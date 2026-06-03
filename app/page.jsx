@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { SB } from '@/lib/supabase';
+import Quotes from '@/app/quotes';
 
 const LOGO_PATH = '/logo.png';
 
@@ -23,6 +24,7 @@ function Sidebar({ page, navigate, user }) {
     { id:'companies', label:'Companies', icon:'👥' },
     { id:'products',  label:'Products', icon:'📦' },
     { id:'shipments', label:'Shipments', icon:'🚚' },
+    { id:'quotes',    label:'Quotes', icon:'💲' },
   ];
   return (
     <aside className="sidebar">
@@ -607,6 +609,7 @@ tbody td.l{text-align:left;padding-right:24px;}.desc{font-weight:500;font-size:1
 // ── App Root ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [user,    setUser]    = useState(null);
+  const [session, setSession] = useState(null);
   const [page,    setPage]    = useState('dashboard');
   const [params,  setParams]  = useState({});
   const [loading, setLoading] = useState(true);
@@ -623,10 +626,10 @@ export default function App() {
 
   useEffect(()=>{
     SB.auth.getSession().then(({data:{session}})=>{
-      setUser(session?.user||null); setLoading(false);
+      setUser(session?.user||null); setSession(session||null); setLoading(false);
     });
     const {data:{subscription}} = SB.auth.onAuthStateChange((_,session)=>{
-      setUser(session?.user||null);
+      setUser(session?.user||null); setSession(session||null);
     });
     return ()=>subscription.unsubscribe();
   },[]);
@@ -634,11 +637,18 @@ export default function App() {
   if (loading) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
   if (!user)   return <Login />;
 
-  const titles = {dashboard:'Dashboard',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',shipments:'Shipments'};
+  const titles = {dashboard:'Dashboard',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',shipments:'Shipments',quotes:'Quotes'};
 
   return (
     <div className="app-shell">
       <Sidebar page={page} navigate={navigate} user={user} />
+      {page==='quotes' ? (
+        <div className="main-area">
+          <div className="quotes-root" style={{height:'100%',overflowY:'auto'}}>
+            <Quotes session={session} />
+          </div>
+        </div>
+      ) : (
       <div className="main-area">
         <div className="page-header">
           <h1 className="page-title">{titles[page]||''}</h1>
@@ -653,6 +663,7 @@ export default function App() {
           {page==='shipments'    && <Shipments />}
         </div>
       </div>
+      )}
       {modal==='create-po'      && <CreatePOModal onClose={()=>setModal(null)} onCreated={id=>{setModal(null);navigate('order-detail',{id});}} />}
       {modal==='create-company' && <CreateCompanyModal onClose={()=>setModal(null)} onCreated={()=>setModal(null)} />}
       {modal==='create-product' && <CreateProductModal onClose={()=>setModal(null)} onCreated={()=>setModal(null)} />}
