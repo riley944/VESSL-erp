@@ -278,7 +278,40 @@ function Platform({ session }) {
     if (error) { flash("Couldn't add task: " + error.message); return false; }
     await loadTasks();
     flash("Task assigned to " + nameForEmail(task.assigned_to));
+    notifyTaskAssigned(task); // best-effort email; never blocks task creation
     return true;
+  };
+
+  const notifyTaskAssigned = async (task) => {
+    try {
+      if (!task.assigned_to) return;
+      const e = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+      const who  = nameForEmail(task.assigned_to);
+      const from = nameForEmail(task.assigned_by);
+      const label = task.quote_label
+        ? `<p style="margin:0;color:#64748b;font-size:12.5px">Quote: <strong style="color:#0b1120">${e(task.quote_label)}</strong></p>` : "";
+      const html = `
+        <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:520px;margin:0 auto;padding:8px">
+          <p style="font-size:15px;color:#0b1120;margin:0 0 4px">Hi ${e(who)},</p>
+          <p style="font-size:15px;color:#0b1120;margin:0 0 16px"><strong>${e(from)}</strong> assigned you a task in Vessl:</p>
+          <div style="background:#f6f8fb;border:1px solid #e6eaf0;border-radius:10px;padding:16px 18px;margin:0 0 18px">
+            <p style="margin:0 0 8px;font-size:15px;color:#0b1120;line-height:1.5">${e(task.task)}</p>
+            ${label}
+          </div>
+          <a href="https://orders.vessl.io" style="display:inline-block;background:#0b1530;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 18px;border-radius:8px">Open Vessl &rarr;</a>
+          <p style="color:#94a3b8;font-size:11px;margin:22px 0 0">King Universal &middot; Vessl</p>
+        </div>`;
+      await supabase.functions.invoke("send-email", {
+        body: {
+          to: task.assigned_to,
+          replyTo: task.assigned_by || undefined,
+          subject: `New task from ${from}`,
+          html,
+        },
+      });
+    } catch (err) {
+      console.error("task email failed", err);
+    }
   };
 
   const toggleTask = async (t) => {
