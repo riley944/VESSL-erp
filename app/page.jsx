@@ -40,8 +40,7 @@ function Sidebar({ page, navigate, user }) {
   return (
     <aside className="sidebar">
       <div className="sb-brand">
-        <div className="sb-glyph">V</div>
-        <div className="sb-word"><b>Vessl</b><span>King Universal</span></div>
+        <img className="sb-logo-img" src="/logo-white.png" alt="King Universal" />
       </div>
       <div className="sb-section">Workspace</div>
       {links.map(l => (
@@ -72,10 +71,9 @@ function Login() {
     <div className="login-wrap">
       <div className="login-card">
         <div className="login-mark">
-          <div className="glyph">V</div>
-          <div className="login-word">Vessl</div>
+          <img className="login-logo-img" src="/logo.png" alt="King Universal" />
         </div>
-        <div className="login-sub">King Universal · Operations</div>
+        <div className="login-sub">Operations Platform · Sign in</div>
         <input className="login-field" type="email" placeholder="Work email" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()} />
         <input className="login-field" type="password" placeholder="Password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()} />
         <button className="btn-login" onClick={submit}>Sign In</button>
