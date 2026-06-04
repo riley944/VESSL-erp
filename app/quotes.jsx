@@ -1042,7 +1042,7 @@ function printQuote(q) {
 }
 
 // ---------- client-safe sheet ----------
-function printClientSheet(clientName, quotesArr, settings) {
+function printClientSheet(clientName, quotesArr, settings, vendor) {
   const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const productBlocks = quotesArr.map((q) => {
     const rows = (q.tiers || [])
@@ -1108,7 +1108,7 @@ function printClientSheet(clientName, quotesArr, settings) {
         </div>
       </div>
       <div class="title">Pricing Quote</div>
-      <div class="titlesub">Prepared for ${esc(clientName)}</div>
+      <div class="titlesub">Prepared for ${esc(clientName)}${vendor?` &middot; Vendor #${esc(vendor)}`:''}</div>
       ${productBlocks || '<div style="color:#6e7681">No priced quantities to show.</div>'}
       <div class="foot">
         ${settings?.company_name ? esc(settings.company_name) : 'King Universal Inc.'}
@@ -1143,7 +1143,9 @@ function SendToClientModal({ clients, onClose }) {
     if (win) win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Preparing sheet…</body>');
     let settings = null;
     try { const { data } = await SB.from('kui_settings').select('*').eq('id',1).single(); settings = data; } catch(e){}
-    const html = printClientSheet(chosenClient, pickedQuotes, settings);
+    let vendor = null;
+    try { const { data } = await SB.from('companies').select('vendor_number').eq('type','client').ilike('name',chosenClient||'').limit(1); vendor = (data&&data[0])?data[0].vendor_number:null; } catch(e){}
+    const html = printClientSheet(chosenClient, pickedQuotes, settings, vendor);
     if (win) {
       win.document.open(); win.document.write(html); win.document.close();
       setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 400);
