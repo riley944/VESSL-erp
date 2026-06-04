@@ -319,7 +319,7 @@ function OrderDetail({ id, navigate }) {
   const [posting, setPosting]   = useState(false);
   const load = async () => {
     const [{ data: p },{ data: its }] = await Promise.all([
-      SB.from('purchase_orders').select('*,companies!factory_company_id(name,email)').eq('id',id).single(),
+      SB.from('purchase_orders').select('*,companies!factory_company_id(name,email),client:companies!client_company_id(name,vendor_number)').eq('id',id).single(),
       SB.from('purchase_order_items').select('*,products(sku,name)').eq('purchase_order_id',id)
     ]);
     setPO(p); setItems(its||[]);
@@ -444,7 +444,7 @@ function OrderDetail({ id, navigate }) {
     }
     const { data, error } = await SB.rpc('po_document_json',{p_po_id:id});
     if (error||!data){ if(win) win.close(); alert('Error: '+(error?.message||'No data')); return; }
-    const html = buildPODoc(data);
+    const html = buildPODoc(data, { pallet: po?.pallet_info });
     if (win) {
       win.document.open();
       win.document.write(html);
@@ -480,6 +480,8 @@ function OrderDetail({ id, navigate }) {
           <div className="blabel">Factory</div>
           <div className="bval">{po.companies?.name||'—'}</div>
           <div className="bsub">{po.companies?.email||''}</div>
+          {po.client?.name && <div style={{marginTop:'10px',paddingTop:'10px',borderTop:'1px solid var(--line)'}}><div style={{color:'var(--muted)',fontSize:'11px',marginBottom:'2px'}}>CLIENT</div><div style={{fontSize:'13px',fontWeight:500}}>{po.client.name}</div>{po.client.vendor_number && <div style={{fontSize:'11.5px',color:'var(--muted)'}}>Vendor # {po.client.vendor_number} · internal</div>}</div>}
+          {po.pallet_info && <div style={{marginTop:'10px',fontSize:'12px',color:'var(--muted)'}}><span style={{textTransform:'uppercase',fontSize:'10px'}}>Pallet</span> · {po.pallet_info}</div>}
         </div>
         <div className="detail-block">
           <div className="blabel">Order Details</div>
@@ -572,7 +574,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     num:po.order_number||'', date:po.order_date||'', ship:po.requested_ship_date||'',
     inco:po.incoterm||'', pay:po.payment_terms||'', dep:po.deposit_percent!=null?String(po.deposit_percent):'',
     mold:po.mold_fee!=null?String(po.mold_fee):'', sample:po.sample_fee!=null?String(po.sample_fee):'',
-    currency:po.currency||'USD', notes:po.notes||'', status:po.status||'draft'
+    currency:po.currency||'USD', notes:po.notes||'', status:po.status||'draft', pallet:po.pallet_info||''
   });
   const [items, setItems] = useState((initialItems||[]).map(it=>({id:it.id,prodId:it.product_id||'',desc:it.description||it.products?.name||'',qty:it.quantity!=null?String(it.quantity):'',price:it.unit_price!=null?String(it.unit_price):''})));
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -586,7 +588,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
       order_number:form.num, order_date:form.date||null, requested_ship_date:form.ship||null,
       incoterm:form.inco||null, payment_terms:form.pay||null, deposit_percent:Number(form.dep)||null,
       mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0, currency:form.currency,
-      notes:form.notes||null, status:form.status, updated_at:new Date().toISOString()
+      notes:form.notes||null, status:form.status, pallet_info:form.pallet||null, updated_at:new Date().toISOString()
     }).eq('id',po.id);
     if(error){alert('Error: '+error.message);return;}
     // replace line items: delete all, re-insert the valid ones
@@ -646,6 +648,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
             <div><label>Sample Fee</label><input type="number" className="form-input" value={form.sample} onChange={e=>f('sample')(e.target.value)} /></div>
             <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}><option>USD</option><option>CNY</option><option>VND</option><option>EUR</option></select></div>
           </div>
+          <div className="form-row"><label>Pallet instructions <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(prints on the factory PO)</span></label><input className="form-input" value={form.pallet} onChange={e=>f('pallet')(e.target.value)} /></div>
           <div className="form-row"><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>f('notes')(e.target.value)} /></div>
         </div>
         <div className="modal-foot">
@@ -715,7 +718,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
       const { data:c } = await SB.from('companies').select('*').eq('id',id).single();
       const { data:cc } = await SB.from('contacts').select('*').eq('company_id',id).order('is_primary',{ascending:false});
       setCo(c); setContacts(cc||[]);
-      setForm({ name:c?.name||'', type:c?.type||'client', email:c?.email||'', phone:c?.phone||'', website:c?.website||'' });
+      setForm({ name:c?.name||'', type:c?.type||'client', email:c?.email||'', phone:c?.phone||'', website:c?.website||'', vendor_number:c?.vendor_number||'', pallet_info:c?.pallet_info||'' });
     })();
   },[id]);
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -723,7 +726,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
   const addContact = () => setContacts(prev=>[...prev,{__new:true,company_id:id,full_name:'',email:'',phone:'',is_primary:prev.length===0}]);
   const save = async () => {
     if(!form.name){alert('Name required');return;}
-    await SB.from('companies').update({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null}).eq('id',id);
+    await SB.from('companies').update({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null}).eq('id',id);
     for(const c of contacts){
       if(!(c.full_name||'').trim()) continue;
       if(c.__new) await SB.from('contacts').insert({company_id:id,full_name:c.full_name,email:c.email||null,phone:c.phone||null,is_primary:!!c.is_primary});
@@ -750,9 +753,9 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
             <>
               <div style={{display:'flex',gap:'8px',marginBottom:'18px'}}><Badge status={co.type} /></div>
               <div className="detail-grid" style={{gridTemplateColumns:'1fr',gap:'0'}}>
-                {[['Email',co.email],['Phone',co.phone],['Website',co.website]].map(([l,v])=>(
-                  <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'11px 0',borderBottom:'1px solid var(--line-2)'}}>
-                    <span style={{color:'var(--muted)',fontSize:'12px'}}>{l}</span><span style={{fontSize:'13px'}}>{v||'—'}</span>
+                {[['Email',co.email],['Phone',co.phone],['Website',co.website],...(co.type==='client'?[['Vendor #',co.vendor_number],['Pallet info',co.pallet_info]]:[])].map(([l,v])=>(
+                  <div key={l} style={{display:'flex',justifyContent:'space-between',gap:'16px',padding:'11px 0',borderBottom:'1px solid var(--line-2)'}}>
+                    <span style={{color:'var(--muted)',fontSize:'12px',whiteSpace:'nowrap'}}>{l}</span><span style={{fontSize:'13px',textAlign:'right',whiteSpace:'pre-wrap'}}>{v||'—'}</span>
                   </div>
                 ))}
               </div>
@@ -775,6 +778,12 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
                 <div><label>Phone</label><input className="form-input" value={form.phone} onChange={e=>f('phone')(e.target.value)} /></div>
               </div>
               <div className="form-row"><label>Website</label><input className="form-input" value={form.website} onChange={e=>f('website')(e.target.value)} placeholder="https://" /></div>
+              {form.type==='client' && (
+                <div className="form-row-2">
+                  <div><label>Vendor # <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(internal — our # with this client)</span></label><input className="form-input" value={form.vendor_number} onChange={e=>f('vendor_number')(e.target.value)} /></div>
+                  <div><label>Pallet info <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(autofills onto their POs)</span></label><input className="form-input" value={form.pallet_info} onChange={e=>f('pallet_info')(e.target.value)} placeholder="e.g. 48x40 GMA, max 60 cartons/pallet" /></div>
+                </div>
+              )}
               <span className="form-section-label">Contacts</span>
               {contacts.map((c,i)=>(
                 <div key={i} className="form-row-2" style={{marginBottom:'10px'}}>
@@ -997,7 +1006,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [refsReady, setRefsReady] = useState(false);
   const [seeded, setSeeded] = useState(false);
   const [items, setItems] = useState([{prodId:'',desc:'',qty:'',price:''}]);
-  const [form, setForm]  = useState({ factoryId:'', clientId:'', num:`KUI-PO-${new Date().getFullYear()}-`, date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'' });
+  const [form, setForm]  = useState({ factoryId:'', clientId:'', num:`KUI-PO-${new Date().getFullYear()}-`, date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
 
   // Build the next sequential PO number, e.g. KUI-PO-2026-007, from existing ones.
@@ -1016,7 +1025,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     Promise.all([
       SB.from('companies').select('id,name').eq('type','factory').order('name'),
       SB.from('products').select('id,sku,name').order('name'),
-      SB.from('companies').select('id,name').eq('type','client').order('name')
+      SB.from('companies').select('id,name,vendor_number,pallet_info').eq('type','client').order('name')
     ]).then(([{data:fac},{data:pro},{data:cli}])=>{ setFactories(fac||[]); setProducts(pro||[]); setClients(cli||[]); setRefsReady(true); });
     // auto-number this PO based on what's already in the system
     SB.from('purchase_orders').select('order_number').then(({data})=>{
@@ -1051,6 +1060,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     setForm(prev=>({...prev,
       factoryId: matchFactory?matchFactory.id:prev.factoryId,
       clientId: matchClient?matchClient.id:prev.clientId,
+      pallet: (matchClient&&matchClient.pallet_info)?matchClient.pallet_info:prev.pallet,
       inco: q.country?`FOB ${q.country}`:prev.inco,
       mold: q.mold_fee!=null?String(q.mold_fee):prev.mold,
       sample: q.sample_fee!=null?String(q.sample_fee):prev.sample,
@@ -1070,7 +1080,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     const valid = items.filter(it => (it.prodId || (it.desc||'').trim()) && Number(it.qty)>0);
     if (valid.length===0) { alert('Add at least one line item with a quantity greater than 0 before creating the PO.'); return; }
     const baseFields = {
-      factory_company_id:form.factoryId, client_company_id:form.clientId||null, order_date:form.date,
+      factory_company_id:form.factoryId, client_company_id:form.clientId||null, pallet_info:form.pallet||null, order_date:form.date,
       requested_ship_date:form.ship||null, incoterm:form.inco||null, payment_terms:form.pay||null,
       deposit_percent:Number(form.dep)||null, mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0,
       currency:form.currency, notes:form.notes||null, status:'draft',
@@ -1181,10 +1191,14 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
             </select>
           </div>
           <div className="form-row"><label>Client <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(for tracking &amp; inventory — never shown on the factory PO)</span></label>
-            <select className="form-select" value={form.clientId} onChange={e=>f('clientId')(e.target.value)}>
+            <select className="form-select" value={form.clientId} onChange={e=>{const cid=e.target.value;const c=clients.find(x=>x.id===cid);setForm(prev=>({...prev,clientId:cid,pallet:(c&&c.pallet_info&&!prev.pallet)?c.pallet_info:prev.pallet}));}}>
               <option value="">Unassigned</option>
               {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
+            {(()=>{ const c=clients.find(x=>x.id===form.clientId); return c?.vendor_number ? <div style={{fontSize:'12px',color:'var(--muted)',marginTop:'6px'}}>Vendor # <b style={{color:'var(--ink)'}}>{c.vendor_number}</b> · internal only, won't appear on the factory PO</div> : null; })()}
+          </div>
+          <div className="form-row"><label>Pallet instructions <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(prints on the factory PO)</span></label>
+            <input className="form-input" value={form.pallet} onChange={e=>f('pallet')(e.target.value)} placeholder="Autofills from the client — edit if needed" />
           </div>
           <div className="form-row-2">
             <div><label>PO Number *</label><input className="form-input" value={form.num} onChange={e=>f('num')(e.target.value)} /></div>
@@ -1255,11 +1269,11 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
 
 // ── Create Company Modal ──────────────────────────────────────────────────────
 function CreateCompanyModal({ onClose, onCreated }) {
-  const [form, setForm] = useState({name:'',type:'client',email:'',phone:'',website:'',cname:'',cemail:'',cphone:''});
+  const [form, setForm] = useState({name:'',type:'client',email:'',phone:'',website:'',vendor_number:'',pallet_info:'',cname:'',cemail:'',cphone:''});
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   const submit = async () => {
     if (!form.name) { alert('Company name required'); return; }
-    const { data: co, error } = await SB.from('companies').insert({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null}).select().single();
+    const { data: co, error } = await SB.from('companies').insert({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null}).select().single();
     if (error) { alert('Error: '+error.message); return; }
     if (form.cname) await SB.from('contacts').insert({company_id:co.id,full_name:form.cname,email:form.cemail||null,phone:form.cphone||null,is_primary:true});
     onCreated();
@@ -1279,6 +1293,12 @@ function CreateCompanyModal({ onClose, onCreated }) {
             <div><label>Phone</label><input className="form-input" value={form.phone} onChange={e=>f('phone')(e.target.value)} /></div>
           </div>
           <div className="form-row"><label>Website</label><input className="form-input" value={form.website} onChange={e=>f('website')(e.target.value)} placeholder="https://" /></div>
+          {form.type==='client' && (
+            <div className="form-row-2">
+              <div><label>Vendor # <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(internal)</span></label><input className="form-input" value={form.vendor_number} onChange={e=>f('vendor_number')(e.target.value)} /></div>
+              <div><label>Pallet info</label><input className="form-input" value={form.pallet_info} onChange={e=>f('pallet_info')(e.target.value)} placeholder="e.g. 48x40 GMA" /></div>
+            </div>
+          )}
           <span className="form-section-label">Primary Contact</span>
           <div className="form-row-2">
             <div><label>Full Name</label><input className="form-input" value={form.cname} onChange={e=>f('cname')(e.target.value)} /></div>
@@ -1404,7 +1424,8 @@ function CreateProductModal({ onClose, onCreated }) {
 }
 
 // ── PO Document Builder ───────────────────────────────────────────────────────
-function buildPODoc(d) {
+function buildPODoc(d, opts={}) {
+  const pallet = opts.pallet || d.pallet_info || '';
   const t=d.totals||{};
   const m=(n,c)=>n==null?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:c||'USD'}).format(n);
   const fd=s=>{if(!s)return'—';return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'});};
@@ -1455,7 +1476,7 @@ tbody td.l{text-align:left;padding-right:24px;}.desc{font-weight:500;font-size:1
   </div>
   <table><thead><tr><th class="l">Item</th><th>Qty</th><th>Cartons</th><th>Unit</th><th>Amount</th></tr></thead><tbody>${lines}</tbody></table>
   <div class="foot">
-    <div><div class="lbl">Notes</div><div class="nb">${d.notes||''}</div>${t.total_cartons?`<div class="lbl" style="margin-top:22px">Logistics</div><div class="nb">${fn(t.total_cartons)} cartons · ${t.total_cbm} CBM · ${fn(t.total_gross_weight_kg)} kg</div>`:''}</div>
+    <div><div class="lbl">Notes</div><div class="nb">${d.notes||''}</div>${pallet?`<div class="lbl" style="margin-top:22px">Palletization</div><div class="nb">${pallet}</div>`:''}${t.total_cartons?`<div class="lbl" style="margin-top:22px">Logistics</div><div class="nb">${fn(t.total_cartons)} cartons · ${t.total_cbm} CBM · ${fn(t.total_gross_weight_kg)} kg</div>`:''}</div>
     <div>
       <div class="tr"><span class="k">Goods subtotal</span><span class="v">${m(t.subtotal,d.currency)}</span></div>
       ${t.mold_fee?`<div class="tr"><span class="k">Tooling / mold</span><span class="v">${m(t.mold_fee,d.currency)}</span></div>`:''}
