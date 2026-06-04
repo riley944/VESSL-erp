@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { SB } from '@/lib/supabase';
 import { SBQ } from '@/lib/supabaseQuotes';
 import Quotes from '@/app/quotes';
@@ -582,10 +583,32 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   const setItem=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const addItem=()=>setItems(prev=>[...prev,{id:null,prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
   const rmItem =i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
+  const [products, setProducts] = useState([]);
+  const [recentDescs, setRecentDescs] = useState([]);
   const [eSrchIdx, setESrchIdx] = useState(-1);
   const [eSrchHits, setESrchHits] = useState([]);
-  const handleEProdInput = (i,v) => { setItem(i,'desc',v); if(v.trim().length>0){const h=products.filter(p=>(p.name||'').toLowerCase().includes(v.toLowerCase())||(p.sku||'').toLowerCase().includes(v.toLowerCase())).slice(0,7);setESrchHits(h);setESrchIdx(i);}else{setESrchIdx(-1);setESrchHits([]);} };
-  const pickEProd = (i,p) => { setItem(i,'desc',p.name); setItem(i,'prodId',p.id); setESrchIdx(-1); setESrchHits([]); };
+  const [eSrchRect, setESrchRect] = useState(null);
+  useEffect(()=>{
+    Promise.all([
+      SB.from('products').select('id,sku,name').order('name'),
+      SB.from('purchase_order_items').select('description').not('description','is',null).limit(200)
+    ]).then(([{data:pro},{data:itmD}])=>{
+      setProducts(pro||[]);
+      setRecentDescs([...new Set((itmD||[]).map(it=>it.description||'').filter(Boolean))]);
+    });
+  },[]);
+  const handleEProdInput = (i,v,el) => {
+    setItem(i,'desc',v);
+    if(v.trim().length>0){
+      const lv=v.toLowerCase();
+      const cat=(products||[]).filter(p=>(p.name||'').toLowerCase().includes(lv)||(p.sku||'').toLowerCase().includes(lv)).map(p=>({id:p.id,name:p.name,sku:p.sku||'',recent:false}));
+      const rec=recentDescs.filter(d=>d.toLowerCase().includes(lv)&&!cat.some(c=>c.name===d)).slice(0,5).map(d=>({id:null,name:d,sku:'',recent:true}));
+      const h=[...cat,...rec].slice(0,8);
+      setESrchHits(h); setESrchIdx(i);
+      if(el){const r=el.getBoundingClientRect();setESrchRect({top:r.bottom+2,left:r.left,w:Math.max(r.width,240)});}
+    } else { setESrchIdx(-1); setESrchHits([]); setESrchRect(null); }
+  };
+  const pickEProd = (i,p) => { setItem(i,'desc',p.name); setItem(i,'prodId',p.id||''); setESrchIdx(-1); setESrchHits([]); setESrchRect(null); };
   const save = async () => {
     if(!form.num){alert('PO number required');return;}
     const { error } = await SB.from('purchase_orders').update({
@@ -632,7 +655,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
                   <tr>
                     <td>
                       <div style={{position:'relative'}}>
-                        <input value={it.desc} onChange={e=>handleEProdInput(i,e.target.value)} onBlur={()=>setTimeout(()=>setESrchIdx(-1),200)} placeholder="Type to search products…" />
+                        <input value={it.desc} onChange={e=>handleEProdInput(i,e.target.value,e.target)} onBlur={()=>setTimeout(()=>{setESrchIdx(-1);setESrchHits([]);setESrchRect(null);},200)} placeholder="Type to search products…" />
                         {eSrchIdx===i && eSrchHits.length>0 && (
                           <div className="prod-suggestions">
                             {eSrchHits.map(p=>(
@@ -676,6 +699,17 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
         </div>
       </div>
     </div>
+    {eSrchIdx>=0 && eSrchHits.length>0 && eSrchRect && typeof window!=='undefined' && createPortal(
+      <div style={{position:'fixed',top:eSrchRect.top,left:eSrchRect.left,width:eSrchRect.w,background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',boxShadow:'0 8px 24px rgba(0,0,0,.16)',zIndex:99999,maxHeight:'220px',overflowY:'auto'}}>
+        {eSrchHits.map(p=>(
+          <div key={p.id||p.name} style={{padding:'10px 14px',fontSize:'13px',cursor:'pointer',borderBottom:'1px solid #f1f5f9',display:'flex',justifyContent:'space-between',alignItems:'center'}} onMouseDown={()=>pickEProd(eSrchIdx,p)}>
+            <span style={{fontWeight:600,color:'#0b1120'}}>{p.name}</span>
+            <span style={{fontSize:'11px',color:'#94a3b8'}}>{p.sku||''}{p.recent?' recent':''}</span>
+          </div>
+        ))}
+      </div>,
+      document.body
+    )}
   );
 }
 
@@ -1027,6 +1061,8 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [items, setItems] = useState([{prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
   const [srchIdx, setSrchIdx] = useState(-1);
   const [srchHits, setSrchHits] = useState([]);
+  const [srchRect, setSrchRect] = useState(null);
+  const [recentDescs, setRecentDescs] = useState([]);
   const [form, setForm]  = useState({ factoryId:'', clientId:'', num:`KUI-PO-${new Date().getFullYear()}-`, date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
 
@@ -1046,8 +1082,13 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     Promise.all([
       SB.from('companies').select('id,name').eq('type','factory').order('name'),
       SB.from('products').select('id,sku,name').order('name'),
-      SB.from('companies').select('id,name,vendor_number,pallet_info').eq('type','client').order('name')
-    ]).then(([{data:fac},{data:pro},{data:cli}])=>{ setFactories(fac||[]); setProducts(pro||[]); setClients(cli||[]); setRefsReady(true); });
+      SB.from('companies').select('id,name,vendor_number,pallet_info').eq('type','client').order('name'),
+      SB.from('purchase_order_items').select('description').not('description','is',null).limit(200)
+    ]).then(([{data:fac},{data:pro},{data:cli},{data:itmD}])=>{
+      setFactories(fac||[]); setProducts(pro||[]); setClients(cli||[]);
+      setRecentDescs([...new Set((itmD||[]).map(it=>it.description||'').filter(Boolean))]);
+      setRefsReady(true);
+    });
     // auto-number this PO based on what's already in the system
     SB.from('purchase_orders').select('order_number').then(({data})=>{
       setForm(prev=> prev.num && !/-$/.test(prev.num) ? prev : {...prev, num: genNum((data||[]).map(r=>r.order_number))});
@@ -1059,8 +1100,18 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   },[]);
 
   const addItem = () => setItems(prev=>[...prev,{prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
-  const handleProdInput = (i,v) => { setItem(i,'desc',v); if(v.trim().length>0){const h=products.filter(p=>(p.name||'').toLowerCase().includes(v.toLowerCase())||(p.sku||'').toLowerCase().includes(v.toLowerCase())).slice(0,7);setSrchHits(h);setSrchIdx(i);}else{setSrchIdx(-1);setSrchHits([]);} };
-  const pickProd = (i,p) => { setItem(i,'desc',p.name); setItem(i,'prodId',p.id); setSrchIdx(-1); setSrchHits([]); };
+  const handleProdInput = (i,v,el) => {
+    setItem(i,'desc',v);
+    if(v.trim().length>0){
+      const lv=v.toLowerCase();
+      const cat=(products||[]).filter(p=>(p.name||'').toLowerCase().includes(lv)||(p.sku||'').toLowerCase().includes(lv)).map(p=>({id:p.id,name:p.name,sku:p.sku||'',recent:false}));
+      const rec=recentDescs.filter(d=>d.toLowerCase().includes(lv)&&!cat.some(c=>c.name===d)).slice(0,5).map(d=>({id:null,name:d,sku:'',recent:true}));
+      const h=[...cat,...rec].slice(0,8);
+      setSrchHits(h); setSrchIdx(i);
+      if(el){const r=el.getBoundingClientRect();setSrchRect({top:r.bottom+2,left:r.left,w:Math.max(r.width,240)});}
+    } else { setSrchIdx(-1); setSrchHits([]); setSrchRect(null); }
+  };
+  const pickProd = (i,p) => { setItem(i,'desc',p.name); setItem(i,'prodId',p.id||''); setSrchIdx(-1); setSrchHits([]); setSrchRect(null); };
   const setItem = (i,k,v) => setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const rmItem  = i => setItems(prev=>prev.filter((_,idx)=>idx!==i));
 
@@ -1243,18 +1294,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
                 <React.Fragment key={i}>
                   <tr>
                     <td>
-                      <div style={{position:'relative'}}>
-                        <input value={it.desc} onChange={e=>handleProdInput(i,e.target.value)} onBlur={()=>setTimeout(()=>setSrchIdx(-1),200)} placeholder="Type to search products…" />
-                        {srchIdx===i && srchHits.length>0 && (
-                          <div className="prod-suggestions">
-                            {srchHits.map(p=>(
-                              <div key={p.id} className="prod-sugg-item" onMouseDown={()=>pickProd(i,p)}>
-                                <span style={{fontWeight:600}}>{p.name}</span>{p.sku&&<span style={{fontSize:'11px',color:'var(--muted)',marginLeft:'8px'}}>{p.sku}</span>}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                      <input value={it.desc} onChange={e=>handleProdInput(i,e.target.value,e.target)} onBlur={()=>setTimeout(()=>{setSrchIdx(-1);setSrchHits([]);setSrchRect(null);},200)} placeholder="Type to search products…" />
                     </td>
                     <td><input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" /></td>
                     <td><input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" /></td>
@@ -1308,6 +1348,17 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
         </div>
       </div>
     </div>
+    {srchIdx>=0 && srchHits.length>0 && srchRect && typeof window!=='undefined' && createPortal(
+      <div style={{position:'fixed',top:srchRect.top,left:srchRect.left,width:srchRect.w,background:'#fff',border:'1px solid #e2e8f0',borderRadius:'10px',boxShadow:'0 8px 24px rgba(0,0,0,.16)',zIndex:99999,maxHeight:'220px',overflowY:'auto'}}>
+        {srchHits.map(p=>(
+          <div key={p.id||p.name} style={{padding:'10px 14px',fontSize:'13px',cursor:'pointer',borderBottom:'1px solid #f1f5f9',display:'flex',justifyContent:'space-between',alignItems:'center'}} onMouseDown={()=>pickProd(srchIdx,p)}>
+            <span style={{fontWeight:600,color:'#0b1120'}}>{p.name}</span>
+            <span style={{fontSize:'11px',color:'#94a3b8'}}>{p.sku||''}{p.recent?' recent':''}</span>
+          </div>
+        ))}
+      </div>,
+      document.body
+    )}
   );
 }
 
