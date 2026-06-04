@@ -1073,6 +1073,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [extraSearch, setExtraSearch] = useState('');
   const [extraPick, setExtraPick] = useState(null);
   const [extraTierIdx, setExtraTierIdx] = useState(0);
+  const [extraMsg, setExtraMsg] = useState('');
   const [refsReady, setRefsReady] = useState(false);
   const [seeded, setSeeded] = useState(false);
   const [items, setItems] = useState([{prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
@@ -1175,10 +1176,14 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   };
   const pickTier = ti => { if(picked) applyQuote(picked, ti); };
   const addExtraFromQuote = (q, ti) => {
-    const t = tiersOf(q)[ti];
-    if (!t) return;
-    setItems(prev=>[...prev,{ prodId:'', desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:t.landed!=null?String(t.landed):'', ci:'', carton:'' }]);
+    const tiers = tiersOf(q);
+    const t = tiers[ti] ?? tiers[0];
+    if (!t) { alert('Could not read tier data — try re-selecting the quote.'); return; }
+    const newItem = { prodId:'', desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:t.landed!=null?String(t.landed):'', ci:'', carton:'' };
+    setItems(prev=>[...prev, newItem]);
     setAddingItem(false); setExtraPick(null); setExtraSearch(''); setExtraTierIdx(0);
+    setExtraMsg(`✓ ${q.product||'Item'} added to line items`);
+    setTimeout(()=>setExtraMsg(''), 3000);
   };
 
   // when opened from a product card, seed the chosen quote once refs are ready
@@ -1300,6 +1305,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
           {/* ── Add extra product from quote (above Factory) ── */}
           {mode==='quote' && picked && (
             <div className="extra-item-bar">
+              {extraMsg && <div style={{fontSize:'13px',color:'#059669',fontWeight:600,marginBottom:'8px',padding:'8px 12px',background:'#d1fae5',borderRadius:'8px'}}>✓ {extraMsg.replace('✓ ','')}</div>}
               {!addingItem ? (
                 <button className="btn btn-ghost btn-sm" style={{width:'100%',justifyContent:'center',marginBottom:'4px'}} onClick={()=>setAddingItem(true)}>+ Add item from quote</button>
               ) : (
