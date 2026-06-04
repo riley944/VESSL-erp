@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { SB } from '@/lib/supabase';
 import { SBQ } from '@/lib/supabaseQuotes';
 import Quotes from '@/app/quotes';
@@ -1284,7 +1284,7 @@ function CreateCompanyModal({ onClose, onCreated }) {
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   const submit = async () => {
     if (!form.name) { alert('Company name required'); return; }
-    const { data: co, error } = await SB.from('companies').insert({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null}).select().single();
+    const { data: co, error } = await SB.from('companies').upsert({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
     if (error) { alert('Error: '+error.message); return; }
     if (form.cname) await SB.from('contacts').insert({company_id:co.id,full_name:form.cname,email:form.cemail||null,phone:form.cphone||null,is_primary:true});
     onCreated();
