@@ -589,10 +589,13 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   useEffect(()=>{
     Promise.all([
       SB.from('products').select('id,sku,name').order('name'),
-      SB.from('purchase_order_items').select('description').not('description','is',null).limit(200)
-    ]).then(([{data:pro},{data:itmD}])=>{
+      SB.from('purchase_order_items').select('description').not('description','is',null).limit(200),
+      SBQ.from('quotes').select('product').not('product','is',null).limit(300)
+    ]).then(([{data:pro},{data:itmD},{data:qProds}])=>{
       setProducts(pro||[]);
-      setRecentDescs([...new Set((itmD||[]).map(it=>it.description||'').filter(Boolean))]);
+      const poDescs=(itmD||[]).map(it=>it.description||'').filter(Boolean);
+      const qNames=(qProds||[]).map(q=>q.product||'').filter(Boolean);
+      setRecentDescs([...new Set([...poDescs,...qNames])]);
     });
   },[]);
   const handleEProdInput = (i,v,el) => {
@@ -606,7 +609,17 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
       if(el){const r=el.getBoundingClientRect();setESrchRect({top:r.bottom+2,left:r.left,w:Math.max(r.width,240)});}
     } else { setESrchIdx(-1); setESrchHits([]); setESrchRect(null); }
   };
-  const pickEProd = (i,p) => { setItem(i,'desc',p.name); setItem(i,'prodId',p.id||''); setESrchIdx(-1); setESrchHits([]); setESrchRect(null); };
+  const pickEProd = async (i,p) => {
+    setItem(i,'desc',p.name); setItem(i,'prodId',p.id||'');
+    setESrchIdx(-1); setESrchHits([]); setESrchRect(null);
+    try {
+      const {data} = await SB.from('purchase_order_items').select('carton_info,ci_value').ilike('description',p.name).limit(1);
+      if (data?.[0]) {
+        if (data[0].carton_info) setItem(i,'carton',data[0].carton_info);
+        if (data[0].ci_value!=null) setItem(i,'ci',String(data[0].ci_value));
+      }
+    } catch(e){}
+  };
   const save = async () => {
     if(!form.num){alert('PO number required');return;}
     const { error } = await SB.from('purchase_orders').update({
@@ -1083,10 +1096,13 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       SB.from('companies').select('id,name').eq('type','factory').order('name'),
       SB.from('products').select('id,sku,name').order('name'),
       SB.from('companies').select('id,name,vendor_number,pallet_info').eq('type','client').order('name'),
-      SB.from('purchase_order_items').select('description').not('description','is',null).limit(200)
-    ]).then(([{data:fac},{data:pro},{data:cli},{data:itmD}])=>{
+      SB.from('purchase_order_items').select('description').not('description','is',null).limit(200),
+      SBQ.from('quotes').select('product').not('product','is',null).limit(300)
+    ]).then(([{data:fac},{data:pro},{data:cli},{data:itmD},{data:qProds}])=>{
       setFactories(fac||[]); setProducts(pro||[]); setClients(cli||[]);
-      setRecentDescs([...new Set((itmD||[]).map(it=>it.description||'').filter(Boolean))]);
+      const poDescs=(itmD||[]).map(it=>it.description||'').filter(Boolean);
+      const qNames=(qProds||[]).map(q=>q.product||'').filter(Boolean);
+      setRecentDescs([...new Set([...poDescs,...qNames])]);
       setRefsReady(true);
     });
     // auto-number this PO based on what's already in the system
@@ -1111,7 +1127,18 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       if(el){const r=el.getBoundingClientRect();setSrchRect({top:r.bottom+2,left:r.left,w:Math.max(r.width,240)});}
     } else { setSrchIdx(-1); setSrchHits([]); setSrchRect(null); }
   };
-  const pickProd = (i,p) => { setItem(i,'desc',p.name); setItem(i,'prodId',p.id||''); setSrchIdx(-1); setSrchHits([]); setSrchRect(null); };
+  const pickProd = async (i,p) => {
+    setItem(i,'desc',p.name); setItem(i,'prodId',p.id||'');
+    setSrchIdx(-1); setSrchHits([]); setSrchRect(null);
+    // autofill carton + CI from the most recent PO that used this product name
+    try {
+      const {data} = await SB.from('purchase_order_items').select('carton_info,ci_value').ilike('description',p.name).limit(1);
+      if (data?.[0]) {
+        if (data[0].carton_info) setItem(i,'carton',data[0].carton_info);
+        if (data[0].ci_value!=null) setItem(i,'ci',String(data[0].ci_value));
+      }
+    } catch(e){}
+  };
   const setItem = (i,k,v) => setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const rmItem  = i => setItems(prev=>prev.filter((_,idx)=>idx!==i));
 
