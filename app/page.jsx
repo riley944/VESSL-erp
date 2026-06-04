@@ -19,9 +19,17 @@ function initials(name){ return (name||'?').replace(/[^A-Za-z0-9 ]/g,'').split(/
 // ── Utils ────────────────────────────────────────────────────────────────────
 const money = (n, c='USD') => n == null ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:c}).format(n);
 const fmtDate = s => { if (!s) return '—'; return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
+const fmtDateTime = s => { if (!s) return ''; const d=new Date(s); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); };
 const fmtNum = n => n == null ? '—' : new Intl.NumberFormat('en-US').format(n);
 const nowDate = () => new Date().toISOString().slice(0,10);
 const STATUSES = ['draft','confirmed','sampling','sample_approved','in_production','ready_to_ship','shipped','delivered','closed','cancelled'];
+const TEAM = [
+  { name:'Kristy',  email:'kristy@kinguniversal.com' },
+  { name:'Loren',   email:'loren@kinguniversal.com' },
+  { name:'Riley',   email:'riley@kinguniversal.com' },
+  { name:'Steven',  email:'steven@kinguniversal.com' },
+  { name:'Carmela', email:'carmela@kinguniversal.com' },
+];
 
 function Badge({ status }) {
   return <span className={`badge badge-${(status||'').replace(/ /g,'_')}`}>{(status||'—').replace(/_/g,' ')}</span>;
@@ -117,6 +125,10 @@ function Dashboard({ navigate }) {
     })();
   },[]);
   if (loading) return <div className="loading">Loading...</div>;
+  const setStatus = async (pid, status) => {
+    await SB.from('purchase_orders').update({status,updated_at:new Date().toISOString()}).eq('id',pid);
+    setRecent(prev=>prev.map(p=>p.id===pid?{...p,status}:p));
+  };
   return (
     <>
       <div className="stats-grid">
@@ -124,24 +136,29 @@ function Dashboard({ navigate }) {
           <div key={l} className="stat-card"><div className="stat-label">{l}</div><div className="stat-value">{v}</div></div>
         ))}
       </div>
-      <div className="section-card">
-        <div className="section-head"><h3>Recent Purchase Orders</h3></div>
-        {recent.length ? (
-          <table className="data-table">
-            <thead><tr><th>PO Number</th><th>Factory</th><th>Status</th><th>Date</th></tr></thead>
-            <tbody>
-              {recent.map(p=>(
-                <tr key={p.id} onClick={()=>navigate('order-detail',{id:p.id})}>
-                  <td className="mono">{p.order_number||'—'}</td>
-                  <td>{p.companies?.name||'—'}</td>
-                  <td><Badge status={p.status} /></td>
-                  <td>{fmtDate(p.order_date)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : <div className="empty"><h3>No orders yet</h3><p>Create your first purchase order to get started.</p></div>}
-      </div>
+      <div className="section-head" style={{padding:'0 2px 12px'}}><h3 style={{fontSize:'17px'}}>Recent Orders</h3><button className="btn btn-ghost btn-sm" onClick={()=>navigate('orders')}>View all →</button></div>
+      {recent.length ? (
+        <div className="order-card-grid">
+          {recent.map(p=>(
+            <div key={p.id} className="order-card">
+              <div className="oc-top" onClick={()=>navigate('order-detail',{id:p.id})}>
+                <span className="oc-num mono">{p.order_number||'—'}</span>
+                <Badge status={p.status} />
+              </div>
+              <div className="oc-factory" onClick={()=>navigate('order-detail',{id:p.id})}>
+                <span className="oc-avatar" style={{background:companyColor(p.companies?.name||'?')}}>{initials(p.companies?.name||'?')}</span>
+                {p.companies?.name||'—'}
+              </div>
+              <div className="oc-foot">
+                <span className="oc-date">{fmtDate(p.order_date)}</span>
+                <select className="oc-status" value={p.status} onChange={e=>setStatus(p.id,e.target.value)}>
+                  {STATUSES.map(s=><option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}
+                </select>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : <div className="section-card"><div className="empty"><h3>No orders yet</h3><p>Create your first purchase order to get started.</p></div></div>}
     </>
   );
 }
@@ -197,12 +214,37 @@ function OrderDetail({ id, navigate }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [ship, setShip]   = useState(null);
+  const [logi, setLogi]   = useState({});
+  const [savingLogi, setSavingLogi] = useState(false);
+  const [notes, setNotes] = useState([]);
+  const [noteText, setNoteText] = useState('');
+  const [noteMsg, setNoteMsg]   = useState('');
+  const [posting, setPosting]   = useState(false);
   const load = async () => {
     const [{ data: p },{ data: its }] = await Promise.all([
       SB.from('purchase_orders').select('*,companies!factory_company_id(name,email)').eq('id',id).single(),
       SB.from('purchase_order_items').select('*,products(sku,name)').eq('purchase_order_id',id)
     ]);
-    setPO(p); setItems(its||[]); setLoading(false);
+    setPO(p); setItems(its||[]);
+    // linked shipment (first one), if any
+    const { data: links } = await SB.from('shipment_pos').select('shipment_id').eq('purchase_order_id',id).limit(1);
+    let sh = null;
+    if (links && links.length) {
+      const { data: s } = await SB.from('shipments').select('*').eq('id',links[0].shipment_id).single();
+      sh = s;
+    }
+    setShip(sh);
+    setLogi({
+      vessel_name: sh?.vessel_name||'', container_no: sh?.container_no||'', booking_number: sh?.booking_number||'',
+      bill_of_lading: sh?.bill_of_lading||'', voyage_no: sh?.voyage_no||'',
+      etd: sh?.estimated_departure ? sh.estimated_departure.slice(0,10) : '',
+      eta: sh?.estimated_arrival ? sh.estimated_arrival.slice(0,10) : '',
+    });
+    // order notes
+    const { data: ns } = await SB.from('order_notes').select('*').eq('purchase_order_id',id).order('created_at',{ascending:false});
+    setNotes(ns||[]);
+    setLoading(false);
   };
   useEffect(()=>{ load(); },[id]);
   const updateStatus = async (status) => {
@@ -230,6 +272,65 @@ function OrderDetail({ id, navigate }) {
       await SB.from('shipment_pos').insert({ shipment_id: ship.id, purchase_order_id: id });
       return true;
     } catch(e){ console.error(e); return false; }
+  };
+  // Find this PO's shipment, creating+linking one if it doesn't exist yet.
+  const getOrCreateShipmentId = async () => {
+    if (ship?.id) return ship.id;
+    const { data: links } = await SB.from('shipment_pos').select('shipment_id').eq('purchase_order_id',id).limit(1);
+    if (links && links.length) return links[0].shipment_id;
+    const base = (po?.order_number || id.slice(0,8)).toString().replace(/^PO[-\s]?/i,'');
+    const num  = `SHP-${base}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
+    const { data: s } = await SB.from('shipments').insert({ shipment_number:num, status:'created', inco_term:po?.incoterm||null }).select().single();
+    if (!s) return null;
+    await SB.from('shipment_pos').insert({ shipment_id:s.id, purchase_order_id:id });
+    setShip(s);
+    return s.id;
+  };
+  const setLg = k => v => setLogi(prev=>({...prev,[k]:v}));
+  const saveLogistics = async () => {
+    setSavingLogi(true);
+    const sid = await getOrCreateShipmentId();
+    if (!sid){ setSavingLogi(false); alert('Could not save logistics.'); return; }
+    const upd = {
+      vessel_name: logi.vessel_name||null, container_no: logi.container_no||null, voyage_no: logi.voyage_no||null,
+      booking_number: logi.booking_number||null, bill_of_lading: logi.bill_of_lading||null,
+      estimated_departure: logi.etd ? new Date(logi.etd+'T12:00:00').toISOString() : null,
+      estimated_arrival:   logi.eta ? new Date(logi.eta+'T12:00:00').toISOString() : null,
+      updated_at: new Date().toISOString(),
+    };
+    const { data: s, error } = await SB.from('shipments').update(upd).eq('id',sid).select().single();
+    setSavingLogi(false);
+    if (error){ alert('Error saving logistics: '+error.message); return; }
+    setShip(s);
+    setNoteMsg('Logistics saved.'); setTimeout(()=>setNoteMsg(''),2500);
+  };
+  const postNote = async () => {
+    const body = (noteText||'').trim(); if(!body) return;
+    setPosting(true);
+    let author=null; try{ const { data } = await SB.auth.getUser(); author=data?.user?.email||null; }catch(e){}
+    const { data:n, error } = await SB.from('order_notes').insert({ purchase_order_id:id, body, author_email:author }).select().single();
+    if (error){ setPosting(false); alert('Couldn\u2019t post note: '+error.message); return; }
+    setNotes(prev=>[n,...prev]); setNoteText('');
+    try {
+      const whoName = author ? author.split('@')[0] : 'Someone';
+      const recipients = TEAM.map(t=>t.email).filter(e=>e!==author);
+      const e = (s)=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+      const html = `
+        <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:520px;margin:0 auto;padding:8px">
+          <p style="font-size:13px;color:#64748b;margin:0 0 4px">New note on order <strong style="color:#0b1120">${e(po?.order_number||'')}</strong>${po?.companies?.name?` &middot; ${e(po.companies.name)}`:''}</p>
+          <div style="background:#f6f8fb;border:1px solid #e6eaf0;border-radius:10px;padding:16px 18px;margin:10px 0 16px">
+            <p style="margin:0;font-size:15px;color:#0b1120;line-height:1.55">${e(body)}</p>
+          </div>
+          <p style="font-size:12px;color:#94a3b8;margin:0 0 16px">Posted by ${e(whoName)}</p>
+          <a href="https://orders.vessl.io" style="display:inline-block;background:#0b1530;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 18px;border-radius:8px">Open in Vessl &rarr;</a>
+        </div>`;
+      if (recipients.length){
+        const { error:mailErr } = await SB.functions.invoke('send-email',{ body:{ to:recipients, replyTo:author||undefined, subject:`Order note \u00b7 ${po?.order_number||''}`, html } });
+        setNoteMsg(mailErr ? 'Note posted (email skipped).' : 'Note posted & team notified.');
+      } else setNoteMsg('Note posted.');
+    } catch(e){ setNoteMsg('Note posted (email skipped).'); }
+    setTimeout(()=>setNoteMsg(''),3000);
+    setPosting(false);
   };
   const deletePO = async () => {
     if(!confirm('Delete this purchase order and all its line items? This cannot be undone.')) return;
@@ -293,12 +394,29 @@ function OrderDetail({ id, navigate }) {
           </div>
         </div>
       </div>
-      <div className="detail-block" style={{marginBottom:'20px',display:'flex',alignItems:'center',gap:'16px',flexWrap:'wrap'}}>
-        <div className="blabel" style={{marginBottom:0}}>Status</div>
-        <select className="status-select" value={po.status} onChange={e=>updateStatus(e.target.value)}>
-          {STATUSES.map(s=><option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}
-        </select>
-        {po.notes && <div style={{flex:1,fontSize:'12.5px',color:'var(--muted)',paddingLeft:'16px',borderLeft:'1px solid var(--line)'}}>{po.notes}</div>}
+      <div className="detail-block" style={{marginBottom:'20px'}}>
+        <div className="blabel">Status &mdash; tap to change</div>
+        <div className="status-pills">
+          {STATUSES.map(s=>(
+            <button key={s} className={`status-pill ${po.status===s?'on':''} sp-${s}`} onClick={()=>updateStatus(s)}>{s.replace(/_/g,' ')}</button>
+          ))}
+        </div>
+        {po.notes && <div style={{marginTop:'12px',fontSize:'12.5px',color:'var(--muted)',paddingTop:'12px',borderTop:'1px solid var(--line)'}}>{po.notes}</div>}
+      </div>
+
+      <div className="section-card" style={{marginBottom:'20px'}}>
+        <div className="section-head"><h3>Logistics</h3>{ship?.shipment_number && <span className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>{ship.shipment_number}</span>}</div>
+        <div className="logi-grid">
+          {[['Vessel / Boat','vessel_name','e.g. MAERSK SELETAR'],['Container #','container_no','e.g. MSKU1234567'],['Voyage #','voyage_no','e.g. 084W'],['Booking #','booking_number',''],['Bill of Lading','bill_of_lading','']].map(([lab,k,ph])=>(
+            <div key={k} className="logi-field"><label>{lab}</label><input className="form-input" value={logi[k]||''} placeholder={ph} onChange={e=>setLg(k)(e.target.value)} /></div>
+          ))}
+          <div className="logi-field"><label>ETD</label><input type="date" className="form-input" value={logi.etd||''} onChange={e=>setLg('etd')(e.target.value)} /></div>
+          <div className="logi-field"><label>ETA</label><input type="date" className="form-input" value={logi.eta||''} onChange={e=>setLg('eta')(e.target.value)} /></div>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:'12px',padding:'0 18px 16px'}}>
+          <button className="btn btn-dark btn-sm" onClick={saveLogistics} disabled={savingLogi}>{savingLogi?'Saving…':'Save logistics'}</button>
+          {!ship && <span style={{fontSize:'12px',color:'var(--muted)'}}>Saving will create a shipment for this PO.</span>}
+        </div>
       </div>
       <div className="section-card">
         <div className="section-head"><h3>Line Items</h3></div>
@@ -323,6 +441,28 @@ function OrderDetail({ id, navigate }) {
           {po.sample_fee>0 && <div className="total-row" style={{opacity:.6,fontStyle:'italic'}}><span className="k">Sample fee (sep.)</span><span className="v">{money(po.sample_fee,po.currency)}</span></div>}
           <div className="total-grand"><span>Total {po.currency||'USD'}</span><span className="mono">{money(grand,po.currency)}</span></div>
           {dep && <div className="total-row" style={{marginTop:'4px'}}><span className="k">{po.deposit_percent}% deposit</span><span className="v">{money(dep,po.currency)}</span></div>}
+        </div>
+      </div>
+
+      <div className="section-card" style={{marginTop:'20px'}}>
+        <div className="section-head"><h3>Notes &amp; Activity</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Posting notifies the team</span></div>
+        <div className="note-composer">
+          <textarea className="form-input" rows={3} placeholder="Add a note about this order — updates, issues, decisions…" value={noteText} onChange={e=>setNoteText(e.target.value)} />
+          <div style={{display:'flex',alignItems:'center',gap:'12px',marginTop:'10px'}}>
+            <button className="btn btn-dark btn-sm" onClick={postNote} disabled={posting||!noteText.trim()}>{posting?'Posting…':'Post & notify team'}</button>
+            {noteMsg && <span style={{fontSize:'12.5px',color:'var(--accent)'}}>{noteMsg}</span>}
+          </div>
+        </div>
+        <div className="note-list">
+          {notes.length ? notes.map(n=>(
+            <div key={n.id} className="note-item">
+              <div className="note-avatar" style={{background:companyColor(n.author_email||'?')}}>{initials(n.author_email||'?')}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div className="note-body">{n.body}</div>
+                <div className="note-meta">{(n.author_email||'unknown').split('@')[0]} · {fmtDateTime(n.created_at)}</div>
+              </div>
+            </div>
+          )) : <div style={{padding:'8px 18px 18px',fontSize:'13px',color:'var(--muted)'}}>No notes yet.</div>}
         </div>
       </div>
     </>
