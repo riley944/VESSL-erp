@@ -22,7 +22,7 @@ const fmtDate = s => { if (!s) return '—'; return new Date(s+'T12:00:00').toLo
 const fmtDateTime = s => { if (!s) return ''; const d=new Date(s); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); };
 const fmtNum = n => n == null ? '—' : new Intl.NumberFormat('en-US').format(n);
 const nowDate = () => new Date().toISOString().slice(0,10);
-const STATUSES = ['draft','confirmed','sampling','sample_approved','in_production','ready_to_ship','shipped','delivered','closed','cancelled'];
+const STATUSES = ['draft','confirmed','sampling','sample_approved','testing','in_production','ready_to_ship','shipped','delivered','closed'];
 const TEAM = [
   { name:'Kristy',  email:'kristy@kinguniversal.com' },
   { name:'Loren',   email:'loren@kinguniversal.com' },
@@ -34,6 +34,78 @@ const TEAM = [
 function Badge({ status }) {
   return <span className={`badge badge-${(status||'').replace(/ /g,'_')}`}>{(status||'—').replace(/_/g,' ')}</span>;
 }
+
+// ── PO browsing helpers (search + client filter, shared by Orders & Dashboard) ──
+const poClient   = p => p.client?.name || '';
+const poFactory  = p => p.factory?.name || p.companies?.name || '';
+const poProducts = p => (p.purchase_order_items||[]).map(it=>it.products?.name||it.description||'').join(' ');
+function filterPOs(rows, { search, client, status }){
+  const s = (search||'').toLowerCase().trim();
+  return (rows||[]).filter(p=>{
+    if (status && status!=='all' && p.status!==status) return false;
+    if (client && client!=='all' && poClient(p)!==client) return false;
+    if (s){
+      const hay = `${p.order_number||''} ${poClient(p)} ${poFactory(p)} ${poProducts(p)}`.toLowerCase();
+      if (!hay.includes(s)) return false;
+    }
+    return true;
+  });
+}
+function distinctClients(rows){
+  const m={}; (rows||[]).forEach(p=>{ const c=poClient(p); if(c) m[c]=(m[c]||0)+1; });
+  return Object.entries(m).sort((a,b)=>a[0].localeCompare(b[0]));
+}
+const PO_CARD_SELECT = 'id,order_number,status,order_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
+
+function OrderCard({ p, navigate, onStatus }){
+  const client = poClient(p), factory = poFactory(p);
+  const name = client || factory || '—';
+  return (
+    <div className="order-card">
+      <div className="oc-top" onClick={()=>navigate('order-detail',{id:p.id})}>
+        <span className="oc-num mono">{p.order_number||'—'}</span>
+        <Badge status={p.status} />
+      </div>
+      <div className="oc-factory" onClick={()=>navigate('order-detail',{id:p.id})}>
+        <span className="oc-avatar" style={{background:companyColor(name)}}>{initials(name)}</span>
+        <span style={{display:'flex',flexDirection:'column',minWidth:0}}>
+          <span style={{fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{name}</span>
+          {client && factory && <span style={{fontSize:'11px',color:'var(--muted)',fontWeight:400}}>{factory}</span>}
+        </span>
+      </div>
+      <div className="oc-foot">
+        <span className="oc-date">{fmtDate(p.order_date)}</span>
+        {onStatus
+          ? <select className="oc-status" value={p.status} onChange={e=>onStatus(p.id,e.target.value)}>{STATUSES.map(s=><option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}</select>
+          : <span className="oc-date">{fmtDate(p.requested_ship_date)}</span>}
+      </div>
+    </div>
+  );
+}
+
+// ── PO toolbar (search + client chips + status chips), shared UI ────────────────
+function PoToolbar({ rows, search, setSearch, client, setClient, status, setStatus }){
+  const clients = distinctClients(rows);
+  return (
+    <div className="po-toolbar">
+      <input className="po-search" placeholder="Search PO #, client, or product…" value={search} onChange={e=>setSearch(e.target.value)} />
+      <div className="filters">
+        <button className={`filter-btn ${client==='all'?'active':''}`} onClick={()=>setClient('all')}>All Clients</button>
+        {clients.map(([c,n])=>(
+          <button key={c} className={`filter-btn ${client===c?'active':''}`} onClick={()=>setClient(c)}>
+            <span className="chip-dot" style={{background:companyColor(c)}} />{c} <span className="chip-n">{n}</span>
+          </button>
+        ))}
+      </div>
+      <div className="filters">
+        {['all',...STATUSES].map(s=>(
+          <button key={s} className={`filter-btn ${status===s?'active':''}`} onClick={()=>setStatus(s)}>{s.replace(/_/g,' ')}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 
 // ── Icons (inline SVG, 1.6px stroke) ─────────────────────────────────────────
 const Ic = {
@@ -111,12 +183,15 @@ function Dashboard({ navigate }) {
   const [stats, setStats] = useState({active:0,prod:0,rts:0,clients:0});
   const [recent, setRecent] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [client, setClient] = useState('all');
+  const [status, setStatusFilter] = useState('all');
   useEffect(() => {
     (async () => {
       const [{ data: pos }, { data: cos }, { data: rec }] = await Promise.all([
         SB.from('purchase_orders').select('status'),
         SB.from('companies').select('type'),
-        SB.from('purchase_orders').select('id,order_number,status,order_date,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(8)
+        SB.from('purchase_orders').select(PO_CARD_SELECT).order('created_at',{ascending:false}).limit(60)
       ]);
       setStats({
         active:(pos||[]).filter(p=>!['closed','cancelled'].includes(p.status)).length,
@@ -129,10 +204,11 @@ function Dashboard({ navigate }) {
     })();
   },[]);
   if (loading) return <div className="loading">Loading...</div>;
-  const setStatus = async (pid, status) => {
-    await SB.from('purchase_orders').update({status,updated_at:new Date().toISOString()}).eq('id',pid);
-    setRecent(prev=>prev.map(p=>p.id===pid?{...p,status}:p));
+  const setStatus = async (pid, st) => {
+    await SB.from('purchase_orders').update({status:st,updated_at:new Date().toISOString()}).eq('id',pid);
+    setRecent(prev=>prev.map(p=>p.id===pid?{...p,status:st}:p));
   };
+  const shown = filterPOs(recent,{search,client,status});
   return (
     <>
       <div className="stats-grid">
@@ -140,29 +216,13 @@ function Dashboard({ navigate }) {
           <div key={l} className="stat-card"><div className="stat-label">{l}</div><div className="stat-value">{v}</div></div>
         ))}
       </div>
-      <div className="section-head" style={{padding:'0 2px 12px'}}><h3 style={{fontSize:'17px'}}>Recent Orders</h3><button className="btn btn-ghost btn-sm" onClick={()=>navigate('orders')}>View all →</button></div>
-      {recent.length ? (
+      <div className="section-head" style={{padding:'0 2px 12px'}}><h3 style={{fontSize:'17px'}}>Orders</h3><button className="btn btn-ghost btn-sm" onClick={()=>navigate('orders')}>View all →</button></div>
+      <PoToolbar rows={recent} search={search} setSearch={setSearch} client={client} setClient={setClient} status={status} setStatus={setStatusFilter} />
+      {shown.length ? (
         <div className="order-card-grid">
-          {recent.map(p=>(
-            <div key={p.id} className="order-card">
-              <div className="oc-top" onClick={()=>navigate('order-detail',{id:p.id})}>
-                <span className="oc-num mono">{p.order_number||'—'}</span>
-                <Badge status={p.status} />
-              </div>
-              <div className="oc-factory" onClick={()=>navigate('order-detail',{id:p.id})}>
-                <span className="oc-avatar" style={{background:companyColor(p.companies?.name||'?')}}>{initials(p.companies?.name||'?')}</span>
-                {p.companies?.name||'—'}
-              </div>
-              <div className="oc-foot">
-                <span className="oc-date">{fmtDate(p.order_date)}</span>
-                <select className="oc-status" value={p.status} onChange={e=>setStatus(p.id,e.target.value)}>
-                  {STATUSES.map(s=><option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}
-                </select>
-              </div>
-            </div>
-          ))}
+          {shown.map(p=><OrderCard key={p.id} p={p} navigate={navigate} onStatus={setStatus} />)}
         </div>
-      ) : <div className="section-card"><div className="empty"><h3>No orders yet</h3><p>Create your first purchase order to get started.</p></div></div>}
+      ) : <div className="section-card"><div className="empty"><h3>No orders match</h3><p>Try clearing the search or filters.</p></div></div>}
     </>
   );
 }
@@ -216,44 +276,30 @@ function KuiSettings() {
 // ── Orders List ───────────────────────────────────────────────────────────────
 function Orders({ navigate }) {
   const [rows, setRows]     = useState([]);
-  const [filter, setFilter] = useState('all');
+  const [status, setStatus] = useState('all');
+  const [search, setSearch] = useState('');
+  const [client, setClient] = useState('all');
   const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  const load = async (f) => {
+  const load = async () => {
     setLoading(true);
-    let q = SB.from('purchase_orders').select('id,order_number,status,order_date,requested_ship_date,companies!factory_company_id(name)').order('created_at',{ascending:false});
-    if (f && f!=='all') q = q.eq('status',f);
-    const { data } = await q;
+    const { data } = await SB.from('purchase_orders').select(PO_CARD_SELECT).order('created_at',{ascending:false});
     setRows(data||[]);
     setLoading(false);
   };
-  useEffect(()=>{ load(filter); },[filter]);
+  useEffect(()=>{ load(); },[]);
+  const setStat = async (pid, st) => {
+    await SB.from('purchase_orders').update({status:st,updated_at:new Date().toISOString()}).eq('id',pid);
+    setRows(prev=>prev.map(p=>p.id===pid?{...p,status:st}:p));
+  };
+  const shown = filterPOs(rows,{search,client,status});
   return (
     <>
-      <div className="filters">
-        {['all',...STATUSES].map(s=>(
-          <button key={s} className={`filter-btn ${filter===s?'active':''}`} onClick={()=>setFilter(s)}>{s.replace(/_/g,' ')}</button>
-        ))}
-      </div>
-      <div className="section-card">
-        {loading ? <div className="loading">Loading...</div> : rows.length ? (
-          <table className="data-table">
-            <thead><tr><th>PO Number</th><th>Factory</th><th>Status</th><th>Order Date</th><th>Ship By</th></tr></thead>
-            <tbody>
-              {rows.map(p=>(
-                <tr key={p.id} onClick={()=>navigate('order-detail',{id:p.id})}>
-                  <td className="mono">{p.order_number||'—'}</td>
-                  <td>{p.companies?.name||'—'}</td>
-                  <td><Badge status={p.status} /></td>
-                  <td>{fmtDate(p.order_date)}</td>
-                  <td>{fmtDate(p.requested_ship_date)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : <div className="empty"><h3>No orders</h3><p>No purchase orders match this filter.</p></div>}
-      </div>
-      {showCreate && <CreatePOModal onClose={()=>setShowCreate(false)} onCreated={id=>{setShowCreate(false);navigate('order-detail',{id});}} />}
+      <PoToolbar rows={rows} search={search} setSearch={setSearch} client={client} setClient={setClient} status={status} setStatus={setStatus} />
+      {loading ? <div className="loading">Loading...</div> : shown.length ? (
+        <div className="order-card-grid">
+          {shown.map(p=><OrderCard key={p.id} p={p} navigate={navigate} onStatus={setStat} />)}
+        </div>
+      ) : <div className="section-card"><div className="empty"><h3>No orders</h3><p>No purchase orders match your search or filters.</p></div></div>}
     </>
   );
 }
@@ -873,6 +919,7 @@ function Shipments() {
 function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [mode, setMode]   = useState('quote'); // 'quote' | 'manual'
   const [factories, setFactories] = useState([]);
+  const [clients, setClients] = useState([]);
   const [products,  setProducts]  = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [qLoading, setQLoading] = useState(true);
@@ -882,7 +929,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [refsReady, setRefsReady] = useState(false);
   const [seeded, setSeeded] = useState(false);
   const [items, setItems] = useState([{prodId:'',desc:'',qty:'',price:''}]);
-  const [form, setForm]  = useState({ factoryId:'', num:`KUI-PO-${new Date().getFullYear()}-`, date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'' });
+  const [form, setForm]  = useState({ factoryId:'', clientId:'', num:`KUI-PO-${new Date().getFullYear()}-`, date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
 
   // Build the next sequential PO number, e.g. KUI-PO-2026-007, from existing ones.
@@ -900,8 +947,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   useEffect(()=>{
     Promise.all([
       SB.from('companies').select('id,name').eq('type','factory').order('name'),
-      SB.from('products').select('id,sku,name').order('name')
-    ]).then(([{data:fac},{data:pro}])=>{ setFactories(fac||[]); setProducts(pro||[]); setRefsReady(true); });
+      SB.from('products').select('id,sku,name').order('name'),
+      SB.from('companies').select('id,name').eq('type','client').order('name')
+    ]).then(([{data:fac},{data:pro},{data:cli}])=>{ setFactories(fac||[]); setProducts(pro||[]); setClients(cli||[]); setRefsReady(true); });
     // auto-number this PO based on what's already in the system
     SB.from('purchase_orders').select('order_number').then(({data})=>{
       setForm(prev=> prev.num && !/-$/.test(prev.num) ? prev : {...prev, num: genNum((data||[]).map(r=>r.order_number))});
@@ -930,9 +978,11 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     setPicked(q); setTierIdx(ti);
     const tiers=tiersOf(q); const t=tiers[ti]||{};
     const matchFactory = factories.find(fc=>(fc.name||'').toLowerCase()===(q.factory||'').toLowerCase());
+    const matchClient  = clients.find(c=>(c.name||'').toLowerCase()===(q.client||'').toLowerCase());
     const matchProduct = products.find(p=>(q.sku && (p.sku||'').toLowerCase()===(q.sku||'').toLowerCase()) || (p.name||'').toLowerCase()===(q.product||'').toLowerCase());
     setForm(prev=>({...prev,
       factoryId: matchFactory?matchFactory.id:prev.factoryId,
+      clientId: matchClient?matchClient.id:prev.clientId,
       inco: q.country?`FOB ${q.country}`:prev.inco,
       mold: q.mold_fee!=null?String(q.mold_fee):prev.mold,
       sample: q.sample_fee!=null?String(q.sample_fee):prev.sample,
@@ -952,7 +1002,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     const valid = items.filter(it => (it.prodId || (it.desc||'').trim()) && Number(it.qty)>0);
     if (valid.length===0) { alert('Add at least one line item with a quantity greater than 0 before creating the PO.'); return; }
     const baseFields = {
-      factory_company_id:form.factoryId, order_date:form.date,
+      factory_company_id:form.factoryId, client_company_id:form.clientId||null, order_date:form.date,
       requested_ship_date:form.ship||null, incoterm:form.inco||null, payment_terms:form.pay||null,
       deposit_percent:Number(form.dep)||null, mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0,
       currency:form.currency, notes:form.notes||null, status:'draft',
@@ -1060,6 +1110,12 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
             <select className="form-select" value={form.factoryId} onChange={e=>f('factoryId')(e.target.value)}>
               <option value="">Select factory...</option>
               {factories.map(fc=><option key={fc.id} value={fc.id}>{fc.name}</option>)}
+            </select>
+          </div>
+          <div className="form-row"><label>Client <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(for tracking &amp; inventory — never shown on the factory PO)</span></label>
+            <select className="form-select" value={form.clientId} onChange={e=>f('clientId')(e.target.value)}>
+              <option value="">Unassigned</option>
+              {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
           <div className="form-row-2">
