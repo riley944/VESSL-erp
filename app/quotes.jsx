@@ -6,6 +6,7 @@ import {
   Box, AlertCircle, Check, Lock, Clock, Download, LogOut, Layers, Users, Printer, Bell, CheckCircle2, Circle, ListChecks, Send, FolderOpen
 } from "lucide-react";
 import { SBQ } from "@/lib/supabaseQuotes";
+import { SB } from "@/lib/supabase";
 
 // ============================================================
 //  SUPABASE CONNECTION
@@ -1041,7 +1042,7 @@ function printQuote(q) {
 }
 
 // ---------- client-safe sheet ----------
-function printClientSheet(clientName, quotesArr) {
+function printClientSheet(clientName, quotesArr, settings) {
   const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const productBlocks = quotesArr.map((q) => {
     const rows = (q.tiers || [])
@@ -1110,14 +1111,14 @@ function printClientSheet(clientName, quotesArr) {
       <div class="titlesub">Prepared for ${esc(clientName)}</div>
       ${productBlocks || '<div style="color:#6e7681">No priced quantities to show.</div>'}
       <div class="foot">
-        King Universal Inc.
-        <div class="terms">Pricing shown is per unit and quoted in USD. Quantities and pricing are estimates valid for 30 days and subject to final confirmation. Prepared by King Universal Inc.</div>
+        ${settings?.company_name ? esc(settings.company_name) : 'King Universal Inc.'}
+        ${(settings?.contact_name||settings?.email||settings?.phone||settings?.office_phone||settings?.address) ? `<div class="terms">${[settings.contact_name,settings.email,settings.phone,settings.office_phone].filter(Boolean).map(esc).join(' &middot; ')}${settings.address?'<br>'+esc(settings.address).replace(/\n/g,'<br>'):''}</div>` : ''}
+        ${settings?.ach_info ? `<div style="margin-top:16px;padding:14px 16px;border:1px solid #e3e3dd;border-radius:8px;background:#faf9f5"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8a8478;margin-bottom:6px">Payment / Wire Instructions</div><div style="font-size:12.5px;color:#3a3a36;line-height:1.6;white-space:pre-wrap">${esc(settings.ach_info)}</div></div>` : ''}
+        <div class="terms">Pricing shown is per unit and quoted in USD. Quantities and pricing are estimates valid for 30 days and subject to final confirmation. Prepared by ${settings?.company_name?esc(settings.company_name):'King Universal Inc.'}.</div>
       </div>
     </div>
-    <script>window.onload = function(){ setTimeout(function(){ window.print(); }, 250); }</script>
   </body></html>`;
-  const w = window.open("", "_blank");
-  if (w) { w.document.write(html); w.document.close(); }
+  return html;
 }
 
 // ---------- Send to Client modal ----------
@@ -1137,7 +1138,22 @@ function SendToClientModal({ clients, onClose }) {
     else setPicked(Object.fromEntries(clientQuotes.map((q) => [q.id, true])));
   };
 
-  const generate = () => { printClientSheet(chosenClient, pickedQuotes); };
+  const generate = async () => {
+    const win = window.open("", "_blank");
+    if (win) win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Preparing sheet…</body>');
+    let settings = null;
+    try { const { data } = await SB.from('kui_settings').select('*').eq('id',1).single(); settings = data; } catch(e){}
+    const html = printClientSheet(chosenClient, pickedQuotes, settings);
+    if (win) {
+      win.document.open(); win.document.write(html); win.document.close();
+      setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 400);
+    } else {
+      const url = URL.createObjectURL(new Blob([html],{type:'text/html'}));
+      const a = document.createElement('a'); a.href=url; a.download=`quote-${chosenClient||'client'}.html`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(()=>URL.revokeObjectURL(url),4000);
+    }
+  };
 
   return (
     <div style={S.overlay} onClick={onClose}>
