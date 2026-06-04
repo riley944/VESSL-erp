@@ -52,13 +52,14 @@ function Sidebar({ page, navigate, user, open }) {
       <div className="sb-brand">
         <img className="sb-logo-img" src={LOGO_WHITE} alt="King Universal" />
       </div>
-      <div className="sb-section">Workspace</div>
-      {links.map(l => (
-        <button key={l.id} className={`nav-link ${page===l.id||page==='order-detail'&&l.id==='orders'?'active':''}`} onClick={()=>navigate(l.id)}>
-          <span className="ic">{Ic[l.id]}</span> {l.label}
-        </button>
-      ))}
-      <div className="sb-spacer" />
+      <div className="sb-scroll">
+        <div className="sb-section">Workspace</div>
+        {links.map(l => (
+          <button key={l.id} className={`nav-link ${page===l.id||page==='order-detail'&&l.id==='orders'?'active':''}`} onClick={()=>navigate(l.id)}>
+            <span className="ic">{Ic[l.id]}</span> {l.label}
+          </button>
+        ))}
+      </div>
       <div className="sb-user">
         <span className="sb-email">{user?.email}</span>
         <button className="btn-signout" onClick={()=>SB.auth.signOut()}>Sign Out</button>
@@ -422,7 +423,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
 
 // ── Companies ────────────────────────────────────────────────────────────────
 function Companies() {
-  const types = ['client','factory','carrier','freight_forwarder','supplier','partner'];
+  const types = ['client','factory','carrier','freight_forwarder'];
   const [tab, setTab]   = useState(0);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -472,7 +473,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
   const [contacts, setContacts] = useState([]);
   const [edit, setEdit] = useState(false);
   const [form, setForm] = useState(null);
-  const types = ['client','factory','carrier','freight_forwarder','supplier','partner'];
+  const types = ['client','factory','carrier','freight_forwarder'];
   useEffect(()=>{
     (async()=>{
       const { data:c } = await SB.from('companies').select('*').eq('id',id).single();
@@ -694,11 +695,27 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [form, setForm]  = useState({ factoryId:'', num:`KUI-PO-${new Date().getFullYear()}-`, date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
 
+  // Build the next sequential PO number, e.g. KUI-PO-2026-007, from existing ones.
+  const genNum = (list=[]) => {
+    const year = new Date().getFullYear();
+    const prefix = `KUI-PO-${year}-`;
+    const max = (list||[]).reduce((m,n)=>{
+      if(typeof n!=='string'||!n.startsWith(prefix)) return m;
+      const tail=parseInt(n.slice(prefix.length),10);
+      return isNaN(tail)?m:Math.max(m,tail);
+    },0);
+    return prefix+String(max+1).padStart(3,'0');
+  };
+
   useEffect(()=>{
     Promise.all([
       SB.from('companies').select('id,name').eq('type','factory').order('name'),
       SB.from('products').select('id,sku,name').order('name')
     ]).then(([{data:fac},{data:pro}])=>{ setFactories(fac||[]); setProducts(pro||[]); setRefsReady(true); });
+    // auto-number this PO based on what's already in the system
+    SB.from('purchase_orders').select('order_number').then(({data})=>{
+      setForm(prev=> prev.num && !/-$/.test(prev.num) ? prev : {...prev, num: genNum((data||[]).map(r=>r.order_number))});
+    });
     // quotes live in the public schema (migrated quotes platform)
     SBQ.from('quotes').select('*').order('created_at',{ascending:false}).then(({data})=>{
       setQuotes(data||[]); setQLoading(false);
@@ -744,14 +761,27 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     if (!form.factoryId||!form.num) { alert('Factory and PO number required'); return; }
     const valid = items.filter(it => (it.prodId || (it.desc||'').trim()) && Number(it.qty)>0);
     if (valid.length===0) { alert('Add at least one line item with a quantity greater than 0 before creating the PO.'); return; }
-    const { data: po, error } = await SB.from('purchase_orders').insert({
-      factory_company_id:form.factoryId, order_number:form.num, order_date:form.date,
+    const baseFields = {
+      factory_company_id:form.factoryId, order_date:form.date,
       requested_ship_date:form.ship||null, incoterm:form.inco||null, payment_terms:form.pay||null,
       deposit_percent:Number(form.dep)||null, mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0,
       currency:form.currency, notes:form.notes||null, status:'draft',
       source_quote_id: picked?.id || null
-    }).select().single();
-    if (error) { alert('Error creating PO: '+error.message); return; }
+    };
+    let po=null, lastErr=null, orderNumber=form.num;
+    for (let attempt=0; attempt<4 && !po; attempt++){
+      const { data, error } = await SB.from('purchase_orders').insert({ ...baseFields, order_number:orderNumber }).select().single();
+      if (!error){ po=data; break; }
+      lastErr=error;
+      if (/order_number|duplicate key/i.test(error.message||'')){
+        const { data:rows } = await SB.from('purchase_orders').select('order_number');
+        orderNumber = genNum((rows||[]).map(r=>r.order_number));
+        setForm(prev=>({...prev,num:orderNumber}));
+        continue; // try again with the next free number
+      }
+      break; // a different error — stop
+    }
+    if (!po) { alert('Error creating PO: '+(lastErr?.message||'unknown')); return; }
     let added=0, failed=[];
     for (const it of valid) {
       const hasDesc=(it.desc||'').trim();
@@ -908,7 +938,7 @@ function CreateCompanyModal({ onClose, onCreated }) {
     if (form.cname) await SB.from('contacts').insert({company_id:co.id,full_name:form.cname,email:form.cemail||null,phone:form.cphone||null,is_primary:true});
     onCreated();
   };
-  const types = ['client','factory','carrier','freight_forwarder','supplier','partner'];
+  const types = ['client','factory','carrier','freight_forwarder'];
   return (
     <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
       <div className="modal-box">
