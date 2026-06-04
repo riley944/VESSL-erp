@@ -1,5 +1,4 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';'use client';
 import { useState, useEffect, useRef } from 'react';
 import { SB } from '@/lib/supabase';
 import { SBQ } from '@/lib/supabaseQuotes';
