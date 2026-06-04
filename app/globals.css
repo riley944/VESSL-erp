@@ -347,3 +347,8 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 .chip-n{opacity:.55;font-size:11px;margin-left:3px;}
 .badge-testing{background:#e0e7ff;color:#4338ca;}
 .status-pill.sp-testing.on{background:#4338ca;border-color:#4338ca;}
+
+/* ── Live PO draft totals ─────────────────────────────── */
+.po-draft-totals{margin:0 0 18px;padding:14px 16px;background:var(--bg);border:1px solid var(--line);border-radius:10px;}
+.pdt-row{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);padding:3px 0;}
+.pdt-grand{display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:var(--ink);padding-top:8px;margin-top:6px;border-top:1px solid var(--line);}
