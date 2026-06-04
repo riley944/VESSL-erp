@@ -887,23 +887,24 @@ function Products({ navigate }) {
 function Shipments() {
   const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
-  useEffect(()=>{
-    (async()=>{
-      const { data } = await SB.from('shipments').select('*,companies!client_company_id(name)').order('created_at',{ascending:false});
-      setRows(data||[]); setLoading(false);
-    })();
-  },[]);
+  const [openId, setOpenId] = useState(null);
+  const reload = async () => {
+    const { data } = await SB.from('shipments').select('*,companies!client_company_id(name)').order('created_at',{ascending:false});
+    setRows(data||[]); setLoading(false);
+  };
+  useEffect(()=>{ reload(); },[]);
   return (
     <div className="section-card">
       {loading ? <div className="loading">Loading...</div> : rows.length ? (
         <table className="data-table">
-          <thead><tr><th>Shipment #</th><th>Client</th><th>Bill of Lading</th><th>Status</th><th>ETA</th></tr></thead>
+          <thead><tr><th>Shipment #</th><th>Client</th><th>Vessel</th><th>Container #</th><th>Status</th><th>ETA</th></tr></thead>
           <tbody>
             {rows.map(s=>(
-              <tr key={s.id}>
+              <tr key={s.id} onClick={()=>setOpenId(s.id)} style={{cursor:'pointer'}}>
                 <td className="mono">{s.shipment_number||'—'}</td>
                 <td>{s.companies?.name||'—'}</td>
-                <td className="mono">{s.bill_of_lading||'—'}</td>
+                <td>{s.vessel_name||'—'}</td>
+                <td className="mono">{s.container_no||'—'}</td>
                 <td><Badge status={s.status} /></td>
                 <td>{fmtDate(s.estimated_arrival)}</td>
               </tr>
@@ -911,9 +912,76 @@ function Shipments() {
           </tbody>
         </table>
       ) : <div className="empty"><h3>No shipments yet</h3><p>Shipments appear here when orders move to the shipping stage.</p></div>}
+      {openId && <ShipmentDetailModal id={openId} onClose={()=>setOpenId(null)} onSaved={()=>{setOpenId(null);reload();}} />}
     </div>
   );
 }
+
+// ── Shipment Detail / Edit Modal ──────────────────────────────────────────────
+function ShipmentDetailModal({ id, onClose, onSaved }) {
+  const [s, setS] = useState(null);
+  const [companies, setCompanies] = useState([]);
+  const [saving, setSaving] = useState(false);
+  useEffect(()=>{
+    SB.from('shipments').select('*').eq('id',id).single().then(({data})=>setS(data||{}));
+    SB.from('companies').select('id,name,type').order('name').then(({data})=>setCompanies(data||[]));
+  },[id]);
+  const set = (k,v)=>setS(prev=>({...prev,[k]:v}));
+  const STAT = ['created','in_transit','at_origin_port','at_transshipment','at_destination_port','customs','out_for_delivery','delivered','delayed','exception','cancelled'];
+  const dval = v => v ? String(v).slice(0,10) : '';
+  const save = async () => {
+    setSaving(true);
+    const upd = {
+      shipment_number: s.shipment_number||null, status: s.status||'created',
+      client_company_id: s.client_company_id||null, carrier_company_id: s.carrier_company_id||null,
+      vessel_name: s.vessel_name||null, container_no: s.container_no||null, voyage_no: s.voyage_no||null,
+      booking_number: s.booking_number||null, bill_of_lading: s.bill_of_lading||null,
+      estimated_departure: dval(s.estimated_departure) ? new Date(dval(s.estimated_departure)+'T12:00:00').toISOString() : null,
+      estimated_arrival:   dval(s.estimated_arrival)   ? new Date(dval(s.estimated_arrival)+'T12:00:00').toISOString()   : null,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await SB.from('shipments').update(upd).eq('id',id);
+    setSaving(false);
+    if (error){ alert('Error: '+error.message); return; }
+    onSaved();
+  };
+  const clients  = companies.filter(c=>['client','brand','customer'].includes(c.type));
+  const carriers = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
+  return (
+    <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
+      <div className="modal-box">
+        <div className="modal-head"><h3>{s?.shipment_number||'Shipment'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        {!s ? <div className="modal-body">Loading…</div> : (
+        <div className="modal-body">
+          <div className="form-row-2">
+            <div><label>Shipment #</label><input className="form-input" value={s.shipment_number||''} onChange={e=>set('shipment_number',e.target.value)} /></div>
+            <div><label>Status</label><select className="form-select" value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{STAT.map(x=><option key={x} value={x}>{x.replace(/_/g,' ')}</option>)}</select></div>
+          </div>
+          <div className="form-row-2">
+            <div><label>Client</label><select className="form-select" value={s.client_company_id||''} onChange={e=>set('client_company_id',e.target.value)}><option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+            <div><label>Carrier / Forwarder</label><select className="form-select" value={s.carrier_company_id||''} onChange={e=>set('carrier_company_id',e.target.value)}><option value="">—</option>{carriers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+          </div>
+          <div className="form-row-2">
+            <div><label>Vessel / Boat</label><input className="form-input" value={s.vessel_name||''} onChange={e=>set('vessel_name',e.target.value)} placeholder="e.g. MAERSK SELETAR" /></div>
+            <div><label>Voyage #</label><input className="form-input" value={s.voyage_no||''} onChange={e=>set('voyage_no',e.target.value)} placeholder="e.g. 084W" /></div>
+          </div>
+          <div className="form-row-2">
+            <div><label>Container #</label><input className="form-input" value={s.container_no||''} onChange={e=>set('container_no',e.target.value)} placeholder="e.g. MSKU1234567" /></div>
+            <div><label>Booking #</label><input className="form-input" value={s.booking_number||''} onChange={e=>set('booking_number',e.target.value)} /></div>
+          </div>
+          <div className="form-row"><label>Bill of Lading</label><input className="form-input" value={s.bill_of_lading||''} onChange={e=>set('bill_of_lading',e.target.value)} /></div>
+          <div className="form-row-2">
+            <div><label>ETD</label><input type="date" className="form-input" value={dval(s.estimated_departure)} onChange={e=>set('estimated_departure',e.target.value)} /></div>
+            <div><label>ETA</label><input type="date" className="form-input" value={dval(s.estimated_arrival)} onChange={e=>set('estimated_arrival',e.target.value)} /></div>
+          </div>
+        </div>
+        )}
+        <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={save} disabled={saving||!s}>{saving?'Saving…':'Save shipment'}</button></div>
+      </div>
+    </div>
+  );
+}
+
 
 // ── Create PO Modal ───────────────────────────────────────────────────────────
 function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
@@ -1132,7 +1200,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
           </div>
           <span className="form-section-label">Line Items</span>
           <table className="items-table">
-            <thead><tr><th style={{width:'48%'}}>Product</th><th>Qty</th><th>Unit Price</th><th style={{width:'36px'}}></th></tr></thead>
+            <thead><tr><th style={{width:'44%'}}>Product</th><th>Qty</th><th>Unit Price</th><th style={{textAlign:'right'}}>Amount</th><th style={{width:'36px'}}></th></tr></thead>
             <tbody>
               {items.map((it,i)=>(
                 <tr key={i}>
@@ -1147,12 +1215,24 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
                   </td>
                   <td><input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" /></td>
                   <td><input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" /></td>
+                  <td className="mono" style={{textAlign:'right',whiteSpace:'nowrap',fontSize:'12.5px'}}>{money((Number(it.qty)||0)*(Number(it.price)||0),form.currency)}</td>
                   <td><button className="rm" onClick={()=>rmItem(i)}>×</button></td>
                 </tr>
               ))}
             </tbody>
           </table>
           {picked && <div style={{fontSize:'12px',color:'var(--muted)',marginBottom:'10px'}}>Prefilled from the quote — edit any field before creating.</div>}
+          {items.some(it=>Number(it.qty)>0&&Number(it.price)>0) && (()=>{
+            const sub=items.reduce((a,it)=>a+(Number(it.qty)||0)*(Number(it.price)||0),0);
+            const mold=Number(form.mold)||0; const grand=sub+mold;
+            return (
+              <div className="po-draft-totals">
+                <div className="pdt-row"><span>Goods subtotal</span><span className="mono">{money(sub,form.currency)}</span></div>
+                {mold>0 && <div className="pdt-row"><span>Tooling / mold</span><span className="mono">{money(mold,form.currency)}</span></div>}
+                <div className="pdt-grand"><span>PO total · {form.currency}</span><span className="mono">{money(grand,form.currency)}</span></div>
+              </div>
+            );
+          })()}
           <button className="btn btn-ghost btn-sm" style={{marginBottom:'16px'}} onClick={addItem}>+ Add Item</button>
           <span className="form-section-label">Fees & Currency</span>
           <div className="form-row-3">
