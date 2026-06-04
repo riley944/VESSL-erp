@@ -102,18 +102,18 @@ function tierMargin(t, client, moldFee) {
 }
 
 const CLIENT_PALETTE = [
-  { bg: "#11161f", avatar: "#450a0a", text: "#f87171", accent: "#f87171" },
-  { bg: "#11161f", avatar: "#451a03", text: "#fb923c", accent: "#fb923c" },
-  { bg: "#11161f", avatar: "#422006", text: "#fbbf24", accent: "#fbbf24" },
-  { bg: "#11161f", avatar: "#1a2e05", text: "#a3e635", accent: "#a3e635" },
-  { bg: "#11161f", avatar: "#052e16", text: "#4ade80", accent: "#4ade80" },
-  { bg: "#11161f", avatar: "#042f2e", text: "#2dd4bf", accent: "#2dd4bf" },
-  { bg: "#11161f", avatar: "#0a2540", text: "#58a6ff", accent: "#58a6ff" },
-  { bg: "#11161f", avatar: "#1e1b4b", text: "#818cf8", accent: "#818cf8" },
-  { bg: "#11161f", avatar: "#2e1065", text: "#a78bfa", accent: "#a78bfa" },
-  { bg: "#11161f", avatar: "#500724", text: "#f472b6", accent: "#f472b6" },
-  { bg: "#11161f", avatar: "#4c0519", text: "#fb7185", accent: "#fb7185" },
-  { bg: "#11161f", avatar: "#083344", text: "#22d3ee", accent: "#22d3ee" },
+  { bg: "#ffffff", avatar: "#f87171", text: "#0b1120", accent: "#f87171" },
+  { bg: "#ffffff", avatar: "#fb923c", text: "#0b1120", accent: "#fb923c" },
+  { bg: "#ffffff", avatar: "#fbbf24", text: "#0b1120", accent: "#fbbf24" },
+  { bg: "#ffffff", avatar: "#a3e635", text: "#0b1120", accent: "#a3e635" },
+  { bg: "#ffffff", avatar: "#4ade80", text: "#0b1120", accent: "#4ade80" },
+  { bg: "#ffffff", avatar: "#2dd4bf", text: "#0b1120", accent: "#2dd4bf" },
+  { bg: "#ffffff", avatar: "#58a6ff", text: "#0b1120", accent: "#58a6ff" },
+  { bg: "#ffffff", avatar: "#818cf8", text: "#0b1120", accent: "#818cf8" },
+  { bg: "#ffffff", avatar: "#a78bfa", text: "#0b1120", accent: "#a78bfa" },
+  { bg: "#ffffff", avatar: "#f472b6", text: "#0b1120", accent: "#f472b6" },
+  { bg: "#ffffff", avatar: "#fb7185", text: "#0b1120", accent: "#fb7185" },
+  { bg: "#ffffff", avatar: "#22d3ee", text: "#0b1120", accent: "#22d3ee" },
 ];
 function clientColor(name) {
   const n = (name || "Unassigned").trim();
@@ -510,8 +510,8 @@ function Platform({ session }) {
 
       <header style={{ ...S.header, ...(isMobile ? S.headerMobile : {}) }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ fontFamily: "var(--display)", fontSize: isMobile ? 22 : 27, fontWeight: 600, color: "#e6edf3", letterSpacing: "-0.02em" }}>Quotes</span>
-          <span style={{ fontSize: 12, color: "#8b949e" }}>Pricing &amp; quote management</span>
+          <span style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: isMobile ? 22 : 27, fontWeight: 600, color: "#0f1729", letterSpacing: "-0.02em" }}>Quotes</span>
+          <span style={{ fontSize: 12, color: "#6a7488" }}>Pricing &amp; quote management</span>
         </div>
         <div style={{ display: "flex", gap: isMobile ? 6 : 10, alignItems: "center", flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end" }}>
           {!isMobile && <span style={S.userTag}>{userEmail}</span>}
@@ -554,7 +554,7 @@ function Platform({ session }) {
 
       <div style={S.controls}>
         <div style={S.searchWrap}>
-          <Search size={16} color="#8b949e" />
+          <Search size={16} color="#6a7488" />
           <input style={S.searchInput} placeholder="Search all quotes — client, product, factory, SKU…" value={search} onChange={(e) => setSearch(e.target.value)} />
           {searching && <button style={S.clearBtn} onClick={() => setSearch("")}><X size={14} /></button>}
         </div>
@@ -569,7 +569,7 @@ function Platform({ session }) {
             const col = clientColor(c.name);
             const on = activeClient === c.name;
             return (
-              <button key={c.name} style={{ ...S.chip, ...(on ? { ...S.chipActive, background: col.accent, borderColor: col.accent, color: "#0d1117" } : { background: "#11161f", borderColor: "#1f2630", color: col.text }) }} onClick={() => { setActiveClient(c.name); setExpanded(null); }}>
+              <button key={c.name} style={{ ...S.chip, ...(on ? { ...S.chipActive, background: col.accent, borderColor: col.accent, color: "#0b1120" } : { background: "#ffffff", borderColor: "#e7eaf0", color: col.accent }) }} onClick={() => { setActiveClient(c.name); setExpanded(null); }}>
                 {c.name} <span style={S.chipCount}>{c.quotes.length}</span>
               </button>
             );
@@ -592,11 +592,11 @@ function Platform({ session }) {
 
       {view === "clients" && (
         <div style={S.clientGrid}>
-          {loading && <div style={S.empty}><div style={{ color: "#8b949e" }}>Loading…</div></div>}
+          {loading && <div style={S.empty}><div style={{ color: "#6a7488" }}>Loading…</div></div>}
           {!loading && clients.length === 0 && (
             <div style={S.empty}>
-              <Box size={42} color="#2a313c" strokeWidth={1.2} />
-              <div style={{ marginTop: 12, color: "#8b949e" }}>No quotes yet. Create your first one.</div>
+              <Box size={42} color="#e7eaf0" strokeWidth={1.2} />
+              <div style={{ marginTop: 12, color: "#6a7488" }}>No quotes yet. Create your first one.</div>
             </div>
           )}
           {!loading && clients.map((c) => {
@@ -604,12 +604,12 @@ function Platform({ session }) {
             const latest = c.quotes.reduce((a, q) => (!a || (q.updatedAt > a) ? q.updatedAt : a), "");
             const col = clientColor(c.name);
             return (
-              <button key={c.name} style={{ ...S.clientCard, background: col.bg, borderColor: "#1f2630", borderTop: `2px solid ${col.accent}` }} onClick={() => setActiveClient(c.name)}>
+              <button key={c.name} style={{ ...S.clientCard, background: col.bg, borderColor: "#e7eaf0", borderTop: `2px solid ${col.accent}` }} onClick={() => setActiveClient(c.name)}>
                 <div style={S.clientCardTop}>
                   <div style={{ ...S.clientAvatar, background: col.avatar, color: col.text }}>{c.name.slice(0, 2).toUpperCase()}</div>
                   <ChevronRight size={18} color="#3f4853" />
                 </div>
-                <div style={{ ...S.clientName, color: "#e6edf3" }}>{c.name}</div>
+                <div style={{ ...S.clientName, color: "#0f1729" }}>{c.name}</div>
                 <div style={S.clientMeta}>
                   {c.quotes.length} {c.quotes.length === 1 ? "quote" : "quotes"} · {tierTotal} tiers
                 </div>
@@ -633,11 +633,11 @@ function Platform({ session }) {
             {!isMobile && <div style={{ width: 112 }} />}
           </div>
 
-          {loading && <div style={S.empty}><div style={{ color: "#8b949e" }}>Loading…</div></div>}
+          {loading && <div style={S.empty}><div style={{ color: "#6a7488" }}>Loading…</div></div>}
           {!loading && shownQuotes.length === 0 && (
             <div style={S.empty}>
-              <Box size={40} color="#2a313c" strokeWidth={1.2} />
-              <div style={{ marginTop: 12, color: "#8b949e" }}>
+              <Box size={40} color="#e7eaf0" strokeWidth={1.2} />
+              <div style={{ marginTop: 12, color: "#6a7488" }}>
                 {view === "search" ? "No quotes match your search." : "No quotes for this client yet."}
               </div>
             </div>
@@ -653,7 +653,7 @@ function Platform({ session }) {
               <div key={q.id} style={S.rowGroup}>
                 <div id={`quote-row-${q.id}`} style={{ ...S.row, ...(open ? S.rowOpen : {}) }} onClick={() => setExpanded(open ? null : q.id)}>
                   <div style={{ width: isMobile ? 20 : 26, display: "flex", alignItems: "center" }}>
-                    {open ? <ChevronDown size={16} color="#8b949e" /> : <ChevronRight size={16} color="#8b949e" />}
+                    {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
                   </div>
                   <div style={{ flex: isMobile ? 1.8 : 2.4, minWidth: 0 }}>
                     <div style={S.cellPrimary}>{q.product || "Untitled product"}</div>
@@ -670,7 +670,7 @@ function Platform({ session }) {
                       <span style={S.tierBadge}><Layers size={11} /> {sum.count}</span>
                     </div>
                   )}
-                  <div style={{ flex: isMobile ? 1.3 : 1.5, textAlign: "right", whiteSpace: "nowrap", ...S.num, fontWeight: 600, color: "#e6edf3", fontSize: isMobile ? 13 : undefined }}>{priceRange}</div>
+                  <div style={{ flex: isMobile ? 1.3 : 1.5, textAlign: "right", whiteSpace: "nowrap", ...S.num, fontWeight: 600, color: "#0f1729", fontSize: isMobile ? 13 : undefined }}>{priceRange}</div>
                   <div style={{ ...(isMobile ? { width: 52 } : { flex: 0.9 }), textAlign: "right", whiteSpace: "nowrap", ...S.num }}>
                     <span style={{ color: sum.avgMargin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>
                       {sum.avgMargin ? sum.avgMargin.toFixed(0) + "%" : "—"}
@@ -748,29 +748,29 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
             const mpu = moldPerUnit(q.moldFee, t.qty);
             return (
               <div key={i} style={S.tierBodyRow}>
-                <div style={{ flex: 1, fontWeight: 600, color: "#e6edf3" }}>{t.qty ? Number(t.qty).toLocaleString() : "—"}</div>
+                <div style={{ flex: 1, fontWeight: 600, color: "#0f1729" }}>{t.qty ? Number(t.qty).toLocaleString() : "—"}</div>
                 <div style={{ flex: 1, textAlign: "right", ...S.num }}>{t.landed ? `$${fmt(t.landed)}` : "—"}</div>
                 <div style={{ flex: 0.8, textAlign: "center", ...S.num }}>
                   <span style={S.methodTag}>{(t.ship || "ocean") === "air" ? "Air" : "Ocean"}</span>
                 </div>
                 <div style={{ flex: 1, textAlign: "right", ...S.num }}>{activeFreight(t) ? `$${fmt(activeFreight(t))}` : "—"}</div>
-                <div style={{ flex: 1, textAlign: "right", ...S.num, fontWeight: 600, color: "#e6edf3" }}>
+                <div style={{ flex: 1, textAlign: "right", ...S.num, fontWeight: 600, color: "#0f1729" }}>
                   {total ? `$${fmt(total)}` : "—"}
-                  {mpu > 0 && <div style={{ fontSize: 10.5, color: "#8b949e", fontWeight: 500 }}>incl. ${fmt(mpu)} mold</div>}
+                  {mpu > 0 && <div style={{ fontSize: 10.5, color: "#6a7488", fontWeight: 500 }}>incl. ${fmt(mpu)} mold</div>}
                 </div>
-                <div style={{ flex: 1, textAlign: "right", ...S.num, fontWeight: 600, color: "#e6edf3" }}>{t.client ? `$${fmt(t.client)}` : "—"}</div>
+                <div style={{ flex: 1, textAlign: "right", ...S.num, fontWeight: 600, color: "#0f1729" }}>{t.client ? `$${fmt(t.client)}` : "—"}</div>
                 <div style={{ flex: 0.8, textAlign: "right", ...S.num }}>
                   <span style={{ color: m && m < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{m ? m.toFixed(0) + "%" : "—"}</span>
                 </div>
               </div>
             );
           })}
-          {(!q.tiers || q.tiers.length === 0) && <div style={{ ...S.tierBodyRow, color: "#8b949e", justifyContent: "center" }}>No tiers entered.</div>}
+          {(!q.tiers || q.tiers.length === 0) && <div style={{ ...S.tierBodyRow, color: "#6a7488", justifyContent: "center" }}>No tiers entered.</div>}
         </div>
         {(Number(q.moldFee) > 0 || Number(q.sampleFee) > 0) && (
           <div style={S.feeNote}>
-            {Number(q.moldFee) > 0 && <span>Mold/tooling fee: <b>${fmt(q.moldFee)}</b> <span style={{ color: "#8b949e" }}>(amortized into total cost per unit)</span></span>}
-            {Number(q.sampleFee) > 0 && <span>Sample fee: <b>${fmt(q.sampleFee)}</b> <span style={{ color: "#8b949e" }}>(not included in total cost)</span></span>}
+            {Number(q.moldFee) > 0 && <span>Mold/tooling fee: <b>${fmt(q.moldFee)}</b> <span style={{ color: "#6a7488" }}>(amortized into total cost per unit)</span></span>}
+            {Number(q.sampleFee) > 0 && <span>Sample fee: <b>${fmt(q.sampleFee)}</b> <span style={{ color: "#6a7488" }}>(not included in total cost)</span></span>}
           </div>
         )}
         {q.freightDutyUpdatedAt && (
@@ -811,7 +811,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
                   {t.done ? <CheckCircle2 size={17} color="#3f7d5a" /> : <Circle size={17} color="#bba" />}
                 </button>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13.5, color: t.done ? "#6e7681" : "#e6edf3", textDecoration: t.done ? "line-through" : "none", fontWeight: 500 }}>{t.task}</div>
+                  <div style={{ fontSize: 13.5, color: t.done ? "#9aa3b5" : "#0f1729", textDecoration: t.done ? "line-through" : "none", fontWeight: 500 }}>{t.task}</div>
                   <div style={S.taskMeta}>For {nameForEmail(t.assigned_to)} · by {nameForEmail(t.assigned_by)} · {fmtStamp(t.created_at)}</div>
                 </div>
                 <button style={S.tierDel} onClick={() => onDeleteTask(t.id)}><X size={14} /></button>
@@ -855,7 +855,7 @@ function TasksPanel({ tasks, userEmail, onToggle, onDelete, onClose, onJump }) {
         {t.done ? <CheckCircle2 size={18} color="#3f7d5a" /> : <Circle size={18} color="#bba" />}
       </button>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 14, color: t.done ? "#6e7681" : "#e6edf3", textDecoration: t.done ? "line-through" : "none", fontWeight: 500 }}>{t.task}</div>
+        <div style={{ fontSize: 14, color: t.done ? "#9aa3b5" : "#0f1729", textDecoration: t.done ? "line-through" : "none", fontWeight: 500 }}>{t.task}</div>
         <div style={S.taskMeta}>
           {t.quote_label ? <button style={S.taskJump} onClick={() => onJump(t.quote_id)}>{t.quote_label}</button> : null}
           {" · "}For {nameForEmail(t.assigned_to)} · by {nameForEmail(t.assigned_by)} · {fmtStamp(t.created_at)}
@@ -871,12 +871,12 @@ function TasksPanel({ tasks, userEmail, onToggle, onDelete, onClose, onJump }) {
           <h2 style={S.modalTitle}>Tasks</h2>
           <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
         </div>
-        <div style={{ padding: "0 26px", display: "flex", gap: 8, borderBottom: "1px solid #1f2630" }}>
+        <div style={{ padding: "0 26px", display: "flex", gap: 8, borderBottom: "1px solid #e7eaf0" }}>
           <button style={{ ...S.taskTab, ...(tab === "mine" ? S.taskTabOn : {}) }} onClick={() => setTab("mine")}>My Tasks ({mine.filter((t) => !t.done).length})</button>
           <button style={{ ...S.taskTab, ...(tab === "all" ? S.taskTabOn : {}) }} onClick={() => setTab("all")}>All Tasks ({tasks.filter((t) => !t.done).length})</button>
         </div>
         <div style={{ padding: "18px 26px 24px", maxHeight: "60vh", overflowY: "auto" }}>
-          {open.length === 0 && done.length === 0 && <div style={{ color: "#8b949e", textAlign: "center", padding: "30px 0" }}>No tasks here.</div>}
+          {open.length === 0 && done.length === 0 && <div style={{ color: "#6a7488", textAlign: "center", padding: "30px 0" }}>No tasks here.</div>}
           {open.map((t) => <Row key={t.id} t={t} />)}
           {done.length > 0 && <div style={{ ...S.detailHead, marginTop: 18 }}>Completed</div>}
           {done.map((t) => <Row key={t.id} t={t} />)}
@@ -900,7 +900,7 @@ function printQuote(q) {
       <td class="r">${t.landed ? "$" + fmt(t.landed) : "—"}</td>
       <td class="c"><span class="method">${(t.ship || "ocean") === "air" ? "Air" : "Ocean"}</span></td>
       <td class="r">${af ? "$" + fmt(af) : "—"}</td>
-      <td class="r">${total ? "$" + fmt(total) : "—"}${mpu > 0 ? `<div style="font-size:9px;color:#8b949e;font-weight:500">incl. $${fmt(mpu)} mold</div>` : ""}</td>
+      <td class="r">${total ? "$" + fmt(total) : "—"}${mpu > 0 ? `<div style="font-size:9px;color:#6a7488;font-weight:500">incl. $${fmt(mpu)} mold</div>` : ""}</td>
       <td class="r price">${t.client ? "$" + fmt(t.client) : "—"}</td>
       <td class="r">${m ? m.toFixed(0) + "%" : "—"}</td>
     </tr>`;
@@ -1108,17 +1108,17 @@ function SendToClientModal({ clients, onClose }) {
         <div style={{ padding: "20px 26px 24px", maxHeight: "62vh", overflowY: "auto" }}>
           {step === "client" && (
             <>
-              <p style={{ fontSize: 13.5, color: "#8b949e", marginTop: 0 }}>Pick a client, then choose which quotes to include. The sheet shows only product, SKU, quantity, and price — no cost or margin.</p>
+              <p style={{ fontSize: 13.5, color: "#6a7488", marginTop: 0 }}>Pick a client, then choose which quotes to include. The sheet shows only product, SKU, quantity, and price — no cost or margin.</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {realClients.length === 0 && <div style={{ color: "#8b949e" }}>No clients yet.</div>}
+                {realClients.length === 0 && <div style={{ color: "#6a7488" }}>No clients yet.</div>}
                 {realClients.map((c) => {
                   const col = clientColor(c.name);
                   return (
                     <button key={c.name} style={S.sendClientRow} onClick={() => { setChosenClient(c.name); setStep("quotes"); }}>
                       <span style={{ ...S.clientAvatar, width: 34, height: 34, fontSize: 13, background: col.avatar, color: col.text }}>{c.name.slice(0, 2).toUpperCase()}</span>
-                      <span style={{ flex: 1, fontWeight: 600, color: "#e6edf3" }}>{c.name}</span>
-                      <span style={{ fontSize: 12.5, color: "#8b949e" }}>{c.quotes.length} {c.quotes.length === 1 ? "quote" : "quotes"}</span>
-                      <ChevronRight size={16} color="#6e7681" />
+                      <span style={{ flex: 1, fontWeight: 600, color: "#0f1729" }}>{c.name}</span>
+                      <span style={{ fontSize: 12.5, color: "#6a7488" }}>{c.quotes.length} {c.quotes.length === 1 ? "quote" : "quotes"}</span>
+                      <ChevronRight size={16} color="#9aa3b5" />
                     </button>
                   );
                 })}
@@ -1131,7 +1131,7 @@ function SendToClientModal({ clients, onClose }) {
                 <ChevronLeft size={15} /> Back to clients
               </button>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontSize: 12.5, color: "#8b949e" }}>Select quotes to include</span>
+                <span style={{ fontSize: 12.5, color: "#6a7488" }}>Select quotes to include</span>
                 <button style={S.taskJump} onClick={toggleAll}>{allOn ? "Clear all" : "Select all"}</button>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1141,8 +1141,8 @@ function SendToClientModal({ clients, onClose }) {
                     <button key={q.id} style={{ ...S.sendQuoteRow, opacity: priced ? 1 : 0.5 }} onClick={() => priced && toggle(q.id)} disabled={!priced}>
                       {picked[q.id] ? <CheckCircle2 size={18} color="#3f7d5a" /> : <Circle size={18} color="#bba" />}
                       <span style={{ flex: 1, textAlign: "left" }}>
-                        <span style={{ fontWeight: 600, color: "#e6edf3" }}>{q.product || "Untitled"}</span>
-                        {q.sku ? <span style={{ color: "#8b949e", fontSize: 12.5 }}> · {q.sku}</span> : null}
+                        <span style={{ fontWeight: 600, color: "#0f1729" }}>{q.product || "Untitled"}</span>
+                        {q.sku ? <span style={{ color: "#6a7488", fontSize: 12.5 }}> · {q.sku}</span> : null}
                         {!priced && <span style={{ color: "#c2683a", fontSize: 11.5, display: "block" }}>No priced tiers — can't include</span>}
                       </span>
                     </button>
@@ -1184,7 +1184,7 @@ function DirectoryPanel({ onClose, contacts, factories, clientRecords, quoteClie
           <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
         </div>
         {!openClient && (
-          <div style={{ padding: "0 26px", display: "flex", gap: 8, borderBottom: "1px solid #1f2630" }}>
+          <div style={{ padding: "0 26px", display: "flex", gap: 8, borderBottom: "1px solid #e7eaf0" }}>
             <button style={{ ...S.taskTab, ...(tab === "clients" ? S.taskTabOn : {}) }} onClick={() => setTab("clients")}>Clients ({clientNames.length})</button>
             <button style={{ ...S.taskTab, ...(tab === "factories" ? S.taskTabOn : {}) }} onClick={() => setTab("factories")}>Factories ({factories.length})</button>
           </div>
@@ -1192,16 +1192,16 @@ function DirectoryPanel({ onClose, contacts, factories, clientRecords, quoteClie
         <div style={{ padding: "18px 26px 24px", maxHeight: "64vh", overflowY: "auto" }}>
           {!openClient && tab === "clients" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {clientNames.length === 0 && <div style={{ color: "#8b949e", textAlign: "center", padding: "26px 0" }}>No clients yet.</div>}
+              {clientNames.length === 0 && <div style={{ color: "#6a7488", textAlign: "center", padding: "26px 0" }}>No clients yet.</div>}
               {clientNames.map((name) => {
                 const col = clientColor(name);
                 const buyers = contacts.filter((c) => (c.client || "").toLowerCase() === name.toLowerCase());
                 return (
                   <button key={name} style={S.sendClientRow} onClick={() => setOpenClient(name)}>
                     <span style={{ ...S.clientAvatar, width: 34, height: 34, fontSize: 13, background: col.avatar, color: col.text }}>{name.slice(0, 2).toUpperCase()}</span>
-                    <span style={{ flex: 1, fontWeight: 600, color: "#e6edf3", textAlign: "left" }}>{name}</span>
-                    <span style={{ fontSize: 12.5, color: "#8b949e" }}>{buyers.length} {buyers.length === 1 ? "buyer" : "buyers"}</span>
-                    <ChevronRight size={16} color="#6e7681" />
+                    <span style={{ flex: 1, fontWeight: 600, color: "#0f1729", textAlign: "left" }}>{name}</span>
+                    <span style={{ fontSize: 12.5, color: "#6a7488" }}>{buyers.length} {buyers.length === 1 ? "buyer" : "buyers"}</span>
+                    <ChevronRight size={16} color="#9aa3b5" />
                   </button>
                 );
               })}
@@ -1257,7 +1257,7 @@ function ClientDetail({ name, record, buyers, onBack, onSaveClientInfo, onUpdate
       </div>
       <div style={{ ...S.dirSection, marginTop: 16 }}>
         <div style={S.detailHead}><Users size={14} /> Buyers</div>
-        {buyers.length === 0 && <div style={{ color: "#8b949e", fontSize: 13, padding: "6px 0 10px" }}>No saved buyers for this client yet.</div>}
+        {buyers.length === 0 && <div style={{ color: "#6a7488", fontSize: 13, padding: "6px 0 10px" }}>No saved buyers for this client yet.</div>}
         {buyers.map((b) => (
           <div key={b.id} style={S.dirBuyerRow}>
             {editingBuyer === b.id ? (
@@ -1273,8 +1273,8 @@ function ClientDetail({ name, record, buyers, onBack, onSaveClientInfo, onUpdate
             ) : (
               <>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, color: "#e6edf3", fontSize: 14 }}>{b.contact || "—"}</div>
-                  <div style={{ fontSize: 12.5, color: "#8b949e" }}>{b.email || "no email"}{b.phone ? " · " + b.phone : ""}</div>
+                  <div style={{ fontWeight: 600, color: "#0f1729", fontSize: 14 }}>{b.contact || "—"}</div>
+                  <div style={{ fontSize: 12.5, color: "#6a7488" }}>{b.email || "no email"}{b.phone ? " · " + b.phone : ""}</div>
                 </div>
                 <button style={S.iconBtn} title="Edit" onClick={() => startEdit(b)}><Edit3 size={15} /></button>
                 <button style={S.iconBtn} title="Delete" onClick={() => { if (confirm("Delete this buyer?")) onDeleteContact(b.id); }}><Trash2 size={15} /></button>
@@ -1314,7 +1314,7 @@ function FactoryList({ factories, onUpdate, onDelete, onAdd }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {factories.length === 0 && <div style={{ color: "#8b949e", textAlign: "center", padding: "26px 0" }}>No saved factories yet.</div>}
+      {factories.length === 0 && <div style={{ color: "#6a7488", textAlign: "center", padding: "26px 0" }}>No saved factories yet.</div>}
       {factories.map((f) => (
         <div key={f.id} style={S.dirBuyerRow}>
           {editingId === f.id ? (
@@ -1330,8 +1330,8 @@ function FactoryList({ factories, onUpdate, onDelete, onAdd }) {
           ) : (
             <>
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: "#e6edf3", fontSize: 14 }}>{f.factory || f.name || "—"}</div>
-                <div style={{ fontSize: 12.5, color: "#8b949e" }}>{[f.factory_contact, f.country, f.lead_time].filter(Boolean).join(" · ") || "no details"}</div>
+                <div style={{ fontWeight: 600, color: "#0f1729", fontSize: 14 }}>{f.factory || f.name || "—"}</div>
+                <div style={{ fontSize: 12.5, color: "#6a7488" }}>{[f.factory_contact, f.country, f.lead_time].filter(Boolean).join(" · ") || "no details"}</div>
               </div>
               <button style={S.iconBtn} title="Edit" onClick={() => startEdit(f)}><Edit3 size={15} /></button>
               <button style={S.iconBtn} title="Delete" onClick={() => { if (confirm("Delete this factory?")) onDelete(f.id); }}><Trash2 size={15} /></button>
@@ -1562,7 +1562,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
           <div style={S.formSection}>
             <div style={S.formSectionHead}><Layers size={15} /> Tiered Pricing — Cost & Client Quote</div>
             <label style={{ ...S.field, marginBottom: 12, maxWidth: 320 }}>
-              <span style={S.fieldLabel}>Sample Fee <span style={{ color: "#8b949e", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>(not included in total cost)</span></span>
+              <span style={S.fieldLabel}>Sample Fee <span style={{ color: "#6a7488", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>(not included in total cost)</span></span>
               <div style={{ position: "relative" }}>
                 <input style={S.input} type="number" value={f.sampleFee ?? ""} onChange={set("sampleFee")} placeholder="$ sample cost — tracked only" />
               </div>
@@ -1596,7 +1596,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                     </div>
                     <div style={{ flex: 1.0 }}><input style={{ ...S.tierInput, ...(airOff ? S.tierInputOff : {}) }} type="number" value={t.freightAir ?? ""} onChange={(e) => setTier(i, "freightAir", e.target.value)} placeholder="$ air" disabled={airOff} /></div>
                     <div style={{ flex: 1.0 }}><input style={{ ...S.tierInput, ...(oceanOff ? S.tierInputOff : {}) }} type="number" value={t.freightOcean ?? ""} onChange={(e) => setTier(i, "freightOcean", e.target.value)} placeholder="$ ocean" disabled={oceanOff} /></div>
-                    <div style={{ flex: 0.9, textAlign: "right", alignSelf: "center", ...S.num, fontWeight: 600, color: "#e6edf3" }}>{total ? `$${fmt(total)}` : "—"}</div>
+                    <div style={{ flex: 0.9, textAlign: "right", alignSelf: "center", ...S.num, fontWeight: 600, color: "#0f1729" }}>{total ? `$${fmt(total)}` : "—"}</div>
                     <div style={{ flex: 1.1, display: "flex", gap: 4 }}>
                       <input style={S.tierInput} type="number" value={t.client ?? ""} onChange={(e) => setTier(i, "client", e.target.value)} placeholder="$" />
                       <button style={S.autoBtn} title="Suggest from margin logic" onClick={() => autoFillClient(i)}>auto</button>
@@ -1618,13 +1618,13 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
             </div>
             <div style={S.tierHint}>Total Cost = EXW + Freight/Duty (auto). Client price auto-suggests from KUI margin logic off total cost — tap "auto," then adjust. Margin turns amber below 25%. Swipe sideways to see all columns.</div>
             <label style={{ ...S.field, marginTop: 14, maxWidth: 320 }}>
-              <span style={S.fieldLabel}>Mold / Tooling Fee <span style={{ color: "#8b949e", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>(amortized per unit into total cost)</span></span>
+              <span style={S.fieldLabel}>Mold / Tooling Fee <span style={{ color: "#6a7488", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>(amortized per unit into total cost)</span></span>
               <div style={{ position: "relative" }}>
                 <input style={S.input} type="number" value={f.moldFee ?? ""} onChange={set("moldFee")} placeholder="$ one-time mold cost" />
               </div>
             </label>
             {Number(f.moldFee) > 0 && (
-              <div style={{ fontSize: 12, color: "#8b949e", marginTop: 6 }}>Divided across each tier's quantity and added to that tier's total cost (e.g. ${fmt(f.moldFee)} ÷ 1,000 units = ${fmt(moldPerUnit(f.moldFee, 1000))}/unit).</div>
+              <div style={{ fontSize: 12, color: "#6a7488", marginTop: 6 }}>Divided across each tier's quantity and added to that tier's total cost (e.g. ${fmt(f.moldFee)} ÷ 1,000 units = ${fmt(moldPerUnit(f.moldFee, 1000))}/unit).</div>
             )}
           </div>
 
@@ -1653,116 +1653,116 @@ function FormSection({ icon, title, children }) {
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Spline+Sans:wght@400;500;600&display=swap');
-input::placeholder, textarea::placeholder { color: #484f58; }
+input::placeholder, textarea::placeholder { color: #cdd5e2; }
 .quotes-root input, .quotes-root select, .quotes-root textarea, .quotes-root button { font-family: 'Spline Sans', system-ui, sans-serif; }
-.quotes-root input:focus, .quotes-root select:focus, .quotes-root textarea:focus { outline: none; border-color: #58a6ff !important; box-shadow: 0 0 0 3px rgba(61,86,128,0.14); }
+.quotes-root input:focus, .quotes-root select:focus, .quotes-root textarea:focus { outline: none; border-color: #3461e0 !important; box-shadow: 0 0 0 3px rgba(61,86,128,0.14); }
 `;
 
 const S = {
-  shell: { minHeight: "100%", background: "#0d1117", padding: "30px 26px 70px", fontFamily: "'Spline Sans', system-ui, sans-serif", color: "#e6edf3" },
-  center: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh", fontSize: 16, color: "#8b949e" },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: 1280, margin: "0 auto 22px", flexWrap: "wrap", gap: 16, background: "linear-gradient(135deg,#11161f,#161b24)", padding: "16px 24px", borderRadius: 16, boxShadow: "0 6px 22px rgba(22,29,46,0.30)" },
+  shell: { minHeight: "100%", background: "#ffffff", padding: "30px 26px 70px", fontFamily: "'Spline Sans', system-ui, sans-serif", color: "#0f1729" },
+  center: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh", fontSize: 16, color: "#6a7488" },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: 1280, margin: "0 auto 22px", flexWrap: "wrap", gap: 16, background: "#ffffff", padding: "16px 24px", borderRadius: 14, border: "1px solid #e7eaf0", boxShadow: "0 1px 3px rgba(15,23,41,0.05)" },
   headerMobile: { flexDirection: "column", alignItems: "stretch", gap: 12, padding: "14px 16px", borderRadius: 14, margin: "0 0 16px" },
   btnMobile: { padding: "9px 12px", fontSize: 13 },
   logoLockup: { display: "flex", alignItems: "center", gap: 14 },
-  title: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 30, fontWeight: 600, margin: "2px 0 0", color: "#e6edf3", letterSpacing: "-0.01em" },
-  primaryBtn: { display: "inline-flex", alignItems: "center", gap: 8, background: "linear-gradient(135deg,#1c2230,#252d3a)", color: "#e6edf3", border: "none", padding: "11px 18px", borderRadius: 11, fontSize: 14, fontWeight: 600, boxShadow: "0 3px 12px rgba(26,34,56,0.24)" },
-  ghostBtn: { display: "inline-flex", alignItems: "center", gap: 7, background: "#11161f", color: "#8b949e", border: "1px solid #2a313c", padding: "10px 15px", borderRadius: 11, fontSize: 14, fontWeight: 600 },
-  userTag: { fontSize: 12, color: "#6e7681", fontWeight: 500 },
+  title: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 30, fontWeight: 600, margin: "2px 0 0", color: "#0f1729", letterSpacing: "-0.01em" },
+  primaryBtn: { display: "inline-flex", alignItems: "center", gap: 8, background: "linear-gradient(145deg,#16264e,#0b1530)", color: "#ffffff", border: "none", padding: "11px 18px", borderRadius: 11, fontSize: 14, fontWeight: 600, boxShadow: "0 3px 12px rgba(11,21,48,0.18)" },
+  ghostBtn: { display: "inline-flex", alignItems: "center", gap: 7, background: "#ffffff", color: "#6a7488", border: "1px solid #e7eaf0", padding: "10px 15px", borderRadius: 11, fontSize: 14, fontWeight: 600 },
+  userTag: { fontSize: 12, color: "#9aa3b5", fontWeight: 500 },
   controls: { display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: 1280, margin: "0 auto 14px", gap: 16, flexWrap: "wrap" },
-  searchWrap: { display: "flex", alignItems: "center", gap: 9, background: "#11161f", border: "1px solid #1f2630", borderRadius: 12, padding: "11px 15px", flex: "1 1 100%", boxShadow: "0 1px 3px rgba(26,34,56,0.05)" },
-  searchInput: { border: "none", background: "transparent", fontSize: 14.5, width: "100%", color: "#e6edf3" },
-  clearBtn: { background: "transparent", border: "none", color: "#8b949e", display: "inline-flex", padding: 2 },
+  searchWrap: { display: "flex", alignItems: "center", gap: 9, background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 12, padding: "11px 15px", flex: "1 1 100%", boxShadow: "0 1px 3px rgba(26,34,56,0.05)" },
+  searchInput: { border: "none", background: "transparent", fontSize: 14.5, width: "100%", color: "#0f1729" },
+  clearBtn: { background: "transparent", border: "none", color: "#6a7488", display: "inline-flex", padding: 2 },
   chipRow: { display: "flex", gap: 8, flexWrap: "wrap", maxWidth: 1280, margin: "0 auto 20px", alignItems: "center" },
-  chip: { display: "inline-flex", alignItems: "center", gap: 6, background: "#11161f", border: "1px solid #1f2630", color: "#54627a", padding: "7px 13px", borderRadius: 20, fontSize: 13, fontWeight: 500 },
-  chipActive: { background: "#1c2230", color: "#e6edf3", borderColor: "#1c2230" },
+  chip: { display: "inline-flex", alignItems: "center", gap: 6, background: "#ffffff", border: "1px solid #e7eaf0", color: "#6a7488", padding: "7px 13px", borderRadius: 20, fontSize: 13, fontWeight: 500 },
+  chipActive: { background: "#101d3d", color: "#ffffff", borderColor: "#101d3d" },
   chipCount: { fontSize: 11, opacity: 0.7, fontWeight: 600 },
   breadcrumb: { display: "flex", alignItems: "center", gap: 10, maxWidth: 1280, margin: "0 auto 14px" },
-  crumbBtn: { display: "inline-flex", alignItems: "center", gap: 3, background: "transparent", border: "none", color: "#58a6ff", fontSize: 14, fontWeight: 600, padding: 0 },
-  crumbSep: { color: "#6e7681" },
-  crumbCurrent: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 20, fontWeight: 600, color: "#e6edf3" },
-  crumbMeta: { fontSize: 12.5, color: "#8b949e", marginLeft: 4 },
+  crumbBtn: { display: "inline-flex", alignItems: "center", gap: 3, background: "transparent", border: "none", color: "#3461e0", fontSize: 14, fontWeight: 600, padding: 0 },
+  crumbSep: { color: "#9aa3b5" },
+  crumbCurrent: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 20, fontWeight: 600, color: "#0f1729" },
+  crumbMeta: { fontSize: 12.5, color: "#6a7488", marginLeft: 4 },
   clientGrid: { maxWidth: 1280, margin: "0 auto", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 16 },
-  clientCard: { background: "#11161f", border: "1px solid #1f2630", borderRadius: 16, padding: "20px 20px 18px", textAlign: "left", display: "flex", flexDirection: "column", gap: 4, boxShadow: "0 2px 8px rgba(26,34,56,0.05)" },
+  clientCard: { background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 16, padding: "20px 20px 18px", textAlign: "left", display: "flex", flexDirection: "column", gap: 4, boxShadow: "0 2px 8px rgba(26,34,56,0.05)" },
   clientCardTop: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
-  clientAvatar: { width: 42, height: 42, borderRadius: 11, background: "linear-gradient(135deg,#1c2230,#2a313c)", color: "#58a6ff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Fraunces', Georgia, serif", fontWeight: 600, fontSize: 16 },
-  clientName: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 19, fontWeight: 600, color: "#e6edf3" },
-  clientMeta: { fontSize: 13, color: "#8b949e", fontWeight: 500 },
-  clientUpdated: { fontSize: 11.5, color: "#8b949e", marginTop: 2 },
-  tableWrap: { maxWidth: 1280, margin: "0 auto", background: "#11161f", border: "1px solid #1f2630", borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 10px rgba(26,34,56,0.05)" },
-  theadRow: { display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: "1px solid #1f2630", fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", color: "#6e7681", fontWeight: 600, background: "#11161f" },
-  rowGroup: { borderBottom: "1px solid #1c2230" },
+  clientAvatar: { width: 42, height: 42, borderRadius: 11, background: "linear-gradient(135deg,#eef1f6,#e7eaf0)", color: "#3461e0", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Fraunces', Georgia, serif", fontWeight: 600, fontSize: 16 },
+  clientName: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 19, fontWeight: 600, color: "#0f1729" },
+  clientMeta: { fontSize: 13, color: "#6a7488", fontWeight: 500 },
+  clientUpdated: { fontSize: 11.5, color: "#6a7488", marginTop: 2 },
+  tableWrap: { maxWidth: 1280, margin: "0 auto", background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 10px rgba(26,34,56,0.05)" },
+  theadRow: { display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: "1px solid #e7eaf0", fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", color: "#9aa3b5", fontWeight: 600, background: "#ffffff" },
+  rowGroup: { borderBottom: "1px solid #eef1f6" },
   row: { display: "flex", alignItems: "center", gap: 10, padding: "15px 18px" },
-  rowOpen: { background: "#161b24" },
-  cellPrimary: { fontSize: 14.5, fontWeight: 600, color: "#e6edf3" },
-  cellSub: { fontSize: 12, color: "#8b949e", marginTop: 2 },
-  cellSub2: { fontSize: 13, color: "#adbac7", fontWeight: 500 },
-  num: { fontSize: 14, fontVariantNumeric: "tabular-nums", color: "#e6edf3" },
-  tierBadge: { display: "inline-flex", alignItems: "center", gap: 4, background: "#1c2230", color: "#58a6ff", fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 14 },
-  fdStamp: { fontSize: 11, color: "#6e7681", marginTop: 8, display: "flex", alignItems: "center", gap: 4 },
-  feeNote: { fontSize: 12.5, color: "#e6edf3", marginTop: 10, display: "flex", flexDirection: "column", gap: 4, background: "#11161f", border: "1px solid #1f2630", borderRadius: 8, padding: "10px 12px" },
-  iconBtn: { background: "transparent", border: "none", color: "#8b949e", padding: 6, borderRadius: 8, display: "inline-flex" },
+  rowOpen: { background: "#f6f8fb" },
+  cellPrimary: { fontSize: 14.5, fontWeight: 600, color: "#0f1729" },
+  cellSub: { fontSize: 12, color: "#6a7488", marginTop: 2 },
+  cellSub2: { fontSize: 13, color: "#36405a", fontWeight: 500 },
+  num: { fontSize: 14, fontVariantNumeric: "tabular-nums", color: "#0f1729" },
+  tierBadge: { display: "inline-flex", alignItems: "center", gap: 4, background: "#eef1f6", color: "#3461e0", fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 14 },
+  fdStamp: { fontSize: 11, color: "#9aa3b5", marginTop: 8, display: "flex", alignItems: "center", gap: 4 },
+  feeNote: { fontSize: 12.5, color: "#0f1729", marginTop: 10, display: "flex", flexDirection: "column", gap: 4, background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 8, padding: "10px 12px" },
+  iconBtn: { background: "transparent", border: "none", color: "#6a7488", padding: 6, borderRadius: 8, display: "inline-flex" },
   empty: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 20px", textAlign: "center", gridColumn: "1 / -1" },
-  detailPanel: { background: "#161b24", padding: "20px 22px 24px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 20, borderTop: "1px dashed #2a313c" },
+  detailPanel: { background: "#f6f8fb", padding: "20px 22px 24px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 20, borderTop: "1px dashed #e7eaf0" },
   detailSection: {},
-  detailHead: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#58a6ff", marginBottom: 11 },
+  detailHead: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#3461e0", marginBottom: 11 },
   detailGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 16px" },
-  detailLabel: { fontSize: 11, color: "#6e7681" },
-  detailValue: { fontSize: 13.5, color: "#e6edf3", fontWeight: 500, marginTop: 1 },
-  tierTable: { border: "1px solid #1f2630", borderRadius: 12, overflow: "hidden", background: "#11161f" },
-  tierHeadRow: { display: "flex", gap: 8, padding: "10px 14px", background: "#1c2230", fontSize: 11, letterSpacing: "0.05em", textTransform: "uppercase", color: "#6e7681", fontWeight: 600 },
-  tierBodyRow: { display: "flex", gap: 8, padding: "11px 14px", borderTop: "1px solid #1c2230", fontSize: 13.5 },
+  detailLabel: { fontSize: 11, color: "#9aa3b5" },
+  detailValue: { fontSize: 13.5, color: "#0f1729", fontWeight: 500, marginTop: 1 },
+  tierTable: { border: "1px solid #e7eaf0", borderRadius: 12, overflow: "hidden", background: "#ffffff" },
+  tierHeadRow: { display: "flex", gap: 8, padding: "10px 14px", background: "#eef1f6", fontSize: 11, letterSpacing: "0.05em", textTransform: "uppercase", color: "#9aa3b5", fontWeight: 600 },
+  tierBodyRow: { display: "flex", gap: 8, padding: "11px 14px", borderTop: "1px solid #eef1f6", fontSize: 13.5 },
   overlay: { position: "fixed", inset: 0, background: "rgba(26,34,56,0.46)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "36px 16px", zIndex: 50, overflowY: "auto" },
-  modal: { background: "#0d1117", borderRadius: 20, width: "100%", maxWidth: 860, boxShadow: "0 24px 70px rgba(26,34,56,0.36)", border: "1px solid #2a313c" },
-  modalHead: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 26px", borderBottom: "1px solid #1f2630" },
-  modalTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 25, fontWeight: 600, margin: 0, color: "#e6edf3" },
+  modal: { background: "#ffffff", borderRadius: 20, width: "100%", maxWidth: 860, boxShadow: "0 24px 60px rgba(11,21,48,0.22)", border: "1px solid #e7eaf0" },
+  modalHead: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 26px", borderBottom: "1px solid #e7eaf0" },
+  modalTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 25, fontWeight: 600, margin: 0, color: "#0f1729" },
   modalBody: { padding: "22px 26px", maxHeight: "66vh", overflowY: "auto" },
-  modalFoot: { display: "flex", justifyContent: "flex-end", gap: 10, padding: "16px 26px", borderTop: "1px solid #1f2630" },
+  modalFoot: { display: "flex", justifyContent: "flex-end", gap: 10, padding: "16px 26px", borderTop: "1px solid #e7eaf0" },
   formSection: { marginBottom: 20 },
-  formSectionHead: { display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#58a6ff", marginBottom: 11 },
+  formSectionHead: { display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#3461e0", marginBottom: 11 },
   formGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 },
   field: { display: "flex", flexDirection: "column", gap: 5 },
-  fieldLabel: { fontSize: 12, color: "#8b949e", fontWeight: 500 },
-  input: { border: "1px solid #2a313c", background: "#0d1117", borderRadius: 10, padding: "10px 12px", fontSize: 14, color: "#e6edf3", width: "100%" },
-  inputSuffix: { position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#6e7681", fontSize: 13, pointerEvents: "none" },
-  tierEditTable: { border: "1px solid #1f2630", borderRadius: 12, overflow: "hidden" },
-  tierEditHead: { display: "flex", gap: 8, padding: "9px 12px", background: "#1c2230", fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase", color: "#6e7681", fontWeight: 600 },
-  tierEditRow: { display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid #1c2230", background: "#11161f" },
-  tierInput: { border: "1px solid #2a313c", background: "#0d1117", borderRadius: 8, padding: "8px 9px", fontSize: 13.5, color: "#e6edf3", width: "100%" },
-  autoBtn: { background: "#1c2230", border: "1px solid #2a313c", color: "#58a6ff", borderRadius: 8, padding: "0 9px", fontSize: 11, fontWeight: 600 },
+  fieldLabel: { fontSize: 12, color: "#6a7488", fontWeight: 500 },
+  input: { border: "1px solid #e7eaf0", background: "#ffffff", borderRadius: 10, padding: "10px 12px", fontSize: 14, color: "#0f1729", width: "100%" },
+  inputSuffix: { position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#9aa3b5", fontSize: 13, pointerEvents: "none" },
+  tierEditTable: { border: "1px solid #e7eaf0", borderRadius: 12, overflow: "hidden" },
+  tierEditHead: { display: "flex", gap: 8, padding: "9px 12px", background: "#eef1f6", fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase", color: "#9aa3b5", fontWeight: 600 },
+  tierEditRow: { display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid #eef1f6", background: "#ffffff" },
+  tierInput: { border: "1px solid #e7eaf0", background: "#ffffff", borderRadius: 8, padding: "8px 9px", fontSize: 13.5, color: "#0f1729", width: "100%" },
+  autoBtn: { background: "#eef1f6", border: "1px solid #e7eaf0", color: "#3461e0", borderRadius: 8, padding: "0 9px", fontSize: 11, fontWeight: 600 },
   tierDel: { background: "transparent", border: "none", color: "#bba", padding: 2, display: "inline-flex" },
-  addTierBtn: { display: "inline-flex", alignItems: "center", gap: 5, background: "#1c2230", color: "#e6edf3", border: "none", borderRadius: 9, padding: "8px 14px", fontSize: 13, fontWeight: 600 },
-  presetBtn: { background: "#11161f", border: "1px solid #2a313c", color: "#8b949e", borderRadius: 9, padding: "8px 14px", fontSize: 13, fontWeight: 500 },
-  tierHint: { fontSize: 11.5, color: "#6e7681", marginTop: 9, lineHeight: 1.5 },
+  addTierBtn: { display: "inline-flex", alignItems: "center", gap: 5, background: "#eef1f6", color: "#0f1729", border: "none", borderRadius: 9, padding: "8px 14px", fontSize: 13, fontWeight: 600 },
+  presetBtn: { background: "#ffffff", border: "1px solid #e7eaf0", color: "#6a7488", borderRadius: 9, padding: "8px 14px", fontSize: 13, fontWeight: 500 },
+  tierHint: { fontSize: 11.5, color: "#9aa3b5", marginTop: 9, lineHeight: 1.5 },
   toast: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", background: "#3f7d5a", color: "#fff", padding: "11px 20px", borderRadius: 11, fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 8, boxShadow: "0 6px 22px rgba(0,0,0,0.2)", zIndex: 100 },
-  sugBox: { position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: "#161b24", border: "1px solid #2a313c", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", zIndex: 20, overflow: "hidden", padding: "4px" },
-  sugHint: { fontSize: 10.5, color: "#6e7681", padding: "6px 8px 4px", letterSpacing: "0.03em" },
-  sugItem: { display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "9px 8px", fontSize: 13.5, color: "#e6edf3", borderRadius: 7, fontWeight: 500 },
+  sugBox: { position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 10, boxShadow: "0 8px 24px rgba(15,23,41,0.14)", zIndex: 20, overflow: "hidden", padding: "4px" },
+  sugHint: { fontSize: 10.5, color: "#9aa3b5", padding: "6px 8px 4px", letterSpacing: "0.03em" },
+  sugItem: { display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "9px 8px", fontSize: 13.5, color: "#0f1729", borderRadius: 7, fontWeight: 500 },
   sugDot: { width: 9, height: 9, borderRadius: "50%", flexShrink: 0 },
-  sugBuyer: { color: "#8b949e", fontWeight: 500, fontSize: 12.5 },
+  sugBuyer: { color: "#6a7488", fontWeight: 500, fontSize: 12.5 },
   tierScroll: { overflowX: "auto", WebkitOverflowScrolling: "touch", borderRadius: 12 },
-  tierInputOff: { background: "#161b24", color: "#6e7681", opacity: 0.6 },
+  tierInputOff: { background: "#f6f8fb", color: "#9aa3b5", opacity: 0.6 },
   taskBadge: { position: "absolute", top: -6, right: -6, background: "#c2683a", color: "#fff", fontSize: 10.5, fontWeight: 700, minWidth: 18, height: 18, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px" },
-  taskItem: { display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 0", borderBottom: "1px solid #1c2230" },
+  taskItem: { display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 0", borderBottom: "1px solid #eef1f6" },
   taskCheck: { background: "transparent", border: "none", padding: 0, display: "inline-flex", marginTop: 1 },
-  taskMeta: { fontSize: 11.5, color: "#8b949e", marginTop: 3 },
-  taskJump: { background: "transparent", border: "none", color: "#58a6ff", fontWeight: 600, padding: 0, fontSize: 11.5, textDecoration: "underline" },
+  taskMeta: { fontSize: 11.5, color: "#6a7488", marginTop: 3 },
+  taskJump: { background: "transparent", border: "none", color: "#3461e0", fontWeight: 600, padding: 0, fontSize: 11.5, textDecoration: "underline" },
   taskAddRow: { display: "flex", gap: 8, alignItems: "center" },
-  taskTab: { background: "transparent", border: "none", borderBottom: "2px solid transparent", color: "#8b949e", fontSize: 13.5, fontWeight: 600, padding: "12px 4px", marginBottom: -1 },
-  taskTabOn: { color: "#e6edf3", borderBottom: "2px solid #58a6ff" },
-  sendClientRow: { display: "flex", alignItems: "center", gap: 12, background: "#11161f", border: "1px solid #1f2630", borderRadius: 12, padding: "12px 14px", textAlign: "left", width: "100%" },
-  sendQuoteRow: { display: "flex", alignItems: "center", gap: 11, background: "#11161f", border: "1px solid #1f2630", borderRadius: 10, padding: "11px 13px", width: "100%" },
-  dirSection: { background: "#11161f", border: "1px solid #1f2630", borderRadius: 12, padding: "14px 16px" },
-  dirBuyerRow: { display: "flex", alignItems: "center", gap: 8, padding: "10px 0", borderBottom: "1px solid #1f2630" },
-  presetLabel: { fontSize: 11, color: "#6e7681", marginBottom: 6, letterSpacing: "0.03em" },
+  taskTab: { background: "transparent", border: "none", borderBottom: "2px solid transparent", color: "#6a7488", fontSize: 13.5, fontWeight: 600, padding: "12px 4px", marginBottom: -1 },
+  taskTabOn: { color: "#0f1729", borderBottom: "2px solid #3461e0" },
+  sendClientRow: { display: "flex", alignItems: "center", gap: 12, background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 12, padding: "12px 14px", textAlign: "left", width: "100%" },
+  sendQuoteRow: { display: "flex", alignItems: "center", gap: 11, background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 10, padding: "11px 13px", width: "100%" },
+  dirSection: { background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 12, padding: "14px 16px" },
+  dirBuyerRow: { display: "flex", alignItems: "center", gap: 8, padding: "10px 0", borderBottom: "1px solid #e7eaf0" },
+  presetLabel: { fontSize: 11, color: "#9aa3b5", marginBottom: 6, letterSpacing: "0.03em" },
   presetPills: { display: "flex", flexWrap: "wrap", gap: 6 },
-  factoryPill: { display: "inline-flex", alignItems: "center", gap: 5, background: "#1c2230", border: "1px solid #2a313c", color: "#58a6ff", borderRadius: 18, padding: "6px 12px", fontSize: 12.5, fontWeight: 600 },
-  saveFactoryBtn: { background: "#11161f", border: "1px dashed #484f58", color: "#58a6ff", borderRadius: 9, padding: "9px 14px", fontSize: 12.5, fontWeight: 600, width: "100%" },
+  factoryPill: { display: "inline-flex", alignItems: "center", gap: 5, background: "#eef1f6", border: "1px solid #e7eaf0", color: "#3461e0", borderRadius: 18, padding: "6px 12px", fontSize: 12.5, fontWeight: 600 },
+  saveFactoryBtn: { background: "#ffffff", border: "1px dashed #cdd5e2", color: "#3461e0", borderRadius: 9, padding: "9px 14px", fontSize: 12.5, fontWeight: 600, width: "100%" },
   saveFactoryRow: { display: "flex", gap: 8, alignItems: "center" },
-  primaryBtnSm: { background: "#1c2230", color: "#e6edf3", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600 },
-  ghostBtnSm: { background: "transparent", color: "#8b949e", border: "1px solid #2a313c", borderRadius: 9, padding: "9px 14px", fontSize: 13, fontWeight: 600 },
-  shipToggle: { flex: 1, background: "#0d1117", border: "1px solid #2a313c", color: "#8b949e", borderRadius: 7, padding: "7px 0", fontSize: 11.5, fontWeight: 600 },
-  shipOn: { background: "#1c2230", color: "#e6edf3", borderColor: "#1c2230" },
-  methodTag: { fontSize: 11, fontWeight: 600, color: "#58a6ff", background: "#1c2230", borderRadius: 12, padding: "2px 9px" },
-  printBtn: { display: "inline-flex", alignItems: "center", gap: 7, background: "#11161f", border: "1px solid #484f58", color: "#58a6ff", borderRadius: 10, padding: "9px 16px", fontSize: 13.5, fontWeight: 600 },
+  primaryBtnSm: { background: "#101d3d", color: "#ffffff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600 },
+  ghostBtnSm: { background: "transparent", color: "#6a7488", border: "1px solid #e7eaf0", borderRadius: 9, padding: "9px 14px", fontSize: 13, fontWeight: 600 },
+  shipToggle: { flex: 1, background: "#ffffff", border: "1px solid #e7eaf0", color: "#6a7488", borderRadius: 7, padding: "7px 0", fontSize: 11.5, fontWeight: 600 },
+  shipOn: { background: "#eef1f6", color: "#0f1729", borderColor: "#eef1f6" },
+  methodTag: { fontSize: 11, fontWeight: 600, color: "#3461e0", background: "#eef1f6", borderRadius: 12, padding: "2px 9px" },
+  printBtn: { display: "inline-flex", alignItems: "center", gap: 7, background: "#ffffff", border: "1px solid #cdd5e2", color: "#3461e0", borderRadius: 10, padding: "9px 16px", fontSize: 13.5, fontWeight: 600 },
 };
