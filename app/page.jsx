@@ -4,7 +4,17 @@ import { SB } from '@/lib/supabase';
 import { SBQ } from '@/lib/supabaseQuotes';
 import Quotes from '@/app/quotes';
 
-const LOGO_PATH = '/logo.png';
+const LOGO_WHITE = "";
+
+// Per-company color — identical hash+palette to the Quotes app so a company's
+// hue is the SAME in both systems.
+const CLIENT_PALETTE = ['#f87171','#fb923c','#fbbf24','#a3e635','#4ade80','#2dd4bf','#58a6ff','#818cf8','#a78bfa','#f472b6','#fb7185','#22d3ee'];
+function companyColor(name){
+  const n=(name||'Unassigned').trim(); let hash=0;
+  for(let i=0;i<n.length;i++) hash=(hash*31+n.charCodeAt(i))>>>0;
+  return CLIENT_PALETTE[hash % CLIENT_PALETTE.length];
+}
+function initials(name){ return (name||'?').replace(/[^A-Za-z0-9 ]/g,'').split(/\s+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('')||'?'; }
 
 // ── Utils ────────────────────────────────────────────────────────────────────
 const money = (n, c='USD') => n == null ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:c}).format(n);
@@ -40,7 +50,7 @@ function Sidebar({ page, navigate, user }) {
   return (
     <aside className="sidebar">
       <div className="sb-brand">
-        <img className="sb-logo-img" src="/logo-white.png" alt="King Universal" />
+        <img className="sb-logo-img" src={LOGO_WHITE} alt="King Universal" />
       </div>
       <div className="sb-section">Workspace</div>
       {links.map(l => (
@@ -275,13 +285,13 @@ function Companies() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  useEffect(()=>{
-    (async()=>{
-      setLoading(true);
-      const { data } = await SB.from('companies').select('*,contacts(full_name,email,is_primary)').eq('type',types[tab]).order('name');
-      setRows(data||[]); setLoading(false);
-    })();
-  },[tab]);
+  const [openId, setOpenId] = useState(null);
+  const load = async () => {
+    setLoading(true);
+    const { data } = await SB.from('companies').select('*,contacts(full_name,email,phone,is_primary)').eq('type',types[tab]).order('name');
+    setRows(data||[]); setLoading(false);
+  };
+  useEffect(()=>{ load(); },[tab]);
   return (
     <>
       <div className="tabs">
@@ -294,49 +304,189 @@ function Companies() {
             <tbody>
               {rows.map(c=>{
                 const p=(c.contacts||[]).find(x=>x.is_primary)||(c.contacts||[])[0]||{};
-                return <tr key={c.id}><td style={{fontWeight:500}}>{c.name}</td><td><Badge status={c.type} /></td><td>{p.full_name||'—'}</td><td>{p.email||'—'}</td></tr>;
+                return <tr key={c.id} onClick={()=>setOpenId(c.id)}>
+                  <td><div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+                    <span style={{width:'26px',height:'26px',borderRadius:'7px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'10px',fontWeight:600,fontFamily:'var(--mono)',color:'#0b1120',background:companyColor(c.name)}}>{initials(c.name)}</span>
+                    <span style={{fontWeight:500}}>{c.name}</span>
+                  </div></td>
+                  <td><Badge status={c.type} /></td>
+                  <td>{p.full_name||'—'}</td>
+                  <td>{p.email||'—'}</td>
+                </tr>;
               })}
             </tbody>
           </table>
         ) : <div className="empty"><h3>No {types[tab].replace(/_/g,' ')}s yet</h3><p>Add your first to get started.</p></div>}
       </div>
-      {showCreate && <CreateCompanyModal onClose={()=>setShowCreate(false)} onCreated={()=>{setShowCreate(false);}} />}
+      {showCreate && <CreateCompanyModal onClose={()=>setShowCreate(false)} onCreated={()=>{setShowCreate(false);load();}} />}
+      {openId && <CompanyDetailModal id={openId} onClose={()=>setOpenId(null)} onSaved={()=>{setOpenId(null);load();}} />}
     </>
   );
 }
 
-// ── Products ─────────────────────────────────────────────────────────────────
-function Products() {
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  const load = async () => {
-    setLoading(true);
-    const { data } = await SB.from('products').select('*,product_categories(name)').order('name');
-    setRows(data||[]); setLoading(false);
+// ── Company Detail + Edit ──────────────────────────────────────────────────────
+function CompanyDetailModal({ id, onClose, onSaved }) {
+  const [co, setCo] = useState(null);
+  const [contacts, setContacts] = useState([]);
+  const [edit, setEdit] = useState(false);
+  const [form, setForm] = useState(null);
+  const types = ['client','factory','carrier','freight_forwarder','supplier','partner'];
+  useEffect(()=>{
+    (async()=>{
+      const { data:c } = await SB.from('companies').select('*').eq('id',id).single();
+      const { data:cc } = await SB.from('contacts').select('*').eq('company_id',id).order('is_primary',{ascending:false});
+      setCo(c); setContacts(cc||[]);
+      setForm({ name:c?.name||'', type:c?.type||'client', email:c?.email||'', phone:c?.phone||'', website:c?.website||'' });
+    })();
+  },[id]);
+  const f = k => v => setForm(prev=>({...prev,[k]:v}));
+  const setC = (i,k,v) => setContacts(prev=>prev.map((c,idx)=>idx===i?{...c,[k]:v}:c));
+  const addContact = () => setContacts(prev=>[...prev,{__new:true,company_id:id,full_name:'',email:'',phone:'',is_primary:prev.length===0}]);
+  const save = async () => {
+    if(!form.name){alert('Name required');return;}
+    await SB.from('companies').update({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null}).eq('id',id);
+    for(const c of contacts){
+      if(!(c.full_name||'').trim()) continue;
+      if(c.__new) await SB.from('contacts').insert({company_id:id,full_name:c.full_name,email:c.email||null,phone:c.phone||null,is_primary:!!c.is_primary});
+      else await SB.from('contacts').update({full_name:c.full_name,email:c.email||null,phone:c.phone||null,is_primary:!!c.is_primary}).eq('id',c.id);
+    }
+    onSaved();
   };
-  useEffect(()=>{ load(); },[]);
+  if(!co||!form) return (
+    <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}><div className="modal-box"><div className="modal-body"><div className="loading">Loading…</div></div></div></div>
+  );
+  const col = companyColor(co.name);
+  return (
+    <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
+      <div className="modal-box">
+        <div className="modal-head" style={{gap:'12px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'12px',minWidth:0}}>
+            <span style={{width:'34px',height:'34px',borderRadius:'9px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'12px',fontWeight:600,fontFamily:'var(--mono)',color:'#0b1120',background:col}}>{initials(co.name)}</span>
+            <h3 style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{co.name}</h3>
+          </div>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          {!edit ? (
+            <>
+              <div style={{display:'flex',gap:'8px',marginBottom:'18px'}}><Badge status={co.type} /></div>
+              <div className="detail-grid" style={{gridTemplateColumns:'1fr',gap:'0'}}>
+                {[['Email',co.email],['Phone',co.phone],['Website',co.website]].map(([l,v])=>(
+                  <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'11px 0',borderBottom:'1px solid var(--line-2)'}}>
+                    <span style={{color:'var(--muted)',fontSize:'12px'}}>{l}</span><span style={{fontSize:'13px'}}>{v||'—'}</span>
+                  </div>
+                ))}
+              </div>
+              <span className="form-section-label">Contacts</span>
+              {contacts.length? contacts.map((c,i)=>(
+                <div key={i} style={{padding:'10px 0',borderBottom:'1px solid var(--line-2)'}}>
+                  <div style={{fontWeight:500,fontSize:'13.5px'}}>{c.full_name} {c.is_primary&&<span style={{fontSize:'10px',color:'var(--accent)',fontFamily:'var(--mono)'}}>· PRIMARY</span>}</div>
+                  <div style={{fontSize:'12.5px',color:'var(--muted)'}}>{[c.email,c.phone].filter(Boolean).join('  ·  ')||'—'}</div>
+                </div>
+              )) : <div style={{fontSize:'13px',color:'var(--muted)'}}>No contacts yet.</div>}
+            </>
+          ) : (
+            <>
+              <div className="form-row-2">
+                <div><label>Company Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
+                <div><label>Type</label><select className="form-select" value={form.type} onChange={e=>f('type')(e.target.value)}>{types.map(t=><option key={t} value={t}>{t.replace(/_/g,' ')}</option>)}</select></div>
+              </div>
+              <div className="form-row-2">
+                <div><label>Email</label><input className="form-input" value={form.email} onChange={e=>f('email')(e.target.value)} /></div>
+                <div><label>Phone</label><input className="form-input" value={form.phone} onChange={e=>f('phone')(e.target.value)} /></div>
+              </div>
+              <div className="form-row"><label>Website</label><input className="form-input" value={form.website} onChange={e=>f('website')(e.target.value)} placeholder="https://" /></div>
+              <span className="form-section-label">Contacts</span>
+              {contacts.map((c,i)=>(
+                <div key={i} className="form-row-2" style={{marginBottom:'10px'}}>
+                  <div><label>Name</label><input className="form-input" value={c.full_name||''} onChange={e=>setC(i,'full_name',e.target.value)} /></div>
+                  <div><label>Email</label><input className="form-input" value={c.email||''} onChange={e=>setC(i,'email',e.target.value)} /></div>
+                  <div><label>Phone</label><input className="form-input" value={c.phone||''} onChange={e=>setC(i,'phone',e.target.value)} /></div>
+                  <div style={{display:'flex',alignItems:'flex-end',gap:'8px'}}><label style={{display:'flex',alignItems:'center',gap:'6px',textTransform:'none',letterSpacing:0,fontFamily:'var(--sans)',fontSize:'12.5px',color:'var(--ink-2)',margin:0}}><input type="checkbox" checked={!!c.is_primary} onChange={e=>setC(i,'is_primary',e.target.checked)} /> Primary contact</label></div>
+                </div>
+              ))}
+              <button className="btn btn-ghost btn-sm" onClick={addContact}>+ Add Contact</button>
+            </>
+          )}
+        </div>
+        <div className="modal-foot">
+          {!edit ? (
+            <><button className="btn btn-ghost" onClick={onClose}>Close</button><button className="btn btn-dark" onClick={()=>setEdit(true)}>Edit</button></>
+          ) : (
+            <><button className="btn btn-ghost" onClick={()=>setEdit(false)}>Cancel</button><button className="btn btn-dark" onClick={save}>Save Changes</button></>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Products ─────────────────────────────────────────────────────────────────
+function Products({ navigate }) {
+  const [quotes, setQuotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [client, setClient] = useState('All');
+  const [search, setSearch] = useState('');
+  const [poQuote, setPoQuote] = useState(null);
+  useEffect(()=>{
+    SBQ.from('quotes').select('*').order('created_at',{ascending:false}).then(({data})=>{ setQuotes(data||[]); setLoading(false); });
+  },[]);
+  const tiersOf = q => { try { return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]); } catch { return []; } };
+  const priceOf = q => { const t=tiersOf(q).map(x=>Number(x.client)||0).filter(Boolean); return t.length?Math.min(...t):null; };
+  const costOf  = q => { const t=tiersOf(q).map(x=>Number(x.landed)||0).filter(Boolean); return t.length?Math.min(...t):null; };
+
+  const clients = ['All', ...Array.from(new Set(quotes.map(q=>(q.client||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b))];
+  const filtered = quotes.filter(q=>{
+    if(client!=='All' && (q.client||'').trim()!==client) return false;
+    const s=search.toLowerCase(); if(!s) return true;
+    return `${q.product} ${q.client} ${q.factory} ${q.sku} ${q.country}`.toLowerCase().includes(s);
+  });
+
   return (
     <>
-      <div className="section-card">
-        {loading ? <div className="loading">Loading...</div> : rows.length ? (
-          <table className="data-table">
-            <thead><tr><th>SKU</th><th>Product</th><th>Category</th><th>Pack</th><th>HS Code</th></tr></thead>
-            <tbody>
-              {rows.map(p=>(
-                <tr key={p.id}>
-                  <td className="mono" style={{fontSize:'12px'}}>{p.sku||'—'}</td>
-                  <td><div style={{fontWeight:500}}>{p.name||'—'}</div>{p.description&&<div style={{fontSize:'11.5px',color:'var(--muted)'}}>{p.description.slice(0,60)}{p.description.length>60?'…':''}</div>}</td>
-                  <td>{p.product_categories?.name||'—'}</td>
-                  <td>{p.units_per_carton?`${fmtNum(p.units_per_carton)} pcs/ctn`:'—'}</td>
-                  <td className="mono">{p.hs_code||'—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : <div className="empty"><h3>No products yet</h3><p>Add your product catalog to use in purchase orders.</p></div>}
+      <div className="prod-toolbar">
+        <div className="prod-search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input placeholder="Search products — name, factory, SKU, country…" value={search} onChange={e=>setSearch(e.target.value)} />
+        </div>
+        <span style={{fontSize:'12px',color:'var(--muted)',fontFamily:'var(--mono)'}}>{filtered.length} of {quotes.length}</span>
       </div>
-      {showCreate && <CreateProductModal onClose={()=>setShowCreate(false)} onCreated={()=>{setShowCreate(false);load();}} />}
+      <div className="filters">
+        {clients.map(c=>(
+          <button key={c} className={`filter-btn ${client===c?'active':''}`} onClick={()=>setClient(c)}>
+            {c!=='All' && <span style={{display:'inline-block',width:'8px',height:'8px',borderRadius:'2px',marginRight:'6px',verticalAlign:'middle',background:companyColor(c)}} />}
+            {c}
+          </button>
+        ))}
+      </div>
+      {loading ? <div className="loading">Loading products…</div> : filtered.length ? (
+        <div className="prod-grid">
+          {filtered.map(q=>{
+            const col=companyColor(q.client); const price=priceOf(q); const cost=costOf(q); const tiers=tiersOf(q);
+            return (
+              <button key={q.id} className="prod-card" onClick={()=>setPoQuote(q)}>
+                <span className="accentbar" style={{background:col}} />
+                <div className="pc-prod">{q.product||'Untitled product'}</div>
+                <div className="pc-client">
+                  <span className="pc-dot" style={{background:col}}>{initials(q.client)}</span>
+                  {q.client||'—'}
+                </div>
+                <div style={{fontSize:'12px',color:'var(--muted)',marginBottom:'2px'}}>{q.factory||'—'}{q.country?` · ${q.country}`:''}</div>
+                {q.sku && <div className="mono" style={{fontSize:'11px',color:'var(--faint)'}}>{q.sku}</div>}
+                <div className="pc-foot">
+                  <div>
+                    <div className="pc-price">{price!=null?money(price):(cost!=null?money(cost):'—')}</div>
+                    <div className="pc-meta">{price!=null?'client price':(cost!=null?'landed cost':'no pricing')} · {tiers.length} {tiers.length===1?'tier':'tiers'}</div>
+                  </div>
+                  <span className="pc-pull">Pull → PO</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : <div className="empty"><h3>No products</h3><p>{quotes.length? 'Nothing matches this filter.' : 'Create quotes in the Quotes tab — each one becomes a pullable product here.'}</p></div>}
+
+      {poQuote && <CreatePOModal initialQuote={poQuote} onClose={()=>setPoQuote(null)} onCreated={id=>{setPoQuote(null);navigate('order-detail',{id});}} />}
     </>
   );
 }
@@ -374,7 +524,7 @@ function Shipments() {
 }
 
 // ── Create PO Modal ───────────────────────────────────────────────────────────
-function CreatePOModal({ onClose, onCreated }) {
+function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [mode, setMode]   = useState('quote'); // 'quote' | 'manual'
   const [factories, setFactories] = useState([]);
   const [products,  setProducts]  = useState([]);
@@ -383,7 +533,9 @@ function CreatePOModal({ onClose, onCreated }) {
   const [qSearch, setQSearch] = useState('');
   const [picked, setPicked] = useState(null);   // chosen quote (form-shaped)
   const [tierIdx, setTierIdx] = useState(0);
-  const [items, setItems] = useState([{prodId:'',qty:'',price:''}]);
+  const [refsReady, setRefsReady] = useState(false);
+  const [seeded, setSeeded] = useState(false);
+  const [items, setItems] = useState([{prodId:'',desc:'',qty:'',price:''}]);
   const [form, setForm]  = useState({ factoryId:'', num:`KUI-PO-${new Date().getFullYear()}-`, date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
 
@@ -391,14 +543,14 @@ function CreatePOModal({ onClose, onCreated }) {
     Promise.all([
       SB.from('companies').select('id,name').eq('type','factory').order('name'),
       SB.from('products').select('id,sku,name').order('name')
-    ]).then(([{data:fac},{data:pro}])=>{ setFactories(fac||[]); setProducts(pro||[]); });
+    ]).then(([{data:fac},{data:pro}])=>{ setFactories(fac||[]); setProducts(pro||[]); setRefsReady(true); });
     // quotes live in the public schema (migrated quotes platform)
     SBQ.from('quotes').select('*').order('created_at',{ascending:false}).then(({data})=>{
       setQuotes(data||[]); setQLoading(false);
     });
   },[]);
 
-  const addItem = () => setItems(prev=>[...prev,{prodId:'',qty:'',price:''}]);
+  const addItem = () => setItems(prev=>[...prev,{prodId:'',desc:'',qty:'',price:''}]);
   const setItem = (i,k,v) => setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const rmItem  = i => setItems(prev=>prev.filter((_,idx)=>idx!==i));
 
@@ -424,9 +576,14 @@ function CreatePOModal({ onClose, onCreated }) {
       sample: q.sample_fee!=null?String(q.sample_fee):prev.sample,
       notes: prev.notes || (q.notes||''),
     }));
-    setItems([{ prodId: matchProduct?matchProduct.id:'', qty: t.qty!=null?String(t.qty):'', price: t.landed!=null?String(t.landed):'' }]);
+    setItems([{ prodId: matchProduct?matchProduct.id:'', desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: t.landed!=null?String(t.landed):'' }]);
   };
   const pickTier = ti => { if(picked) applyQuote(picked, ti); };
+
+  // when opened from a product card, seed the chosen quote once refs are ready
+  useEffect(()=>{
+    if(initialQuote && refsReady && !seeded){ applyQuote(initialQuote, 0); setSeeded(true); }
+  },[initialQuote, refsReady, seeded]);
 
   const submit  = async () => {
     if (!form.factoryId||!form.num) { alert('Factory and PO number required'); return; }
@@ -439,14 +596,12 @@ function CreatePOModal({ onClose, onCreated }) {
     }).select().single();
     if (error) { alert('Error: '+error.message); return; }
     for (const it of items) {
-      if (it.prodId && Number(it.qty)>0) {
-        await SB.from('purchase_order_items').insert({ purchase_order_id:po.id, product_id:it.prodId, quantity:Number(it.qty), unit_price:Number(it.price)||0, currency:form.currency });
+      if ((it.prodId || (it.desc||'').trim()) && Number(it.qty)>0) {
+        await SB.from('purchase_order_items').insert({ purchase_order_id:po.id, product_id:it.prodId||null, description:(it.desc||'').trim()||null, quantity:Number(it.qty), unit_price:Number(it.price)||0, currency:form.currency });
       }
     }
     onCreated(po.id);
   };
-
-  const avatar = name => (name||'?').slice(0,2).toUpperCase();
 
   return (
     <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
@@ -464,7 +619,7 @@ function CreatePOModal({ onClose, onCreated }) {
           {picked && (
             <div className="qp-banner">
               <span><b>{picked.product||'Quote'}</b> · {picked.client||'—'} {picked.sku?`· ${picked.sku}`:''}</span>
-              <button className="x" onClick={()=>{setPicked(null);setItems([{prodId:'',qty:'',price:''}]);}}>Change</button>
+              <button className="x" onClick={()=>{setPicked(null);setItems([{prodId:'',desc:'',qty:'',price:''}]);}}>Change</button>
             </div>
           )}
 
@@ -482,7 +637,7 @@ function CreatePOModal({ onClose, onCreated }) {
                     const tiers=tiersOf(q); const price=qPrice(q);
                     return (
                       <button key={q.id} className="qp-card" onClick={()=>applyQuote(q,0)}>
-                        <span className="qp-avatar">{avatar(q.client)}</span>
+                        <span className="qp-avatar" style={{background:companyColor(q.client),color:'#0b1120'}}>{initials(q.client)}</span>
                         <span className="qp-meta">
                           <div className="qp-prod">{q.product||'Untitled product'}</div>
                           <div className="qp-sub">{q.client||'—'}{q.factory?` · ${q.factory}`:''}{q.sku?` · ${q.sku}`:''}</div>
@@ -536,14 +691,19 @@ function CreatePOModal({ onClose, onCreated }) {
           </div>
           <span className="form-section-label">Line Items</span>
           <table className="items-table">
-            <thead><tr><th style={{width:'44%'}}>Product</th><th>Qty</th><th>Unit Price</th><th style={{width:'36px'}}></th></tr></thead>
+            <thead><tr><th style={{width:'48%'}}>Product</th><th>Qty</th><th>Unit Price</th><th style={{width:'36px'}}></th></tr></thead>
             <tbody>
               {items.map((it,i)=>(
                 <tr key={i}>
-                  <td><select value={it.prodId} onChange={e=>setItem(i,'prodId',e.target.value)}>
-                    <option value="">Select product...</option>
-                    {products.map(p=><option key={p.id} value={p.id}>{p.sku?p.sku+' — ':''}{p.name}</option>)}
-                  </select></td>
+                  <td>
+                    <input value={it.desc} onChange={e=>setItem(i,'desc',e.target.value)} placeholder="Product name / description" />
+                    {products.length>0 && (
+                      <select style={{marginTop:'5px'}} value={it.prodId} onChange={e=>{const pid=e.target.value;const pr=products.find(x=>x.id===pid);setItem(i,'prodId',pid);if(pr&&!(it.desc||'').trim())setItem(i,'desc',pr.name||'');}}>
+                        <option value="">Link to catalog product (optional)…</option>
+                        {products.map(p=><option key={p.id} value={p.id}>{p.sku?p.sku+' — ':''}{p.name}</option>)}
+                      </select>
+                    )}
+                  </td>
                   <td><input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" /></td>
                   <td><input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" /></td>
                   <td><button className="rm" onClick={()=>rmItem(i)}>×</button></td>
@@ -551,7 +711,7 @@ function CreatePOModal({ onClose, onCreated }) {
               ))}
             </tbody>
           </table>
-          {picked && <div style={{fontSize:'12px',color:'var(--muted)',marginBottom:'10px'}}>Prefilled from quote — edit any field before creating. If the product or factory didn't auto-match, pick it above.</div>}
+          {picked && <div style={{fontSize:'12px',color:'var(--muted)',marginBottom:'10px'}}>Prefilled from the quote — edit any field before creating.</div>}
           <button className="btn btn-ghost btn-sm" style={{marginBottom:'16px'}} onClick={addItem}>+ Add Item</button>
           <span className="form-section-label">Fees & Currency</span>
           <div className="form-row-3">
@@ -738,7 +898,7 @@ export default function App() {
   const pageActions = {
     orders:    <button className="btn btn-dark" onClick={()=>setModal('create-po')}>+ New PO</button>,
     companies: <button className="btn btn-dark" onClick={()=>setModal('create-company')}>+ New Company</button>,
-    products:  <button className="btn btn-dark" onClick={()=>setModal('create-product')}>+ New Product</button>,
+    products:  <button className="btn btn-ghost" onClick={()=>navigate('quotes')}>+ New Quote</button>,
     shipments: <button className="btn btn-dark" onClick={()=>alert('Coming soon')}>+ New Shipment</button>,
   };
   const [modal, setModal] = useState(null);
@@ -780,7 +940,7 @@ export default function App() {
           {page==='orders'       && <Orders navigate={navigate} />}
           {page==='order-detail' && <OrderDetail id={params.id} navigate={navigate} />}
           {page==='companies'    && <Companies />}
-          {page==='products'     && <Products />}
+          {page==='products'     && <Products navigate={navigate} />}
           {page==='shipments'    && <Shipments />}
         </div>
       </div>
