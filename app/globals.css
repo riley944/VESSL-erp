@@ -227,3 +227,69 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 .pull-link{font-size:11px;font-family:var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--accent);font-weight:600;white-space:nowrap;}
 .data-table tbody tr:hover .pull-link{text-decoration:underline;}
 .quotes-root{height:100%;overflow-y:auto;background:#f6f8fb;}
+
+/* ════════════════════════════════════════════════════════════════════
+   MOBILE / RESPONSIVE
+   Hamburger + slide-in drawer + reflow of grids, tables, forms, modals.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Hamburger button + backdrop: hidden on desktop, shown on mobile. */
+.mobile-menu-btn{display:none;position:fixed;top:11px;left:12px;z-index:80;
+  width:42px;height:42px;align-items:center;justify-content:center;
+  background:var(--card);color:var(--ink);border:1px solid var(--line);
+  border-radius:11px;box-shadow:var(--shadow-md);cursor:pointer;-webkit-tap-highlight-color:transparent;}
+.mobile-menu-btn:active{transform:scale(.95);}
+.sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(11,21,48,.5);
+  backdrop-filter:blur(2px);z-index:85;opacity:0;transition:opacity .2s;}
+
+@media (max-width: 860px){
+  .mobile-menu-btn{display:flex;}
+  .sidebar-backdrop.show{display:block;opacity:1;}
+
+  /* Sidebar becomes an off-canvas drawer */
+  .sidebar{position:fixed;top:0;left:0;bottom:0;height:100%;width:264px;max-width:84vw;
+    z-index:90;transform:translateX(-100%);transition:transform .24s cubic-bezier(.4,0,.2,1);
+    box-shadow:0 0 40px rgba(0,0,0,.4);}
+  .sidebar.sidebar--open{transform:translateX(0);}
+
+  /* Main column takes the full width */
+  .app-shell{height:100dvh;}
+  .main-area{width:100%;}
+
+  /* Header: clear the hamburger, allow wrapping, smaller title */
+  .page-header{padding:14px 16px 12px 64px;flex-wrap:wrap;gap:10px;}
+  .page-title{font-size:21px;}
+  .page-actions{gap:8px;}
+  .page-actions .btn{padding:8px 12px;font-size:12.5px;}
+  .page-content{padding:16px 14px 60px;}
+
+  /* Quotes view: push its content below the floating hamburger */
+  .quotes-root{padding-top:44px;}
+
+  /* Dashboard stat cards: 2-up instead of 4-up */
+  .stats-grid{grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;}
+  .stat-value{font-size:25px;}
+
+  /* Tables: let them scroll sideways inside their card instead of clipping */
+  .section-card{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .data-table{min-width:560px;}
+  .data-table th,.data-table td{padding:11px 12px;}
+
+  /* Detail + form grids collapse to a single column */
+  .detail-grid{grid-template-columns:1fr;gap:14px;}
+  .form-row-2,.form-row-3{grid-template-columns:1fr;gap:0;}
+  .form-row-2>div,.form-row-3>div{margin-bottom:16px;}
+
+  /* Modals: full-width sheet, less inset */
+  .modal-overlay{padding:14px 10px;align-items:flex-start;}
+  .modal-box,.modal-box.modal-lg{max-width:100%;}
+  .modal-body{padding:18px;}
+  .modal-head,.modal-foot{padding-left:18px;padding-right:18px;}
+}
+
+/* Extra squeeze for very narrow phones */
+@media (max-width: 420px){
+  .stats-grid{grid-template-columns:1fr 1fr;gap:10px;}
+  .page-title{font-size:19px;}
+  .stat-value{font-size:22px;}
+}
