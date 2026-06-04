@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { SB } from '@/lib/supabase';
+import { SBQ } from '@/lib/supabaseQuotes';
 import Quotes from '@/app/quotes';
 
 const LOGO_PATH = '/logo.png';
@@ -16,26 +17,36 @@ function Badge({ status }) {
   return <span className={`badge badge-${(status||'').replace(/ /g,'_')}`}>{(status||'—').replace(/_/g,' ')}</span>;
 }
 
+// ── Icons (inline SVG, 1.6px stroke) ─────────────────────────────────────────
+const Ic = {
+  dashboard:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>,
+  orders:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-3"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>,
+  companies:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h.01M9 13h.01M9 17h.01M15 9h.01M15 13h.01M15 17h.01"/></svg>,
+  products:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>,
+  shipments:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6h13v9H1zM14 9h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg>,
+  quotes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9.5 14.5h3.5a1.5 1.5 0 0 0 0-3h-2a1.5 1.5 0 0 1 0-3H14"/></svg>,
+};
+
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 function Sidebar({ page, navigate, user }) {
   const links = [
-    { id:'dashboard', label:'Dashboard', icon:'⊞' },
-    { id:'orders',    label:'Purchase Orders', icon:'📋' },
-    { id:'companies', label:'Companies', icon:'👥' },
-    { id:'products',  label:'Products', icon:'📦' },
-    { id:'shipments', label:'Shipments', icon:'🚚' },
-    { id:'quotes',    label:'Quotes', icon:'💲' },
+    { id:'dashboard', label:'Dashboard' },
+    { id:'orders',    label:'Purchase Orders' },
+    { id:'companies', label:'Companies' },
+    { id:'products',  label:'Products' },
+    { id:'shipments', label:'Shipments' },
+    { id:'quotes',    label:'Quotes' },
   ];
   return (
     <aside className="sidebar">
-      <div className="sb-logo">
-        <img src={LOGO_PATH} alt="King Universal" onError={e=>{e.target.style.display='none';}} />
-        <span style={{color:'#fff',fontFamily:'var(--serif)',fontSize:'15px',fontWeight:400,display:'block',marginTop:'4px'}}>King Universal</span>
+      <div className="sb-brand">
+        <div className="sb-glyph">V</div>
+        <div className="sb-word"><b>Vessl</b><span>King Universal</span></div>
       </div>
-      <div className="sb-section">Menu</div>
+      <div className="sb-section">Workspace</div>
       {links.map(l => (
         <button key={l.id} className={`nav-link ${page===l.id||page==='order-detail'&&l.id==='orders'?'active':''}`} onClick={()=>navigate(l.id)}>
-          <span style={{fontSize:'14px'}}>{l.icon}</span> {l.label}
+          <span className="ic">{Ic[l.id]}</span> {l.label}
         </button>
       ))}
       <div className="sb-spacer" />
@@ -60,9 +71,12 @@ function Login() {
   return (
     <div className="login-wrap">
       <div className="login-card">
-        <img className="login-logo" src={LOGO_PATH} alt="KUI" onError={e=>{e.target.style.display='none';}} />
-        <h2>Sign in to Vessl</h2>
-        <input className="login-field" type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()} />
+        <div className="login-mark">
+          <div className="glyph">V</div>
+          <div className="login-word">Vessl</div>
+        </div>
+        <div className="login-sub">King Universal · Operations</div>
+        <input className="login-field" type="email" placeholder="Work email" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()} />
         <input className="login-field" type="password" placeholder="Password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()} />
         <button className="btn-login" onClick={submit}>Sign In</button>
         <div className="login-error">{err}</div>
@@ -225,7 +239,7 @@ function OrderDetail({ id, navigate }) {
         <select className="status-select" value={po.status} onChange={e=>updateStatus(e.target.value)}>
           {STATUSES.map(s=><option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}
         </select>
-        {po.notes && <div style={{flex:1,fontSize:'12.5px',color:'var(--muted)',paddingLeft:'16px',borderLeft:'1px solid var(--border)'}}>{po.notes}</div>}
+        {po.notes && <div style={{flex:1,fontSize:'12.5px',color:'var(--muted)',paddingLeft:'16px',borderLeft:'1px solid var(--line)'}}>{po.notes}</div>}
       </div>
       <div className="section-card">
         <div className="section-head"><h3>Line Items</h3></div>
@@ -363,27 +377,67 @@ function Shipments() {
 
 // ── Create PO Modal ───────────────────────────────────────────────────────────
 function CreatePOModal({ onClose, onCreated }) {
+  const [mode, setMode]   = useState('quote'); // 'quote' | 'manual'
   const [factories, setFactories] = useState([]);
   const [products,  setProducts]  = useState([]);
+  const [quotes, setQuotes] = useState([]);
+  const [qLoading, setQLoading] = useState(true);
+  const [qSearch, setQSearch] = useState('');
+  const [picked, setPicked] = useState(null);   // chosen quote (form-shaped)
+  const [tierIdx, setTierIdx] = useState(0);
   const [items, setItems] = useState([{prodId:'',qty:'',price:''}]);
   const [form, setForm]  = useState({ factoryId:'', num:`KUI-PO-${new Date().getFullYear()}-`, date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
+
   useEffect(()=>{
     Promise.all([
       SB.from('companies').select('id,name').eq('type','factory').order('name'),
       SB.from('products').select('id,sku,name').order('name')
     ]).then(([{data:fac},{data:pro}])=>{ setFactories(fac||[]); setProducts(pro||[]); });
+    // quotes live in the public schema (migrated quotes platform)
+    SBQ.from('quotes').select('*').order('created_at',{ascending:false}).then(({data})=>{
+      setQuotes(data||[]); setQLoading(false);
+    });
   },[]);
+
   const addItem = () => setItems(prev=>[...prev,{prodId:'',qty:'',price:''}]);
   const setItem = (i,k,v) => setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const rmItem  = i => setItems(prev=>prev.filter((_,idx)=>idx!==i));
+
+  // tiers stored as jsonb on each quote row
+  const tiersOf = q => { try { return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]); } catch { return []; } };
+  const qPrice  = q => { const t=tiersOf(q).map(x=>Number(x.client)||0).filter(Boolean); return t.length?Math.min(...t):null; };
+
+  const filteredQuotes = quotes.filter(q=>{
+    const s=qSearch.toLowerCase(); if(!s) return true;
+    return `${q.product} ${q.client} ${q.factory} ${q.sku} ${q.country}`.toLowerCase().includes(s);
+  });
+
+  // when a quote+tier is chosen, prefill the PO form & line item
+  const applyQuote = (q, ti=0) => {
+    setPicked(q); setTierIdx(ti);
+    const tiers=tiersOf(q); const t=tiers[ti]||{};
+    const matchFactory = factories.find(fc=>(fc.name||'').toLowerCase()===(q.factory||'').toLowerCase());
+    const matchProduct = products.find(p=>(q.sku && (p.sku||'').toLowerCase()===(q.sku||'').toLowerCase()) || (p.name||'').toLowerCase()===(q.product||'').toLowerCase());
+    setForm(prev=>({...prev,
+      factoryId: matchFactory?matchFactory.id:prev.factoryId,
+      inco: q.country?`FOB ${q.country}`:prev.inco,
+      mold: q.mold_fee!=null?String(q.mold_fee):prev.mold,
+      sample: q.sample_fee!=null?String(q.sample_fee):prev.sample,
+      notes: prev.notes || (q.notes||''),
+    }));
+    setItems([{ prodId: matchProduct?matchProduct.id:'', qty: t.qty!=null?String(t.qty):'', price: t.landed!=null?String(t.landed):'' }]);
+  };
+  const pickTier = ti => { if(picked) applyQuote(picked, ti); };
+
   const submit  = async () => {
     if (!form.factoryId||!form.num) { alert('Factory and PO number required'); return; }
     const { data: po, error } = await SB.from('purchase_orders').insert({
       factory_company_id:form.factoryId, order_number:form.num, order_date:form.date,
       requested_ship_date:form.ship||null, incoterm:form.inco||null, payment_terms:form.pay||null,
       deposit_percent:Number(form.dep)||null, mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0,
-      currency:form.currency, notes:form.notes||null, status:'draft'
+      currency:form.currency, notes:form.notes||null, status:'draft',
+      source_quote_id: picked?.id || null
     }).select().single();
     if (error) { alert('Error: '+error.message); return; }
     for (const it of items) {
@@ -393,12 +447,78 @@ function CreatePOModal({ onClose, onCreated }) {
     }
     onCreated(po.id);
   };
+
+  const avatar = name => (name||'?').slice(0,2).toUpperCase();
+
   return (
     <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
       <div className="modal-box modal-lg">
         <div className="modal-head"><h3>New Purchase Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
-          <div className="form-row"><label>Factory *</label>
+
+          {/* mode toggle */}
+          <div className="qp-toggle">
+            <button className={mode==='quote'?'on':''} onClick={()=>setMode('quote')}>Generate from Quote</button>
+            <button className={mode==='manual'?'on':''} onClick={()=>{setMode('manual');setPicked(null);}}>Manual Entry</button>
+          </div>
+
+          {/* selected-quote banner */}
+          {picked && (
+            <div className="qp-banner">
+              <span><b>{picked.product||'Quote'}</b> · {picked.client||'—'} {picked.sku?`· ${picked.sku}`:''}</span>
+              <button className="x" onClick={()=>{setPicked(null);setItems([{prodId:'',qty:'',price:''}]);}}>Change</button>
+            </div>
+          )}
+
+          {/* QUOTE PICKER */}
+          {mode==='quote' && !picked && (
+            <>
+              <div className="qp-search">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                <input placeholder="Search quotes — product, client, factory, SKU…" value={qSearch} onChange={e=>setQSearch(e.target.value)} autoFocus />
+              </div>
+              {qLoading ? <div className="loading">Loading quotes…</div> : (
+                <div className="qp-list">
+                  {filteredQuotes.length===0 && <div className="empty" style={{padding:'40px 20px'}}><p>No quotes match.</p></div>}
+                  {filteredQuotes.map(q=>{
+                    const tiers=tiersOf(q); const price=qPrice(q);
+                    return (
+                      <button key={q.id} className="qp-card" onClick={()=>applyQuote(q,0)}>
+                        <span className="qp-avatar">{avatar(q.client)}</span>
+                        <span className="qp-meta">
+                          <div className="qp-prod">{q.product||'Untitled product'}</div>
+                          <div className="qp-sub">{q.client||'—'}{q.factory?` · ${q.factory}`:''}{q.sku?` · ${q.sku}`:''}</div>
+                        </span>
+                        <span className="qp-right">
+                          <div className="qp-price">{price!=null?money(price):'—'}</div>
+                          <div className="qp-tiers">{tiers.length} {tiers.length===1?'tier':'tiers'}</div>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* tier picker once a quote is chosen */}
+          {mode==='quote' && picked && tiersOf(picked).length>0 && (
+            <div className="form-row">
+              <label>Pricing Tier — pick the quantity to build this PO from</label>
+              <div className="qp-tierpick">
+                {tiersOf(picked).map((t,i)=>(
+                  <button key={i} className={i===tierIdx?'on':''} onClick={()=>pickTier(i)}>
+                    {t.qty?Number(t.qty).toLocaleString():'—'} @ {t.landed?money(Number(t.landed)):'—'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* SHARED PO FORM — shown for manual, or after a quote is picked */}
+          {(mode==='manual' || picked) && (
+          <>
+          <div className="form-row" style={{marginTop:picked?4:0}}><label>Factory *</label>
             <select className="form-select" value={form.factoryId} onChange={e=>f('factoryId')(e.target.value)}>
               <option value="">Select factory...</option>
               {factories.map(fc=><option key={fc.id} value={fc.id}>{fc.name}</option>)}
@@ -410,7 +530,7 @@ function CreatePOModal({ onClose, onCreated }) {
           </div>
           <div className="form-row-2">
             <div><label>Ship By</label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
-            <div><label>Incoterm</label><input className="form-input" placeholder="e.g. FOB HCMC" value={form.inco} onChange={e=>f('inco')(e.target.value)} /></div>
+            <div><label>Incoterm (EXW / FOB)</label><input className="form-input" placeholder="e.g. FOB HCMC" value={form.inco} onChange={e=>f('inco')(e.target.value)} /></div>
           </div>
           <div className="form-row-2">
             <div><label>Payment Terms</label><input className="form-input" placeholder="e.g. 30/70" value={form.pay} onChange={e=>f('pay')(e.target.value)} /></div>
@@ -422,17 +542,18 @@ function CreatePOModal({ onClose, onCreated }) {
             <tbody>
               {items.map((it,i)=>(
                 <tr key={i}>
-                  <td><select style={{width:'100%',padding:'6px 8px',border:'1px solid var(--border)',borderRadius:'4px',fontSize:'13px',fontFamily:'var(--sans)',background:'#fff'}} value={it.prodId} onChange={e=>setItem(i,'prodId',e.target.value)}>
+                  <td><select value={it.prodId} onChange={e=>setItem(i,'prodId',e.target.value)}>
                     <option value="">Select product...</option>
                     {products.map(p=><option key={p.id} value={p.id}>{p.sku?p.sku+' — ':''}{p.name}</option>)}
                   </select></td>
-                  <td><input type="number" style={{width:'100%',padding:'6px 8px',border:'1px solid var(--border)',borderRadius:'4px',fontSize:'13px',fontFamily:'var(--sans)'}} value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" /></td>
-                  <td><input type="number" step="0.01" style={{width:'100%',padding:'6px 8px',border:'1px solid var(--border)',borderRadius:'4px',fontSize:'13px',fontFamily:'var(--sans)'}} value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" /></td>
+                  <td><input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" /></td>
+                  <td><input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" /></td>
                   <td><button className="rm" onClick={()=>rmItem(i)}>×</button></td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {picked && <div style={{fontSize:'12px',color:'var(--muted)',marginBottom:'10px'}}>Prefilled from quote — edit any field before creating. If the product or factory didn't auto-match, pick it above.</div>}
           <button className="btn btn-ghost btn-sm" style={{marginBottom:'16px'}} onClick={addItem}>+ Add Item</button>
           <span className="form-section-label">Fees & Currency</span>
           <div className="form-row-3">
@@ -441,10 +562,12 @@ function CreatePOModal({ onClose, onCreated }) {
             <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}><option>USD</option><option>CNY</option><option>VND</option><option>EUR</option></select></div>
           </div>
           <div className="form-row"><label>Notes</label><textarea className="form-textarea" placeholder="Special instructions..." value={form.notes} onChange={e=>f('notes')(e.target.value)} /></div>
+          </>
+          )}
         </div>
         <div className="modal-foot">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-dark" onClick={submit}>Create Purchase Order</button>
+          <button className="btn btn-dark" onClick={submit} disabled={mode==='quote'&&!picked} style={mode==='quote'&&!picked?{opacity:.5,pointerEvents:'none'}:{}}>Create Purchase Order</button>
         </div>
       </div>
     </div>
