@@ -361,3 +361,8 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 .prod-sugg-item:last-child{border-bottom:none;}
 .prod-sugg-item:hover,.prod-sugg-item:active{background:var(--bg);}
 .item-sub-row td{padding-top:0!important;padding-bottom:0!important;}
+
+/* ── Extra item picker (above Factory on quote-mode PO) ── */
+.extra-item-bar{margin-bottom:16px;}
+.extra-item-panel{border:1.5px dashed var(--accent);border-radius:12px;padding:14px 16px;background:var(--bg);}
+.extra-item-head{display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:600;color:var(--ink);margin-bottom:6px;}
