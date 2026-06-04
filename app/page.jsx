@@ -43,6 +43,7 @@ const Ic = {
   products:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>,
   shipments:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6h13v9H1zM14 9h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg>,
   quotes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9.5 14.5h3.5a1.5 1.5 0 0 0 0-3h-2a1.5 1.5 0 0 1 0-3H14"/></svg>,
+  settings:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
 };
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
@@ -68,6 +69,9 @@ function Sidebar({ page, navigate, user, open }) {
           </button>
         ))}
       </div>
+      <button className={`nav-link sb-settings ${page==='settings'?'active':''}`} onClick={()=>navigate('settings')}>
+        <span className="ic">{Ic.settings}</span> KUI Settings
+      </button>
       <div className="sb-user">
         <span className="sb-email">{user?.email}</span>
         <button className="btn-signout" onClick={()=>SB.auth.signOut()}>Sign Out</button>
@@ -159,6 +163,52 @@ function Dashboard({ navigate }) {
           ))}
         </div>
       ) : <div className="section-card"><div className="empty"><h3>No orders yet</h3><p>Create your first purchase order to get started.</p></div></div>}
+    </>
+  );
+}
+
+// ── KUI Settings ──────────────────────────────────────────────────────────────
+function KuiSettings() {
+  const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  useEffect(()=>{
+    SB.from('kui_settings').select('*').eq('id',1).single().then(({data})=>{
+      setForm(data || { id:1, company_name:'', address:'', contact_name:'', email:'', phone:'', office_phone:'', ach_info:'' });
+    });
+  },[]);
+  const f = k => v => setForm(prev=>({...prev,[k]:v}));
+  const save = async () => {
+    setSaving(true);
+    const { error } = await SB.from('kui_settings').upsert({ ...form, id:1, updated_at:new Date().toISOString() });
+    setSaving(false);
+    setMsg(error ? 'Error: '+error.message : 'Saved.'); setTimeout(()=>setMsg(''),2500);
+  };
+  if (!form) return <div className="loading">Loading...</div>;
+  const fields = [['Company name','company_name','King Universal Inc.'],['Contact name','contact_name',''],['Email','email',''],['Phone','phone',''],['Office phone','office_phone','']];
+  return (
+    <>
+      <div className="section-card" style={{marginBottom:'20px'}}>
+        <div className="section-head"><h3>Company Info</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Used on documents sent to clients</span></div>
+        <div className="logi-grid">
+          {fields.map(([lab,k,ph])=>(
+            <div key={k} className="logi-field"><label>{lab}</label><input className="form-input" value={form[k]||''} placeholder={ph} onChange={e=>f(k)(e.target.value)} /></div>
+          ))}
+          <div className="logi-field" style={{gridColumn:'1 / -1'}}><label>Address</label><textarea className="form-input" rows={2} value={form.address||''} onChange={e=>f('address')(e.target.value)} /></div>
+        </div>
+      </div>
+      <div className="section-card" style={{marginBottom:'20px'}}>
+        <div className="section-head"><h3>ACH / Wire Information</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Auto-fills the bottom of client quote sheets</span></div>
+        <div style={{padding:'18px'}}>
+          <label style={{display:'block',fontSize:'11px',letterSpacing:'.04em',textTransform:'uppercase',color:'var(--muted)',marginBottom:'5px'}}>Bank / payment details</label>
+          <textarea className="form-input" rows={7} value={form.ach_info||''} placeholder={"Bank name:\nBeneficiary:\nAccount #:\nRouting / ABA:\nSWIFT:\nBank address:"} onChange={e=>f('ach_info')(e.target.value)} />
+          <p style={{fontSize:'12px',color:'var(--muted)',marginTop:'8px'}}>Leave blank for now if you don't have it — the client sheet just won't show a payment block until this is filled in.</p>
+        </div>
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:'14px'}}>
+        <button className="btn btn-dark" onClick={save} disabled={saving}>{saving?'Saving…':'Save settings'}</button>
+        {msg && <span style={{fontSize:'13px',color:'var(--accent)'}}>{msg}</span>}
+      </div>
     </>
   );
 }
@@ -1344,6 +1394,7 @@ export default function App() {
           {page==='companies'    && <Companies />}
           {page==='products'     && <Products navigate={navigate} />}
           {page==='shipments'    && <Shipments key={shipmentsRefresh} />}
+          {page==='settings'     && <KuiSettings />}
         </div>
       </div>
       )}
