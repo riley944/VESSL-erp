@@ -1069,6 +1069,10 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [qSearch, setQSearch] = useState('');
   const [picked, setPicked] = useState(null);   // chosen quote (form-shaped)
   const [tierIdx, setTierIdx] = useState(0);
+  const [addingItem, setAddingItem] = useState(false);
+  const [extraSearch, setExtraSearch] = useState('');
+  const [extraPick, setExtraPick] = useState(null);
+  const [extraTierIdx, setExtraTierIdx] = useState(0);
   const [refsReady, setRefsReady] = useState(false);
   const [seeded, setSeeded] = useState(false);
   const [items, setItems] = useState([{prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
@@ -1170,6 +1174,12 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     setItems([{ prodId: matchProduct?matchProduct.id:'', desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: t.landed!=null?String(t.landed):'', ci:'', carton:'' }]);
   };
   const pickTier = ti => { if(picked) applyQuote(picked, ti); };
+  const addExtraFromQuote = (q, ti) => {
+    const t = tiersOf(q)[ti];
+    if (!t) return;
+    setItems(prev=>[...prev,{ prodId:'', desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:t.landed!=null?String(t.landed):'', ci:'', carton:'' }]);
+    setAddingItem(false); setExtraPick(null); setExtraSearch(''); setExtraTierIdx(0);
+  };
 
   // when opened from a product card, seed the chosen quote once refs are ready
   useEffect(()=>{
@@ -1286,6 +1296,64 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
           {/* SHARED PO FORM — shown for manual, or after a quote is picked */}
           {(mode==='manual' || picked) && (
           <>
+
+          {/* ── Add extra product from quote (above Factory) ── */}
+          {mode==='quote' && picked && (
+            <div className="extra-item-bar">
+              {!addingItem ? (
+                <button className="btn btn-ghost btn-sm" style={{width:'100%',justifyContent:'center',marginBottom:'4px'}} onClick={()=>setAddingItem(true)}>+ Add item from quote</button>
+              ) : (
+                <div className="extra-item-panel">
+                  <div className="extra-item-head">
+                    <span>Add another product</span>
+                    <button className="modal-close" onClick={()=>{setAddingItem(false);setExtraPick(null);setExtraSearch('');}}>×</button>
+                  </div>
+                  {!extraPick ? (
+                    <>
+                      <div className="qp-search" style={{margin:'10px 0 8px'}}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                        <input placeholder="Search quotes — product, client…" value={extraSearch} onChange={e=>setExtraSearch(e.target.value)} autoFocus />
+                      </div>
+                      <div className="qp-list" style={{maxHeight:'200px',borderRadius:'10px',border:'1px solid var(--line)',marginBottom:'12px'}}>
+                        {(()=>{
+                          const lv=(extraSearch||'').toLowerCase().trim();
+                          const qs=lv?quotes.filter(q=>(q.product||'').toLowerCase().includes(lv)||(q.client||'').toLowerCase().includes(lv)||(q.factory||'').toLowerCase().includes(lv)):quotes;
+                          return qs.length===0
+                            ? <div style={{padding:'16px',fontSize:'13px',color:'var(--muted)'}}>No quotes match.</div>
+                            : qs.slice(0,12).map(q=>{ const trs=tiersOf(q); const pr=qPrice(q); return (
+                              <button key={q.id} className="qp-card" onClick={()=>{setExtraPick(q);setExtraTierIdx(0);}}>
+                                <span className="qp-avatar" style={{background:companyColor(q.client),color:'#0b1120'}}>{initials(q.client)}</span>
+                                <span className="qp-meta"><div className="qp-prod">{q.product||'Untitled'}</div><div className="qp-sub">{q.client||'—'}{q.factory?` · ${q.factory}`:''}</div></span>
+                                <span className="qp-right"><div className="qp-price">{pr!=null?money(pr):'—'}</div><div className="qp-tiers">{trs.length} tier{trs.length!==1?'s':''}</div></span>
+                              </button>
+                            );});
+                        })()}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="qp-banner" style={{margin:'10px 0'}}>
+                        <span><b>{extraPick.product||'Quote'}</b> · {extraPick.client||'—'}</span>
+                        <button className="x" onClick={()=>setExtraPick(null)}>Change</button>
+                      </div>
+                      <div className="form-row" style={{marginBottom:'12px'}}>
+                        <label>Pricing Tier</label>
+                        <div className="qp-tierpick">
+                          {tiersOf(extraPick).map((t,i)=>(
+                            <button key={i} className={i===extraTierIdx?'on':''} onClick={()=>setExtraTierIdx(i)}>
+                              {t.qty?Number(t.qty).toLocaleString():'—'} @ {t.landed?money(Number(t.landed)):'—'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <button className="btn btn-dark btn-sm" style={{marginBottom:'12px'}} onClick={()=>addExtraFromQuote(extraPick,extraTierIdx)}>Add to PO →</button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="form-row" style={{marginTop:picked?4:0}}><label>Factory *</label>
             <select className="form-select" value={form.factoryId} onChange={e=>f('factoryId')(e.target.value)}>
               <option value="">Select factory...</option>
