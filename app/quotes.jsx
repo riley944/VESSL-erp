@@ -349,16 +349,29 @@ function Platform({ session }) {
   }, []);
 
   const saveContact = async (contact) => {
-    const { error } = await supabase.from("client_contacts").insert(contact);
-    if (error) { flash("Couldn't save contact: " + error.message); return false; }
+    const { error } = await supabase.from("client_contacts").upsert(contact).select();
+    if (error && !/duplicate|unique/i.test(error.message)) { flash("Couldn't save contact: " + error.message); return false; }
+    // Mirror into ERP company directory
+    try {
+      const { data: co } = await SB.from('companies').upsert({name:contact.client,type:'client',email:contact.email||null,phone:contact.phone||null},{onConflict:'name,type'}).select('id').single();
+      if (co?.id && contact.contact) {
+        const exists = await SB.from('contacts').select('id').eq('company_id',co.id).ilike('full_name',contact.contact).limit(1);
+        if (!exists.data?.length) await SB.from('contacts').insert({company_id:co.id,full_name:contact.contact,email:contact.email||null,phone:contact.phone||null,is_primary:true}).select();
+      }
+    } catch(e) {}
     await loadContacts();
     flash("Contact saved to library");
     return true;
   };
 
   const saveFactoryPreset = async (preset) => {
-    const { error } = await supabase.from("factory_presets").insert(preset);
-    if (error) { flash("Couldn't save factory: " + error.message); return false; }
+    const { error } = await supabase.from("factory_presets").upsert(preset).select();
+    if (error && !/duplicate|unique/i.test(error.message)) { flash("Couldn't save factory: " + error.message); return false; }
+    // Mirror into ERP company directory
+    try {
+      const factName = (preset.factory || preset.name || '').trim();
+      if (factName) await SB.from('companies').upsert({name:factName,type:'factory',email:preset.factory_email||null,phone:preset.factory_phone||null},{onConflict:'name,type'}).select();
+    } catch(e) {}
     await loadFactories();
     flash("Factory saved to library");
     return true;
