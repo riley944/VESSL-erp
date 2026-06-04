@@ -509,8 +509,9 @@ function Platform({ session }) {
       <style>{CSS}</style>
 
       <header style={{ ...S.header, ...(isMobile ? S.headerMobile : {}) }}>
-        <div style={S.logoLockup}>
-          <KULogo height={isMobile ? 30 : 40} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={{ fontFamily: "var(--display)", fontSize: isMobile ? 22 : 27, fontWeight: 600, color: "#e6edf3", letterSpacing: "-0.02em" }}>Quotes</span>
+          <span style={{ fontSize: 12, color: "#8b949e" }}>Pricing &amp; quote management</span>
         </div>
         <div style={{ display: "flex", gap: isMobile ? 6 : 10, alignItems: "center", flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end" }}>
           {!isMobile && <span style={S.userTag}>{userEmail}</span>}
