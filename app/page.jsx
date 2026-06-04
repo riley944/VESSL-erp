@@ -524,9 +524,9 @@ function OrderDetail({ id, navigate }) {
             <tbody>
               {items.map(it=>(
                 <tr key={it.id}>
-                  <td><div style={{fontWeight:500}}>{it.products?.name||it.description||'—'}</div><div className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>{it.products?.sku||''}</div></td>
+                  <td><div style={{fontWeight:500}}>{it.products?.name||it.description||'—'}</div><div className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>{it.products?.sku||''}</div>{it.carton_info&&<div style={{fontSize:'11px',color:'var(--muted)',marginTop:'2px'}}>{it.carton_info}</div>}</td>
                   <td className="mono">{fmtNum(it.quantity)}</td>
-                  <td className="mono">{money(it.unit_price,po.currency)}</td>
+                  <td className="mono">{money(it.unit_price,po.currency)}{it.ci_value?<div style={{fontSize:'10px',color:'var(--muted)'}}>CI: {money(it.ci_value,po.currency)}</div>:null}</td>
                   <td className="mono">{money(Number(it.quantity)*Number(it.unit_price),po.currency)}</td>
                 </tr>
               ))}
@@ -576,11 +576,11 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     mold:po.mold_fee!=null?String(po.mold_fee):'', sample:po.sample_fee!=null?String(po.sample_fee):'',
     currency:po.currency||'USD', notes:po.notes||'', status:po.status||'draft', pallet:po.pallet_info||''
   });
-  const [items, setItems] = useState((initialItems||[]).map(it=>({id:it.id,prodId:it.product_id||'',desc:it.description||it.products?.name||'',qty:it.quantity!=null?String(it.quantity):'',price:it.unit_price!=null?String(it.unit_price):''})));
+  const [items, setItems] = useState((initialItems||[]).map(it=>({id:it.id,prodId:it.product_id||'',desc:it.description||it.products?.name||'',qty:it.quantity!=null?String(it.quantity):'',price:it.unit_price!=null?String(it.unit_price):'',ci:it.ci_value!=null?String(it.ci_value):'',carton:it.carton_info||''})));
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   useEffect(()=>{ SB.from('products').select('id,sku,name').order('name').then(({data})=>setProducts(data||[])); },[]);
   const setItem=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
-  const addItem=()=>setItems(prev=>[...prev,{id:null,prodId:'',desc:'',qty:'',price:''}]);
+  const addItem=()=>setItems(prev=>[...prev,{id:null,prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
   const rmItem =i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
   const save = async () => {
     if(!form.num){alert('PO number required');return;}
@@ -596,7 +596,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     for(const it of items){
       const hasDesc=(it.desc||'').trim();
       if(!(it.prodId||hasDesc) || !(Number(it.qty)>0)) continue;
-      const base={purchase_order_id:po.id,product_id:it.prodId||null,quantity:Number(it.qty),unit_price:Number(it.price)||0,currency:form.currency};
+      const base={purchase_order_id:po.id,product_id:it.prodId||null,quantity:Number(it.qty),unit_price:Number(it.price)||0,currency:form.currency,ci_value:Number(it.ci)||null,carton_info:it.carton||null};
       let { error:e1 } = await SB.from('purchase_order_items').insert({...base,description:hasDesc||null});
       if(e1 && /description/i.test(e1.message)) await SB.from('purchase_order_items').insert(base);
     }
@@ -1037,7 +1037,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     });
   },[]);
 
-  const addItem = () => setItems(prev=>[...prev,{prodId:'',desc:'',qty:'',price:''}]);
+  const addItem = () => setItems(prev=>[...prev,{prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
   const setItem = (i,k,v) => setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const rmItem  = i => setItems(prev=>prev.filter((_,idx)=>idx!==i));
 
@@ -1066,7 +1066,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       sample: q.sample_fee!=null?String(q.sample_fee):prev.sample,
       notes: prev.notes || (q.notes||''),
     }));
-    setItems([{ prodId: matchProduct?matchProduct.id:'', desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: t.landed!=null?String(t.landed):'' }]);
+    setItems([{ prodId: matchProduct?matchProduct.id:'', desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: t.landed!=null?String(t.landed):'', ci:'', carton:'' }]);
   };
   const pickTier = ti => { if(picked) applyQuote(picked, ti); };
 
@@ -1103,7 +1103,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     let added=0, failed=[];
     for (const it of valid) {
       const hasDesc=(it.desc||'').trim();
-      const base={ purchase_order_id:po.id, product_id:it.prodId||null, quantity:Number(it.qty), unit_price:Number(it.price)||0, currency:form.currency };
+      const base={ purchase_order_id:po.id, product_id:it.prodId||null, quantity:Number(it.qty), unit_price:Number(it.price)||0, currency:form.currency, ci_value:Number(it.ci)||null, carton_info:it.carton||null };
       let { error:e1 } = await SB.from('purchase_order_items').insert({ ...base, description:hasDesc||null });
       if (e1 && /description/i.test(e1.message)) {
         // description column not added yet (migration 007) — insert without it
@@ -1213,25 +1213,36 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
             <div><label>Deposit %</label><input type="number" className="form-input" placeholder="30" value={form.dep} onChange={e=>f('dep')(e.target.value)} /></div>
           </div>
           <span className="form-section-label">Line Items</span>
+          <datalist id="prod-list">{products.map(p=><option key={p.id} value={p.name}>{p.sku?`${p.sku} — `:''}{p.name}</option>)}</datalist>
           <table className="items-table">
-            <thead><tr><th style={{width:'44%'}}>Product</th><th>Qty</th><th>Unit Price</th><th style={{textAlign:'right'}}>Amount</th><th style={{width:'36px'}}></th></tr></thead>
+            <thead><tr><th style={{width:'40%'}}>Product</th><th>Qty</th><th>Unit Price</th><th style={{textAlign:'right'}}>Amount</th><th style={{width:'36px'}}></th></tr></thead>
             <tbody>
               {items.map((it,i)=>(
-                <tr key={i}>
-                  <td>
-                    <input value={it.desc} onChange={e=>setItem(i,'desc',e.target.value)} placeholder="Product name / description" />
-                    {products.length>0 && (
-                      <select style={{marginTop:'5px'}} value={it.prodId} onChange={e=>{const pid=e.target.value;const pr=products.find(x=>x.id===pid);setItem(i,'prodId',pid);if(pr&&!(it.desc||'').trim())setItem(i,'desc',pr.name||'');}}>
-                        <option value="">Link to catalog product (optional)…</option>
-                        {products.map(p=><option key={p.id} value={p.id}>{p.sku?p.sku+' — ':''}{p.name}</option>)}
-                      </select>
-                    )}
-                  </td>
-                  <td><input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" /></td>
-                  <td><input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" /></td>
-                  <td className="mono" style={{textAlign:'right',whiteSpace:'nowrap',fontSize:'12.5px'}}>{money((Number(it.qty)||0)*(Number(it.price)||0),form.currency)}</td>
-                  <td><button className="rm" onClick={()=>rmItem(i)}>×</button></td>
-                </tr>
+                <React.Fragment key={i}>
+                  <tr>
+                    <td>
+                      <input list="prod-list" value={it.desc} onChange={e=>{const v=e.target.value;const pr=products.find(p=>p.name===v||(p.sku&&v.startsWith(p.sku)));setItem(i,'desc',v);if(pr){setItem(i,'prodId',pr.id);}else{setItem(i,'prodId','');}}} placeholder="Type to search products…" />
+                    </td>
+                    <td><input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" /></td>
+                    <td><input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" /></td>
+                    <td className="mono" style={{textAlign:'right',whiteSpace:'nowrap',fontSize:'12.5px'}}>{money((Number(it.qty)||0)*(Number(it.price)||0),form.currency)}</td>
+                    <td><button className="rm" onClick={()=>rmItem(i)}>×</button></td>
+                  </tr>
+                  <tr className="item-sub-row">
+                    <td colSpan={5}>
+                      <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 8px'}}>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}>
+                          <span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>CI Value ($)</span>
+                          <input type="number" step="0.01" className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.ci||''} onChange={e=>setItem(i,'ci',e.target.value)} placeholder="0.00" />
+                        </div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'1 1 180px'}}>
+                          <span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Carton info</span>
+                          <input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.carton||''} onChange={e=>setItem(i,'carton',e.target.value)} placeholder="e.g. 12 pcs/ctn, 60×40×30 cm, 11 kg" />
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </React.Fragment>
               ))}
             </tbody>
           </table>
