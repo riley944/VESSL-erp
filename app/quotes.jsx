@@ -301,7 +301,7 @@ function Platform({ session }) {
           <a href="https://orders.vessl.io" style="display:inline-block;background:#0b1530;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 18px;border-radius:8px">Open Vessl &rarr;</a>
           <p style="color:#94a3b8;font-size:11px;margin:22px 0 0">King Universal &middot; Vessl</p>
         </div>`;
-      await supabase.functions.invoke("send-email", {
+      const { data, error } = await supabase.functions.invoke("send-email", {
         body: {
           to: task.assigned_to,
           replyTo: task.assigned_by || undefined,
@@ -309,8 +309,16 @@ function Platform({ session }) {
           html,
         },
       });
+      if (error) {
+        let why = error.message || "unknown error";
+        try { const ctx = await error.context?.json?.(); if (ctx?.error) why = ctx.error; } catch {}
+        flash("Email didn't send: " + why);
+        return;
+      }
+      if (data && data.ok === false) { flash("Email didn't send: " + (data.error || "unknown")); return; }
+      flash("Email sent to " + who);
     } catch (err) {
-      console.error("task email failed", err);
+      flash("Email error: " + (err?.message || err));
     }
   };
 
