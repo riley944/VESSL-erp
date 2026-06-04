@@ -570,7 +570,6 @@ function OrderDetail({ id, navigate }) {
 
 // ── PO Edit Modal ───────────────────────────────────────────────────────────
 function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
-  const [products, setProducts] = useState([]);
   const [form, setForm] = useState({
     num:po.order_number||'', date:po.order_date||'', ship:po.requested_ship_date||'',
     inco:po.incoterm||'', pay:po.payment_terms||'', dep:po.deposit_percent!=null?String(po.deposit_percent):'',
@@ -579,7 +578,6 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   });
   const [items, setItems] = useState((initialItems||[]).map(it=>({id:it.id,prodId:it.product_id||'',desc:it.description||it.products?.name||'',qty:it.quantity!=null?String(it.quantity):'',price:it.unit_price!=null?String(it.unit_price):'',ci:it.ci_value!=null?String(it.ci_value):'',carton:it.carton_info||''})));
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
-  useEffect(()=>{ SB.from('products').select('id,sku,name').order('name').then(({data})=>setProducts(data||[])); },[]);
   const setItem=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const addItem=()=>setItems(prev=>[...prev,{id:null,prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
   const rmItem =i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
