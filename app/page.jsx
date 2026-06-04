@@ -582,6 +582,10 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   const setItem=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const addItem=()=>setItems(prev=>[...prev,{id:null,prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
   const rmItem =i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
+  const [eSrchIdx, setESrchIdx] = useState(-1);
+  const [eSrchHits, setESrchHits] = useState([]);
+  const handleEProdInput = (i,v) => { setItem(i,'desc',v); if(v.trim().length>0){const h=products.filter(p=>(p.name||'').toLowerCase().includes(v.toLowerCase())||(p.sku||'').toLowerCase().includes(v.toLowerCase())).slice(0,7);setESrchHits(h);setESrchIdx(i);}else{setESrchIdx(-1);setESrchHits([]);} };
+  const pickEProd = (i,p) => { setItem(i,'desc',p.name); setItem(i,'prodId',p.id); setESrchIdx(-1); setESrchHits([]); };
   const save = async () => {
     if(!form.num){alert('PO number required');return;}
     const { error } = await SB.from('purchase_orders').update({
@@ -621,23 +625,38 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
           </div>
           <span className="form-section-label">Line Items</span>
           <table className="items-table">
-            <thead><tr><th style={{width:'48%'}}>Product</th><th>Qty</th><th>Unit Price</th><th style={{width:'36px'}}></th></tr></thead>
+            <thead><tr><th style={{width:'40%'}}>Product</th><th>Qty</th><th>Unit Price</th><th style={{width:'36px'}}></th></tr></thead>
             <tbody>
               {items.map((it,i)=>(
-                <tr key={i}>
-                  <td>
-                    <input value={it.desc} onChange={e=>setItem(i,'desc',e.target.value)} placeholder="Product name / description" />
-                    {products.length>0 && (
-                      <select style={{marginTop:'5px'}} value={it.prodId} onChange={e=>{const pid=e.target.value;const pr=products.find(x=>x.id===pid);setItem(i,'prodId',pid);if(pr&&!(it.desc||'').trim())setItem(i,'desc',pr.name||'');}}>
-                        <option value="">Link to catalog product (optional)…</option>
-                        {products.map(p=><option key={p.id} value={p.id}>{p.sku?p.sku+' — ':''}{p.name}</option>)}
-                      </select>
-                    )}
-                  </td>
-                  <td><input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" /></td>
-                  <td><input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" /></td>
-                  <td><button className="rm" onClick={()=>rmItem(i)}>×</button></td>
-                </tr>
+                <React.Fragment key={i}>
+                  <tr>
+                    <td>
+                      <div style={{position:'relative'}}>
+                        <input value={it.desc} onChange={e=>handleEProdInput(i,e.target.value)} onBlur={()=>setTimeout(()=>setESrchIdx(-1),200)} placeholder="Type to search products…" />
+                        {eSrchIdx===i && eSrchHits.length>0 && (
+                          <div className="prod-suggestions">
+                            {eSrchHits.map(p=>(
+                              <div key={p.id} className="prod-sugg-item" onMouseDown={()=>pickEProd(i,p)}>
+                                <span style={{fontWeight:600}}>{p.name}</span>{p.sku&&<span style={{fontSize:'11px',color:'var(--muted)',marginLeft:'8px'}}>{p.sku}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td><input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" /></td>
+                    <td><input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" /></td>
+                    <td><button className="rm" onClick={()=>rmItem(i)}>×</button></td>
+                  </tr>
+                  <tr className="item-sub-row">
+                    <td colSpan={4}>
+                      <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 8px'}}>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>CI Value ($)</span><input type="number" step="0.01" className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.ci||''} onChange={e=>setItem(i,'ci',e.target.value)} placeholder="0.00" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'1 1 180px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Carton info</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.carton||''} onChange={e=>setItem(i,'carton',e.target.value)} placeholder="e.g. 12 pcs/ctn, 60×40×30 cm, 11 kg" /></div>
+                      </div>
+                    </td>
+                  </tr>
+                </React.Fragment>
               ))}
             </tbody>
           </table>
@@ -1005,7 +1024,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [tierIdx, setTierIdx] = useState(0);
   const [refsReady, setRefsReady] = useState(false);
   const [seeded, setSeeded] = useState(false);
-  const [items, setItems] = useState([{prodId:'',desc:'',qty:'',price:''}]);
+  const [items, setItems] = useState([{prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
+  const [srchIdx, setSrchIdx] = useState(-1);
+  const [srchHits, setSrchHits] = useState([]);
   const [form, setForm]  = useState({ factoryId:'', clientId:'', num:`KUI-PO-${new Date().getFullYear()}-`, date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
 
@@ -1038,6 +1059,8 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   },[]);
 
   const addItem = () => setItems(prev=>[...prev,{prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
+  const handleProdInput = (i,v) => { setItem(i,'desc',v); if(v.trim().length>0){const h=products.filter(p=>(p.name||'').toLowerCase().includes(v.toLowerCase())||(p.sku||'').toLowerCase().includes(v.toLowerCase())).slice(0,7);setSrchHits(h);setSrchIdx(i);}else{setSrchIdx(-1);setSrchHits([]);} };
+  const pickProd = (i,p) => { setItem(i,'desc',p.name); setItem(i,'prodId',p.id); setSrchIdx(-1); setSrchHits([]); };
   const setItem = (i,k,v) => setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const rmItem  = i => setItems(prev=>prev.filter((_,idx)=>idx!==i));
 
@@ -1132,7 +1155,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
           {picked && (
             <div className="qp-banner">
               <span><b>{picked.product||'Quote'}</b> · {picked.client||'—'} {picked.sku?`· ${picked.sku}`:''}</span>
-              <button className="x" onClick={()=>{setPicked(null);setItems([{prodId:'',desc:'',qty:'',price:''}]);}}>Change</button>
+              <button className="x" onClick={()=>{setPicked(null);setItems([{prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);}}>Change</button>
             </div>
           )}
 
@@ -1213,7 +1236,6 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
             <div><label>Deposit %</label><input type="number" className="form-input" placeholder="30" value={form.dep} onChange={e=>f('dep')(e.target.value)} /></div>
           </div>
           <span className="form-section-label">Line Items</span>
-          <datalist id="prod-list">{products.map(p=><option key={p.id} value={p.name}>{p.sku?`${p.sku} — `:''}{p.name}</option>)}</datalist>
           <table className="items-table">
             <thead><tr><th style={{width:'40%'}}>Product</th><th>Qty</th><th>Unit Price</th><th style={{textAlign:'right'}}>Amount</th><th style={{width:'36px'}}></th></tr></thead>
             <tbody>
@@ -1221,7 +1243,18 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
                 <React.Fragment key={i}>
                   <tr>
                     <td>
-                      <input list="prod-list" value={it.desc} onChange={e=>{const v=e.target.value;const pr=products.find(p=>p.name===v||(p.sku&&v.startsWith(p.sku)));setItem(i,'desc',v);if(pr){setItem(i,'prodId',pr.id);}else{setItem(i,'prodId','');}}} placeholder="Type to search products…" />
+                      <div style={{position:'relative'}}>
+                        <input value={it.desc} onChange={e=>handleProdInput(i,e.target.value)} onBlur={()=>setTimeout(()=>setSrchIdx(-1),200)} placeholder="Type to search products…" />
+                        {srchIdx===i && srchHits.length>0 && (
+                          <div className="prod-suggestions">
+                            {srchHits.map(p=>(
+                              <div key={p.id} className="prod-sugg-item" onMouseDown={()=>pickProd(i,p)}>
+                                <span style={{fontWeight:600}}>{p.name}</span>{p.sku&&<span style={{fontSize:'11px',color:'var(--muted)',marginLeft:'8px'}}>{p.sku}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td><input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" /></td>
                     <td><input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" /></td>
@@ -1287,6 +1320,14 @@ function CreateCompanyModal({ onClose, onCreated }) {
     const { data: co, error } = await SB.from('companies').upsert({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
     if (error) { alert('Error: '+error.message); return; }
     if (form.cname) await SB.from('contacts').insert({company_id:co.id,full_name:form.cname,email:form.cemail||null,phone:form.cphone||null,is_primary:true});
+    // Mirror into Quotes directory so it appears in quote autofill
+    try {
+      if (form.type==='client') {
+        await SBQ.from('client_contacts').insert({client:form.name,contact:form.cname||null,email:form.cemail||null,phone:form.phone||null}).select();
+      } else if (form.type==='factory') {
+        await SBQ.from('factory_presets').insert({factory:form.name,factory_email:form.email||null,factory_phone:form.phone||null}).select();
+      }
+    } catch(e) {}
     onCreated();
   };
   const types = ['client','factory','carrier','freight_forwarder'];
