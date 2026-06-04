@@ -38,7 +38,7 @@ const Ic = {
 };
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ page, navigate, user }) {
+function Sidebar({ page, navigate, user, open }) {
   const links = [
     { id:'dashboard', label:'Dashboard' },
     { id:'orders',    label:'Purchase Orders' },
@@ -48,7 +48,7 @@ function Sidebar({ page, navigate, user }) {
     { id:'quotes',    label:'Quotes' },
   ];
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${open?'sidebar--open':''}`}>
       <div className="sb-brand">
         <img className="sb-logo-img" src={LOGO_WHITE} alt="King Universal" />
       </div>
@@ -207,6 +207,28 @@ function OrderDetail({ id, navigate }) {
   const updateStatus = async (status) => {
     await SB.from('purchase_orders').update({status,updated_at:new Date().toISOString()}).eq('id',id);
     setPO(prev=>({...prev,status}));
+    if (status === 'shipped') {
+      const created = await ensureShipmentForPO();
+      if (created) alert('A shipment was created for this PO. You can find it in the Shipments tab.');
+    }
+  };
+  // Turn this PO into a shipment (once). Returns true if a new shipment was made.
+  const ensureShipmentForPO = async () => {
+    try {
+      const { data: links } = await SB.from('shipment_pos').select('shipment_id').eq('purchase_order_id',id).limit(1);
+      if (links && links.length) return false; // already linked to a shipment
+      const base = (po?.order_number || id.slice(0,8)).toString().replace(/^PO[-\s]?/i,'');
+      const num  = `SHP-${base}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
+      const { data: ship, error: sErr } = await SB.from('shipments').insert({
+        shipment_number: num,
+        status: 'in_transit',
+        inco_term: po?.incoterm || null,
+        estimated_departure: new Date().toISOString(),
+      }).select('id').single();
+      if (sErr || !ship) { console.error('shipment create failed', sErr); return false; }
+      await SB.from('shipment_pos').insert({ shipment_id: ship.id, purchase_order_id: id });
+      return true;
+    } catch(e){ console.error(e); return false; }
   };
   const deletePO = async () => {
     if(!confirm('Delete this purchase order and all its line items? This cannot be undone.')) return;
@@ -216,12 +238,28 @@ function OrderDetail({ id, navigate }) {
     navigate('orders');
   };
   const genPO = async () => {
+    // Open the window SYNCHRONOUSLY, before any await — otherwise iPad/Safari
+    // treats it as a non-user-gesture popup and blocks it (button "does nothing").
+    const win = window.open('', '_blank');
+    if (win) {
+      win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating PO…</body>');
+    }
     const { data, error } = await SB.rpc('po_document_json',{p_po_id:id});
-    if (error||!data){alert('Error: '+(error?.message||'No data'));return;}
-    const win=window.open('','_blank');
-    win.document.write(buildPODoc(data));
-    win.document.close();
-    setTimeout(()=>{win.focus();win.print();},1000);
+    if (error||!data){ if(win) win.close(); alert('Error: '+(error?.message||'No data')); return; }
+    const html = buildPODoc(data);
+    if (win) {
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 600);
+    } else {
+      // Popup was blocked anyway — fall back to downloading the PO as a file.
+      const url = URL.createObjectURL(new Blob([html],{type:'text/html'}));
+      const a = document.createElement('a');
+      a.href = url; a.download = `PO-${po?.order_number||id}.html`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    }
   };
   if (loading) return <div className="loading">Loading...</div>;
   if (!po) return <div className="empty"><h3>Order not found</h3></div>;
@@ -897,6 +935,67 @@ function CreateCompanyModal({ onClose, onCreated }) {
   );
 }
 
+// ── Create Shipment Modal ─────────────────────────────────────────────────────
+function CreateShipmentModal({ onClose, onCreated }) {
+  const [companies, setCompanies] = useState([]);
+  const [pos, setPos] = useState([]);
+  const [form, setForm] = useState({
+    number: `SHP-${Date.now().toString(36).slice(-5).toUpperCase()}`,
+    client:'', carrier:'', bol:'', etd:'', eta:'', status:'created', inco:'', poId:''
+  });
+  const f = k => v => setForm(prev=>({...prev,[k]:v}));
+  useEffect(()=>{
+    SB.from('companies').select('id,name,type').order('name').then(({data})=>setCompanies(data||[]));
+    SB.from('purchase_orders').select('id,order_number').order('created_at',{ascending:false}).limit(200).then(({data})=>setPos(data||[]));
+  },[]);
+  const clients  = companies.filter(c=>['client','brand','customer'].includes(c.type));
+  const carriers = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
+  const STATUSES = ['created','in_transit','at_origin_port','at_transshipment','at_destination_port','customs','out_for_delivery','delivered','delayed','exception','cancelled'];
+  const submit = async () => {
+    if (!form.number) { alert('Shipment number required'); return; }
+    const { data: ship, error } = await SB.from('shipments').insert({
+      shipment_number: form.number,
+      client_company_id: form.client || null,
+      carrier_company_id: form.carrier || null,
+      bill_of_lading: form.bol || null,
+      estimated_departure: form.etd ? new Date(form.etd+'T12:00:00').toISOString() : null,
+      estimated_arrival:   form.eta ? new Date(form.eta+'T12:00:00').toISOString() : null,
+      status: form.status,
+      inco_term: form.inco || null,
+    }).select('id').single();
+    if (error) { alert('Error: '+error.message); return; }
+    if (form.poId) await SB.from('shipment_pos').insert({ shipment_id: ship.id, purchase_order_id: form.poId });
+    onCreated();
+  };
+  return (
+    <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
+      <div className="modal-box">
+        <div className="modal-head"><h3>New Shipment</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-body">
+          <div className="form-row-2">
+            <div><label>Shipment # *</label><input className="form-input" value={form.number} onChange={e=>f('number')(e.target.value)} /></div>
+            <div><label>Status</label><select className="form-select" value={form.status} onChange={e=>f('status')(e.target.value)}>{STATUSES.map(s=><option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}</select></div>
+          </div>
+          <div className="form-row-2">
+            <div><label>Client</label><select className="form-select" value={form.client} onChange={e=>f('client')(e.target.value)}><option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+            <div><label>Carrier / Forwarder</label><select className="form-select" value={form.carrier} onChange={e=>f('carrier')(e.target.value)}><option value="">—</option>{carriers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+          </div>
+          <div className="form-row"><label>Bill of Lading</label><input className="form-input" value={form.bol} onChange={e=>f('bol')(e.target.value)} /></div>
+          <div className="form-row-2">
+            <div><label>ETD</label><input type="date" className="form-input" value={form.etd} onChange={e=>f('etd')(e.target.value)} /></div>
+            <div><label>ETA</label><input type="date" className="form-input" value={form.eta} onChange={e=>f('eta')(e.target.value)} /></div>
+          </div>
+          <div className="form-row-2">
+            <div><label>Incoterm</label><input className="form-input" value={form.inco} onChange={e=>f('inco')(e.target.value)} placeholder="FOB, DDP…" /></div>
+            <div><label>Link to PO (optional)</label><select className="form-select" value={form.poId} onChange={e=>f('poId')(e.target.value)}><option value="">None</option>{pos.map(p=><option key={p.id} value={p.id}>{p.order_number||p.id.slice(0,8)}</option>)}</select></div>
+          </div>
+        </div>
+        <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={submit}>Save Shipment</button></div>
+      </div>
+    </div>
+  );
+}
+
 // ── Create Product Modal ──────────────────────────────────────────────────────
 function CreateProductModal({ onClose, onCreated }) {
   const [cats, setCats] = useState([]);
@@ -1026,11 +1125,13 @@ export default function App() {
     orders:    <button className="btn btn-dark" onClick={()=>setModal('create-po')}>+ New PO</button>,
     companies: <button className="btn btn-dark" onClick={()=>setModal('create-company')}>+ New Company</button>,
     products:  <button className="btn btn-ghost" onClick={()=>navigate('quotes')}>+ New Quote</button>,
-    shipments: <button className="btn btn-dark" onClick={()=>alert('Coming soon')}>+ New Shipment</button>,
+    shipments: <button className="btn btn-dark" onClick={()=>setModal('create-shipment')}>+ New Shipment</button>,
   };
   const [modal, setModal] = useState(null);
+  const [shipmentsRefresh, setShipmentsRefresh] = useState(0);
+  const [navOpen, setNavOpen] = useState(false);
 
-  const navigate = (p, pr={}) => { setPage(p); setParams(pr); };
+  const navigate = (p, pr={}) => { setPage(p); setParams(pr); setNavOpen(false); };
 
   useEffect(()=>{
     SB.auth.getSession().then(({data:{session}})=>{
@@ -1049,7 +1150,11 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar page={page} navigate={navigate} user={user} />
+      <button className="mobile-menu-btn" aria-label="Open menu" onClick={()=>setNavOpen(true)}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <div className={`sidebar-backdrop ${navOpen?'show':''}`} onClick={()=>setNavOpen(false)} />
+      <Sidebar page={page} navigate={navigate} user={user} open={navOpen} />
       {page==='quotes' ? (
         <div className="main-area">
           <div className="quotes-root" style={{height:'100%',overflowY:'auto'}}>
@@ -1068,13 +1173,14 @@ export default function App() {
           {page==='order-detail' && <OrderDetail id={params.id} navigate={navigate} />}
           {page==='companies'    && <Companies />}
           {page==='products'     && <Products navigate={navigate} />}
-          {page==='shipments'    && <Shipments />}
+          {page==='shipments'    && <Shipments key={shipmentsRefresh} />}
         </div>
       </div>
       )}
       {modal==='create-po'      && <CreatePOModal onClose={()=>setModal(null)} onCreated={id=>{setModal(null);navigate('order-detail',{id});}} />}
       {modal==='create-company' && <CreateCompanyModal onClose={()=>setModal(null)} onCreated={()=>setModal(null)} />}
       {modal==='create-product' && <CreateProductModal onClose={()=>setModal(null)} onCreated={()=>setModal(null)} />}
+      {modal==='create-shipment'&& <CreateShipmentModal onClose={()=>setModal(null)} onCreated={()=>{setModal(null);setShipmentsRefresh(n=>n+1);navigate('shipments');}} />}
     </div>
   );
 }
