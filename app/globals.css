@@ -337,3 +337,13 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 
 /* Pinned KUI Settings link at bottom of rail */
 .sb-settings{flex-shrink:0;border-top:1px solid rgba(255,255,255,.07);border-radius:0;margin:0;}
+
+/* ── PO toolbar: search + filter rows ─────────────────── */
+.po-toolbar{display:flex;flex-direction:column;gap:10px;margin-bottom:18px;}
+.po-search{width:100%;padding:11px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card);font-size:14px;color:var(--ink);box-shadow:var(--shadow-sm);}
+.po-search:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(52,97,224,.12);}
+.po-search::placeholder{color:var(--muted);}
+.chip-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle;}
+.chip-n{opacity:.55;font-size:11px;margin-left:3px;}
+.badge-testing{background:#e0e7ff;color:#4338ca;}
+.status-pill.sp-testing.on{background:#4338ca;border-color:#4338ca;}
