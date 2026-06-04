@@ -630,6 +630,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     onSaved();
   };
   return (
+    <>
     <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
       <div className="modal-box modal-lg">
         <div className="modal-head"><h3>Edit Purchase Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
@@ -710,6 +711,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
       </div>,
       document.body
     )}
+    </>
   );
 }
 
@@ -1191,6 +1193,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   };
 
   return (
+    <>
     <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
       <div className="modal-box modal-lg">
         <div className="modal-head"><h3>New Purchase Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
@@ -1359,6 +1362,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       </div>,
       document.body
     )}
+    </>
   );
 }
 
