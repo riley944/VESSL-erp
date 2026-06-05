@@ -21,6 +21,26 @@ function initials(name){ return (name||'?').replace(/[^A-Za-z0-9 ]/g,'').split(/
 const money = (n, c='USD') => n == null ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:c}).format(n);
 const fmtDate = s => { if (!s) return '—'; return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
 const fmtDateTime = s => { if (!s) return ''; const d=new Date(s); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); };
+
+// Auto-create shipment when a PO moves to shipped — callable from any component
+async function createShipmentForPO(poId) {
+  try {
+    const { data: links } = await SB.from('shipment_pos').select('shipment_id').eq('purchase_order_id',poId).limit(1);
+    if (links && links.length > 0) return false; // already has a shipment
+    const { data: po } = await SB.from('purchase_orders').select('id,order_number,client_company_id').eq('id',poId).single();
+    const base = (po?.order_number||poId.slice(0,8)).toString().replace(/^PO[-\s]?/i,'');
+    const num  = 'SHP-'+base+'-'+Date.now().toString(36).slice(-4).toUpperCase();
+    const { data: ship, error: sErr } = await SB.from('shipments').insert({
+      shipment_number: num,
+      status: 'in_transit',
+      client_company_id: po?.client_company_id||null,
+    }).select('id').single();
+    if (sErr||!ship){ alert('Could not create shipment: '+(sErr?.message||'unknown')); return false; }
+    const { error: lErr } = await SB.from('shipment_pos').insert({ shipment_id:ship.id, purchase_order_id:poId });
+    if (lErr){ alert('Shipment created but link failed: '+lErr.message); return false; }
+    return true;
+  } catch(e){ alert('Shipment error: '+e.message); return false; }
+}
 const fmtNum = n => n == null ? '—' : new Intl.NumberFormat('en-US').format(n);
 const nowDate = () => new Date().toISOString().slice(0,10);
 const STATUSES = ['draft','confirmed','sampling','sample_approved','testing','in_production','ready_to_ship','shipped','delivered','closed'];
@@ -220,6 +240,7 @@ function Dashboard({ navigate }) {
   const setStatus = async (pid, st) => {
     await SB.from('purchase_orders').update({status:st,updated_at:new Date().toISOString()}).eq('id',pid);
     setRecent(prev=>prev.map(p=>p.id===pid?{...p,status:st}:p));
+    if (st==='shipped'){ const ok=await createShipmentForPO(pid); if(ok) alert('Shipment created — check the Shipments tab.'); }
   };
   const shown = filterPOs(recent,{search,client,status});
   return (
@@ -452,6 +473,7 @@ function Orders({ navigate }) {
   const setStat = async (pid, st) => {
     await SB.from('purchase_orders').update({status:st,updated_at:new Date().toISOString()}).eq('id',pid);
     setRows(prev=>prev.map(p=>p.id===pid?{...p,status:st}:p));
+    if (st==='shipped'){ const ok=await createShipmentForPO(pid); if(ok) alert('Shipment created — check the Shipments tab.'); }
   };
   const shown = filterPOs(rows,{search,client,status});
   return (
@@ -517,8 +539,8 @@ function OrderDetail({ id, navigate }) {
     await SB.from('purchase_orders').update({status,updated_at:new Date().toISOString()}).eq('id',id);
     setPO(prev=>({...prev,status}));
     if (status === 'shipped') {
-      const created = await ensureShipmentForPO();
-      if (created) alert('Shipment created for '+( po?.order_number||'this PO')+'. Find it in the Shipments tab.');
+      const ok = await createShipmentForPO(id);
+      if (ok) alert('Shipment created for '+(po?.order_number||'this PO')+'. Check the Shipments tab.');
     }
   };
   // Turn this PO into a shipment (once). Returns true if a new shipment was made.
