@@ -10,10 +10,10 @@ import { SB } from "@/lib/supabase";
 
 // ============================================================
 //  SUPABASE CONNECTION
-//  Uses the ERP project's PUBLIC schema (where quotes data was migrated),
-//  via the shared SBQ client. Same login as the rest of the ERP.
+//  Now using the vessl schema directly via the main SB client.
+//  All quotes data has been migrated from public → vessl.
 // ============================================================
-const supabase = SBQ;
+const supabase = SB;
 
 // team members for task assignment
 const TEAM = [
@@ -455,7 +455,7 @@ function Platform({ session }) {
 
   useEffect(() => {
     const ch = supabase.channel("quotes-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "quotes" }, () => {
+      .on("postgres_changes", { event: "*", schema: "vessl", table: "quotes" }, () => {
         if (Date.now() - lastSaveRef.current < 2500) return;
         load();
       })
