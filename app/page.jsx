@@ -544,6 +544,15 @@ function OrderDetail({ id, navigate }) {
     if(error){alert('Error deleting: '+error.message);return;}
     navigate('orders');
   };
+  const deletePO = async () => {
+    if (!confirm('Delete this purchase order and all its line items? This cannot be undone.')) return;
+    await SB.from('purchase_order_items').delete().eq('purchase_order_id',id);
+    await SB.from('order_notes').delete().eq('purchase_order_id',id);
+    await SB.from('shipment_pos').delete().eq('purchase_order_id',id);
+    const { error } = await SB.from('purchase_orders').delete().eq('id',id);
+    if (error){ alert('Error: '+error.message); return; }
+    navigate('orders');
+  };
   const genPO = async () => {
     // Open the window SYNCHRONOUSLY, before any await — otherwise iPad/Safari
     // treats it as a non-user-gesture popup and blocks it (button "does nothing").
@@ -591,7 +600,7 @@ function OrderDetail({ id, navigate }) {
           <div className="bsub">{po.companies?.email||''}</div>
           {po.client?.name && <div style={{marginTop:'10px',paddingTop:'10px',borderTop:'1px solid var(--line)'}}><div style={{color:'var(--muted)',fontSize:'11px',marginBottom:'2px'}}>CLIENT</div><div style={{fontSize:'13px',fontWeight:500}}>{po.client.name}</div>{po.client.vendor_number && <div style={{fontSize:'11.5px',color:'var(--muted)'}}>Vendor # {po.client.vendor_number} · internal</div>}</div>}
           {po.pallet_info && <div style={{marginTop:'10px',fontSize:'12px',color:'var(--muted)'}}><span style={{textTransform:'uppercase',fontSize:'10px'}}>Pallet</span> · {po.pallet_info}</div>}
-          {po.needs_samples && <div style={{marginTop:'10px',padding:'8px 10px',background:'#fef9c3',borderRadius:'8px',fontSize:'12px',color:'#854d0e'}}><b>Samples required:</b> {po.sample_type||'TOP'}{po.sample_qty?` · ${po.sample_qty} pcs`:''}</div>}
+          {po.needs_samples && <div style={{marginTop:'10px',padding:'8px 10px',background:'#fef9c3',borderRadius:'8px',fontSize:'12px',color:'#854d0e'}}><b>Samples required:</b> {po.sample_type||'TOP'}{po.sample_qty?' \u00b7 '+po.sample_qty+' pcs':''}</div>}
         </div>
         <div className="detail-block">
           <div className="blabel">Order Details</div>
@@ -667,7 +676,7 @@ function OrderDetail({ id, navigate }) {
           <textarea className="form-input" rows={3} placeholder="Add a note or task for the selected person…" value={noteText} onChange={e=>setNoteText(e.target.value)} />
           <div style={{display:'flex',alignItems:'center',gap:'12px',marginTop:'10px'}}>
             <button className="btn btn-dark btn-sm" onClick={postNote} disabled={posting||!noteText.trim()}>
-              {posting?'Posting…': noteAssignee==='all'?'Post & notify team':`Post & notify ${TEAM.find(m=>m.email===noteAssignee)?.name||'person'}`}
+              {posting?'Posting\u2026': noteAssignee==='all'?'Post & notify team':'Post & notify '+((TEAM.find(m=>m.email===noteAssignee)||{}).name||'person')}
             </button>
             {noteMsg && <span style={{fontSize:'12.5px',color:'var(--accent)'}}>{noteMsg}</span>}
           </div>
@@ -680,7 +689,7 @@ function OrderDetail({ id, navigate }) {
                 <div className="note-body">{n.body}</div>
                 <div className="note-meta">
                   {(n.author_email||'unknown').split('@')[0]}
-                  {n.assigned_to && n.assigned_to!=='all' && <span style={{color:'var(--accent)'}}> → {TEAM.find(m=>m.email===n.assigned_to)?.name||n.assigned_to.split('@')[0]}</span>}
+                  {n.assigned_to && n.assigned_to!=='all' && <span style={{color:'var(--accent)'}}>{' \u2192 '}{(TEAM.find(m=>m.email===n.assigned_to)||{}).name||n.assigned_to.split('@')[0]}</span>}
                   {' · '}{fmtDateTime(n.created_at)}
                 </div>
               </div>
