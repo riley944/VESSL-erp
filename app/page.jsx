@@ -500,21 +500,19 @@ function OrderDetail({ id, navigate }) {
         ? TEAM.map(t=>t.email).filter(e=>e!==author)
         : [noteAssignee].filter(e=>e!==author);
       const esc = s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-      const html = `
-        <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;margin:0 auto;padding:8px">
-          <p style="font-size:13px;color:#64748b;margin:0 0 4px">
-            ${noteAssignee!=='all'?`<strong style="color:#3461e0">@${esc(assigneeName)}</strong> — task from `:'Note on order '}
-            <strong style="color:#0b1120">${esc(po?.order_number||'')}</strong>${po?.companies?.name?` &middot; ${esc(po.companies.name)}`:''}
-          </p>
-          <div style="background:#f6f8fb;border:1px solid #e6eaf0;border-radius:10px;padding:16px 18px;margin:10px 0 16px">
-            <p style="margin:0;font-size:15px;color:#0b1120;line-height:1.55">${esc(body)}</p>
-          </div>
-          <p style="font-size:12px;color:#94a3b8;margin:0 0 16px">Posted by ${esc(whoName)}</p>
-          <a href="https://orders.vessl.io" style="display:inline-block;background:#0b1530;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 18px;border-radius:8px">Open in Vessl &rarr;</a>
-        </div>`;
+      const taskPrefix = noteAssignee!=='all' ? '<strong style="color:#3461e0">@'+esc(assigneeName)+'</strong> \u2014 task from ' : 'Note on order ';
+      const clientSuffix = po?.companies?.name ? ' &middot; '+esc(po.companies.name) : '';
+      const html = '<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;margin:0 auto;padding:8px">'
+        +'<p style="font-size:13px;color:#64748b;margin:0 0 4px">'+taskPrefix+'<strong style="color:#0b1120">'+esc(po?.order_number||'')+'</strong>'+clientSuffix+'</p>'
+        +'<div style="background:#f6f8fb;border:1px solid #e6eaf0;border-radius:10px;padding:16px 18px;margin:10px 0 16px">'
+        +'<p style="margin:0;font-size:15px;color:#0b1120;line-height:1.55">'+esc(body)+'</p></div>'
+        +'<p style="font-size:12px;color:#94a3b8;margin:0 0 16px">Posted by '+esc(whoName)+'</p>'
+        +'<a href="https://orders.vessl.io" style="display:inline-block;background:#0b1530;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 18px;border-radius:8px">Open in Vessl &rarr;</a>'
+        +'</div>';
       if (recipients.length){
-        const { error:mailErr } = await SB.functions.invoke('send-email',{ body:{ to:recipients, replyTo:author||undefined, subject:`${noteAssignee!=='all'?'Task for you':'Order note'} \u00b7 ${po?.order_number||''}`, html } });
-        setNoteMsg(mailErr ? 'Note posted (email skipped).' : `Note posted & ${assigneeName} notified.`);
+        const subj = (noteAssignee!=='all'?'Task for you':'Order note')+' \u00b7 '+(po?.order_number||'');
+        const { error:mailErr } = await SB.functions.invoke('send-email',{ body:{ to:recipients, replyTo:author||undefined, subject:subj, html } });
+        setNoteMsg(mailErr ? 'Note posted (email skipped).' : 'Note posted & '+assigneeName+' notified.');
       } else setNoteMsg('Note posted.');
     } catch(e){ setNoteMsg('Note posted (email skipped).'); }
     setNoteAssignee('all');
