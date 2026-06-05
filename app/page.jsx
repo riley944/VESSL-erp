@@ -442,7 +442,7 @@ function OrderDetail({ id, navigate }) {
       const { data: links } = await SB.from('shipment_pos').select('shipment_id').eq('purchase_order_id',id).limit(1);
       if (links && links.length) return false; // already linked to a shipment
       const base = (po?.order_number || id.slice(0,8)).toString().replace(/^PO[-\s]?/i,'');
-      const num  = `SHP-${base}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
+      const num  = 'SHP-'+base+'-'+Date.now().toString(36).slice(-4).toUpperCase();
       const { data: ship, error: sErr } = await SB.from('shipments').insert({
         shipment_number: num,
         status: 'in_transit',
@@ -460,7 +460,7 @@ function OrderDetail({ id, navigate }) {
     const { data: links } = await SB.from('shipment_pos').select('shipment_id').eq('purchase_order_id',id).limit(1);
     if (links && links.length) return links[0].shipment_id;
     const base = (po?.order_number || id.slice(0,8)).toString().replace(/^PO[-\s]?/i,'');
-    const num  = `SHP-${base}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
+    const num  = 'SHP-'+base+'-'+Date.now().toString(36).slice(-4).toUpperCase();
     const { data: s } = await SB.from('shipments').insert({ shipment_number:num, status:'created', inco_term:po?.incoterm||null }).select().single();
     if (!s) return null;
     await SB.from('shipment_pos').insert({ shipment_id:s.id, purchase_order_id:id });
@@ -523,7 +523,7 @@ function OrderDetail({ id, navigate }) {
     if (!file) return;
     setUploading(true);
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
-    const path = `${id}/${Date.now()}-${safeName}`;
+    const path = id+'/'+Date.now()+'-'+safeName;
     const { error } = await SB.storage.from('po-attachments').upload(path, file, { upsert:false });
     if (error){ setUploading(false); alert('Upload failed: '+error.message+'\n\nMake sure the "po-attachments" storage bucket has been created in Supabase.'); return; }
     const { data: files } = await SB.storage.from('po-attachments').list(id+'/');
@@ -532,10 +532,10 @@ function OrderDetail({ id, navigate }) {
   };
   const deleteAttachment = async (name) => {
     if (!confirm('Remove this attachment?')) return;
-    await SB.storage.from('po-attachments').remove([`${id}/${name}`]);
+    await SB.storage.from('po-attachments').remove([id+'/'+name]);
     setAttachments(prev=>prev.filter(f=>f.name!==name));
   };
-  const attachUrl = (name) => SB.storage.from('po-attachments').getPublicUrl(`${id}/${name}`).data.publicUrl;
+  const attachUrl = (name) => SB.storage.from('po-attachments').getPublicUrl(id+'/'+name).data.publicUrl;
     if(!confirm('Delete this purchase order and all its line items? This cannot be undone.')) return;
     await SB.from('purchase_order_items').delete().eq('purchase_order_id',id);
     const { error } = await SB.from('purchase_orders').delete().eq('id',id);
@@ -570,7 +570,7 @@ function OrderDetail({ id, navigate }) {
       // Popup was blocked anyway — fall back to downloading the PO as a file.
       const url = URL.createObjectURL(new Blob([html],{type:'text/html'}));
       const a = document.createElement('a');
-      a.href = url; a.download = `PO-${po?.order_number||id}.html`;
+      a.href = url; a.download = 'PO-'+(po?.order_number||id)+'.html';
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(()=>URL.revokeObjectURL(url), 4000);
     }
@@ -615,7 +615,7 @@ function OrderDetail({ id, navigate }) {
         <div className="blabel">Status &mdash; tap to change</div>
         <div className="status-pills">
           {STATUSES.map(s=>(
-            <button key={s} className={`status-pill ${po.status===s?'on':''} sp-${s}`} onClick={()=>updateStatus(s)}>{s.replace(/_/g,' ')}</button>
+            <button key={s} className={'status-pill '+(po.status===s?'on':'')+' sp-'+s} onClick={()=>updateStatus(s)}>{s.replace(/_/g,' ')}</button>
           ))}
         </div>
         {po.notes && <div style={{marginTop:'12px',fontSize:'12.5px',color:'var(--muted)',paddingTop:'12px',borderTop:'1px solid var(--line)'}}>{po.notes}</div>}
