@@ -33,7 +33,7 @@ const TEAM = [
 ];
 
 function Badge({ status }) {
-  return <span className={`badge badge-${(status||'').replace(/ /g,'_')}`}>{(status||'—').replace(/_/g,' ')}</span>;
+  return <span className={'badge badge-'+(status||'').replace(/ /g,'_')}>{(status||'—').replace(/_/g,' ').toUpperCase()}</span>;
 }
 
 // ── PO browsing helpers (search + client filter, shared by Orders & Dashboard) ──
@@ -60,7 +60,6 @@ const PO_CARD_SELECT = 'id,order_number,status,order_date,requested_ship_date,fa
 
 function OrderCard({ p, navigate, onStatus }){
   const client = poClient(p), factory = poFactory(p);
-  const name = client || factory || '—';
   return (
     <div className="order-card">
       <div className="oc-top" onClick={()=>navigate('order-detail',{id:p.id})}>
@@ -68,10 +67,10 @@ function OrderCard({ p, navigate, onStatus }){
         <Badge status={p.status} />
       </div>
       <div className="oc-factory" onClick={()=>navigate('order-detail',{id:p.id})}>
-        <span className="oc-avatar" style={{background:companyColor(name)}}>{initials(name)}</span>
-        <span style={{display:'flex',flexDirection:'column',minWidth:0}}>
-          <span style={{fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{name}</span>
-          {client && factory && <span style={{fontSize:'11px',color:'var(--muted)',fontWeight:400}}>{factory}</span>}
+        <span className="oc-avatar" style={{background:companyColor(client||factory)}}>{initials(client||factory)}</span>
+        <span style={{display:'flex',flexDirection:'column',minWidth:0,gap:'2px'}}>
+          <span style={{fontWeight:700,fontSize:'14px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',color:'var(--ink)'}}>{client||'No client'}</span>
+          {factory && <span style={{fontSize:'11px',color:'var(--muted)',fontWeight:400,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{factory}</span>}
         </span>
       </div>
       <div className="oc-foot">
@@ -91,16 +90,16 @@ function PoToolbar({ rows, search, setSearch, client, setClient, status, setStat
     <div className="po-toolbar">
       <input className="po-search" placeholder="Search PO #, client, or product…" value={search} onChange={e=>setSearch(e.target.value)} />
       <div className="filters">
-        <button className={`filter-btn ${client==='all'?'active':''}`} onClick={()=>setClient('all')}>All Clients</button>
+        <button className={'filter-btn '+(client==='all'?'active':'')} onClick={()=>setClient('all')}>All</button>
         {clients.map(([c,n])=>(
-          <button key={c} className={`filter-btn ${client===c?'active':''}`} onClick={()=>setClient(c)}>
+          <button key={c} className={'filter-btn '+(client===c?'active':'')} onClick={()=>setClient(c)}>
             <span className="chip-dot" style={{background:companyColor(c)}} />{c} <span className="chip-n">{n}</span>
           </button>
         ))}
       </div>
       <div className="filters">
         {['all',...STATUSES].map(s=>(
-          <button key={s} className={`filter-btn ${status===s?'active':''}`} onClick={()=>setStatus(s)}>{s.replace(/_/g,' ')}</button>
+          <button key={s} className={'filter-btn '+(status===s?'active':'')} onClick={()=>setStatus(s)}>{s==='all'?'ALL':s.replace(/_/g,' ').toUpperCase()}</button>
         ))}
       </div>
     </div>
@@ -189,6 +188,7 @@ function Dashboard({ navigate }) {
   const [search, setSearch] = useState('');
   const [client, setClient] = useState('all');
   const [status, setStatusFilter] = useState('all');
+  const [taskCount, setTaskCount] = useState(0);
   useEffect(() => {
     (async () => {
       const [{ data: pos }, { data: cos }, { data: rec }] = await Promise.all([
@@ -203,6 +203,7 @@ function Dashboard({ navigate }) {
         clients:(cos||[]).filter(c=>c.type==='client').length
       });
       setRecent(rec||[]);
+      try { const { data: t } = await SBQ.from('tasks').select('id,done').eq('done',false); setTaskCount((t||[]).length); } catch(e){}
       setLoading(false);
     })();
   },[]);
@@ -219,7 +220,18 @@ function Dashboard({ navigate }) {
           <div key={l} className="stat-card"><div className="stat-label">{l}</div><div className="stat-value">{v}</div></div>
         ))}
       </div>
-      <div className="section-head" style={{padding:'0 2px 12px'}}><h3 style={{fontSize:'17px'}}>Orders</h3><button className="btn btn-ghost btn-sm" onClick={()=>navigate('orders')}>View all →</button></div>
+      <div className="section-head" style={{padding:'0 2px 12px'}}>
+        <h3 style={{fontSize:'17px'}}>Orders</h3>
+        <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+          {taskCount > 0 && (
+            <button className="btn btn-ghost btn-sm" style={{position:'relative',gap:'6px'}} onClick={()=>navigate('quotes')}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+              <span style={{background:'var(--hot)',color:'#fff',borderRadius:'999px',fontSize:'10px',fontWeight:700,padding:'1px 6px',fontFamily:'var(--mono)'}}>{taskCount}</span>
+            </button>
+          )}
+          <button className="btn btn-ghost btn-sm" onClick={()=>navigate('orders')}>View all →</button>
+        </div>
+      </div>
       <PoToolbar rows={recent} search={search} setSearch={setSearch} client={client} setClient={setClient} status={status} setStatus={setStatusFilter} />
       {shown.length ? (
         <div className="order-card-grid">
@@ -1171,7 +1183,9 @@ function Shipments() {
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState(null);
   const reload = async () => {
-    const { data } = await SB.from('shipments').select('*,companies!client_company_id(name)').order('created_at',{ascending:false});
+    const { data } = await SB.from('shipments')
+      .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client:companies!client_company_id(name)))')
+      .order('created_at',{ascending:false});
     setRows(data||[]); setLoading(false);
   };
   useEffect(()=>{ reload(); },[]);
@@ -1179,18 +1193,23 @@ function Shipments() {
     <div className="section-card">
       {loading ? <div className="loading">Loading...</div> : rows.length ? (
         <table className="data-table">
-          <thead><tr><th>Shipment #</th><th>Client</th><th>Vessel</th><th>Container #</th><th>Status</th><th>ETA</th></tr></thead>
+          <thead><tr><th>PO #</th><th>Client</th><th>Vessel</th><th>Container #</th><th>Status</th><th>ETA</th></tr></thead>
           <tbody>
-            {rows.map(s=>(
-              <tr key={s.id} onClick={()=>setOpenId(s.id)} style={{cursor:'pointer'}}>
-                <td className="mono">{s.shipment_number||'—'}</td>
-                <td>{s.companies?.name||'—'}</td>
-                <td>{s.vessel_name||'—'}</td>
-                <td className="mono">{s.container_no||'—'}</td>
-                <td><Badge status={s.status} /></td>
-                <td>{fmtDate(s.estimated_arrival)}</td>
-              </tr>
-            ))}
+            {rows.map(s=>{
+              const po = s.shipment_pos?.[0]?.purchase_orders;
+              const poNum = po?.order_number || s.shipment_number || '—';
+              const clientName = (po?.client?.name || s.companies?.name || '—').toUpperCase();
+              return (
+                <tr key={s.id} onClick={()=>setOpenId(s.id)} style={{cursor:'pointer'}}>
+                  <td className="mono" style={{fontWeight:600}}>{poNum}</td>
+                  <td style={{fontWeight:500}}>{clientName}</td>
+                  <td>{s.vessel_name||'—'}</td>
+                  <td className="mono">{s.container_no||'—'}</td>
+                  <td><Badge status={s.status} /></td>
+                  <td>{fmtDate(s.estimated_arrival)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       ) : <div className="empty"><h3>No shipments yet</h3><p>Shipments appear here when orders move to the shipping stage.</p></div>}
@@ -1202,11 +1221,15 @@ function Shipments() {
 // ── Shipment Detail / Edit Modal ──────────────────────────────────────────────
 function ShipmentDetailModal({ id, onClose, onSaved }) {
   const [s, setS] = useState(null);
+  const [linkedPO, setLinkedPO] = useState(null);
   const [companies, setCompanies] = useState([]);
   const [saving, setSaving] = useState(false);
   useEffect(()=>{
     SB.from('shipments').select('*').eq('id',id).single().then(({data})=>setS(data||{}));
     SB.from('companies').select('id,name,type').order('name').then(({data})=>setCompanies(data||[]));
+    SB.from('shipment_pos').select('purchase_orders(order_number,client:companies!client_company_id(name))').eq('shipment_id',id).limit(1).then(({data})=>{
+      if(data?.[0]?.purchase_orders) setLinkedPO(data[0].purchase_orders);
+    });
   },[id]);
   const set = (k,v)=>setS(prev=>({...prev,[k]:v}));
   const STAT = ['created','in_transit','at_origin_port','at_transshipment','at_destination_port','customs','out_for_delivery','delivered','delayed','exception','cancelled'];
@@ -1232,16 +1255,16 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
   return (
     <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
       <div className="modal-box">
-        <div className="modal-head"><h3>{s?.shipment_number||'Shipment'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>{linkedPO?.order_number || s?.shipment_number || 'Shipment'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
         {!s ? <div className="modal-body">Loading…</div> : (
         <div className="modal-body">
           <div className="form-row-2">
-            <div><label>Shipment #</label><input className="form-input" value={s.shipment_number||''} onChange={e=>set('shipment_number',e.target.value)} /></div>
+            <div><label>PO #</label><input className="form-input" value={linkedPO?.order_number||s.shipment_number||''} readOnly style={{opacity:.7,cursor:'default'}} /></div>
             <div><label>Status</label><select className="form-select" value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{STAT.map(x=><option key={x} value={x}>{x.replace(/_/g,' ')}</option>)}</select></div>
           </div>
           <div className="form-row-2">
-            <div><label>Client</label><select className="form-select" value={s.client_company_id||''} onChange={e=>set('client_company_id',e.target.value)}><option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-            <div><label>Carrier / Forwarder</label><select className="form-select" value={s.carrier_company_id||''} onChange={e=>set('carrier_company_id',e.target.value)}><option value="">—</option>{carriers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+            <div><label>Client</label><input className="form-input" value={(linkedPO?.client?.name||s.companies?.name||'—').toUpperCase()} readOnly style={{opacity:.7,cursor:'default',fontWeight:600}} /></div>
+            <div><label>Carrier / Forwarder</label><select className="form-select" value={s.carrier_company_id||''} onChange={e=>set('carrier_company_id',e.target.value)}><option value="">—</option>{companies.filter(c=>['carrier','freight_forwarder'].includes(c.type)).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           </div>
           <div className="form-row-2">
             <div><label>Vessel / Boat</label><input className="form-input" value={s.vessel_name||''} onChange={e=>set('vessel_name',e.target.value)} placeholder="e.g. MAERSK SELETAR" /></div>
