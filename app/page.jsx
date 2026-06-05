@@ -536,12 +536,6 @@ function OrderDetail({ id, navigate }) {
     setAttachments(prev=>prev.filter(f=>f.name!==name));
   };
   const attachUrl = (name) => SB.storage.from('po-attachments').getPublicUrl(id+'/'+name).data.publicUrl;
-    if(!confirm('Delete this purchase order and all its line items? This cannot be undone.')) return;
-    await SB.from('purchase_order_items').delete().eq('purchase_order_id',id);
-    const { error } = await SB.from('purchase_orders').delete().eq('id',id);
-    if(error){alert('Error deleting: '+error.message);return;}
-    navigate('orders');
-  };
   const deletePO = async () => {
     if (!confirm('Delete this purchase order and all its line items? This cannot be undone.')) return;
     await SB.from('purchase_order_items').delete().eq('purchase_order_id',id);
