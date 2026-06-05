@@ -225,7 +225,7 @@ function Dashboard({ navigate }) {
   return (
     <>
       {showTasks && (
-        <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&setShowTasks(false)}>
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowTasks(false)}>
           <div className="modal-box">
             <div className="modal-head"><h3>Open Tasks</h3><button className="modal-close" onClick={()=>setShowTasks(false)}>×</button></div>
             <div className="modal-body">
@@ -913,7 +913,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   };
   return (
     <>
-    <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal-box modal-lg">
         <div className="modal-head"><h3>Edit Purchase Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
@@ -1096,12 +1096,12 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
   };
   const [confirmDel, setConfirmDel] = useState(false);
   if(!co||!form) return (
-    <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}><div className="modal-box"><div className="modal-body"><div className="loading">Loading…</div></div></div></div>
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}><div className="modal-box"><div className="modal-body"><div className="loading">Loading…</div></div></div></div>
   );
   const col = companyColor(co.name);
   return (
     <>
-    <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal-box">
         <div className="modal-head" style={{gap:'12px'}}>
           <div style={{display:'flex',alignItems:'center',gap:'12px',minWidth:0}}>
@@ -1339,7 +1339,7 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
   const carriers = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
   return (
     <>
-    <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal-box">
         <div className="modal-head"><h3>{linkedPO?.order_number || s?.shipment_number || 'Shipment'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
         {!s ? <div className="modal-body">Loading…</div> : (
@@ -1399,7 +1399,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [srchHits, setSrchHits] = useState([]);
   const [srchRect, setSrchRect] = useState(null);
   const [recentDescs, setRecentDescs] = useState([]);
-  const [form, setForm]  = useState({ factoryId:'', clientId:'', num:`KUI-PO-${new Date().getFullYear()}-`, date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'', needs_samples:false, sample_type:'TOP', sample_qty:'' });
+  const [form, setForm]  = useState({ factoryId:'', clientId:'', num:'', date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'', needs_samples:false, sample_type:'TOP', sample_qty:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
 
   // Build the next sequential PO number, e.g. KUI-PO-2026-007, from existing ones.
@@ -1542,13 +1542,24 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       const { data, error } = await SB.from('purchase_orders').insert({ ...baseFields, order_number:orderNumber }).select().single();
       if (!error){ po=data; break; }
       lastErr=error;
-      if (/order_number|duplicate key/i.test(error.message||'')){
+      const msg = (error.message||'').toLowerCase();
+      if (/order_number|duplicate key/i.test(msg)){
         const { data:rows } = await SB.from('purchase_orders').select('order_number');
         orderNumber = genNum((rows||[]).map(r=>r.order_number));
         setForm(prev=>({...prev,num:orderNumber}));
-        continue; // try again with the next free number
+        continue;
       }
-      break; // a different error — stop
+      if (/load failed|network|fetch|failed to fetch/i.test(msg)){
+        // iOS Safari sometimes aborts fetch — wait and retry
+        await new Promise(r=>setTimeout(r, 800*(attempt+1)));
+        continue;
+      }
+      if (/source_quote_id|foreign key|violates/i.test(msg)){
+        // FK constraint on source_quote_id — retry without it
+        baseFields.source_quote_id = null;
+        continue;
+      }
+      break;
     }
     if (!po) { alert('Error creating PO: '+(lastErr?.message||'unknown')); return; }
     let added=0, failed=[];
@@ -1569,7 +1580,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
 
   return (
     <>
-    <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal-box modal-lg">
         <div className="modal-head"><h3>New Purchase Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
@@ -1583,7 +1594,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
           {/* selected-quote banner */}
           {picked && (
             <div className="qp-banner">
-              <span><b>{picked.product||'Quote'}</b> · {picked.client||'—'} {picked.sku?`· ${picked.sku}`:''}</span>
+              <span><b>{picked.product||'Quote'}</b>{' \u00b7 '}{picked.client||'—'}{picked.sku?' \u00b7 '+picked.sku:''}</span>
               <button className="x" onClick={()=>{setPicked(null);setItems([{prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);}}>Change</button>
             </div>
           )}
@@ -1839,7 +1850,7 @@ function CreateCompanyModal({ onClose, onCreated }) {
   };
   const types = ['client','factory','carrier','freight_forwarder'];
   return (
-    <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal-box">
         <div className="modal-head"><h3>New Company</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
@@ -1903,7 +1914,7 @@ function CreateShipmentModal({ onClose, onCreated }) {
     onCreated();
   };
   return (
-    <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal-box">
         <div className="modal-head"><h3>New Shipment</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
@@ -1949,7 +1960,7 @@ function CreateProductModal({ onClose, onCreated }) {
     onCreated();
   };
   return (
-    <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal-box">
         <div className="modal-head"><h3>New Product</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
