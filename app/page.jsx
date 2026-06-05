@@ -1100,6 +1100,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
   );
   const col = companyColor(co.name);
   return (
+    <>
     <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
       <div className="modal-box">
         <div className="modal-head" style={{gap:'12px'}}>
@@ -1168,6 +1169,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
       </div>
     </div>
     {confirmDel && <ConfirmModal title={'Delete '+co.name+'?'} message="All contacts will be removed. This cannot be undone." onConfirm={()=>{setConfirmDel(false);deleteCompany();}} onCancel={()=>setConfirmDel(false)} />}
+    </>
   );
 }
 
@@ -1336,6 +1338,7 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
   const clients  = companies.filter(c=>['client','brand','customer'].includes(c.type));
   const carriers = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
   return (
+    <>
     <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}>
       <div className="modal-box">
         <div className="modal-head"><h3>{linkedPO?.order_number || s?.shipment_number || 'Shipment'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
@@ -1368,6 +1371,7 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
       </div>
     </div>
     {confirmDel && <ConfirmModal title="Delete shipment?" message="POs will be unlinked. This cannot be undone." onConfirm={()=>{setConfirmDel(false);deleteShipment();}} onCancel={()=>setConfirmDel(false)} />}
+    </>
   );
 }
 
