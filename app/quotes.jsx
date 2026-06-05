@@ -574,7 +574,6 @@ function Platform({ session }) {
             <Bell size={15} /> {isMobile ? "" : "Tasks"}
             {myOpenTaskCount > 0 && <span style={S.taskBadge}>{myOpenTaskCount}</span>}
           </button>
-          <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setShowDirectory(true)}><FolderOpen size={15} /> {isMobile ? "" : "Directory"}</button>
           <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setShowSend(true)}><Send size={15} /> {isMobile ? "Send" : "Send to Client"}</button>
           <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={exportCSV}><Download size={15} /> {isMobile ? "" : "Export"}</button>
           <button style={{ ...S.primaryBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), client: "", tiers: [{ qty: 1500, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] })}>
@@ -594,17 +593,6 @@ function Platform({ session }) {
 
       {showSend && (
         <SendToClientModal clients={clients} onClose={() => setShowSend(false)} />
-      )}
-
-      {showDirectory && (
-        <DirectoryPanel
-          onClose={() => setShowDirectory(false)}
-          contacts={contacts} factories={factories} clientRecords={clientRecords}
-          quoteClients={clients.map((c) => c.name).filter((n) => n !== "Unassigned")}
-          onUpdateContact={updateContact} onDeleteContact={deleteContact} onAddContact={addContactDirect}
-          onUpdateFactory={updateFactory} onDeleteFactory={deleteFactory} onAddFactory={addFactoryDirect}
-          onSaveClientInfo={upsertClientRecord}
-        />
       )}
 
       <div style={S.controls}>
