@@ -663,65 +663,96 @@ function OrderDetail({ id, navigate }) {
         </div>
       </div>
 
-      <div className="section-card" style={{marginTop:'20px'}}>
-        <div className="section-head"><h3>Notes &amp; Activity</h3></div>
-        <div className="note-composer">
-          <div style={{marginBottom:'10px'}}>
-            <div style={{fontSize:'11px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)',marginBottom:'6px'}}>Notify</div>
-            <div className="filters" style={{flexWrap:'wrap',gap:'6px'}}>
-              <button className={`filter-btn${noteAssignee==='all'?' active':''}`} onClick={()=>setNoteAssignee('all')}>All</button>
-              {TEAM.map(m=>(
-                <button key={m.email} className={`filter-btn${noteAssignee===m.email?' active':''}`} onClick={()=>setNoteAssignee(m.email)}>{m.name}</button>
-              ))}
-            </div>
-          </div>
-          <textarea className="form-input" rows={3} placeholder="Add a note or task for the selected person…" value={noteText} onChange={e=>setNoteText(e.target.value)} />
-          <div style={{display:'flex',alignItems:'center',gap:'12px',marginTop:'10px'}}>
-            <button className="btn btn-dark btn-sm" onClick={postNote} disabled={posting||!noteText.trim()}>
-              {notifyLabel}
-            </button>
-            {noteMsg && <span style={{fontSize:'12.5px',color:'var(--accent)'}}>{noteMsg}</span>}
+      <OrderNotes
+        notes={notes} noteText={noteText} setNoteText={setNoteText}
+        noteAssignee={noteAssignee} setNoteAssignee={setNoteAssignee}
+        postNote={postNote} posting={posting} noteMsg={noteMsg}
+      />
+      <OrderAttachments
+        attachments={attachments} uploading={uploading}
+        onFileChange={onFileChange} attachUrl={attachUrl}
+        deleteAttachment={deleteAttachment}
+      />
+    </>
+  );
+}
+
+function OrderNotes({ notes, noteText, setNoteText, noteAssignee, setNoteAssignee, postNote, posting, noteMsg }) {
+  const btnLabel = posting ? 'Posting...' : noteAssignee === 'all' ? 'Post & notify team' : 'Post & notify ' + ((TEAM.find(m => m.email === noteAssignee) || {}).name || 'person');
+  return (
+    <div className="section-card" style={{marginTop:'20px'}}>
+      <div className="section-head"><h3>Notes &amp; Activity</h3></div>
+      <div className="note-composer">
+        <div style={{marginBottom:'10px'}}>
+          <div style={{fontSize:'11px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)',marginBottom:'6px'}}>Notify</div>
+          <div className="filters" style={{flexWrap:'wrap',gap:'6px'}}>
+            <button className={'filter-btn' + (noteAssignee === 'all' ? ' active' : '')} onClick={() => setNoteAssignee('all')}>All</button>
+            {TEAM.map(m => (
+              <button key={m.email} className={'filter-btn' + (noteAssignee === m.email ? ' active' : '')} onClick={() => setNoteAssignee(m.email)}>{m.name}</button>
+            ))}
           </div>
         </div>
-        <div className="note-list">
-          {notes.length ? notes.map(n=>(
+        <textarea className="form-input" rows={3} placeholder="Add a note or task..." value={noteText} onChange={e => setNoteText(e.target.value)} />
+        <div style={{display:'flex',alignItems:'center',gap:'12px',marginTop:'10px'}}>
+          <button className="btn btn-dark btn-sm" onClick={postNote} disabled={posting || !noteText.trim()}>{btnLabel}</button>
+          {noteMsg && <span style={{fontSize:'12.5px',color:'var(--accent)'}}>{noteMsg}</span>}
+        </div>
+      </div>
+      <div className="note-list">
+        {notes.length > 0 ? notes.map(n => {
+          const assigneeName = n.assigned_to && n.assigned_to !== 'all' ? ((TEAM.find(m => m.email === n.assigned_to) || {}).name || n.assigned_to.split('@')[0]) : null;
+          return (
             <div key={n.id} className="note-item">
-              <div className="note-avatar" style={{background:companyColor(n.author_email||'?')}}>{initials(n.author_email||'?')}</div>
+              <div className="note-avatar" style={{background:companyColor(n.author_email || '?')}}>{initials(n.author_email || '?')}</div>
               <div style={{flex:1,minWidth:0}}>
                 <div className="note-body">{n.body}</div>
                 <div className="note-meta">
-                  {(n.author_email||'unknown').split('@')[0]}
-                  {n.assigned_to && n.assigned_to!=='all' && <span style={{color:'var(--accent)'}}>{' \u2192 '}{(TEAM.find(m=>m.email===n.assigned_to)||{}).name||n.assigned_to.split('@')[0]}</span>}
-                  {' · '}{fmtDateTime(n.created_at)}
+                  {(n.author_email || 'unknown').split('@')[0]}
+                  {assigneeName && <span style={{color:'var(--accent)'}}> {'\u2192'} {assigneeName}</span>}
+                  {' \u00b7 '}{fmtDateTime(n.created_at)}
                 </div>
               </div>
             </div>
-          )) : <div style={{padding:'8px 18px 18px',fontSize:'13px',color:'var(--muted)'}}>No notes yet.</div>}
-        </div>
+          );
+        }) : <div style={{padding:'8px 18px 18px',fontSize:'13px',color:'var(--muted)'}}>No notes yet.</div>}
       </div>
+    </div>
+  );
+}
 
-      <div className="section-card" style={{marginTop:'20px'}}>
-        <div className="section-head"><h3>Attachments</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Photos, spec sheets, samples, etc.</span></div>
-        <div style={{padding:'14px 18px',borderBottom:attachments.length?'1px solid var(--line)':'none'}}>
-          <label style={{cursor:uploading?'default':'pointer'}}>
-            <span className={`btn btn-ghost btn-sm${uploading?' disabled':''}`}>{uploading?'Uploading…':'+ Add attachment'}</span>
-            <input type="file" accept="image/*,.pdf" style={{display:'none'}} disabled={uploading} onChange={onFileChange} />
-          </label>
-          <p style={{fontSize:'12px',color:'var(--muted)',marginTop:'6px',marginBottom:0}}>JPEG, PNG, PDF — stored securely per order.</p>
-        </div>
-        {attachments.length>0 && (
-          <div>
-            {attachments.map(f=>(
-              <div key={f.name} style={{display:'flex',alignItems:'center',gap:'12px',padding:'11px 18px',borderBottom:'1px solid var(--line-2)'}}>
-                <span style={{flex:1,fontSize:'13px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--ink)'}}>{f.name.split('-').slice(1).join('-')||f.name}</span>
-                <a href={attachUrl(f.name)} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{flexShrink:0}}>View</a>
-                <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)',flexShrink:0}} onClick={()=>deleteAttachment(f.name)}>Remove</button>
-              </div>
-            ))}
-          </div>
-        )}
+function OrderAttachments({ attachments, uploading, onFileChange, attachUrl, deleteAttachment }) {
+  const borderVal = attachments.length > 0 ? '1px solid var(--line)' : 'none';
+  const spanClass = 'btn btn-ghost btn-sm' + (uploading ? ' disabled' : '');
+  return (
+    <div className="section-card" style={{marginTop:'20px'}}>
+      <div className="section-head">
+        <h3>Attachments</h3>
+        <span style={{fontSize:'11px',color:'var(--muted)'}}>Photos, spec sheets, samples</span>
       </div>
-    </>
+      <div style={{padding:'14px 18px',borderBottom:borderVal}}>
+        <label style={{cursor: uploading ? 'default' : 'pointer'}}>
+          <span className={spanClass}>{uploading ? 'Uploading...' : '+ Add attachment'}</span>
+          <input type="file" accept="image/*,.pdf" style={{display:'none'}} disabled={uploading} onChange={onFileChange} />
+        </label>
+        <p style={{fontSize:'12px',color:'var(--muted)',marginTop:'6px',marginBottom:0}}>JPEG, PNG, PDF</p>
+      </div>
+      {attachments.length > 0 && (
+        <div>
+          {attachments.map(f => {
+            const parts = f.name.split('-');
+            const displayName = parts.length > 1 ? parts.slice(1).join('-') : f.name;
+            const href = attachUrl(f.name);
+            return (
+              <div key={f.name} style={{display:'flex',alignItems:'center',gap:'12px',padding:'11px 18px',borderBottom:'1px solid var(--line-2)'}}>
+                <span style={{flex:1,fontSize:'13px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{displayName}</span>
+                <a href={href} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">View</a>
+                <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)'}} onClick={() => deleteAttachment(f.name)}>Remove</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
