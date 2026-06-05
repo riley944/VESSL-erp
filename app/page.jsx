@@ -616,19 +616,21 @@ function OrderDetail({ id, navigate }) {
     setUploading(false);
   };
   const deleteAttachment = async (name) => {
-    if (!confirm('Remove this attachment?')) return;
-    await SB.storage.from('po-attachments').remove([id+'/'+name]);
-    setAttachments(prev=>prev.filter(f=>f.name!==name));
+    setConfirmDel({title:'Remove attachment?',message:'This file will be permanently deleted.',onConfirm:()=>{ setConfirmDel(null); deleteAttachmentConfirmed(name); }});
   };
   const attachUrl = (name) => SB.storage.from('po-attachments').getPublicUrl(id+'/'+name).data.publicUrl;
+  const [confirmDel, setConfirmDel] = useState(null); // {title,message,onConfirm}
   const deletePO = async () => {
-    if (!confirm('Delete this purchase order and all its line items? This cannot be undone.')) return;
     await SB.from('purchase_order_items').delete().eq('purchase_order_id',id);
     await SB.from('order_notes').delete().eq('purchase_order_id',id);
     await SB.from('shipment_pos').delete().eq('purchase_order_id',id);
     const { error } = await SB.from('purchase_orders').delete().eq('id',id);
     if (error){ alert('Error: '+error.message); return; }
     navigate('orders');
+  };
+  const deleteAttachmentConfirmed = async (name) => {
+    await SB.storage.from('po-attachments').remove([id+'/'+name]);
+    setAttachments(prev=>prev.filter(f=>f.name!==name));
   };
   const genPO = async () => {
     // Open the window SYNCHRONOUSLY, before any await — otherwise iPad/Safari
@@ -669,8 +671,9 @@ function OrderDetail({ id, navigate }) {
         <button className="btn btn-dark btn-sm" onClick={genPO}>Generate PO PDF</button>
         <div style={{flex:1}} />
         <button className="btn btn-ghost btn-sm" onClick={()=>setEditing(true)}>Edit</button>
-        <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)'}} onClick={deletePO}>Delete</button>
+        <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)'}} onClick={()=>setConfirmDel({title:'Delete purchase order?',message:'This will permanently delete '+( po?.order_number||'this PO')+' and all its line items.',onConfirm:()=>{setConfirmDel(null);deletePO();}})}>Delete</button>
       </div>
+      {confirmDel && <ConfirmModal title={confirmDel.title} message={confirmDel.message} onConfirm={confirmDel.onConfirm} onCancel={()=>setConfirmDel(null)} />}
       {editing && <PoEditModal po={po} items={items} onClose={()=>setEditing(false)} onSaved={()=>{setEditing(false);load();}} />}
       <div className="detail-grid">
         <div className="detail-block">
@@ -1087,11 +1090,11 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
     onSaved();
   };
   const deleteCompany = async () => {
-    if (!confirm(`Delete ${co.name}? This will also remove all contacts and cannot be undone.`)) return;
     const { error } = await SB.from('companies').delete().eq('id',id);
     if (error){ alert('Error: '+error.message); return; }
     onSaved();
   };
+  const [confirmDel, setConfirmDel] = useState(false);
   if(!co||!form) return (
     <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}><div className="modal-box"><div className="modal-body"><div className="loading">Loading…</div></div></div></div>
   );
@@ -1157,13 +1160,14 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
         </div>
         <div className="modal-foot">
           {!edit ? (
-            <><button className="btn btn-ghost" onClick={onClose}>Close</button><button className="btn btn-ghost btn-sm" style={{color:'var(--hot)',marginRight:'auto'}} onClick={deleteCompany}>Delete</button><button className="btn btn-dark" onClick={()=>setEdit(true)}>Edit</button></>
+            <><button className="btn btn-ghost" onClick={onClose}>Close</button><button className="btn btn-ghost btn-sm" style={{color:'var(--hot)',marginRight:'auto'}} onClick={()=>setConfirmDel(true)}>Delete</button><button className="btn btn-dark" onClick={()=>setEdit(true)}>Edit</button></>
           ) : (
             <><button className="btn btn-ghost" onClick={()=>setEdit(false)}>Cancel</button><button className="btn btn-dark" onClick={save}>Save Changes</button></>
           )}
         </div>
       </div>
     </div>
+    {confirmDel && <ConfirmModal title={'Delete '+co.name+'?'} message="All contacts will be removed. This cannot be undone." onConfirm={()=>{setConfirmDel(false);deleteCompany();}} onCancel={()=>setConfirmDel(false)} />}
   );
 }
 
@@ -1323,8 +1327,8 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
     if (error){ alert('Error: '+error.message); return; }
     onSaved();
   };
+  const [confirmDel, setConfirmDel] = useState(false);
   const deleteShipment = async () => {
-    if (!confirm('Delete this shipment? POs will be unlinked. This cannot be undone.')) return;
     await SB.from('shipment_pos').delete().eq('shipment_id',id);
     await SB.from('shipments').delete().eq('id',id);
     onSaved();
@@ -1360,9 +1364,10 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
           </div>
         </div>
         )}
-        <div className="modal-foot"><button className="btn btn-ghost btn-sm" style={{color:'var(--hot)',marginRight:'auto'}} onClick={deleteShipment}>Delete</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={save} disabled={saving||!s}>{saving?'Saving…':'Save shipment'}</button></div>
+        <div className="modal-foot"><button className="btn btn-ghost btn-sm" style={{color:'var(--hot)',marginRight:'auto'}} onClick={()=>setConfirmDel(true)}>Delete</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={save} disabled={saving||!s}>{saving?'Saving…':'Save shipment'}</button></div>
       </div>
     </div>
+    {confirmDel && <ConfirmModal title="Delete shipment?" message="POs will be unlinked. This cannot be undone." onConfirm={()=>{setConfirmDel(false);deleteShipment();}} onCancel={()=>setConfirmDel(false)} />}
   );
 }
 
@@ -1987,7 +1992,8 @@ function buildPODoc(d, opts={}) {
     const ci = det.ci || (det.ci_value != null ? det.ci_value : null);
     const carton = det.carton || det.carton_info || '';
     return '<tr>'
-      +'<td class="l"><div class="desc">'+(l.description||'')+'</div><div class="sku">'+(l.sku||'')+'</div>'+(carton?'<div class="carton">'+carton+'</div>':'')+'</td>'
+      +'<td class="l"><div class="desc">'+(l.description||'')+'</div>'+(carton?'<div class="carton">'+carton+'</div>':'')+'</td>'
+      +'<td class="num mono" style="font-size:11px;color:#8a9097;">'+(l.sku||det.sku||'—')+'</td>'
       +'<td class="num">'+fn(l.quantity)+'</td>'
       +'<td class="num">'+(ci!=null?m(ci,d.currency):'—')+'</td>'
       +'<td class="num">'+m(l.unit_price,d.currency)+'</td>'
@@ -2039,7 +2045,7 @@ function buildPODoc(d, opts={}) {
 +'<div><div class="lbl">Incoterm</div><div class="tv">'+(d.incoterm||'—')+'</div></div>'
 +'<div><div class="lbl">Payment</div><div class="tv">'+(d.payment_terms||'—')+'</div></div>'
 +'</div>'
-+'<table><thead><tr><th class="l">Item / SKU</th><th>Qty</th><th>CI Value</th><th>Unit Cost</th><th>Amount</th></tr></thead><tbody>'+lines+'</tbody></table>'
++'<table><thead><tr><th class="l">Description</th><th>Style / SKU</th><th>Qty</th><th>CI Value</th><th>Unit Cost</th><th>Amount</th></tr></thead><tbody>'+lines+'</tbody></table>'
 +'<div class="foot">'
 +'<div><div class="lbl">Notes</div><div class="nb">'+(d.notes||'')+'</div>'+(pallet?'<div class="lbl" style="margin-top:22px">Palletization</div><div class="nb">'+pallet+'</div>':'')+(t.total_cartons?'<div class="lbl" style="margin-top:22px">Logistics</div><div class="nb">'+fn(t.total_cartons)+' cartons \u00b7 '+t.total_cbm+' CBM \u00b7 '+fn(t.total_gross_weight_kg)+' kg</div>':'')+'</div>'
 +'<div>'
@@ -2053,6 +2059,29 @@ function buildPODoc(d, opts={}) {
 +'<div class="sign"><div><div class="sline"><div class="lbl">Authorized \u2014 King Universal Inc.</div></div></div><div><div class="sline"><div class="lbl">Accepted \u2014 Supplier</div></div></div></div>'
 +'<div class="pf"><span>King Universal Inc.</span><span>'+(d.po_number||'')+'</span></div>'
 +'</div></body></html>';
+}
+
+// ── Confirm Modal ─────────────────────────────────────────────────────────────
+function ConfirmModal({ title, message, confirmLabel='Delete', danger=true, onConfirm, onCancel }) {
+  return (
+    <div className="modal-overlay" onClick={onCancel} style={{zIndex:10000}}>
+      <div className="modal-box" style={{maxWidth:'380px',padding:'32px 28px',textAlign:'center'}} onClick={e=>e.stopPropagation()}>
+        <div style={{width:'52px',height:'52px',borderRadius:'50%',background:danger?'#fef2f2':'#f0f9ff',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 18px'}}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={danger?'#e53935':'#3461e0'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            {danger
+              ? <><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></>
+              : <><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></>}
+          </svg>
+        </div>
+        <h3 style={{fontFamily:'var(--sans)',fontSize:'16px',fontWeight:600,color:'var(--ink)',marginBottom:'8px'}}>{title}</h3>
+        {message && <p style={{fontSize:'13.5px',color:'var(--muted)',lineHeight:1.55,marginBottom:'28px'}}>{message}</p>}
+        <div style={{display:'flex',gap:'10px',justifyContent:'center'}}>
+          <button className="btn btn-ghost" style={{minWidth:'90px'}} onClick={onCancel}>Cancel</button>
+          <button className="btn" style={{minWidth:'90px',background:danger?'#e53935':'var(--accent)',color:'#fff',fontWeight:600}} onClick={onConfirm}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── App Root ──────────────────────────────────────────────────────────────────
