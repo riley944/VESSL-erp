@@ -518,26 +518,25 @@ function OrderDetail({ id, navigate }) {
     setPO(prev=>({...prev,status}));
     if (status === 'shipped') {
       const created = await ensureShipmentForPO();
-      if (created) alert('A shipment was created for this PO. You can find it in the Shipments tab.');
+      if (created) alert('Shipment created for '+( po?.order_number||'this PO')+'. Find it in the Shipments tab.');
     }
   };
   // Turn this PO into a shipment (once). Returns true if a new shipment was made.
   const ensureShipmentForPO = async () => {
     try {
       const { data: links } = await SB.from('shipment_pos').select('shipment_id').eq('purchase_order_id',id).limit(1);
-      if (links && links.length) return false; // already linked to a shipment
+      if (links && links.length) return false; // already linked
       const base = (po?.order_number || id.slice(0,8)).toString().replace(/^PO[-\s]?/i,'');
       const num  = 'SHP-'+base+'-'+Date.now().toString(36).slice(-4).toUpperCase();
       const { data: ship, error: sErr } = await SB.from('shipments').insert({
         shipment_number: num,
         status: 'in_transit',
-        inco_term: po?.incoterm || null,
-        estimated_departure: new Date().toISOString(),
+        client_company_id: po?.client_company_id || null,
       }).select('id').single();
-      if (sErr || !ship) { console.error('shipment create failed', sErr); return false; }
+      if (sErr || !ship) { alert('Shipment creation failed: '+(sErr?.message||'unknown')); return false; }
       await SB.from('shipment_pos').insert({ shipment_id: ship.id, purchase_order_id: id });
       return true;
-    } catch(e){ console.error(e); return false; }
+    } catch(e){ alert('Shipment creation error: '+e.message); return false; }
   };
   // Find this PO's shipment, creating+linking one if it doesn't exist yet.
   const getOrCreateShipmentId = async () => {
@@ -546,7 +545,7 @@ function OrderDetail({ id, navigate }) {
     if (links && links.length) return links[0].shipment_id;
     const base = (po?.order_number || id.slice(0,8)).toString().replace(/^PO[-\s]?/i,'');
     const num  = 'SHP-'+base+'-'+Date.now().toString(36).slice(-4).toUpperCase();
-    const { data: s } = await SB.from('shipments').insert({ shipment_number:num, status:'created', inco_term:po?.incoterm||null }).select().single();
+    const { data: s } = await SB.from('shipments').insert({ shipment_number:num, status:'created', client_company_id: po?.client_company_id||null }).select().single();
     if (!s) return null;
     await SB.from('shipment_pos').insert({ shipment_id:s.id, purchase_order_id:id });
     setShip(s);
@@ -1907,7 +1906,6 @@ function CreateShipmentModal({ onClose, onCreated }) {
       estimated_departure: form.etd ? new Date(form.etd+'T12:00:00').toISOString() : null,
       estimated_arrival:   form.eta ? new Date(form.eta+'T12:00:00').toISOString() : null,
       status: form.status,
-      inco_term: form.inco || null,
     }).select('id').single();
     if (error) { alert('Error: '+error.message); return; }
     if (form.poId) await SB.from('shipment_pos').insert({ shipment_id: ship.id, purchase_order_id: form.poId });
