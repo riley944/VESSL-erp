@@ -115,6 +115,7 @@ const Ic = {
   companies:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h.01M9 13h.01M9 17h.01M15 9h.01M15 13h.01M15 17h.01"/></svg>,
   products:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>,
   shipments:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6h13v9H1zM14 9h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg>,
+  inventory:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
   quotes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9.5 14.5h3.5a1.5 1.5 0 0 0 0-3h-2a1.5 1.5 0 0 1 0-3H14"/></svg>,
   settings:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
 };
@@ -127,6 +128,7 @@ function Sidebar({ page, navigate, user, open }) {
     { id:'companies', label:'Companies' },
     { id:'products',  label:'Products' },
     { id:'shipments', label:'Shipments' },
+    { id:'inventory', label:'Inventory' },
     { id:'quotes',    label:'Quotes' },
   ];
   return (
@@ -228,6 +230,80 @@ function Dashboard({ navigate }) {
   );
 }
 
+// ── Inventory ─────────────────────────────────────────────────────────────────
+function Inventory() {
+  const [groups, setGroups] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [refreshed, setRefreshed] = useState(null);
+  const load = async () => {
+    setLoading(true);
+    const { data: pos } = await SB.from('purchase_orders')
+      .select('id,order_number,status,client:companies!client_company_id(name,id),purchase_order_items(description,quantity,products(name,sku)),shipment_pos(shipments(status))')
+      .not('status','in','("draft","cancelled","closed","delivered")');
+    const active = (pos||[]).filter(po => {
+      const ships = (po.shipment_pos||[]).map(sp=>sp.shipments).filter(Boolean);
+      return !ships.some(s=>['shipped','delivered'].includes(s?.status));
+    });
+    const g = {};
+    active.forEach(po=>{
+      const cName = po.client?.name||'Unassigned';
+      if (!g[cName]) g[cName] = { color:companyColor(cName), products:{} };
+      (po.purchase_order_items||[]).forEach(it=>{
+        const prod = it.products?.name||it.description||'—';
+        const sku  = it.products?.sku||'';
+        const k = `${prod}|||${sku}`;
+        if (!g[cName].products[k]) g[cName].products[k] = { prod, sku, qty:0, orders:[] };
+        g[cName].products[k].qty  += Number(it.quantity)||0;
+        g[cName].products[k].orders.push({ num:po.order_number||po.id.slice(0,8), status:po.status });
+      });
+    });
+    setGroups(g); setRefreshed(new Date()); setLoading(false);
+  };
+  useEffect(()=>{ load(); },[]);
+  if (loading) return <div className="loading">Loading inventory…</div>;
+  const clients = Object.keys(groups).sort();
+  if (!clients.length) return (
+    <div className="section-card"><div className="empty"><h3>Inventory is empty</h3><p>Live (non-draft) POs appear here automatically. Counts drop once a shipment is marked as shipped.</p></div></div>
+  );
+  return (
+    <>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'20px'}}>
+        <span style={{fontSize:'12.5px',color:'var(--muted)'}}>Live on-order inventory · updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>
+        <button className="btn btn-ghost btn-sm" onClick={load}>↻ Refresh</button>
+      </div>
+      {clients.map(c=>{
+        const { color, products } = groups[c];
+        const rows = Object.values(products);
+        const total = rows.reduce((a,p)=>a+p.qty,0);
+        return (
+          <div key={c} className="section-card" style={{marginBottom:'20px'}}>
+            <div className="section-head">
+              <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+                <span className="oc-avatar" style={{background:color,width:'30px',height:'30px',fontSize:'11px'}}>{initials(c)}</span>
+                <h3>{c}</h3>
+              </div>
+              <span style={{fontFamily:'var(--mono)',fontSize:'12px',color:'var(--muted)'}}>{total.toLocaleString()} units on order</span>
+            </div>
+            <table className="data-table">
+              <thead><tr><th>Product</th><th>SKU</th><th style={{textAlign:'right'}}>On order</th><th>POs</th></tr></thead>
+              <tbody>
+                {rows.sort((a,b)=>b.qty-a.qty).map((p,i)=>(
+                  <tr key={i}>
+                    <td style={{fontWeight:500}}>{p.prod}</td>
+                    <td className="mono" style={{fontSize:'12px',color:'var(--muted)'}}>{p.sku||'—'}</td>
+                    <td style={{textAlign:'right',fontFamily:'var(--mono)',fontWeight:700,fontSize:'16px'}}>{p.qty.toLocaleString()}</td>
+                    <td>{p.orders.map((o,j)=><span key={j} className={`badge badge-${o.status}`} style={{marginRight:'4px',fontSize:'10px'}}>{o.num}</span>)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 // ── KUI Settings ──────────────────────────────────────────────────────────────
 function KuiSettings() {
   const [form, setForm] = useState(null);
@@ -319,6 +395,8 @@ function OrderDetail({ id, navigate }) {
   const [noteMsg, setNoteMsg]   = useState('');
   const [posting, setPosting]   = useState(false);
   const [noteAssignee, setNoteAssignee] = useState('all');
+  const [attachments, setAttachments] = useState([]);
+  const [uploading, setUploading] = useState(false);
   const load = async () => {
     const [{ data: p },{ data: its }] = await Promise.all([
       SB.from('purchase_orders').select('*,companies!factory_company_id(name,email),client:companies!client_company_id(name,vendor_number)').eq('id',id).single(),
@@ -342,6 +420,11 @@ function OrderDetail({ id, navigate }) {
     // order notes
     const { data: ns } = await SB.from('order_notes').select('*').eq('purchase_order_id',id).order('created_at',{ascending:false});
     setNotes(ns||[]);
+    // attachments from storage (bucket 'po-attachments')
+    try {
+      const { data: files } = await SB.storage.from('po-attachments').list(id+'/');
+      setAttachments(files?.filter(f=>f.name)|| []);
+    } catch(e){ setAttachments([]); }
     setLoading(false);
   };
   useEffect(()=>{ load(); },[id]);
@@ -438,7 +521,23 @@ function OrderDetail({ id, navigate }) {
     setTimeout(()=>setNoteMsg(''),3000);
     setPosting(false);
   };
-  const deletePO = async () => {
+  const uploadFile = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+    const path = `${id}/${Date.now()}-${safeName}`;
+    const { error } = await SB.storage.from('po-attachments').upload(path, file, { upsert:false });
+    if (error){ setUploading(false); alert('Upload failed: '+error.message+'\n\nMake sure the "po-attachments" storage bucket has been created in Supabase.'); return; }
+    const { data: files } = await SB.storage.from('po-attachments').list(id+'/');
+    setAttachments(files?.filter(f=>f.name)||[]);
+    setUploading(false);
+  };
+  const deleteAttachment = async (name) => {
+    if (!confirm('Remove this attachment?')) return;
+    await SB.storage.from('po-attachments').remove([`${id}/${name}`]);
+    setAttachments(prev=>prev.filter(f=>f.name!==name));
+  };
+  const attachUrl = (name) => SB.storage.from('po-attachments').getPublicUrl(`${id}/${name}`).data.publicUrl;
     if(!confirm('Delete this purchase order and all its line items? This cannot be undone.')) return;
     await SB.from('purchase_order_items').delete().eq('purchase_order_id',id);
     const { error } = await SB.from('purchase_orders').delete().eq('id',id);
@@ -588,6 +687,29 @@ function OrderDetail({ id, navigate }) {
             </div>
           )) : <div style={{padding:'8px 18px 18px',fontSize:'13px',color:'var(--muted)'}}>No notes yet.</div>}
         </div>
+      </div>
+
+      <div className="section-card" style={{marginTop:'20px'}}>
+        <div className="section-head"><h3>Attachments</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Photos, spec sheets, samples, etc.</span></div>
+        <div style={{padding:'14px 18px',borderBottom:attachments.length?'1px solid var(--line)':'none'}}>
+          <label style={{cursor:uploading?'default':'pointer'}}>
+            <span className={`btn btn-ghost btn-sm${uploading?' disabled':''}`}>{uploading?'Uploading…':'+ Add attachment'}</span>
+            <input type="file" accept="image/*,.pdf" style={{display:'none'}} disabled={uploading}
+              onChange={e=>{if(e.target.files[0])uploadFile(e.target.files[0]);e.target.value='';}} />
+          </label>
+          <p style={{fontSize:'12px',color:'var(--muted)',marginTop:'6px',marginBottom:0}}>JPEG, PNG, PDF — stored securely per order.</p>
+        </div>
+        {attachments.length>0 && (
+          <div>
+            {attachments.map(f=>(
+              <div key={f.name} style={{display:'flex',alignItems:'center',gap:'12px',padding:'11px 18px',borderBottom:'1px solid var(--line-2)'}}>
+                <span style={{flex:1,fontSize:'13px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--ink)'}}>{f.name.replace(/^\d+-/,'')}</span>
+                <a href={attachUrl(f.name)} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{flexShrink:0}}>View</a>
+                <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)',flexShrink:0}} onClick={()=>deleteAttachment(f.name)}>Remove</button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </>
   );
@@ -1828,6 +1950,7 @@ export default function App() {
           {page==='companies'    && <Companies />}
           {page==='products'     && <Products navigate={navigate} />}
           {page==='shipments'    && <Shipments key={shipmentsRefresh} />}
+          {page==='inventory'    && <Inventory />}
           {page==='settings'     && <KuiSettings />}
         </div>
       </div>
