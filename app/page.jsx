@@ -297,7 +297,7 @@ function Inventory() {
       (po.purchase_order_items||[]).forEach(it=>{
         const prod = it.products?.name||it.description||'—';
         const sku  = it.products?.sku||'';
-        const k = `${prod}|||${sku}`;
+        const k = prod+'|||'+sku;
         if (!g[cName].products[k]) g[cName].products[k] = { prod, sku, qty:0, orders:[] };
         g[cName].products[k].qty  += Number(it.quantity)||0;
         g[cName].products[k].orders.push({ num:po.order_number||po.id.slice(0,8), status:po.status });
@@ -308,15 +308,54 @@ function Inventory() {
   useEffect(()=>{ load(); },[]);
   if (loading) return <div className="loading">Loading inventory…</div>;
   const clients = Object.keys(groups).sort();
+  const totalUnits = clients.reduce((a,c)=>a+Object.values(groups[c].products).reduce((b,p)=>b+p.qty,0),0);
+  const totalSkus  = clients.reduce((a,c)=>a+Object.keys(groups[c].products).length,0);
+  const maxUnits   = Math.max(1,...clients.map(c=>Object.values(groups[c].products).reduce((a,p)=>a+p.qty,0)));
   if (!clients.length) return (
-    <div className="section-card"><div className="empty"><h3>Inventory is empty</h3><p>Live (non-draft) POs appear here automatically. Counts drop once a shipment is marked as shipped.</p></div></div>
+    <div className="section-card"><div className="empty"><h3>Inventory is empty</h3><p>Live (non-draft) POs appear here automatically. Counts drop once a shipment is marked shipped.</p></div></div>
   );
   return (
     <>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'20px'}}>
-        <span style={{fontSize:'12.5px',color:'var(--muted)'}}>Live on-order inventory · updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>
+        <span style={{fontSize:'12.5px',color:'var(--muted)'}}>Live on-order · updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>
         <button className="btn btn-ghost btn-sm" onClick={load}>↻ Refresh</button>
       </div>
+
+      {/* Summary stats */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'14px',marginBottom:'24px'}}>
+        {[
+          {label:'Total Units On Order', value:totalUnits.toLocaleString(), sub:'across all clients'},
+          {label:'Active SKUs', value:totalSkus.toLocaleString(), sub:'unique products'},
+          {label:'Active Clients', value:clients.length.toString(), sub:'with live orders'},
+        ].map(s=>(
+          <div key={s.label} className="section-card" style={{padding:'18px 20px',marginBottom:0}}>
+            <div style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'8px'}}>{s.label}</div>
+            <div style={{fontFamily:'var(--mono)',fontSize:'26px',fontWeight:700,color:'var(--ink)',lineHeight:1}}>{s.value}</div>
+            <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'5px'}}>{s.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Visual bar chart by client */}
+      <div className="section-card" style={{marginBottom:'24px',padding:'20px 24px'}}>
+        <div style={{fontSize:'11px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'16px'}}>Units on order by client</div>
+        {clients.map(c=>{
+          const qty = Object.values(groups[c].products).reduce((a,p)=>a+p.qty,0);
+          const pct = (qty/maxUnits*100).toFixed(1);
+          return (
+            <div key={c} style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'10px'}}>
+              <span className="oc-avatar" style={{background:groups[c].color,width:'24px',height:'24px',fontSize:'9px',flexShrink:0}}>{initials(c)}</span>
+              <span style={{fontSize:'12px',fontWeight:500,width:'120px',flexShrink:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c}</span>
+              <div style={{flex:1,background:'var(--bg)',borderRadius:'4px',height:'16px',overflow:'hidden'}}>
+                <div style={{width:pct+'%',background:groups[c].color,height:'100%',borderRadius:'4px',transition:'width .4s ease',minWidth:qty>0?'3px':'0'}} />
+              </div>
+              <span style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:600,width:'50px',textAlign:'right',flexShrink:0}}>{qty.toLocaleString()}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Per-client detail tables */}
       {clients.map(c=>{
         const { color, products } = groups[c];
         const rows = Object.values(products);
@@ -338,7 +377,7 @@ function Inventory() {
                     <td style={{fontWeight:500}}>{p.prod}</td>
                     <td className="mono" style={{fontSize:'12px',color:'var(--muted)'}}>{p.sku||'—'}</td>
                     <td style={{textAlign:'right',fontFamily:'var(--mono)',fontWeight:700,fontSize:'16px'}}>{p.qty.toLocaleString()}</td>
-                    <td>{p.orders.map((o,j)=><span key={j} className={`badge badge-${o.status}`} style={{marginRight:'4px',fontSize:'10px'}}>{o.num}</span>)}</td>
+                    <td>{p.orders.map((o,j)=><span key={j} className={'badge badge-'+o.status} style={{marginRight:'4px',fontSize:'10px'}}>{o.num}</span>)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -600,7 +639,7 @@ function OrderDetail({ id, navigate }) {
     }
     const { data, error } = await SB.rpc('po_document_json',{p_po_id:id});
     if (error||!data){ if(win) win.close(); alert('Error: '+(error?.message||'No data')); return; }
-    const html = buildPODoc(data, { pallet: po?.pallet_info });
+    const html = buildPODoc(data, { pallet: po?.pallet_info, clientName: po?.client?.name, itemDetails: items });
     if (win) {
       win.document.open();
       win.document.write(html);
@@ -1284,6 +1323,12 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
     if (error){ alert('Error: '+error.message); return; }
     onSaved();
   };
+  const deleteShipment = async () => {
+    if (!confirm('Delete this shipment? POs will be unlinked. This cannot be undone.')) return;
+    await SB.from('shipment_pos').delete().eq('shipment_id',id);
+    await SB.from('shipments').delete().eq('id',id);
+    onSaved();
+  };
   const clients  = companies.filter(c=>['client','brand','customer'].includes(c.type));
   const carriers = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
   return (
@@ -1315,7 +1360,7 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
           </div>
         </div>
         )}
-        <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={save} disabled={saving||!s}>{saving?'Saving…':'Save shipment'}</button></div>
+        <div className="modal-foot"><button className="btn btn-ghost btn-sm" style={{color:'var(--hot)',marginRight:'auto'}} onClick={deleteShipment}>Delete</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={save} disabled={saving||!s}>{saving?'Saving…':'Save shipment'}</button></div>
       </div>
     </div>
   );
@@ -1931,68 +1976,83 @@ function CreateProductModal({ onClose, onCreated }) {
 // ── PO Document Builder ───────────────────────────────────────────────────────
 function buildPODoc(d, opts={}) {
   const pallet = opts.pallet || d.pallet_info || '';
+  const clientName = opts.clientName || d.client_name || '';
+  const itemDetails = opts.itemDetails || [];
   const t=d.totals||{};
   const m=(n,c)=>n==null?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:c||'USD'}).format(n);
   const fd=s=>{if(!s)return'—';return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'});};
   const fn=n=>n==null?'—':new Intl.NumberFormat('en-US').format(n);
-  const lines=(d.lines||[]).map(l=>`<tr>
-    <td class="l"><div class="desc">${l.description||''}</div><div class="sku">${l.sku||''}</div></td>
-    <td class="num">${fn(l.quantity)}</td><td class="num">${l.carton_count?fn(l.carton_count):'—'}</td>
-    <td class="num">${m(l.unit_price,d.currency)}</td><td class="num">${m(l.line_amount,d.currency)}</td></tr>`).join('');
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${d.po_number||'PO'}</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Spline+Sans:wght@400;500&family=Spline+Sans+Mono:wght@400&display=swap" rel="stylesheet">
-<style>*{box-sizing:border-box;margin:0;padding:0;}html,body{background:#fff;font-family:'Spline Sans',sans-serif;font-size:13px;color:#1a1d1f;}
-.page{max-width:8.5in;margin:0 auto;padding:.9in .9in .8in;min-height:11in;}
-.lbl{font-family:'Spline Sans Mono',monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:#8a9097;}
-.num{font-family:'Spline Sans Mono',monospace;}.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:60px;}
-.logo{height:56px;}.title-row{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:52px;}
-h1{font-family:'Fraunces',serif;font-weight:400;font-size:30px;}
-.pov{font-family:'Spline Sans Mono',monospace;font-size:15px;margin-top:5px;text-align:right;}
-.parties{display:grid;grid-template-columns:1fr 1fr;gap:56px;margin-bottom:46px;}
-.party-name{font-size:14px;font-weight:500;margin-bottom:5px;margin-top:11px;}.party-body{font-size:12px;line-height:1.75;color:#8a9097;}
-.terms{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;padding-top:22px;border-top:1px solid #ececec;margin-bottom:50px;}
-.tv{font-size:13px;font-weight:500;margin-top:7px;}
-table{width:100%;border-collapse:collapse;}
-thead th{font-family:'Spline Sans Mono',monospace;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:#8a9097;text-align:right;font-weight:400;padding:0 0 14px;}
-thead th.l{text-align:left;}tbody td{font-size:12.5px;padding:18px 0;border-top:1px solid #ececec;text-align:right;vertical-align:top;}
-tbody td.l{text-align:left;padding-right:24px;}.desc{font-weight:500;font-size:13px;}.sku{font-family:'Spline Sans Mono',monospace;font-size:10px;color:#c9ccce;margin-top:4px;}
-.foot{display:grid;grid-template-columns:1fr 280px;gap:60px;margin-top:46px;}
-.nb{font-size:11.5px;line-height:1.8;color:#8a9097;margin-top:12px;}
-.tr{display:flex;justify-content:space-between;padding:9px 0;font-size:12.5px;}.tr .k{color:#8a9097;}.tr .v{font-family:'Spline Sans Mono',monospace;}
-.grand{display:flex;justify-content:space-between;padding:16px 0 0;margin-top:8px;border-top:1px solid #1a1d1f;}
-.grand .k{font-family:'Fraunces',serif;font-size:14px;}.grand .v{font-family:'Spline Sans Mono',monospace;font-size:19px;}
-.dep{display:flex;justify-content:space-between;padding-top:12px;font-size:11.5px;color:#8a9097;}.dep .v{font-family:'Spline Sans Mono',monospace;}
-.sign{display:grid;grid-template-columns:1fr 1fr;gap:56px;margin-top:80px;}
-.sline{border-top:1px solid #c9ccce;padding-top:8px;}
-.pf{margin-top:54px;display:flex;justify-content:space-between;font-family:'Spline Sans Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#c9ccce;}
-@media print{@page{size:letter;margin:0;}.page{padding:.85in .9in;}}</style></head><body>
-<div class="page">
-  <div class="head"><img class="logo" src="/logo.png" alt="King Universal"></div>
-  <div class="title-row"><h1>Purchase Order</h1><div><div class="lbl">PO Number</div><div class="pov">${d.po_number||'—'}</div></div></div>
-  <div class="parties">
-    <div><div class="lbl">Supplier</div><div class="party-name">${d.supplier?.name||'—'}</div><div class="party-body">${d.supplier?.contact?'Attn: '+d.supplier.contact+'<br>':''}${(d.supplier?.lines||[]).join('<br>')}${d.supplier?.email?'<br>'+d.supplier.email:''}</div></div>
-    <div><div class="lbl">Ship To</div><div class="party-name">${d.ship_to?.name||'—'}</div><div class="party-body">${(d.ship_to?.lines||[]).join('<br>')}</div></div>
-  </div>
-  <div class="terms">
-    <div><div class="lbl">Order Date</div><div class="tv">${fd(d.order_date)}</div></div>
-    <div><div class="lbl">Ship By</div><div class="tv">${fd(d.requested_ship_date)}</div></div>
-    <div><div class="lbl">Incoterm</div><div class="tv">${d.incoterm||'—'}</div></div>
-    <div><div class="lbl">Payment</div><div class="tv">${d.payment_terms||'—'}</div></div>
-  </div>
-  <table><thead><tr><th class="l">Item</th><th>Qty</th><th>Cartons</th><th>Unit</th><th>Amount</th></tr></thead><tbody>${lines}</tbody></table>
-  <div class="foot">
-    <div><div class="lbl">Notes</div><div class="nb">${d.notes||''}</div>${pallet?`<div class="lbl" style="margin-top:22px">Palletization</div><div class="nb">${pallet}</div>`:''}${t.total_cartons?`<div class="lbl" style="margin-top:22px">Logistics</div><div class="nb">${fn(t.total_cartons)} cartons · ${t.total_cbm} CBM · ${fn(t.total_gross_weight_kg)} kg</div>`:''}</div>
-    <div>
-      <div class="tr"><span class="k">Goods subtotal</span><span class="v">${m(t.subtotal,d.currency)}</span></div>
-      ${t.mold_fee?`<div class="tr"><span class="k">Tooling / mold</span><span class="v">${m(t.mold_fee,d.currency)}</span></div>`:''}
-      ${t.sample_fee?`<div class="tr" style="opacity:.6;font-style:italic"><span class="k">Sample fee (sep.)</span><span class="v">${m(t.sample_fee,d.currency)}</span></div>`:''}
-      <div class="grand"><span class="k">Total — ${d.currency||'USD'}</span><span class="v">${m(t.grand_total,d.currency)}</span></div>
-      ${t.deposit_amount?`<div class="dep"><span>${d.deposit_percent}% deposit</span><span class="v">${m(t.deposit_amount,d.currency)}</span></div>`:''}
-    </div>
-  </div>
-  <div class="sign"><div><div class="sline"><div class="lbl">Authorized — King Universal Inc.</div></div></div><div><div class="sline"><div class="lbl">Accepted — Supplier</div></div></div></div>
-  <div class="pf"><span>King Universal Inc.</span><span>${d.po_number||''}</span></div>
-</div></body></html>`;
+  const lines=(d.lines||[]).map((l,idx)=>{
+    const det = itemDetails[idx] || {};
+    const ci = det.ci || (det.ci_value != null ? det.ci_value : null);
+    const carton = det.carton || det.carton_info || '';
+    return '<tr>'
+      +'<td class="l"><div class="desc">'+(l.description||'')+'</div><div class="sku">'+(l.sku||'')+'</div>'+(carton?'<div class="carton">'+carton+'</div>':'')+'</td>'
+      +'<td class="num">'+fn(l.quantity)+'</td>'
+      +'<td class="num">'+(ci!=null?m(ci,d.currency):'—')+'</td>'
+      +'<td class="num">'+m(l.unit_price,d.currency)+'</td>'
+      +'<td class="num">'+m(l.line_amount,d.currency)+'</td>'
+      +'</tr>';
+  }).join('');
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+(d.po_number||'PO')+'</title>'
++'<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Spline+Sans:wght@400;500&family=Spline+Sans+Mono:wght@400&display=swap" rel="stylesheet">'
++'<style>*{box-sizing:border-box;margin:0;padding:0;}html,body{background:#fff;font-family:\'Spline Sans\',sans-serif;font-size:13px;color:#1a1d1f;}'
++'.page{max-width:8.5in;margin:0 auto;padding:.9in .9in .8in;min-height:11in;}'
++'.lbl{font-family:\'Spline Sans Mono\',monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:#8a9097;}'
++'.num{font-family:\'Spline Sans Mono\',monospace;}.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:48px;}'
++'.logo{height:52px;}.title-row{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px;}'
++'h1{font-family:\'Fraunces\',serif;font-weight:400;font-size:30px;}'
++'.pov{font-family:\'Spline Sans Mono\',monospace;font-size:15px;margin-top:5px;text-align:right;}'
++'.client-banner{background:#f8f9fa;border-left:3px solid #1a1d1f;padding:10px 16px;margin-bottom:40px;display:flex;align-items:baseline;gap:16px;}'
++'.client-banner .lbl{margin-bottom:0;}.client-banner .name{font-size:16px;font-weight:600;font-family:\'Fraunces\',serif;}'
++'.parties{display:grid;grid-template-columns:1fr 1fr;gap:56px;margin-bottom:46px;}'
++'.party-name{font-size:14px;font-weight:500;margin-bottom:5px;margin-top:11px;}.party-body{font-size:12px;line-height:1.75;color:#8a9097;}'
++'.terms{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;padding-top:22px;border-top:1px solid #ececec;margin-bottom:50px;}'
++'.tv{font-size:13px;font-weight:500;margin-top:7px;}'
++'table{width:100%;border-collapse:collapse;}'
++'thead th{font-family:\'Spline Sans Mono\',monospace;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:#8a9097;text-align:right;font-weight:400;padding:0 0 14px;}'
++'thead th.l{text-align:left;}tbody td{font-size:12.5px;padding:16px 0;border-top:1px solid #ececec;text-align:right;vertical-align:top;}'
++'tbody td.l{text-align:left;padding-right:24px;}.desc{font-weight:500;font-size:13px;}.sku{font-family:\'Spline Sans Mono\',monospace;font-size:10px;color:#c9ccce;margin-top:3px;}'
++'.carton{font-size:10.5px;color:#8a9097;margin-top:3px;line-height:1.5;}'
++'.foot{display:grid;grid-template-columns:1fr 280px;gap:60px;margin-top:46px;}'
++'.nb{font-size:11.5px;line-height:1.8;color:#8a9097;margin-top:12px;}'
++'.tr{display:flex;justify-content:space-between;padding:9px 0;font-size:12.5px;}.tr .k{color:#8a9097;}.tr .v{font-family:\'Spline Sans Mono\',monospace;}'
++'.grand{display:flex;justify-content:space-between;padding:16px 0 0;margin-top:8px;border-top:1px solid #1a1d1f;}'
++'.grand .k{font-family:\'Fraunces\',serif;font-size:14px;}.grand .v{font-family:\'Spline Sans Mono\',monospace;font-size:19px;}'
++'.dep{display:flex;justify-content:space-between;padding-top:12px;font-size:11.5px;color:#8a9097;}.dep .v{font-family:\'Spline Sans Mono\',monospace;}'
++'.sign{display:grid;grid-template-columns:1fr 1fr;gap:56px;margin-top:80px;}'
++'.sline{border-top:1px solid #c9ccce;padding-top:8px;}'
++'.pf{margin-top:54px;display:flex;justify-content:space-between;font-family:\'Spline Sans Mono\',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#c9ccce;}'
++'@media print{@page{size:letter;margin:0;}.page{padding:.85in .9in;}}'
++'</style></head><body>'
++'<div class="page">'
++'<div class="head"><img class="logo" src="/logo.png" alt="King Universal"></div>'
++'<div class="title-row"><h1>Purchase Order</h1><div><div class="lbl">PO Number</div><div class="pov">'+(d.po_number||'—')+'</div></div></div>'
++(clientName ? '<div class="client-banner"><span class="lbl">Prepared for</span><span class="name">'+clientName+'</span></div>' : '<div style="margin-bottom:40px"></div>')
++'<div class="parties">'
++'<div><div class="lbl">Supplier</div><div class="party-name">'+(d.supplier?.name||'—')+'</div><div class="party-body">'+(d.supplier?.contact?'Attn: '+d.supplier.contact+'<br>':'')+(d.supplier?.lines||[]).join('<br>')+(d.supplier?.email?'<br>'+d.supplier.email:'')+'</div></div>'
++'<div><div class="lbl">Ship To</div><div class="party-name">'+(d.ship_to?.name||'—')+'</div><div class="party-body">'+(d.ship_to?.lines||[]).join('<br>')+'</div></div>'
++'</div>'
++'<div class="terms">'
++'<div><div class="lbl">Order Date</div><div class="tv">'+fd(d.order_date)+'</div></div>'
++'<div><div class="lbl">Ship By</div><div class="tv">'+fd(d.requested_ship_date)+'</div></div>'
++'<div><div class="lbl">Incoterm</div><div class="tv">'+(d.incoterm||'—')+'</div></div>'
++'<div><div class="lbl">Payment</div><div class="tv">'+(d.payment_terms||'—')+'</div></div>'
++'</div>'
++'<table><thead><tr><th class="l">Item / SKU</th><th>Qty</th><th>CI Value</th><th>Unit Cost</th><th>Amount</th></tr></thead><tbody>'+lines+'</tbody></table>'
++'<div class="foot">'
++'<div><div class="lbl">Notes</div><div class="nb">'+(d.notes||'')+'</div>'+(pallet?'<div class="lbl" style="margin-top:22px">Palletization</div><div class="nb">'+pallet+'</div>':'')+(t.total_cartons?'<div class="lbl" style="margin-top:22px">Logistics</div><div class="nb">'+fn(t.total_cartons)+' cartons \u00b7 '+t.total_cbm+' CBM \u00b7 '+fn(t.total_gross_weight_kg)+' kg</div>':'')+'</div>'
++'<div>'
++'<div class="tr"><span class="k">Goods subtotal</span><span class="v">'+m(t.subtotal,d.currency)+'</span></div>'
++(t.mold_fee?'<div class="tr"><span class="k">Tooling / mold</span><span class="v">'+m(t.mold_fee,d.currency)+'</span></div>':'')
++(t.sample_fee?'<div class="tr" style="opacity:.6;font-style:italic"><span class="k">Sample fee (sep.)</span><span class="v">'+m(t.sample_fee,d.currency)+'</span></div>':'')
++'<div class="grand"><span class="k">Total \u2014 '+(d.currency||'USD')+'</span><span class="v">'+m(t.grand_total,d.currency)+'</span></div>'
++(t.deposit_amount?'<div class="dep"><span>'+d.deposit_percent+'% deposit</span><span class="v">'+m(t.deposit_amount,d.currency)+'</span></div>':'')
++'</div>'
++'</div>'
++'<div class="sign"><div><div class="sline"><div class="lbl">Authorized \u2014 King Universal Inc.</div></div></div><div><div class="sline"><div class="lbl">Accepted \u2014 Supplier</div></div></div></div>'
++'<div class="pf"><span>King Universal Inc.</span><span>'+(d.po_number||'')+'</span></div>'
++'</div></body></html>';
 }
 
 // ── App Root ──────────────────────────────────────────────────────────────────
