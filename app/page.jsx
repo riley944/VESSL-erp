@@ -188,7 +188,8 @@ function Dashboard({ navigate }) {
   const [search, setSearch] = useState('');
   const [client, setClient] = useState('all');
   const [status, setStatusFilter] = useState('all');
-  const [taskCount, setTaskCount] = useState(0);
+  const [tasks, setTasks] = useState([]);
+  const [showTasks, setShowTasks] = useState(false);
   useEffect(() => {
     (async () => {
       const [{ data: pos }, { data: cos }, { data: rec }] = await Promise.all([
@@ -203,10 +204,18 @@ function Dashboard({ navigate }) {
         clients:(cos||[]).filter(c=>c.type==='client').length
       });
       setRecent(rec||[]);
-      try { const { data: t } = await SBQ.from('tasks').select('id,done').eq('done',false); setTaskCount((t||[]).length); } catch(e){}
+      try { const { data: t } = await SBQ.from('tasks').select('*').order('created_at',{ascending:false}); setTasks(t||[]); } catch(e){}
       setLoading(false);
     })();
   },[]);
+  const toggleTask = async (t) => {
+    try {
+      const done = !t.done;
+      await SBQ.from('tasks').update({done, done_at: done ? new Date().toISOString() : null}).eq('id',t.id);
+      setTasks(prev=>prev.map(x=>x.id===t.id?{...x,done}:x));
+    } catch(e){}
+  };
+  const openCount = tasks.filter(t=>!t.done).length;
   if (loading) return <div className="loading">Loading...</div>;
   const setStatus = async (pid, st) => {
     await SB.from('purchase_orders').update({status:st,updated_at:new Date().toISOString()}).eq('id',pid);
@@ -215,6 +224,31 @@ function Dashboard({ navigate }) {
   const shown = filterPOs(recent,{search,client,status});
   return (
     <>
+      {showTasks && (
+        <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&setShowTasks(false)}>
+          <div className="modal-box">
+            <div className="modal-head"><h3>Open Tasks</h3><button className="modal-close" onClick={()=>setShowTasks(false)}>×</button></div>
+            <div className="modal-body">
+              {tasks.filter(t=>!t.done).length===0 ? <div className="empty"><h3>All clear</h3><p>No open tasks right now.</p></div> : tasks.filter(t=>!t.done).map(t=>(
+                <div key={t.id} style={{display:'flex',alignItems:'flex-start',gap:'12px',padding:'12px 0',borderBottom:'1px solid var(--line-2)'}}>
+                  <button onClick={()=>toggleTask(t)} style={{marginTop:'2px',flexShrink:0,width:'18px',height:'18px',borderRadius:'50%',border:'2px solid var(--accent)',background:'none',cursor:'pointer'}} />
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:'13.5px',fontWeight:500}}>{t.body||t.title||'Task'}</div>
+                    <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'3px'}}>
+                      {t.assigned_to&&<span style={{marginRight:'8px'}}>{'→ '+t.assigned_to}</span>}
+                      {t.client&&<span>{t.client}</span>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {tasks.filter(t=>t.done).length>0 && (
+                <div style={{marginTop:'16px',fontSize:'12px',color:'var(--muted)'}}>{tasks.filter(t=>t.done).length} completed task{tasks.filter(t=>t.done).length!==1?'s':''} hidden</div>
+              )}
+            </div>
+            <div className="modal-foot"><button className="btn btn-ghost" onClick={()=>setShowTasks(false)}>Close</button><button className="btn btn-ghost btn-sm" onClick={()=>navigate('quotes')}>Open in Quotes →</button></div>
+          </div>
+        </div>
+      )}
       <div className="stats-grid">
         {[['Active Orders',stats.active],['In Production',stats.prod],['Ready to Ship',stats.rts],['Clients',stats.clients]].map(([l,v])=>(
           <div key={l} className="stat-card"><div className="stat-label">{l}</div><div className="stat-value">{v}</div></div>
@@ -223,10 +257,10 @@ function Dashboard({ navigate }) {
       <div className="section-head" style={{padding:'0 2px 12px'}}>
         <h3 style={{fontSize:'17px'}}>Orders</h3>
         <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
-          {taskCount > 0 && (
-            <button className="btn btn-ghost btn-sm" style={{position:'relative',gap:'6px'}} onClick={()=>navigate('quotes')}>
+          {openCount > 0 && (
+            <button className="btn btn-ghost btn-sm" style={{position:'relative',gap:'6px'}} onClick={()=>setShowTasks(true)}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-              <span style={{background:'var(--hot)',color:'#fff',borderRadius:'999px',fontSize:'10px',fontWeight:700,padding:'1px 6px',fontFamily:'var(--mono)'}}>{taskCount}</span>
+              <span style={{background:'var(--hot)',color:'#fff',borderRadius:'999px',fontSize:'10px',fontWeight:700,padding:'1px 6px',fontFamily:'var(--mono)'}}>{openCount}</span>
             </button>
           )}
           <button className="btn btn-ghost btn-sm" onClick={()=>navigate('orders')}>View all →</button>
@@ -1387,17 +1421,27 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   });
 
   // when a quote+tier is chosen, prefill the PO form & line item
-  const applyQuote = (q, ti=0) => {
+  const applyQuote = async (q, ti=0) => {
     setPicked(q); setTierIdx(ti);
     const tiers=tiersOf(q); const t=tiers[ti]||{};
     const matchFactory = factories.find(fc=>(fc.name||'').toLowerCase()===(q.factory||'').toLowerCase());
-    const matchClient  = clients.find(c=>(c.name||'').toLowerCase()===(q.client||'').toLowerCase());
+    let matchClient  = clients.find(c=>(c.name||'').toLowerCase()===(q.client||'').toLowerCase());
+    // Fuzzy fallback: try contains match
+    if (!matchClient && q.client) {
+      const ql = (q.client||'').toLowerCase();
+      matchClient = clients.find(c=>(c.name||'').toLowerCase().includes(ql) || ql.includes((c.name||'').toLowerCase()));
+    }
+    // Still no match — upsert into vessl.companies so client always gets set
+    if (!matchClient && q.client) {
+      const { data: co } = await SB.from('companies').upsert({name:q.client,type:'client'},{onConflict:'name,type'}).select('id,name,pallet_info').single();
+      if (co) { matchClient = co; setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]); }
+    }
     const matchProduct = products.find(p=>(q.sku && (p.sku||'').toLowerCase()===(q.sku||'').toLowerCase()) || (p.name||'').toLowerCase()===(q.product||'').toLowerCase());
     setForm(prev=>({...prev,
       factoryId: matchFactory?matchFactory.id:prev.factoryId,
       clientId: matchClient?matchClient.id:prev.clientId,
       pallet: (matchClient&&matchClient.pallet_info)?matchClient.pallet_info:prev.pallet,
-      inco: q.country?`FOB ${q.country}`:prev.inco,
+      inco: q.country?'FOB '+q.country:prev.inco,
       mold: q.mold_fee!=null?String(q.mold_fee):prev.mold,
       sample: q.sample_fee!=null?String(q.sample_fee):prev.sample,
       notes: prev.notes || (q.notes||''),
@@ -1405,14 +1449,20 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     setItems([{ prodId: matchProduct?matchProduct.id:'', desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: t.landed!=null?String(t.landed):'', ci:'', carton:'' }]);
   };
   const pickTier = ti => { if(picked) applyQuote(picked, ti); };
-  const addExtraFromQuote = (q, ti) => {
+  const addExtraFromQuote = async (q, ti) => {
     const tiers = tiersOf(q);
     const t = tiers[ti] ?? tiers[0];
     if (!t) { alert('Could not read tier data — try re-selecting the quote.'); return; }
     const newItem = { prodId:'', desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:t.landed!=null?String(t.landed):'', ci:'', carton:'' };
     setItems(prev=>[...prev, newItem]);
+    // If no client set yet on this PO, pull it from this quote's client
+    if (!form.clientId && q.client) {
+      let mc = clients.find(c=>(c.name||'').toLowerCase()===(q.client||'').toLowerCase());
+      if (!mc) { const { data: co } = await SB.from('companies').upsert({name:q.client,type:'client'},{onConflict:'name,type'}).select('id,name,pallet_info').single(); if(co){ mc=co; setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]); } }
+      if (mc) setForm(prev=>({...prev,clientId:mc.id,pallet:mc.pallet_info||prev.pallet}));
+    }
     setAddingItem(false); setExtraPick(null); setExtraSearch(''); setExtraTierIdx(0);
-    setExtraMsg(`✓ ${q.product||'Item'} added to line items`);
+    setExtraMsg('✓ '+( q.product||'Item')+' added to line items');
     setTimeout(()=>setExtraMsg(''), 3000);
   };
 
