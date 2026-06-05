@@ -583,6 +583,8 @@ function OrderDetail({ id, navigate }) {
   const mold = Number(po.mold_fee||0);
   const grand = subtotal+mold;
   const dep = po.deposit_percent ? grand*(po.deposit_percent/100) : null;
+  const notifyLabel = posting ? 'Posting...' : noteAssignee==='all' ? 'Post & notify team' : 'Post & notify '+((TEAM.find(m=>m.email===noteAssignee)||{}).name||'person');
+  const onFileChange = (e) => { const f = e.target.files && e.target.files[0]; if (f) uploadFile(f); e.target.value = ''; };
   return (
     <>
       <div style={{display:'flex',gap:'10px',marginBottom:'20px',flexWrap:'wrap'}}>
@@ -676,7 +678,7 @@ function OrderDetail({ id, navigate }) {
           <textarea className="form-input" rows={3} placeholder="Add a note or task for the selected person…" value={noteText} onChange={e=>setNoteText(e.target.value)} />
           <div style={{display:'flex',alignItems:'center',gap:'12px',marginTop:'10px'}}>
             <button className="btn btn-dark btn-sm" onClick={postNote} disabled={posting||!noteText.trim()}>
-              {posting?'Posting\u2026': noteAssignee==='all'?'Post & notify team':'Post & notify '+((TEAM.find(m=>m.email===noteAssignee)||{}).name||'person')}
+              {notifyLabel}
             </button>
             {noteMsg && <span style={{fontSize:'12.5px',color:'var(--accent)'}}>{noteMsg}</span>}
           </div>
@@ -703,8 +705,7 @@ function OrderDetail({ id, navigate }) {
         <div style={{padding:'14px 18px',borderBottom:attachments.length?'1px solid var(--line)':'none'}}>
           <label style={{cursor:uploading?'default':'pointer'}}>
             <span className={`btn btn-ghost btn-sm${uploading?' disabled':''}`}>{uploading?'Uploading…':'+ Add attachment'}</span>
-            <input type="file" accept="image/*,.pdf" style={{display:'none'}} disabled={uploading}
-              onChange={e=>{if(e.target.files[0])uploadFile(e.target.files[0]);e.target.value='';}} />
+            <input type="file" accept="image/*,.pdf" style={{display:'none'}} disabled={uploading} onChange={onFileChange} />
           </label>
           <p style={{fontSize:'12px',color:'var(--muted)',marginTop:'6px',marginBottom:0}}>JPEG, PNG, PDF — stored securely per order.</p>
         </div>
@@ -712,7 +713,7 @@ function OrderDetail({ id, navigate }) {
           <div>
             {attachments.map(f=>(
               <div key={f.name} style={{display:'flex',alignItems:'center',gap:'12px',padding:'11px 18px',borderBottom:'1px solid var(--line-2)'}}>
-                <span style={{flex:1,fontSize:'13px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--ink)'}}>{f.name.replace(/^\d+-/,'')}</span>
+                <span style={{flex:1,fontSize:'13px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--ink)'}}>{f.name.split('-').slice(1).join('-')||f.name}</span>
                 <a href={attachUrl(f.name)} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{flexShrink:0}}>View</a>
                 <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)',flexShrink:0}} onClick={()=>deleteAttachment(f.name)}>Remove</button>
               </div>
