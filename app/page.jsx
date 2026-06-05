@@ -318,6 +318,7 @@ function OrderDetail({ id, navigate }) {
   const [noteText, setNoteText] = useState('');
   const [noteMsg, setNoteMsg]   = useState('');
   const [posting, setPosting]   = useState(false);
+  const [noteAssignee, setNoteAssignee] = useState('all');
   const load = async () => {
     const [{ data: p },{ data: its }] = await Promise.all([
       SB.from('purchase_orders').select('*,companies!factory_company_id(name,email),client:companies!client_company_id(name,vendor_number)').eq('id',id).single(),
@@ -405,27 +406,35 @@ function OrderDetail({ id, navigate }) {
     const body = (noteText||'').trim(); if(!body) return;
     setPosting(true);
     let author=null; try{ const { data } = await SB.auth.getUser(); author=data?.user?.email||null; }catch(e){}
-    const { data:n, error } = await SB.from('order_notes').insert({ purchase_order_id:id, body, author_email:author }).select().single();
+    const assignedTo = noteAssignee==='all' ? null : noteAssignee;
+    const { data:n, error } = await SB.from('order_notes').insert({ purchase_order_id:id, body, author_email:author, assigned_to:assignedTo }).select().single();
     if (error){ setPosting(false); alert('Couldn\u2019t post note: '+error.message); return; }
     setNotes(prev=>[n,...prev]); setNoteText('');
     try {
       const whoName = author ? author.split('@')[0] : 'Someone';
-      const recipients = TEAM.map(t=>t.email).filter(e=>e!==author);
-      const e = (s)=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+      const assigneeName = noteAssignee==='all' ? 'team' : (TEAM.find(m=>m.email===noteAssignee)?.name||noteAssignee.split('@')[0]);
+      const recipients = noteAssignee==='all'
+        ? TEAM.map(t=>t.email).filter(e=>e!==author)
+        : [noteAssignee].filter(e=>e!==author);
+      const esc = s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
       const html = `
-        <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:520px;margin:0 auto;padding:8px">
-          <p style="font-size:13px;color:#64748b;margin:0 0 4px">New note on order <strong style="color:#0b1120">${e(po?.order_number||'')}</strong>${po?.companies?.name?` &middot; ${e(po.companies.name)}`:''}</p>
+        <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;margin:0 auto;padding:8px">
+          <p style="font-size:13px;color:#64748b;margin:0 0 4px">
+            ${noteAssignee!=='all'?`<strong style="color:#3461e0">@${esc(assigneeName)}</strong> — task from `:'Note on order '}
+            <strong style="color:#0b1120">${esc(po?.order_number||'')}</strong>${po?.companies?.name?` &middot; ${esc(po.companies.name)}`:''}
+          </p>
           <div style="background:#f6f8fb;border:1px solid #e6eaf0;border-radius:10px;padding:16px 18px;margin:10px 0 16px">
-            <p style="margin:0;font-size:15px;color:#0b1120;line-height:1.55">${e(body)}</p>
+            <p style="margin:0;font-size:15px;color:#0b1120;line-height:1.55">${esc(body)}</p>
           </div>
-          <p style="font-size:12px;color:#94a3b8;margin:0 0 16px">Posted by ${e(whoName)}</p>
+          <p style="font-size:12px;color:#94a3b8;margin:0 0 16px">Posted by ${esc(whoName)}</p>
           <a href="https://orders.vessl.io" style="display:inline-block;background:#0b1530;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 18px;border-radius:8px">Open in Vessl &rarr;</a>
         </div>`;
       if (recipients.length){
-        const { error:mailErr } = await SB.functions.invoke('send-email',{ body:{ to:recipients, replyTo:author||undefined, subject:`Order note \u00b7 ${po?.order_number||''}`, html } });
-        setNoteMsg(mailErr ? 'Note posted (email skipped).' : 'Note posted & team notified.');
+        const { error:mailErr } = await SB.functions.invoke('send-email',{ body:{ to:recipients, replyTo:author||undefined, subject:`${noteAssignee!=='all'?'Task for you':'Order note'} \u00b7 ${po?.order_number||''}`, html } });
+        setNoteMsg(mailErr ? 'Note posted (email skipped).' : `Note posted & ${assigneeName} notified.`);
       } else setNoteMsg('Note posted.');
     } catch(e){ setNoteMsg('Note posted (email skipped).'); }
+    setNoteAssignee('all');
     setTimeout(()=>setNoteMsg(''),3000);
     setPosting(false);
   };
@@ -483,6 +492,7 @@ function OrderDetail({ id, navigate }) {
           <div className="bsub">{po.companies?.email||''}</div>
           {po.client?.name && <div style={{marginTop:'10px',paddingTop:'10px',borderTop:'1px solid var(--line)'}}><div style={{color:'var(--muted)',fontSize:'11px',marginBottom:'2px'}}>CLIENT</div><div style={{fontSize:'13px',fontWeight:500}}>{po.client.name}</div>{po.client.vendor_number && <div style={{fontSize:'11.5px',color:'var(--muted)'}}>Vendor # {po.client.vendor_number} · internal</div>}</div>}
           {po.pallet_info && <div style={{marginTop:'10px',fontSize:'12px',color:'var(--muted)'}}><span style={{textTransform:'uppercase',fontSize:'10px'}}>Pallet</span> · {po.pallet_info}</div>}
+          {po.needs_samples && <div style={{marginTop:'10px',padding:'8px 10px',background:'#fef9c3',borderRadius:'8px',fontSize:'12px',color:'#854d0e'}}><b>Samples required:</b> {po.sample_type||'TOP'}{po.sample_qty?` · ${po.sample_qty} pcs`:''}</div>}
         </div>
         <div className="detail-block">
           <div className="blabel">Order Details</div>
@@ -544,11 +554,22 @@ function OrderDetail({ id, navigate }) {
       </div>
 
       <div className="section-card" style={{marginTop:'20px'}}>
-        <div className="section-head"><h3>Notes &amp; Activity</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Posting notifies the team</span></div>
+        <div className="section-head"><h3>Notes &amp; Activity</h3></div>
         <div className="note-composer">
-          <textarea className="form-input" rows={3} placeholder="Add a note about this order — updates, issues, decisions…" value={noteText} onChange={e=>setNoteText(e.target.value)} />
+          <div style={{marginBottom:'10px'}}>
+            <div style={{fontSize:'11px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)',marginBottom:'6px'}}>Notify</div>
+            <div className="filters" style={{flexWrap:'wrap',gap:'6px'}}>
+              <button className={`filter-btn${noteAssignee==='all'?' active':''}`} onClick={()=>setNoteAssignee('all')}>All</button>
+              {TEAM.map(m=>(
+                <button key={m.email} className={`filter-btn${noteAssignee===m.email?' active':''}`} onClick={()=>setNoteAssignee(m.email)}>{m.name}</button>
+              ))}
+            </div>
+          </div>
+          <textarea className="form-input" rows={3} placeholder="Add a note or task for the selected person…" value={noteText} onChange={e=>setNoteText(e.target.value)} />
           <div style={{display:'flex',alignItems:'center',gap:'12px',marginTop:'10px'}}>
-            <button className="btn btn-dark btn-sm" onClick={postNote} disabled={posting||!noteText.trim()}>{posting?'Posting…':'Post & notify team'}</button>
+            <button className="btn btn-dark btn-sm" onClick={postNote} disabled={posting||!noteText.trim()}>
+              {posting?'Posting…': noteAssignee==='all'?'Post & notify team':`Post & notify ${TEAM.find(m=>m.email===noteAssignee)?.name||'person'}`}
+            </button>
             {noteMsg && <span style={{fontSize:'12.5px',color:'var(--accent)'}}>{noteMsg}</span>}
           </div>
         </div>
@@ -558,7 +579,11 @@ function OrderDetail({ id, navigate }) {
               <div className="note-avatar" style={{background:companyColor(n.author_email||'?')}}>{initials(n.author_email||'?')}</div>
               <div style={{flex:1,minWidth:0}}>
                 <div className="note-body">{n.body}</div>
-                <div className="note-meta">{(n.author_email||'unknown').split('@')[0]} · {fmtDateTime(n.created_at)}</div>
+                <div className="note-meta">
+                  {(n.author_email||'unknown').split('@')[0]}
+                  {n.assigned_to && n.assigned_to!=='all' && <span style={{color:'var(--accent)'}}> → {TEAM.find(m=>m.email===n.assigned_to)?.name||n.assigned_to.split('@')[0]}</span>}
+                  {' · '}{fmtDateTime(n.created_at)}
+                </div>
               </div>
             </div>
           )) : <div style={{padding:'8px 18px 18px',fontSize:'13px',color:'var(--muted)'}}>No notes yet.</div>}
@@ -574,7 +599,8 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     num:po.order_number||'', date:po.order_date||'', ship:po.requested_ship_date||'',
     inco:po.incoterm||'', pay:po.payment_terms||'', dep:po.deposit_percent!=null?String(po.deposit_percent):'',
     mold:po.mold_fee!=null?String(po.mold_fee):'', sample:po.sample_fee!=null?String(po.sample_fee):'',
-    currency:po.currency||'USD', notes:po.notes||'', status:po.status||'draft', pallet:po.pallet_info||''
+    currency:po.currency||'USD', notes:po.notes||'', status:po.status||'draft', pallet:po.pallet_info||'',
+    needs_samples:!!po.needs_samples, sample_type:po.sample_type||'TOP', sample_qty:po.sample_qty!=null?String(po.sample_qty):''
   });
   const [items, setItems] = useState((initialItems||[]).map(it=>({id:it.id,prodId:it.product_id||'',desc:it.description||it.products?.name||'',qty:it.quantity!=null?String(it.quantity):'',price:it.unit_price!=null?String(it.unit_price):'',ci:it.ci_value!=null?String(it.ci_value):'',carton:it.carton_info||''})));
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -626,7 +652,9 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
       order_number:form.num, order_date:form.date||null, requested_ship_date:form.ship||null,
       incoterm:form.inco||null, payment_terms:form.pay||null, deposit_percent:Number(form.dep)||null,
       mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0, currency:form.currency,
-      notes:form.notes||null, status:form.status, pallet_info:form.pallet||null, updated_at:new Date().toISOString()
+      notes:form.notes||null, status:form.status, pallet_info:form.pallet||null,
+      needs_samples:!!form.needs_samples, sample_type:form.needs_samples?(form.sample_type||null):null, sample_qty:form.needs_samples?(Number(form.sample_qty)||null):null,
+      updated_at:new Date().toISOString()
     }).eq('id',po.id);
     if(error){alert('Error: '+error.message);return;}
     // replace line items: delete all, re-insert the valid ones
@@ -696,6 +724,24 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
             </tbody>
           </table>
           <button className="btn btn-ghost btn-sm" style={{marginBottom:'16px'}} onClick={addItem}>+ Add Item</button>
+          <span className="form-section-label">Preproduction Samples</span>
+          <div style={{padding:'4px 0 14px'}}>
+            <label style={{display:'flex',alignItems:'center',gap:'10px',fontSize:'13.5px',cursor:'pointer',fontFamily:'var(--sans)',textTransform:'none',letterSpacing:0,color:'var(--ink)',fontWeight:400}}>
+              <input type="checkbox" checked={!!form.needs_samples} onChange={e=>f('needs_samples')(e.target.checked)} style={{width:'16px',height:'16px',accentColor:'var(--accent)'}} />
+              Do we need preproduction samples for this order?
+            </label>
+            {form.needs_samples && (
+              <div className="form-row-2" style={{marginTop:'12px'}}>
+                <div><label>Sample type</label>
+                  <select className="form-select" value={form.sample_type||'TOP'} onChange={e=>f('sample_type')(e.target.value)}>
+                    <option value="TOP">TOP (Top of Production)</option>
+                    <option value="Preproduction">Preproduction sample</option>
+                  </select>
+                </div>
+                <div><label>Quantity needed</label><input type="number" className="form-input" value={form.sample_qty||''} onChange={e=>f('sample_qty')(e.target.value)} placeholder="e.g. 3" /></div>
+              </div>
+            )}
+          </div>
           <span className="form-section-label">Fees & Currency</span>
           <div className="form-row-3">
             <div><label>Mold / Tooling</label><input type="number" className="form-input" value={form.mold} onChange={e=>f('mold')(e.target.value)} /></div>
@@ -800,6 +846,12 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
     }
     onSaved();
   };
+  const deleteCompany = async () => {
+    if (!confirm(`Delete ${co.name}? This will also remove all contacts and cannot be undone.`)) return;
+    const { error } = await SB.from('companies').delete().eq('id',id);
+    if (error){ alert('Error: '+error.message); return; }
+    onSaved();
+  };
   if(!co||!form) return (
     <div className="modal-overlay" onClick={e=>e.target.className==='modal-overlay'&&onClose()}><div className="modal-box"><div className="modal-body"><div className="loading">Loading…</div></div></div></div>
   );
@@ -865,7 +917,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
         </div>
         <div className="modal-foot">
           {!edit ? (
-            <><button className="btn btn-ghost" onClick={onClose}>Close</button><button className="btn btn-dark" onClick={()=>setEdit(true)}>Edit</button></>
+            <><button className="btn btn-ghost" onClick={onClose}>Close</button><button className="btn btn-ghost btn-sm" style={{color:'var(--hot)',marginRight:'auto'}} onClick={deleteCompany}>Delete</button><button className="btn btn-dark" onClick={()=>setEdit(true)}>Edit</button></>
           ) : (
             <><button className="btn btn-ghost" onClick={()=>setEdit(false)}>Cancel</button><button className="btn btn-dark" onClick={save}>Save Changes</button></>
           )}
@@ -1081,7 +1133,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [srchHits, setSrchHits] = useState([]);
   const [srchRect, setSrchRect] = useState(null);
   const [recentDescs, setRecentDescs] = useState([]);
-  const [form, setForm]  = useState({ factoryId:'', clientId:'', num:`KUI-PO-${new Date().getFullYear()}-`, date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'' });
+  const [form, setForm]  = useState({ factoryId:'', clientId:'', num:`KUI-PO-${new Date().getFullYear()}-`, date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'', needs_samples:false, sample_type:'TOP', sample_qty:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
 
   // Build the next sequential PO number, e.g. KUI-PO-2026-007, from existing ones.
@@ -1200,6 +1252,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       requested_ship_date:form.ship||null, incoterm:form.inco||null, payment_terms:form.pay||null,
       deposit_percent:Number(form.dep)||null, mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0,
       currency:form.currency, notes:form.notes||null, status:'draft',
+      needs_samples:!!form.needs_samples, sample_type:form.needs_samples?(form.sample_type||null):null, sample_qty:form.needs_samples?(Number(form.sample_qty)||null):null,
       source_quote_id: picked?.id || null
     };
     let po=null, lastErr=null, orderNumber=form.num;
@@ -1434,7 +1487,25 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
             );
           })()}
           <button className="btn btn-ghost btn-sm" style={{marginBottom:'16px'}} onClick={addItem}>+ Add Item</button>
-          <span className="form-section-label">Fees & Currency</span>
+          <span className="form-section-label">Preproduction Samples</span>
+          <div style={{padding:'4px 0 14px'}}>
+            <label style={{display:'flex',alignItems:'center',gap:'10px',fontSize:'13.5px',cursor:'pointer',fontFamily:'var(--sans)',textTransform:'none',letterSpacing:0,color:'var(--ink)',fontWeight:400}}>
+              <input type="checkbox" checked={!!form.needs_samples} onChange={e=>f('needs_samples')(e.target.checked)} style={{width:'16px',height:'16px',accentColor:'var(--accent)'}} />
+              Do we need preproduction samples for this order?
+            </label>
+            {form.needs_samples && (
+              <div className="form-row-2" style={{marginTop:'12px'}}>
+                <div><label>Sample type</label>
+                  <select className="form-select" value={form.sample_type||'TOP'} onChange={e=>f('sample_type')(e.target.value)}>
+                    <option value="TOP">TOP (Top of Production)</option>
+                    <option value="Preproduction">Preproduction sample</option>
+                  </select>
+                </div>
+                <div><label>Quantity needed</label><input type="number" className="form-input" value={form.sample_qty||''} onChange={e=>f('sample_qty')(e.target.value)} placeholder="e.g. 3" /></div>
+              </div>
+            )}
+          </div>
+          <span className="form-section-label">Fees &amp; Currency</span>
           <div className="form-row-3">
             <div><label>Mold / Tooling</label><input type="number" className="form-input" placeholder="0" value={form.mold} onChange={e=>f('mold')(e.target.value)} /></div>
             <div><label>Sample Fee</label><input type="number" className="form-input" placeholder="0" value={form.sample} onChange={e=>f('sample')(e.target.value)} /></div>
