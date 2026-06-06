@@ -1460,6 +1460,35 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   },[]);
 
   const addItem = () => setItems(prev=>[...prev,{prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
+  const [showNewClient, setShowNewClient] = useState(false);
+  const [newClientName, setNewClientName] = useState('');
+  const addNewClient = async () => {
+    const name = newClientName.trim(); if (!name) return;
+    const { data: co } = await SB.from('companies').upsert({name,type:'client'},{onConflict:'name,type'}).select('id,name,pallet_info').single();
+    if (co){ setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]); f('clientId')(co.id); if(co.pallet_info)f('pallet')(co.pallet_info); }
+    setShowNewClient(false); setNewClientName('');
+  };
+  const saveAsProductsAndQuotes = async () => {
+    const filled = items.filter(it=>it.desc.trim());
+    if (!filled.length){ alert('Add at least one product description first.'); return; }
+    const clientName = (clients.find(c=>c.id===form.clientId)||{}).name||'';
+    const factoryName = (factories.find(fc=>fc.id===form.factoryId)||{}).name||'';
+    let saved=0;
+    for (const it of filled){
+      // Save to products catalog
+      await SB.from('products').upsert({name:it.desc,sku:it.prodId||null},{onConflict:'name'}).select('id').single();
+      // Save as a quote with pricing tier
+      const tier = {qty:Number(it.qty)||1,exw:Number(it.price)||0,ship:0,freightAir:0,freightOcean:0,landed:Number(it.price)||0,client:Number(it.price)||0};
+      await SB.from('quotes').insert({
+        product:it.desc, sku:it.prodId||null, client:clientName||null, factory:factoryName||null,
+        quote_date:form.date||new Date().toISOString().split('T')[0],
+        tiers:JSON.stringify([tier]), status:'active',
+        ci_value:it.ci?Number(it.ci):null,
+      });
+      saved++;
+    }
+    alert(saved+' product'+(saved!==1?'s':'')+' saved to Products and Quotes.');
+  };
   const handleProdInput = (i,v,el) => {
     setItem(i,'desc',v);
     if(v.trim().length>0){
@@ -1738,7 +1767,15 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
               <option value="">Unassigned</option>
               {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            {(()=>{ const c=clients.find(x=>x.id===form.clientId); return c?.vendor_number ? <div style={{fontSize:'12px',color:'var(--muted)',marginTop:'6px'}}>Vendor # <b style={{color:'var(--ink)'}}>{c.vendor_number}</b> · internal only, won't appear on the factory PO</div> : null; })()}
+            {!showNewClient
+              ? <button className="btn btn-ghost btn-sm" style={{marginTop:'8px'}} onClick={()=>setShowNewClient(true)}>+ New client</button>
+              : <div style={{display:'flex',gap:'8px',marginTop:'8px',alignItems:'center'}}>
+                  <input className="form-input" style={{flex:1}} placeholder="Client name…" value={newClientName} onChange={e=>setNewClientName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNewClient()} autoFocus />
+                  <button className="btn btn-dark btn-sm" onClick={addNewClient}>Add</button>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>{setShowNewClient(false);setNewClientName('');}}>✕</button>
+                </div>
+            }
+            {(()=>{ const c=clients.find(x=>x.id===form.clientId); return c?.vendor_number ? <div style={{fontSize:'12px',color:'var(--muted)',marginTop:'6px'}}>Vendor # <b style={{color:'var(--ink)'}}>{c.vendor_number}</b></div> : null; })()}
           </div>
           <div className="form-row"><label>Pallet instructions <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(prints on the factory PO)</span></label>
             <input className="form-input" value={form.pallet} onChange={e=>f('pallet')(e.target.value)} placeholder="Autofills from the client — edit if needed" />
@@ -1800,7 +1837,12 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
               </div>
             );
           })()}
-          <button className="btn btn-ghost btn-sm" style={{marginBottom:'16px'}} onClick={addItem}>+ Add Item</button>
+          <div style={{display:"flex",gap:"10px",marginBottom:"16px",alignItems:"center",flexWrap:"wrap"}}>
+            <button className="btn btn-ghost btn-sm" onClick={addItem}>+ Add Item</button>
+            {mode==="manual" && items.some(it=>it.desc.trim()) && (
+              <button className="btn btn-ghost btn-sm" style={{color:"var(--accent)"}} onClick={saveAsProductsAndQuotes}>25BE Save as products &amp; quotes</button>
+            )}
+          </div>
           <span className="form-section-label">Preproduction Samples</span>
           <div style={{padding:'4px 0 14px'}}>
             <label style={{display:'flex',alignItems:'center',gap:'10px',fontSize:'13.5px',cursor:'pointer',fontFamily:'var(--sans)',textTransform:'none',letterSpacing:0,color:'var(--ink)',fontWeight:400}}>
