@@ -886,19 +886,34 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     if (co){ setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]); f('clientId')(co.id); if(co.pallet_info&&!form.pallet)f('pallet')(co.pallet_info); }
     setShowNewClient(false); setNewClientName('');
   };
+  const [saveMsg, setSaveMsg] = useState('');
   const saveAsProductsAndQuotes = async () => {
     const filled = items.filter(it=>it.desc.trim());
-    if (!filled.length){ alert('No products to save.'); return; }
+    if (!filled.length){ setSaveMsg('error:Add at least one product description first.'); setTimeout(()=>setSaveMsg(''),3000); return; }
     const clientName = (clients.find(c=>c.id===form.clientId)||po.client||{}).name||'';
     const factoryName = po.companies?.name||'';
-    let saved=0;
+    let saved=0, errors=[];
     for (const it of filled){
-      await SB.from('products').upsert({name:it.desc,sku:it.prodId||null},{onConflict:'name'}).select('id').single();
-      const tier={qty:Number(it.qty)||1,exw:Number(it.price)||0,ship:0,freightAir:0,freightOcean:0,landed:Number(it.price)||0,client:Number(it.price)||0};
-      await SB.from('quotes').insert({product:it.desc,sku:it.prodId||null,client:clientName||null,factory:factoryName||null,quote_date:form.date||new Date().toISOString().split('T')[0],tiers:JSON.stringify([tier]),status:'active',ci_value:it.ci?Number(it.ci):null});
-      saved++;
+      const name = it.desc.trim();
+      // Save to products catalog — check first to avoid duplicates
+      const { data: existing } = await SB.from('products').select('id').eq('name',name).maybeSingle();
+      if (!existing) {
+        const { error: pErr } = await SB.from('products').insert({name, sku:it.prodId||null});
+        if (pErr) errors.push('Product: '+pErr.message);
+      }
+      // Save as quote — tiers as plain array (not stringified)
+      const tier = {qty:Number(it.qty)||1, exw:Number(it.price)||0, ship:0, freightAir:0, freightOcean:0, landed:Number(it.price)||0, client:Number(it.price)||0};
+      const { error: qErr } = await SB.from('quotes').insert({
+        product:name, sku:it.prodId||null, client:clientName||null, factory:factoryName||null,
+        quote_date:form.date||new Date().toISOString().split('T')[0],
+        tiers:[tier], status:'active'
+      });
+      if (qErr) errors.push('Quote: '+qErr.message);
+      else saved++;
     }
-    alert(saved+' product'+(saved!==1?'s':'')+' saved to Products and Quotes.');
+    if (errors.length) { setSaveMsg('error:'+errors[0]); }
+    else { setSaveMsg(saved+' product'+(saved!==1?'s':'')+' saved to Products and Quotes.'); }
+    setTimeout(()=>setSaveMsg(''),4000);
   };
   useEffect(()=>{
     Promise.all([
@@ -1056,6 +1071,13 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
           <div className="form-row"><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>f('notes')(e.target.value)} /></div>
         </div>
         <div className="modal-foot" style={{flexWrap:'wrap',gap:'10px'}}>
+          {saveMsg && (
+            <div style={{flex:'0 0 100%',padding:'8px 12px',borderRadius:'8px',fontSize:'13px',fontWeight:500,
+              background:saveMsg.startsWith('error:')?'#fef2f2':'#d1fae5',
+              color:saveMsg.startsWith('error:')?'#991b1b':'#065f46'}}>
+              {saveMsg.startsWith('error:')?'⚠ '+saveMsg.slice(6):'✓ '+saveMsg}
+            </div>
+          )}
           <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)',marginRight:'auto'}} onClick={saveAsProductsAndQuotes}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight:'4px'}}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
             Save as products &amp; quotes
@@ -1512,26 +1534,32 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     if (co){ setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]); f('clientId')(co.id); if(co.pallet_info)f('pallet')(co.pallet_info); }
     setShowNewClient(false); setNewClientName('');
   };
+  const [saveMsg, setSaveMsg] = useState('');
   const saveAsProductsAndQuotes = async () => {
     const filled = items.filter(it=>it.desc.trim());
-    if (!filled.length){ alert('Add at least one product description first.'); return; }
+    if (!filled.length){ setSaveMsg('error:Add at least one product description first.'); setTimeout(()=>setSaveMsg(''),3000); return; }
     const clientName = (clients.find(c=>c.id===form.clientId)||{}).name||'';
     const factoryName = (factories.find(fc=>fc.id===form.factoryId)||{}).name||'';
-    let saved=0;
+    let saved=0, errors=[];
     for (const it of filled){
-      // Save to products catalog
-      await SB.from('products').upsert({name:it.desc,sku:it.prodId||null},{onConflict:'name'}).select('id').single();
-      // Save as a quote with pricing tier
-      const tier = {qty:Number(it.qty)||1,exw:Number(it.price)||0,ship:0,freightAir:0,freightOcean:0,landed:Number(it.price)||0,client:Number(it.price)||0};
-      await SB.from('quotes').insert({
-        product:it.desc, sku:it.prodId||null, client:clientName||null, factory:factoryName||null,
+      const name = it.desc.trim();
+      const { data: existing } = await SB.from('products').select('id').eq('name',name).maybeSingle();
+      if (!existing) {
+        const { error: pErr } = await SB.from('products').insert({name, sku:it.prodId||null});
+        if (pErr) errors.push('Product: '+pErr.message);
+      }
+      const tier = {qty:Number(it.qty)||1, exw:Number(it.price)||0, ship:0, freightAir:0, freightOcean:0, landed:Number(it.price)||0, client:Number(it.price)||0};
+      const { error: qErr } = await SB.from('quotes').insert({
+        product:name, sku:it.prodId||null, client:clientName||null, factory:factoryName||null,
         quote_date:form.date||new Date().toISOString().split('T')[0],
-        tiers:JSON.stringify([tier]), status:'active',
-        ci_value:it.ci?Number(it.ci):null,
+        tiers:[tier], status:'active'
       });
-      saved++;
+      if (qErr) errors.push('Quote: '+qErr.message);
+      else saved++;
     }
-    alert(saved+' product'+(saved!==1?'s':'')+' saved to Products and Quotes.');
+    if (errors.length) setSaveMsg('error:'+errors[0]);
+    else setSaveMsg(saved+' product'+(saved!==1?'s':'')+' saved to Products and Quotes.');
+    setTimeout(()=>setSaveMsg(''),4000);
   };
   const handleProdInput = (i,v,el) => {
     setItem(i,'desc',v);
@@ -1884,7 +1912,8 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
           <div style={{display:"flex",gap:"10px",marginBottom:"16px",alignItems:"center",flexWrap:"wrap"}}>
             <button className="btn btn-ghost btn-sm" onClick={addItem}>+ Add Item</button>
             {mode==="manual" && items.some(it=>it.desc.trim()) && (
-              <button className="btn btn-ghost btn-sm" style={{color:"var(--accent)"}} onClick={saveAsProductsAndQuotes}>25BE Save as products &amp; quotes</button>
+              {saveMsg && <div style={{fontSize:'12.5px',fontWeight:500,padding:'6px 10px',borderRadius:'7px',background:saveMsg.startsWith('error:')?'#fef2f2':'#d1fae5',color:saveMsg.startsWith('error:')?'#991b1b':'#065f46'}}>{saveMsg.startsWith('error:')?'⚠ '+saveMsg.slice(6):'✓ '+saveMsg}</div>}
+              <button className="btn btn-ghost btn-sm" style={{color:"var(--accent)"}} onClick={saveAsProductsAndQuotes}>&#9654; Save as products &amp; quotes</button>
             )}
           </div>
           <span className="form-section-label">Preproduction Samples</span>
