@@ -1911,10 +1911,10 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
           })()}
           <div style={{display:"flex",gap:"10px",marginBottom:"16px",alignItems:"center",flexWrap:"wrap"}}>
             <button className="btn btn-ghost btn-sm" onClick={addItem}>+ Add Item</button>
-            {mode==="manual" && items.some(it=>it.desc.trim()) && (
-              {saveMsg && <div style={{fontSize:'12.5px',fontWeight:500,padding:'6px 10px',borderRadius:'7px',background:saveMsg.startsWith('error:')?'#fef2f2':'#d1fae5',color:saveMsg.startsWith('error:')?'#991b1b':'#065f46'}}>{saveMsg.startsWith('error:')?'⚠ '+saveMsg.slice(6):'✓ '+saveMsg}</div>}
-              <button className="btn btn-ghost btn-sm" style={{color:"var(--accent)"}} onClick={saveAsProductsAndQuotes}>&#9654; Save as products &amp; quotes</button>
+            {mode==='manual' && items.some(it=>it.desc.trim()) && (
+              <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)'}} onClick={saveAsProductsAndQuotes}>Save as products &amp; quotes</button>
             )}
+            {saveMsg && <div style={{fontSize:'12.5px',fontWeight:500,padding:'6px 10px',borderRadius:'7px',background:saveMsg.startsWith('error:')?'#fef2f2':'#d1fae5',color:saveMsg.startsWith('error:')?'#991b1b':'#065f46'}}>{saveMsg.startsWith('error:')?'⚠ '+saveMsg.slice(6):'✓ '+saveMsg}</div>}
           </div>
           <span className="form-section-label">Preproduction Samples</span>
           <div style={{padding:'4px 0 14px'}}>
