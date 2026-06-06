@@ -864,7 +864,8 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     inco:po.incoterm||'', pay:po.payment_terms||'', dep:po.deposit_percent!=null?String(po.deposit_percent):'',
     mold:po.mold_fee!=null?String(po.mold_fee):'', sample:po.sample_fee!=null?String(po.sample_fee):'',
     currency:po.currency||'USD', notes:po.notes||'', status:po.status||'draft', pallet:po.pallet_info||'',
-    needs_samples:!!po.needs_samples, sample_type:po.sample_type||'TOP', sample_qty:po.sample_qty!=null?String(po.sample_qty):''
+    needs_samples:!!po.needs_samples, sample_type:po.sample_type||'TOP', sample_qty:po.sample_qty!=null?String(po.sample_qty):'',
+    clientId: po.client_company_id||''
   });
   const [items, setItems] = useState((initialItems||[]).map(it=>({id:it.id,prodId:it.product_id||'',desc:it.description||it.products?.name||'',qty:it.quantity!=null?String(it.quantity):'',price:it.unit_price!=null?String(it.unit_price):'',ci:it.ci_value!=null?String(it.ci_value):'',carton:it.carton_info||''})));
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -873,16 +874,41 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   const rmItem =i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
   const [products, setProducts] = useState([]);
   const [recentDescs, setRecentDescs] = useState([]);
+  const [clients, setClients] = useState([]);
   const [eSrchIdx, setESrchIdx] = useState(-1);
   const [eSrchHits, setESrchHits] = useState([]);
   const [eSrchRect, setESrchRect] = useState(null);
+  const [showNewClient, setShowNewClient] = useState(false);
+  const [newClientName, setNewClientName] = useState('');
+  const addNewClient = async () => {
+    const name = newClientName.trim(); if (!name) return;
+    const { data: co } = await SB.from('companies').upsert({name,type:'client'},{onConflict:'name,type'}).select('id,name,pallet_info').single();
+    if (co){ setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]); f('clientId')(co.id); if(co.pallet_info&&!form.pallet)f('pallet')(co.pallet_info); }
+    setShowNewClient(false); setNewClientName('');
+  };
+  const saveAsProductsAndQuotes = async () => {
+    const filled = items.filter(it=>it.desc.trim());
+    if (!filled.length){ alert('No products to save.'); return; }
+    const clientName = (clients.find(c=>c.id===form.clientId)||po.client||{}).name||'';
+    const factoryName = po.companies?.name||'';
+    let saved=0;
+    for (const it of filled){
+      await SB.from('products').upsert({name:it.desc,sku:it.prodId||null},{onConflict:'name'}).select('id').single();
+      const tier={qty:Number(it.qty)||1,exw:Number(it.price)||0,ship:0,freightAir:0,freightOcean:0,landed:Number(it.price)||0,client:Number(it.price)||0};
+      await SB.from('quotes').insert({product:it.desc,sku:it.prodId||null,client:clientName||null,factory:factoryName||null,quote_date:form.date||new Date().toISOString().split('T')[0],tiers:JSON.stringify([tier]),status:'active',ci_value:it.ci?Number(it.ci):null});
+      saved++;
+    }
+    alert(saved+' product'+(saved!==1?'s':'')+' saved to Products and Quotes.');
+  };
   useEffect(()=>{
     Promise.all([
       SB.from('products').select('id,sku,name').order('name'),
       SB.from('purchase_order_items').select('description').not('description','is',null).limit(200),
-      SBQ.from('quotes').select('product').not('product','is',null).limit(300)
-    ]).then(([{data:pro},{data:itmD},{data:qProds}])=>{
+      SBQ.from('quotes').select('product').not('product','is',null).limit(300),
+      SB.from('companies').select('id,name,pallet_info').eq('type','client').order('name')
+    ]).then(([{data:pro},{data:itmD},{data:qProds},{data:cli}])=>{
       setProducts(pro||[]);
+      setClients(cli||[]);
       const poDescs=(itmD||[]).map(it=>it.description||'').filter(Boolean);
       const qNames=(qProds||[]).map(q=>q.product||'').filter(Boolean);
       setRecentDescs([...new Set([...poDescs,...qNames])]);
@@ -917,6 +943,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
       incoterm:form.inco||null, payment_terms:form.pay||null, deposit_percent:Number(form.dep)||null,
       mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0, currency:form.currency,
       notes:form.notes||null, status:form.status, pallet_info:form.pallet||null,
+      client_company_id: form.clientId||null,
       needs_samples:!!form.needs_samples, sample_type:form.needs_samples?(form.sample_type||null):null, sample_qty:form.needs_samples?(Number(form.sample_qty)||null):null,
       updated_at:new Date().toISOString()
     }).eq('id',po.id);
@@ -1012,10 +1039,27 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
             <div><label>Sample Fee</label><input type="number" className="form-input" value={form.sample} onChange={e=>f('sample')(e.target.value)} /></div>
             <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}><option>USD</option><option>CNY</option><option>VND</option><option>EUR</option></select></div>
           </div>
-          <div className="form-row"><label>Pallet instructions <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(prints on the factory PO)</span></label><input className="form-input" value={form.pallet} onChange={e=>f('pallet')(e.target.value)} /></div>
+          <div className="form-row"><label>Client <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(for tracking &amp; inventory)</span></label>
+            <select className="form-select" value={form.clientId} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setForm(prev=>({...prev,clientId:e.target.value,pallet:(c?.pallet_info&&!prev.pallet)?c.pallet_info:prev.pallet}));}}>
+              <option value="">Unassigned</option>
+              {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            {!showNewClient
+              ? <button className="btn btn-ghost btn-sm" style={{marginTop:'8px'}} onClick={()=>setShowNewClient(true)}>+ New client</button>
+              : <div style={{display:'flex',gap:'8px',marginTop:'8px',alignItems:'center'}}>
+                  <input className="form-input" style={{flex:1}} placeholder="Client name…" value={newClientName} onChange={e=>setNewClientName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNewClient()} autoFocus />
+                  <button className="btn btn-dark btn-sm" onClick={addNewClient}>Add</button>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>{setShowNewClient(false);setNewClientName('');}}>✕</button>
+                </div>
+            }
+          </div>
           <div className="form-row"><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>f('notes')(e.target.value)} /></div>
         </div>
-        <div className="modal-foot">
+        <div className="modal-foot" style={{flexWrap:'wrap',gap:'10px'}}>
+          <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)',marginRight:'auto'}} onClick={saveAsProductsAndQuotes}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight:'4px'}}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Save as products &amp; quotes
+          </button>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-dark" onClick={save}>Save Changes</button>
         </div>
