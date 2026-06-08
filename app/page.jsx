@@ -670,13 +670,179 @@ function SalesOrderDetail({id,navigate}){
 
 function CreateSOModal({onClose,onCreated}){
   const nd=()=>new Date().toISOString().split('T')[0];
-  const [mode,setMode]=useState('catalog');
   const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',payment:'',currency:'USD',notes:''});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
-  const [items,setItems]=useState([]);
+  const [items,setItems]=useState([{desc:'',sku:'',qty:'',price:'',quoteId:null,tierIdx:0,noPrice:false}]);
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
-  const addBlank=()=>setItems(prev=>[...prev,{desc:'',sku:'',qty:'',price:'',quoteId:null,tierIdx:0,noPrice:false}]);
+  const addItem=()=>setItems(prev=>[...prev,{desc:'',sku:'',qty:'',price:'',quoteId:null,tierIdx:0,noPrice:false}]);
   const rmItem=i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
+  const [clients,setClients]=useState([]);
+  const [quotes,setQuotes]=useState([]);
+  const [availPOs,setAvailPOs]=useState([]);
+  const [linkedPOIds,setLinkedPOIds]=useState([]);
+  const [poSearch,setPOSearch]=useState('');
+  const [showNC,setShowNC]=useState(false);
+  const [ncName,setNcName]=useState('');
+  const [srchIdx,setSrchIdx]=useState(-1);
+  const [srchHits,setSrchHits]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const tOf=q=>{try{return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]);}catch{return [];}};
+  useEffect(()=>{
+    Promise.all([
+      SB.from('companies').select('id,name,vendor_number').order('name'),
+      SB.from('quotes').select('*').order('product'),
+      SB.from('purchase_orders').select('id,order_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300),
+      SB.from('sales_orders').select('so_number').order('created_at',{ascending:false}).limit(100),
+    ]).then(([{data:cli},{data:qs},{data:pos},{data:sos}])=>{
+      setClients(cli||[]); setQuotes(qs||[]); setAvailPOs(pos||[]);
+      setForm(prev=>({...prev,num:genSONum((sos||[]).map(s=>s.so_number))}));
+    });
+  },[]);
+  const addNC=async()=>{ const n=ncName.trim(); if(!n) return; const {data:co}=await SB.from('companies').upsert({name:n,type:'client'},{onConflict:'name,type'}).select('id,name').single(); if(co){setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]);f('clientId')(co.id);} setShowNC(false);setNcName(''); };
+  const handleSearch=(i,v)=>{
+    si(i,'desc',v);
+    if(v.trim().length>1){
+      const lv=v.toLowerCase();
+      const hits=quotes.filter(q=>(q.product||'').toLowerCase().includes(lv)||(q.sku||'').toLowerCase().includes(lv)||(q.client||'').toLowerCase().includes(lv)).slice(0,6);
+      setSrchHits(hits); setSrchIdx(i);
+    } else { setSrchHits([]); setSrchIdx(-1); }
+  };
+  const pickFromCatalog=(i,q)=>{
+    const ts=tOf(q);
+    const best=ts.find(t=>Number(t.client)>0)||ts[0]||{};
+    const tIdx=ts.indexOf(best)>=0?ts.indexOf(best):0;
+    const noPrice=!best.client||Number(best.client)===0;
+    setItems(prev=>prev.map((it,idx)=>idx===i?{...it,desc:q.product||'',sku:q.sku||'',price:best.client?String(best.client):'',qty:best.qty?String(best.qty):it.qty,quoteId:q.id,tierIdx:tIdx,noPrice}:it));
+    if(q.client&&!form.clientId){const m=clients.find(c=>(c.name||'').toLowerCase()===q.client.toLowerCase());if(m)f('clientId')(m.id);}
+    setSrchHits([]); setSrchIdx(-1);
+  };
+  const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
+  const prevRev=items.reduce((a,it)=>a+(Number(it.qty)||0)*(Number(it.price)||0),0);
+  const filtPOs=availPOs.filter(p=>!poSearch||(p.order_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.companies?.name||'').toLowerCase().includes(poSearch.toLowerCase()));
+  const submit=async()=>{
+    if(!form.num.trim()){alert('SO number required');return;}
+    if(!items.filter(it=>it.desc.trim()).length){alert('Add at least one line item');return;}
+    setLoading(true);
+    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,status:'received'}).select().single();
+    if(e0||!so){alert('Error: '+(e0?.message||'unknown'));setLoading(false);return;}
+    const toIns=items.filter(it=>it.desc.trim()).map(it=>({sales_order_id:so.id,description:it.desc.trim(),client_sku:it.sku||null,quantity:Number(it.qty)||null,client_price:Number(it.price)||null,currency:form.currency,_quoteId:it.quoteId,_tierIdx:it.tierIdx||0}));
+    if(toIns.length) await SB.from('sales_order_items').insert(toIns.map(({_quoteId,_tierIdx,...rest})=>rest));
+    if(linkedPOIds.length) await SB.from('sales_order_pos').insert(linkedPOIds.map(pid=>({sales_order_id:so.id,purchase_order_id:pid})));
+    for(const it of toIns){
+      if(it._quoteId&&Number(it.client_price)>0){
+        try{
+          const {data:q}=await SB.from('quotes').select('tiers').eq('id',it._quoteId).single();
+          if(q){
+            const ts=Array.isArray(q.tiers)?[...q.tiers]:(q.tiers?JSON.parse(q.tiers):[]);
+            if(ts[it._tierIdx]&&(!Number(ts[it._tierIdx].client)||Number(ts[it._tierIdx].client)===0)){
+              ts[it._tierIdx]={...ts[it._tierIdx],client:it.client_price};
+              await SB.from('quotes').update({tiers:ts}).eq('id',it._quoteId);
+            }
+          }
+        }catch(e){}
+      }
+    }
+    setLoading(false); onCreated(so.id);
+  };
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal-box" style={{maxWidth:'700px'}}>
+        <div className="modal-head"><h3>New Sales Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-body">
+          <div className="form-row-2">
+            <div><label>SO Number</label><input className="form-input" style={{fontFamily:'var(--mono)'}} value={form.num} onChange={e=>f('num')(e.target.value)} placeholder="KUI-SO-2026-001" /></div>
+            <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}>{['USD','CAD','EUR','GBP','AUD'].map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+          </div>
+          <div style={{marginBottom:'16px'}}>
+            <label>Client</label>
+            <select className="form-select" value={form.clientId} onChange={e=>f('clientId')(e.target.value)}><option value="">— select client —</option>{[...clients].sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=><option key={c.id} value={c.id}>{c.name}{c.vendor_number?' ('+c.vendor_number+')':''}</option>)}</select>
+            {!showNC?<button className="btn btn-ghost btn-sm" style={{marginTop:'8px'}} onClick={()=>setShowNC(true)}>+ New client</button>:<div style={{display:'flex',gap:'8px',marginTop:'8px',alignItems:'center'}}><input className="form-input" style={{flex:1}} placeholder="Client name…" value={ncName} onChange={e=>setNcName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNC()} autoFocus /><button className="btn btn-dark btn-sm" onClick={addNC}>Add</button><button className="btn btn-ghost btn-sm" onClick={()=>{setShowNC(false);setNcName('');}}>✕</button></div>}
+          </div>
+          <div><label>Client PO #</label><input className="form-input" value={form.clientPO} onChange={e=>f('clientPO')(e.target.value)} placeholder="Client's purchase order number" /></div>
+          <div className="form-row-2">
+            <div><label>Order Date</label><input type="date" className="form-input" value={form.date} onChange={e=>f('date')(e.target.value)} /></div>
+            <div><label>Required Ship Date</label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
+          </div>
+          <div><label>Payment Terms</label><input className="form-input" value={form.payment} onChange={e=>f('payment')(e.target.value)} placeholder="e.g. Net 30, 50% deposit" /></div>
+
+          <span className="form-section-label">Line Items</span>
+          <table className="items-table">
+            <thead><tr><th style={{width:'40%'}}>Product</th><th>Qty</th><th>Client Price</th><th style={{width:'36px'}}></th></tr></thead>
+            <tbody>
+              {items.map((it,i)=>(
+                <React.Fragment key={i}>
+                  <tr>
+                    <td>
+                      <div style={{position:'relative'}}>
+                        <input value={it.desc} onChange={e=>handleSearch(i,e.target.value)} onBlur={()=>setTimeout(()=>{setSrchHits([]);setSrchIdx(-1);},200)} placeholder="Type to search products…" />
+                        {srchIdx===i&&srchHits.length>0&&(
+                          <div className="prod-suggestions">
+                            {srchHits.map(q=>{
+                              const ts=tOf(q); const best=ts.find(t=>Number(t.client)>0)||ts[0]||{};
+                              return (
+                                <div key={q.id} className="prod-sugg-item" onMouseDown={()=>pickFromCatalog(i,q)}>
+                                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:'8px'}}>
+                                    <span style={{fontWeight:600}}>{q.product}</span>
+                                    <span style={{fontFamily:'var(--mono)',fontSize:'11px',color:Number(best.client)>0?'var(--ink)':'#d97706',flexShrink:0}}>{Number(best.client)>0?money(best.client):'No price'}</span>
+                                  </div>
+                                  <div style={{fontSize:'11px',color:'var(--muted)'}}>{q.client||'—'}{q.factory?' · '+q.factory:''}{q.sku?' · '+q.sku:''}</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td><input type="number" value={it.qty} onChange={e=>si(i,'qty',e.target.value)} placeholder="0" /></td>
+                    <td>
+                      <input type="number" step="0.01" value={it.price} onChange={e=>si(i,'price',e.target.value)} placeholder="0.00" style={{borderColor:it.noPrice&&!it.price?'#f59e0b':''}} />
+                      {it.noPrice&&!it.price&&<div style={{fontSize:'10px',color:'#d97706',marginTop:'2px'}}>Enter client price</div>}
+                      {it.noPrice&&it.price&&<div style={{fontSize:'10px',color:'#059669',marginTop:'2px'}}>Will save to catalog</div>}
+                    </td>
+                    <td><button className="rm" onClick={()=>rmItem(i)}>×</button></td>
+                  </tr>
+                  <tr className="item-sub-row">
+                    <td colSpan={4}>
+                      <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 8px'}}>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 110px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Client SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.sku||''} onChange={e=>si(i,'sku',e.target.value)} placeholder="Client SKU" /></div>
+                      </div>
+                    </td>
+                  </tr>
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',margin:'4px 0 16px'}}>
+            <button className="btn btn-ghost btn-sm" onClick={addItem}>+ Add Item</button>
+            {prevRev>0&&<span style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:'14px',color:'var(--ink)'}}>{'Total: '+money(prevRev,form.currency)}</span>}
+          </div>
+
+          <span className="form-section-label">Link Factory POs (optional)</span>
+          <div style={{marginBottom:'16px'}}>
+            <input className="form-input" placeholder="Search by PO # or factory name…" value={poSearch} onChange={e=>setPOSearch(e.target.value)} style={{marginBottom:'8px'}} />
+            <div style={{maxHeight:'140px',overflowY:'auto',border:'1px solid var(--line-2)',borderRadius:'8px'}}>
+              {filtPOs.length===0&&<div style={{padding:'16px',textAlign:'center',color:'var(--muted)',fontSize:'13px'}}>No POs found</div>}
+              {filtPOs.slice(0,25).map(po=>{ const on=linkedPOIds.includes(po.id); return (
+                <div key={po.id} onClick={()=>togglePO(po.id)} style={{display:'flex',alignItems:'center',gap:'10px',padding:'9px 14px',borderBottom:'1px solid var(--line-2)',cursor:'pointer',background:on?'rgba(52,97,224,.07)':'transparent'}}>
+                  <div style={{width:'16px',height:'16px',borderRadius:'4px',border:'2px solid '+(on?'var(--accent)':'var(--line-2)'),background:on?'var(--accent)':'transparent',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>{on&&<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/></svg>}</div>
+                  <span style={{fontFamily:'var(--mono)',fontWeight:600,fontSize:'12px',color:'var(--ink)'}}>{po.order_number}</span>
+                  <span style={{fontSize:'12px',color:'var(--muted)',flex:1}}>{po.companies?.name||'—'}</span>
+                  <Badge status={po.status} />
+                </div>
+              ); })}
+            </div>
+            {linkedPOIds.length>0&&<div style={{fontSize:'12px',color:'var(--accent)',marginTop:'6px',fontWeight:600}}>{linkedPOIds.length+' PO'+(linkedPOIds.length!==1?'s':'')+' linked'}</div>}
+          </div>
+          <div><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>f('notes')(e.target.value)} placeholder="Internal notes…" rows={3} /></div>
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-dark" onClick={submit} disabled={loading}>{loading?'Creating…':'Create Sales Order'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
   const [clients,setClients]=useState([]);
   const [quotes,setQuotes]=useState([]);
   const [availPOs,setAvailPOs]=useState([]);
