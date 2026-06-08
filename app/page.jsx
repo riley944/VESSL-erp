@@ -688,7 +688,7 @@ function CreateSOModal({onClose,onCreated}){
   const [loading,setLoading]=useState(false);
   useEffect(()=>{
     Promise.all([
-      SB.from('companies').select('id,name,vendor_number').in('type',['client','brand','customer']).order('name'),
+      SB.from('companies').select('id,name,vendor_number').order('name'),
       SB.from('products').select('id,name,sku').order('name'),
       SB.from('purchase_orders').select('id,order_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300),
       SB.from('sales_orders').select('so_number').order('created_at',{ascending:false}).limit(100),
@@ -807,7 +807,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   const [showNC,setShowNC]=useState(false);
   const [ncName,setNcName]=useState('');
   const [loading,setLoading]=useState(false);
-  useEffect(()=>{ Promise.all([SB.from('companies').select('id,name').in('type',['client','brand','customer']).order('name'),SB.from('purchase_orders').select('id,order_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300)]).then(([{data:cli},{data:pos}])=>{setClients(cli||[]);setAvailPOs(pos||[]);}); },[]);
+  useEffect(()=>{ Promise.all([SB.from('companies').select('id,name').order('name'),SB.from('purchase_orders').select('id,order_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300)]).then(([{data:cli},{data:pos}])=>{setClients(cli||[]);setAvailPOs(pos||[]);}); },[]);
   const addNC=async()=>{ const n=ncName.trim(); if(!n) return; const {data:co}=await SB.from('companies').upsert({name:n,type:'client'},{onConflict:'name,type'}).select('id,name').single(); if(co){setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]);f('clientId')(co.id);} setShowNC(false);setNcName(''); };
   const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
   const save=async()=>{
@@ -1138,7 +1138,7 @@ function OrderDetail({ id, navigate }) {
     }
     const { data, error } = await SB.rpc('po_document_json',{p_po_id:id});
     if (error||!data){ if(win) win.close(); alert('Error: '+(error?.message||'No data')); return; }
-    const html = buildPODoc(data, { pallet: po?.pallet_info, clientName: po?.client?.name, itemDetails: items });
+    const html = buildPODoc(data, { pallet: po?.pallet_info, clientName: po?.client?.name, itemDetails: items, testingRequired: po?.testing_required, deliveryAddress: po?.delivery_address, shippingMethod: po?.shipping_method });
     if (win) {
       win.document.open();
       win.document.write(html);
@@ -1341,12 +1341,13 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     mold:po.mold_fee!=null?String(po.mold_fee):'', sample:po.sample_fee!=null?String(po.sample_fee):'',
     currency:po.currency||'USD', notes:po.notes||'', status:po.status||'draft', pallet:po.pallet_info||'',
     needs_samples:!!po.needs_samples, sample_type:po.sample_type||'TOP', sample_qty:po.sample_qty!=null?String(po.sample_qty):'',
-    clientId: po.client_company_id||''
+    clientId: po.client_company_id||'',
+    testing_required: !!po.testing_required, delivery_address: po.delivery_address||'', shipping_method: po.shipping_method||''
   });
-  const [items, setItems] = useState((initialItems||[]).map(it=>({id:it.id,prodId:it.product_id||'',desc:it.description||it.products?.name||'',qty:it.quantity!=null?String(it.quantity):'',price:it.unit_price!=null?String(it.unit_price):'',ci:it.ci_value!=null?String(it.ci_value):'',carton:it.carton_info||''})));
+  const [items, setItems] = useState((initialItems||[]).map(it=>({id:it.id,prodId:it.product_id||'',desc:it.description||it.products?.name||'',qty:it.quantity!=null?String(it.quantity):'',price:it.unit_price!=null?String(it.unit_price):'',ci:it.ci_value!=null?String(it.ci_value):'',carton:it.carton_info||'',vpn:it.vpn||'',masterSku:it.master_sku||'',packSku:it.pack_sku||'',babySku:it.baby_sku||'',retailPrice:it.retail_price!=null?String(it.retail_price):''})));
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   const setItem=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
-  const addItem=()=>setItems(prev=>[...prev,{id:null,prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
+  const addItem=()=>setItems(prev=>[...prev,{id:null,prodId:'',desc:'',qty:'',price:'',ci:'',carton:'',vpn:'',masterSku:'',packSku:'',babySku:'',retailPrice:''}]);
   const rmItem =i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
   const [products, setProducts] = useState([]);
   const [recentDescs, setRecentDescs] = useState([]);
@@ -1436,6 +1437,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
       notes:form.notes||null, status:form.status, pallet_info:form.pallet||null,
       client_company_id: form.clientId||null,
       needs_samples:!!form.needs_samples, sample_type:form.needs_samples?(form.sample_type||null):null, sample_qty:form.needs_samples?(Number(form.sample_qty)||null):null,
+      testing_required:!!form.testing_required, delivery_address:form.delivery_address||null, shipping_method:form.shipping_method||null,
       updated_at:new Date().toISOString()
     }).eq('id',po.id);
     if(error){alert('Error: '+error.message);return;}
@@ -1444,7 +1446,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     for(const it of items){
       const hasDesc=(it.desc||'').trim();
       if(!(it.prodId||hasDesc) || !(Number(it.qty)>0)) continue;
-      const base={purchase_order_id:po.id,product_id:it.prodId||null,quantity:Number(it.qty),unit_price:Number(it.price)||0,currency:form.currency,ci_value:Number(it.ci)||null,carton_info:it.carton||null};
+      const base={purchase_order_id:po.id,product_id:it.prodId||null,quantity:Number(it.qty),unit_price:Number(it.price)||0,currency:form.currency,ci_value:Number(it.ci)||null,carton_info:it.carton||null,vpn:it.vpn||null,master_sku:it.masterSku||null,pack_sku:it.packSku||null,baby_sku:it.babySku||null,retail_price:it.retailPrice?Number(it.retailPrice):null};
       let { error:e1 } = await SB.from('purchase_order_items').insert({...base,description:hasDesc||null});
       if(e1 && /description/i.test(e1.message)) await SB.from('purchase_order_items').insert(base);
     }
@@ -1495,9 +1497,16 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
                   </tr>
                   <tr className="item-sub-row">
                     <td colSpan={4}>
-                      <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 8px'}}>
+                      <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 4px'}}>
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>CI Value ($)</span><input type="number" step="0.01" className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.ci||''} onChange={e=>setItem(i,'ci',e.target.value)} placeholder="0.00" /></div>
                         <div style={{display:'flex',flexDirection:'column',flex:'1 1 180px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Carton info</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.carton||''} onChange={e=>setItem(i,'carton',e.target.value)} placeholder="e.g. 12 pcs/ctn, 60×40×30 cm, 11 kg" /></div>
+                      </div>
+                      <div style={{display:'flex',gap:'8px',flexWrap:'wrap',padding:'0 0 8px'}}>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 90px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>VPN #</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.vpn||''} onChange={e=>setItem(i,'vpn',e.target.value)} placeholder="VPN" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Master SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.masterSku||''} onChange={e=>setItem(i,'masterSku',e.target.value)} placeholder="Master" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Pack SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.packSku||''} onChange={e=>setItem(i,'packSku',e.target.value)} placeholder="Pack" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Baby SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.babySku||''} onChange={e=>setItem(i,'babySku',e.target.value)} placeholder="Baby" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Retail Price</span><input type="number" step="0.01" className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.retailPrice||''} onChange={e=>setItem(i,'retailPrice',e.target.value)} placeholder="0.00" /></div>
                       </div>
                     </td>
                   </tr>
@@ -1545,6 +1554,24 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
             }
           </div>
           <div className="form-row"><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>f('notes')(e.target.value)} /></div>
+          <span className="form-section-label">Compliance & Delivery</span>
+          <div className="form-row-2">
+            <div><label>Shipping Method</label>
+              <select className="form-select" value={form.shipping_method} onChange={e=>f('shipping_method')(e.target.value)}>
+                <option value="">— select —</option>
+                <option value="FedEx">FedEx</option>
+                <option value="Sine Trading">Sine Trading</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',justifyContent:'flex-end'}}>
+              <label style={{display:'flex',alignItems:'center',gap:'10px',fontSize:'13.5px',cursor:'pointer',fontFamily:'var(--sans)',textTransform:'none',letterSpacing:0,color:'var(--ink)',fontWeight:400,marginBottom:'2px'}}>
+                <input type="checkbox" checked={!!form.testing_required} onChange={e=>f('testing_required')(e.target.checked)} style={{width:'16px',height:'16px',accentColor:'#7c3aed'}} />
+                Testing Required
+              </label>
+            </div>
+          </div>
+          <div className="form-row"><label>Delivery Address</label><textarea className="form-textarea" rows={3} value={form.delivery_address} onChange={e=>f('delivery_address')(e.target.value)} placeholder="Full delivery address for factory reference" /></div>
         </div>
         <div className="modal-foot" style={{flexWrap:'wrap',gap:'10px'}}>
           {saveMsg && (
@@ -2133,6 +2160,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       deposit_percent:Number(form.dep)||null, mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0,
       currency:form.currency, notes:form.notes||null, status:'draft',
       needs_samples:!!form.needs_samples, sample_type:form.needs_samples?(form.sample_type||null):null, sample_qty:form.needs_samples?(Number(form.sample_qty)||null):null,
+      testing_required:!!form.testing_required, delivery_address:form.delivery_address||null, shipping_method:form.shipping_method||null,
       source_quote_id: picked?.id || null
     };
     let po=null, lastErr=null, orderNumber=form.num;
@@ -2163,7 +2191,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     let added=0, failed=[];
     for (const it of valid) {
       const hasDesc=(it.desc||'').trim();
-      const base={ purchase_order_id:po.id, product_id:it.prodId||null, quantity:Number(it.qty), unit_price:Number(it.price)||0, currency:form.currency, ci_value:Number(it.ci)||null, carton_info:it.carton||null };
+      const base={ purchase_order_id:po.id, product_id:it.prodId||null, quantity:Number(it.qty), unit_price:Number(it.price)||0, currency:form.currency, ci_value:Number(it.ci)||null, carton_info:it.carton||null, vpn:it.vpn||null, master_sku:it.masterSku||null, pack_sku:it.packSku||null, baby_sku:it.babySku||null, retail_price:it.retailPrice?Number(it.retailPrice):null };
       let { error:e1 } = await SB.from('purchase_order_items').insert({ ...base, description:hasDesc||null });
       if (e1 && /description/i.test(e1.message)) {
         // description column not added yet (migration 007) — insert without it
@@ -2357,15 +2385,16 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
                   </tr>
                   <tr className="item-sub-row">
                     <td colSpan={5}>
-                      <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 8px'}}>
-                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}>
-                          <span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>CI Value ($)</span>
-                          <input type="number" step="0.01" className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.ci||''} onChange={e=>setItem(i,'ci',e.target.value)} placeholder="0.00" />
-                        </div>
-                        <div style={{display:'flex',flexDirection:'column',flex:'1 1 180px'}}>
-                          <span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Carton info</span>
-                          <input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.carton||''} onChange={e=>setItem(i,'carton',e.target.value)} placeholder="e.g. 12 pcs/ctn, 60×40×30 cm, 11 kg" />
-                        </div>
+                      <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 4px'}}>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>CI Value ($)</span><input type="number" step="0.01" className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.ci||''} onChange={e=>setItem(i,'ci',e.target.value)} placeholder="0.00" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'1 1 180px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Carton info</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.carton||''} onChange={e=>setItem(i,'carton',e.target.value)} placeholder="e.g. 12 pcs/ctn, 60×40×30 cm, 11 kg" /></div>
+                      </div>
+                      <div style={{display:'flex',gap:'8px',flexWrap:'wrap',padding:'0 0 8px'}}>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 90px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>VPN #</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.vpn||''} onChange={e=>setItem(i,'vpn',e.target.value)} placeholder="VPN" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Master SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.masterSku||''} onChange={e=>setItem(i,'masterSku',e.target.value)} placeholder="Master" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Pack SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.packSku||''} onChange={e=>setItem(i,'packSku',e.target.value)} placeholder="Pack" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Baby SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.babySku||''} onChange={e=>setItem(i,'babySku',e.target.value)} placeholder="Baby" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Retail Price</span><input type="number" step="0.01" className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.retailPrice||''} onChange={e=>setItem(i,'retailPrice',e.target.value)} placeholder="0.00" /></div>
                       </div>
                     </td>
                   </tr>
@@ -2417,6 +2446,24 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
             <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}><option>USD</option><option>CNY</option><option>VND</option><option>EUR</option></select></div>
           </div>
           <div className="form-row"><label>Notes</label><textarea className="form-textarea" placeholder="Special instructions..." value={form.notes} onChange={e=>f('notes')(e.target.value)} /></div>
+          <span className="form-section-label">Compliance & Delivery</span>
+          <div className="form-row-2">
+            <div><label>Shipping Method</label>
+              <select className="form-select" value={form.shipping_method||''} onChange={e=>f('shipping_method')(e.target.value)}>
+                <option value="">— select —</option>
+                <option value="FedEx">FedEx</option>
+                <option value="Sine Trading">Sine Trading</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',justifyContent:'flex-end'}}>
+              <label style={{display:'flex',alignItems:'center',gap:'10px',fontSize:'13.5px',cursor:'pointer',fontFamily:'var(--sans)',textTransform:'none',letterSpacing:0,color:'var(--ink)',fontWeight:400,marginBottom:'4px'}}>
+                <input type="checkbox" checked={!!form.testing_required} onChange={e=>f('testing_required')(e.target.checked)} style={{width:'16px',height:'16px',accentColor:'#7c3aed'}} />
+                Testing Required
+              </label>
+            </div>
+          </div>
+          <div className="form-row"><label>Delivery Address</label><textarea className="form-textarea" rows={3} value={form.delivery_address||''} onChange={e=>f('delivery_address')(e.target.value)} placeholder="Full delivery address for factory reference" /></div>
           </>
           )}
         </div>
@@ -2609,7 +2656,99 @@ function buildPODoc(d, opts={}) {
   const pallet = opts.pallet || d.pallet_info || '';
   const clientName = opts.clientName || d.client_name || '';
   const itemDetails = opts.itemDetails || [];
+  const testingRequired = opts.testingRequired || d.testing_required || false;
+  const deliveryAddress = opts.deliveryAddress || d.delivery_address || '';
+  const shippingMethod = opts.shippingMethod || d.shipping_method || '';
   const t=d.totals||{};
+  const m=(n,c)=>n==null?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:c||'USD'}).format(n);
+  const fd=s=>{if(!s)return'—';return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'});};
+  const fn=n=>n==null?'—':new Intl.NumberFormat('en-US').format(n);
+  const lines=(d.lines||[]).map((l,idx)=>{
+    const det = itemDetails[idx] || {};
+    const ci = det.ci || (det.ci_value != null ? det.ci_value : null);
+    const carton = det.carton || det.carton_info || '';
+    const vpn = det.vpn || l.vpn || '';
+    const masterSku = det.masterSku || l.master_sku || '';
+    const packSku = det.packSku || l.pack_sku || '';
+    const babySku = det.babySku || l.baby_sku || '';
+    const retailPrice = det.retailPrice != null ? det.retailPrice : (l.retail_price != null ? l.retail_price : null);
+    const skuLine = [masterSku?'Master: '+masterSku:'', packSku?'Pack: '+packSku:'', babySku?'Baby: '+babySku:''].filter(Boolean).join(' · ');
+    return '<tr>'
+      +'<td class="l"><div class="desc">'+(l.description||'')+'</div>'
+      +(carton?'<div class="carton">'+carton+'</div>':'')
+      +(vpn?'<div class="sku">VPN# '+vpn+'</div>':'')
+      +(skuLine?'<div class="sku">'+skuLine+'</div>':'')
+      +(retailPrice!=null?'<div class="sku">Retail: '+m(retailPrice,d.currency)+'</div>':'')
+      +'</td>'
+      +'<td class="num mono" style="font-size:11px;color:#8a9097;">'+(l.sku||det.sku||'—')+'</td>'
+      +'<td class="num">'+fn(l.quantity)+'</td>'
+      +'<td class="num">'+(ci!=null?m(ci,d.currency):'—')+'</td>'
+      +'<td class="num">'+m(l.unit_price,d.currency)+'</td>'
+      +'<td class="num">'+m(l.line_amount,d.currency)+'</td>'
+      +'</tr>';
+  }).join('');
+  const termsExtra = [shippingMethod?'<div><div class="lbl">Shipping</div><div class="tv">'+shippingMethod+'</div></div>':'', testingRequired?'<div><div class="lbl">Testing</div><div class="tv" style="color:#7c3aed;font-weight:600">Required</div></div>':''].filter(Boolean).join('');
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+(d.po_number||'PO')+'</title>'
++'<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Spline+Sans:wght@400;500&family=Spline+Sans+Mono:wght@400&display=swap" rel="stylesheet">'
++'<style>*{box-sizing:border-box;margin:0;padding:0;}html,body{background:#fff;font-family:\'Spline Sans\',sans-serif;font-size:13px;color:#1a1d1f;}'
++'.page{max-width:8.5in;margin:0 auto;padding:.9in .9in .8in;min-height:11in;}'
++'.lbl{font-family:\'Spline Sans Mono\',monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:#8a9097;}'
++'.num{font-family:\'Spline Sans Mono\',monospace;}.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:48px;}'
++'.logo{height:52px;}.title-row{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px;}'
++'h1{font-family:\'Fraunces\',serif;font-weight:400;font-size:30px;}'
++'.pov{font-family:\'Spline Sans Mono\',monospace;font-size:15px;margin-top:5px;text-align:right;}'
++'.client-banner{background:#f8f9fa;border-left:3px solid #1a1d1f;padding:10px 16px;margin-bottom:40px;display:flex;align-items:baseline;gap:16px;}'
++'.client-banner .lbl{margin-bottom:0;}.client-banner .name{font-size:16px;font-weight:600;font-family:\'Fraunces\',serif;}'
++'.parties{display:grid;grid-template-columns:1fr 1fr;gap:56px;margin-bottom:46px;}'
++'.party-name{font-size:14px;font-weight:500;margin-bottom:5px;margin-top:11px;}.party-body{font-size:12px;line-height:1.75;color:#8a9097;}'
++'.terms{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:24px;padding-top:22px;border-top:1px solid #ececec;margin-bottom:50px;}'
++'.tv{font-size:13px;font-weight:500;margin-top:7px;}'
++'table{width:100%;border-collapse:collapse;}'
++'thead th{font-family:\'Spline Sans Mono\',monospace;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:#8a9097;text-align:right;font-weight:400;padding:0 0 14px;}'
++'thead th.l{text-align:left;}tbody td{font-size:12.5px;padding:16px 0;border-top:1px solid #ececec;text-align:right;vertical-align:top;}'
++'tbody td.l{text-align:left;padding-right:24px;}.desc{font-weight:500;font-size:13px;}.sku{font-family:\'Spline Sans Mono\',monospace;font-size:10px;color:#c9ccce;margin-top:3px;}'
++'.carton{font-size:10.5px;color:#8a9097;margin-top:3px;line-height:1.5;}'
++'.foot{display:grid;grid-template-columns:1fr 280px;gap:60px;margin-top:46px;}'
++'.nb{font-size:11.5px;line-height:1.8;color:#8a9097;margin-top:12px;}'
++'.tr{display:flex;justify-content:space-between;padding:9px 0;font-size:12.5px;}.tr .k{color:#8a9097;}.tr .v{font-family:\'Spline Sans Mono\',monospace;}'
++'.grand{display:flex;justify-content:space-between;padding:16px 0 0;margin-top:8px;border-top:1px solid #1a1d1f;}'
++'.grand .k{font-family:\'Fraunces\',serif;font-size:14px;}.grand .v{font-family:\'Spline Sans Mono\',monospace;font-size:19px;}'
++'.dep{display:flex;justify-content:space-between;padding-top:12px;font-size:11.5px;color:#8a9097;}.dep .v{font-family:\'Spline Sans Mono\',monospace;}'
++'.sign{display:grid;grid-template-columns:1fr 1fr;gap:56px;margin-top:80px;}'
++'.sline{border-top:1px solid #c9ccce;padding-top:8px;}'
++'.pf{margin-top:54px;display:flex;justify-content:space-between;font-family:\'Spline Sans Mono\',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#c9ccce;}'
++'@media print{@page{size:letter;margin:0;}.page{padding:.85in .9in;}}'
++'</style></head><body>'
++'<div class="page">'
++'<div class="head"><img class="logo" src="/logo.png" alt="King Universal"></div>'
++'<div class="title-row"><h1>Purchase Order</h1><div><div class="lbl">PO Number</div><div class="pov">'+(d.po_number||'—')+'</div></div></div>'
++(clientName ? '<div class="client-banner"><span class="lbl">Prepared for</span><span class="name">'+clientName+'</span></div>' : '<div style="margin-bottom:40px"></div>')
++'<div class="parties">'
++'<div><div class="lbl">Supplier</div><div class="party-name">'+(d.supplier?.name||'—')+'</div><div class="party-body">'+(d.supplier?.contact?'Attn: '+d.supplier.contact+'<br>':'')+(d.supplier?.lines||[]).join('<br>')+(d.supplier?.email?'<br>'+d.supplier.email:'')+'</div></div>'
++'<div><div class="lbl">Ship To</div><div class="party-name">'+(d.ship_to?.name||'King Universal Inc.')+'</div><div class="party-body">'+(deliveryAddress?deliveryAddress.replace(/\n/g,'<br>'):(d.ship_to?.lines||[]).join('<br>'))+'</div></div>'
++'</div>'
++'<div class="terms">'
++'<div><div class="lbl">Order Date</div><div class="tv">'+fd(d.order_date)+'</div></div>'
++'<div><div class="lbl">Ship By</div><div class="tv">'+fd(d.requested_ship_date)+'</div></div>'
++'<div><div class="lbl">Incoterm</div><div class="tv">'+(d.incoterm||'—')+'</div></div>'
++'<div><div class="lbl">Payment</div><div class="tv">'+(d.payment_terms||'—')+'</div></div>'
++termsExtra
++'</div>'
++'<table><thead><tr><th class="l">Description</th><th>Style / SKU</th><th>Qty</th><th>CI Value</th><th>Unit Cost</th><th>Amount</th></tr></thead><tbody>'+lines+'</tbody></table>'
++'<div class="foot">'
++'<div><div class="lbl">Notes</div><div class="nb">'+(d.notes||'')+'</div>'+(pallet?'<div class="lbl" style="margin-top:22px">Palletization</div><div class="nb">'+pallet+'</div>':'')+(t.total_cartons?'<div class="lbl" style="margin-top:22px">Logistics</div><div class="nb">'+fn(t.total_cartons)+' cartons \u00b7 '+t.total_cbm+' CBM \u00b7 '+fn(t.total_gross_weight_kg)+' kg</div>':'')+'</div>'
++'<div>'
++'<div class="tr"><span class="k">Goods subtotal</span><span class="v">'+m(t.subtotal,d.currency)+'</span></div>'
++(t.mold_fee?'<div class="tr"><span class="k">Tooling / mold</span><span class="v">'+m(t.mold_fee,d.currency)+'</span></div>':'')
++(t.sample_fee?'<div class="tr" style="opacity:.6;font-style:italic"><span class="k">Sample fee (sep.)</span><span class="v">'+m(t.sample_fee,d.currency)+'</span></div>':'')
++'<div class="grand"><span class="k">Total \u2014 '+(d.currency||'USD')+'</span><span class="v">'+m(t.grand_total,d.currency)+'</span></div>'
++(t.deposit_amount?'<div class="dep"><span>'+d.deposit_percent+'% deposit</span><span class="v">'+m(t.deposit_amount,d.currency)+'</span></div>':'')
++'</div>'
++'</div>'
++'<div class="sign"><div><div class="sline"><div class="lbl">Authorized \u2014 King Universal Inc.</div></div></div><div><div class="sline"><div class="lbl">Accepted \u2014 Supplier</div></div></div></div>'
++'<div class="pf"><span>King Universal Inc.</span><span>'+(d.po_number||'')+'</span></div>'
++'</div></body></html>';
+}
   const m=(n,c)=>n==null?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:c||'USD'}).format(n);
   const fd=s=>{if(!s)return'—';return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'});};
   const fn=n=>n==null?'—':new Intl.NumberFormat('en-US').format(n);
