@@ -22,6 +22,30 @@ const money = (n, c='USD') => n == null ? '—' : new Intl.NumberFormat('en-US',
 const fmtDate = s => { if (!s) return '—'; return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
 const fmtDateTime = s => { if (!s) return ''; const d=new Date(s); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); };
 
+// ── Sales Orders constants ────────────────────────────────────────────────────
+const SO_STATUSES = ['received','confirmed','in_production','shipped','delivered','invoiced','closed'];
+const SO_SM = {
+  received:     {label:'Received',     color:'#6366f1',bg:'#eef2ff'},
+  confirmed:    {label:'Confirmed',    color:'#3461e0',bg:'#eff6ff'},
+  in_production:{label:'In Production',color:'#d97706',bg:'#fffbeb'},
+  shipped:      {label:'Shipped',      color:'#0891b2',bg:'#ecfeff'},
+  delivered:    {label:'Delivered',    color:'#059669',bg:'#ecfdf5'},
+  invoiced:     {label:'Invoiced',     color:'#7c3aed',bg:'#f5f3ff'},
+  closed:       {label:'Closed',       color:'#64748b',bg:'#f8fafc'},
+};
+const genSONum = (list=[]) => {
+  const yr = new Date().getFullYear();
+  const pfx = 'KUI-SO-'+yr+'-';
+  const nums = list.map(n=>{ const m=(n||'').match(/KUI-SO-\d{4}-(\d+)/i); return m?parseInt(m[1]):0; }).filter(n=>n>0);
+  return pfx+String(nums.length?Math.max(...nums)+1:1).padStart(3,'0');
+};
+const mgnColor = p => p===null?'#94a3b8':p>=25?'#059669':p>=15?'#d97706':'#dc2626';
+const soMetrics = so => {
+  const rev = (so.sales_order_items||[]).reduce((a,i)=>a+(Number(i.quantity)||0)*(Number(i.client_price)||0),0);
+  const cost = (so.sales_order_pos||[]).reduce((a,l)=>a+((l.purchase_orders?.purchase_order_items)||[]).reduce((b,i)=>b+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0),0);
+  return {rev, cost, gross:rev-cost, mgn:rev>0?(rev-cost)/rev*100:null};
+};
+
 // Auto-create shipment when a PO moves to shipped — callable from any component
 async function createShipmentForPO(poId) {
   try {
@@ -129,6 +153,7 @@ function PoToolbar({ rows, search, setSearch, client, setClient, status, setStat
 
 // ── Icons (inline SVG, 1.6px stroke) ─────────────────────────────────────────
 const Ic = {
+  'sales-orders':<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="12" y1="17" x2="8" y2="17"/><line x1="20" y1="17" x2="17" y2="17"/><polyline points="17 15 19 17 17 19"/></svg>,
   dashboard:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>,
   orders:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-3"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>,
   companies:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h.01M9 13h.01M9 17h.01M15 9h.01M15 13h.01M15 17h.01"/></svg>,
@@ -142,14 +167,16 @@ const Ic = {
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 function Sidebar({ page, navigate, user, open }) {
   const links = [
-    { id:'dashboard', label:'Dashboard' },
-    { id:'orders',    label:'Purchase Orders' },
-    { id:'companies', label:'Companies' },
-    { id:'products',  label:'Products' },
-    { id:'shipments', label:'Shipments' },
-    { id:'inventory', label:'Inventory' },
-    { id:'quotes',    label:'Quotes' },
+    { id:'dashboard',     label:'Dashboard' },
+    { id:'sales-orders',  label:'Sales Orders' },
+    { id:'orders',        label:'Purchase Orders' },
+    { id:'companies',     label:'Companies' },
+    { id:'products',      label:'Products' },
+    { id:'shipments',     label:'Shipments' },
+    { id:'inventory',     label:'Inventory' },
+    { id:'quotes',        label:'Quotes' },
   ];
+  const activeFor = { 'sales-orders':['sales-orders','so-detail'], 'orders':['orders','order-detail'] };
   return (
     <aside className={`sidebar ${open?'sidebar--open':''}`}>
       <div className="sb-brand">
@@ -158,7 +185,7 @@ function Sidebar({ page, navigate, user, open }) {
       <div className="sb-scroll">
         <div className="sb-section">Workspace</div>
         {links.map(l => (
-          <button key={l.id} className={`nav-link ${page===l.id||page==='order-detail'&&l.id==='orders'?'active':''}`} onClick={()=>navigate(l.id)}>
+          <button key={l.id} className={'nav-link '+((activeFor[l.id]||[l.id]).includes(page)?'active':'')} onClick={()=>navigate(l.id)}>
             <span className="ic">{Ic[l.id]}</span> {l.label}
           </button>
         ))}
@@ -407,6 +434,455 @@ function Inventory() {
         );
       })}
     </>
+  );
+}
+
+// ── Sales Orders ─────────────────────────────────────────────────────────────
+function SOBadge({status}){
+  const m=SO_SM[status]||{label:(status||'—').replace(/_/g,' '),color:'#64748b',bg:'#f8fafc'};
+  return <span style={{display:'inline-flex',alignItems:'center',padding:'3px 9px',borderRadius:'20px',fontSize:'10px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',background:m.bg,color:m.color,whiteSpace:'nowrap'}}>{m.label}</span>;
+}
+
+function SOCard({so,onClick}){
+  const {rev,cost,mgn}=soMetrics(so);
+  const cl=so.client?.name||'—'; const mc=mgnColor(mgn);
+  return (
+    <div className="order-card" onClick={onClick} style={{cursor:'pointer'}}>
+      <div className="oc-top">
+        <span style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:700,color:'var(--ink)'}}>{so.so_number||'—'}</span>
+        <SOBadge status={so.status} />
+      </div>
+      <div className="oc-factory">
+        <span className="oc-avatar" style={{background:companyColor(cl)}}>{initials(cl)}</span>
+        <span style={{display:'flex',flexDirection:'column',gap:'2px',minWidth:0,overflow:'hidden'}}>
+          <span style={{fontWeight:700,fontSize:'14px',color:'var(--ink)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{cl}</span>
+          {so.client_po_number && <span style={{fontSize:'11px',color:'var(--muted)'}}>{'Client PO: '+so.client_po_number}</span>}
+        </span>
+      </div>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px 4px'}}>
+        <span style={{fontFamily:'var(--mono)',fontSize:'14px',fontWeight:700,color:'var(--ink)'}}>{rev>0?money(rev,so.currency):'No items'}</span>
+        {mgn!==null && <span style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:700,color:mc,background:mc+'22',padding:'2px 8px',borderRadius:'12px'}}>{mgn.toFixed(1)+'%'}</span>}
+      </div>
+      {(so.required_ship_date||cost>0) && (
+        <div style={{padding:'2px 16px 12px',fontSize:'11px',color:'var(--muted)',display:'flex',gap:'14px'}}>
+          {so.required_ship_date && <span>{'Ship by '+fmtDate(so.required_ship_date)}</span>}
+          {cost>0 && <span>{'Cost: '+money(cost,so.currency)}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SalesOrders({navigate}){
+  const [rows,setRows]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [search,setSearch]=useState('');
+  const [statusF,setStatusF]=useState('all');
+  const [clientF,setClientF]=useState('all');
+  const [showCreate,setShowCreate]=useState(false);
+  const load=async()=>{ setLoading(true); const {data}=await SB.from('sales_orders').select('*,client:companies!client_company_id(id,name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(unit_price,quantity)))').order('created_at',{ascending:false}); setRows(data||[]); setLoading(false); };
+  useEffect(()=>{ load(); },[]);
+  const clients=[...new Set(rows.map(r=>r.client?.name).filter(Boolean))].sort();
+  const shown=rows.filter(r=>{
+    if(statusF!=='all'&&r.status!==statusF) return false;
+    if(clientF!=='all'&&r.client?.name!==clientF) return false;
+    if(search){ const q=search.toLowerCase(); return (r.so_number||'').toLowerCase().includes(q)||(r.client_po_number||'').toLowerCase().includes(q)||(r.client?.name||'').toLowerCase().includes(q); }
+    return true;
+  });
+  const totals=shown.reduce((a,so)=>{ const m=soMetrics(so); return {rev:a.rev+m.rev,cost:a.cost+m.cost,n:a.n+1}; },{rev:0,cost:0,n:0});
+  const totalMgn=totals.rev>0?(totals.rev-totals.cost)/totals.rev*100:null;
+  return (
+    <>
+      {showCreate && <CreateSOModal onClose={()=>setShowCreate(false)} onCreated={(id)=>{setShowCreate(false);id?navigate('so-detail',{id}):load();}} />}
+      <div className="po-toolbar">
+        <div className="search-wrap" style={{flex:1,maxWidth:'400px'}}>
+          <svg className="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input className="search-input" placeholder="Search SO#, client PO#, client..." value={search} onChange={e=>setSearch(e.target.value)} />
+        </div>
+        <button className="btn btn-dark btn-sm" onClick={()=>setShowCreate(true)}>+ New Sales Order</button>
+      </div>
+      {shown.length>0 && (
+        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'10px',marginBottom:'20px'}}>
+          {[{l:'Orders',v:String(totals.n),c:'var(--ink)'},{l:'Revenue',v:money(totals.rev),c:'var(--ink)'},{l:'Factory Cost',v:totals.cost>0?money(totals.cost):'No POs linked',c:'var(--muted)'},{l:'Avg Margin',v:totalMgn!==null?totalMgn.toFixed(1)+'%':'—',c:mgnColor(totalMgn)}].map(t=>(
+            <div key={t.l} className="section-card" style={{padding:'14px 16px',marginBottom:0}}>
+              <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.12em',color:'var(--muted)',marginBottom:'6px'}}>{t.l}</div>
+              <div style={{fontFamily:'var(--mono)',fontSize:'20px',fontWeight:700,color:t.c,lineHeight:1}}>{t.v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {clients.length>1 && (
+        <div style={{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'10px'}}>
+          {['all',...clients].map(c=>{ const on=clientF===c; return <button key={c} onClick={()=>setClientF(c)} style={{padding:'4px 12px',borderRadius:'20px',border:'none',cursor:'pointer',fontSize:'12px',fontWeight:600,background:on?companyColor(c):'var(--line-2)',color:on?'#fff':'var(--muted)'}}>{c==='all'?'All clients':c}</button>; })}
+        </div>
+      )}
+      <div style={{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'20px'}}>
+        {['all',...SO_STATUSES].map(s=>{ const on=statusF===s; const m=SO_SM[s]; return <button key={s} onClick={()=>setStatusF(s)} style={{padding:'4px 12px',borderRadius:'20px',border:'none',cursor:'pointer',fontSize:'11px',fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',background:on?(m?m.color:'#334155'):(m?m.bg:'var(--line-2)'),color:on?'#fff':(m?m.color:'var(--muted)')}}>{s==='all'?'ALL':s.replace(/_/g,' ')}</button>; })}
+      </div>
+      {loading ? <div className="loading">Loading…</div> : shown.length ? (
+        <div className="order-card-grid">{shown.map(so=><SOCard key={so.id} so={so} onClick={()=>navigate('so-detail',{id:so.id})} />)}</div>
+      ) : (
+        <div className="section-card"><div style={{padding:'52px 32px',textAlign:'center'}}>
+          <svg style={{margin:'0 auto 16px',display:'block',opacity:.3}} width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          <h3 style={{marginBottom:'8px',fontSize:'16px',fontWeight:700}}>{'No sales orders'+(statusF!=='all'?' with this status':'')}</h3>
+          <p style={{color:'var(--muted)',fontSize:'13px',marginBottom:'22px',lineHeight:1.6}}>Sales orders are client POs received by KUI. Create one to track revenue and margin.</p>
+          <button className="btn btn-dark btn-sm" onClick={()=>setShowCreate(true)}>+ New Sales Order</button>
+        </div></div>
+      )}
+    </>
+  );
+}
+
+function SalesOrderDetail({id,navigate}){
+  const [so,setSo]=useState(null);
+  const [items,setItems]=useState([]);
+  const [linkedPos,setLinkedPos]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [editing,setEditing]=useState(false);
+  const [confirmDel,setConfirmDel]=useState(false);
+  const [invoiceNum,setInvoiceNum]=useState('');
+  const [savingInv,setSavingInv]=useState(false);
+  const load=async()=>{
+    setLoading(true);
+    const [{data:soD},{data:itmD},{data:posD}]=await Promise.all([
+      SB.from('sales_orders').select('*,client:companies!client_company_id(id,name,vendor_number)').eq('id',id).single(),
+      SB.from('sales_order_items').select('*,products(name,sku)').eq('sales_order_id',id).order('created_at'),
+      SB.from('sales_order_pos').select('purchase_orders(id,order_number,status,currency,companies!factory_company_id(name),purchase_order_items(description,quantity,unit_price))').eq('sales_order_id',id),
+    ]);
+    setSo(soD); setItems(itmD||[]); setInvoiceNum(soD?.invoice_number||'');
+    setLinkedPos((posD||[]).map(p=>p.purchase_orders).filter(Boolean));
+    setLoading(false);
+  };
+  useEffect(()=>{ load(); },[id]);
+  if(loading) return <div className="loading">Loading…</div>;
+  if(!so) return null;
+  const rev=items.reduce((a,i)=>a+(Number(i.quantity)||0)*(Number(i.client_price)||0),0);
+  const cost=linkedPos.reduce((a,po)=>a+(po.purchase_order_items||[]).reduce((b,i)=>b+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0),0);
+  const gross=rev-cost; const mgn=rev>0?gross/rev*100:null; const mc=mgnColor(mgn);
+  const cl=so.client?.name||'—';
+  const updateStatus=async s=>{await SB.from('sales_orders').update({status:s,updated_at:new Date().toISOString()}).eq('id',id); setSo(prev=>({...prev,status:s}));};
+  const saveInvoice=async()=>{ setSavingInv(true); await SB.from('sales_orders').update({invoice_number:invoiceNum.trim()||null,updated_at:new Date().toISOString()}).eq('id',id); setSo(prev=>({...prev,invoice_number:invoiceNum.trim()||null})); setSavingInv(false); };
+  const deleteSO=async()=>{ await SB.from('sales_order_pos').delete().eq('sales_order_id',id); await SB.from('sales_order_items').delete().eq('sales_order_id',id); await SB.from('sales_orders').delete().eq('id',id); navigate('sales-orders'); };
+  const unlinkPO=async poId=>{ await SB.from('sales_order_pos').delete().eq('sales_order_id',id).eq('purchase_order_id',poId); setLinkedPos(prev=>prev.filter(p=>p.id!==poId)); };
+  return (
+    <>
+      {editing && <EditSOModal so={so} items={items} linkedPos={linkedPos} onClose={()=>setEditing(false)} onSaved={()=>{setEditing(false);load();}} />}
+      {confirmDel && <ConfirmModal title={'Delete '+so.so_number+'?'} message="All line items and factory PO links will be removed. This cannot be undone." onConfirm={()=>{setConfirmDel(false);deleteSO();}} onCancel={()=>setConfirmDel(false)} />}
+      <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'20px',flexWrap:'wrap'}}>
+        <button className="btn btn-ghost btn-sm" onClick={()=>navigate('sales-orders')}>{'← Back'}</button>
+        <span style={{flex:1}} />
+        <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)'}} onClick={()=>setConfirmDel(true)}>Delete</button>
+        <button className="btn btn-ghost btn-sm" onClick={()=>setEditing(true)}>Edit</button>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'12px',marginBottom:'22px'}}>
+        {[{l:'Revenue',v:money(rev,so.currency),c:'var(--ink)',t:'var(--line-2)'},{l:'Factory Cost',v:cost>0?money(cost,so.currency):'No POs linked',c:cost>0?'var(--ink)':'var(--muted)',t:'var(--line-2)'},{l:'Gross Margin',v:gross>0?money(gross,so.currency):'—',c:gross>0?'#059669':'var(--muted)',t:gross>0?'#059669':'var(--line-2)'},{l:'Margin %',v:mgn!==null?mgn.toFixed(1)+'%':'—',c:mc,t:mc}].map(t=>(
+          <div key={t.l} className="section-card" style={{padding:'16px 18px',marginBottom:0,borderTop:'3px solid '+t.t}}>
+            <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.12em',color:'var(--muted)',marginBottom:'8px'}}>{t.l}</div>
+            <div style={{fontFamily:'var(--mono)',fontSize:'22px',fontWeight:700,color:t.c,lineHeight:1}}>{t.v}</div>
+          </div>
+        ))}
+      </div>
+      <div className="detail-grid" style={{marginBottom:'20px'}}>
+        <div className="section-card" style={{marginBottom:0}}>
+          <div style={{padding:'18px 18px 6px'}}>
+            <div style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'12px'}}>Client</div>
+            <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'16px'}}>
+              <span style={{width:'40px',height:'40px',borderRadius:'10px',background:companyColor(cl),display:'flex',alignItems:'center',justifyContent:'center',fontSize:'13px',fontWeight:700,color:'#fff',flexShrink:0}}>{initials(cl)}</span>
+              <div><div style={{fontWeight:700,fontSize:'16px',color:'var(--ink)'}}>{cl}</div>{so.client?.vendor_number&&<div style={{fontSize:'12px',color:'var(--muted)'}}>{'Vendor # '+so.client.vendor_number}</div>}</div>
+            </div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',borderTop:'1px solid var(--line-2)'}}>
+            {[['Our SO #',so.so_number||'—'],['Client PO #',so.client_po_number||'—'],['Order Date',fmtDate(so.order_date)],['Ship By',fmtDate(so.required_ship_date)],['Payment',so.payment_terms||'—'],['Currency',so.currency||'USD']].map(([l,v],i)=>(
+              <div key={l} style={{padding:'12px 18px',borderBottom:i<4?'1px solid var(--line-2)':'none',borderRight:i%2===0?'1px solid var(--line-2)':'none'}}>
+                <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'4px'}}>{l}</div>
+                <div style={{fontSize:'13px',fontWeight:600,color:'var(--ink)',fontFamily:l.includes('#')?'var(--mono)':'inherit'}}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="section-card" style={{marginBottom:'12px'}}>
+            <div style={{padding:'14px 18px 8px',fontSize:'10px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)'}}>Status — tap to change</div>
+            <div style={{padding:'0 18px 16px',display:'flex',flexWrap:'wrap',gap:'6px'}}>
+              {SO_STATUSES.map(s=>{ const m=SO_SM[s]; const on=so.status===s; return <button key={s} onClick={()=>updateStatus(s)} style={{padding:'5px 14px',borderRadius:'20px',border:'none',cursor:'pointer',fontSize:'11px',fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',background:on?m.color:m.bg,color:on?'#fff':m.color,transition:'all .15s'}}>{m.label}</button>; })}
+            </div>
+          </div>
+          {(so.status==='invoiced'||so.invoice_number) && (
+            <div className="section-card" style={{padding:'16px 18px',marginBottom:'12px'}}>
+              <div style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'8px'}}>Invoice Number</div>
+              <div style={{display:'flex',gap:'8px'}}>
+                <input className="form-input" style={{flex:1}} placeholder="INV-2026-001" value={invoiceNum} onChange={e=>setInvoiceNum(e.target.value)} onKeyDown={e=>e.key==='Enter'&&saveInvoice()} />
+                <button className="btn btn-dark btn-sm" onClick={saveInvoice} disabled={savingInv}>{savingInv?'…':'Save'}</button>
+              </div>
+            </div>
+          )}
+          {so.notes && <div className="section-card" style={{padding:'16px 18px'}}><div style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'8px'}}>Notes</div><div style={{fontSize:'13.5px',color:'var(--ink)',lineHeight:1.6}}>{so.notes}</div></div>}
+        </div>
+      </div>
+      <div className="section-card" style={{marginBottom:'20px'}}>
+        <div className="section-head"><h3>Line Items</h3><span style={{fontFamily:'var(--mono)',fontSize:'12px',color:'var(--muted)'}}>{items.length+' item'+(items.length!==1?'s':'')}</span></div>
+        {items.length ? (
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:'13px'}}>
+              <thead><tr style={{borderBottom:'1px solid var(--line-2)'}}>
+                {['Description','Client SKU','Qty','Unit Price','Amount'].map(h=><th key={h} style={{padding:'8px 16px',textAlign:h==='Description'||h==='Client SKU'?'left':'right',fontSize:'9.5px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',fontWeight:600,whiteSpace:'nowrap'}}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {items.map((it,i)=>{ const amt=(Number(it.quantity)||0)*(Number(it.client_price)||0); return (
+                  <tr key={it.id||i} style={{borderBottom:'1px solid var(--line-2)'}}>
+                    <td style={{padding:'12px 16px',fontWeight:500,color:'var(--ink)'}}>{it.description||it.products?.name||'—'}</td>
+                    <td style={{padding:'12px 16px',fontFamily:'var(--mono)',fontSize:'12px',color:'var(--muted)'}}>{it.client_sku||'—'}</td>
+                    <td style={{padding:'12px 16px',textAlign:'right',fontFamily:'var(--mono)'}}>{new Intl.NumberFormat('en-US').format(it.quantity||0)}</td>
+                    <td style={{padding:'12px 16px',textAlign:'right',fontFamily:'var(--mono)'}}>{money(it.client_price,so.currency)}</td>
+                    <td style={{padding:'12px 16px',textAlign:'right',fontFamily:'var(--mono)',fontWeight:600}}>{money(amt,so.currency)}</td>
+                  </tr>
+                ); })}
+              </tbody>
+              <tfoot><tr style={{borderTop:'2px solid var(--line-2)'}}>
+                <td colSpan="4" style={{padding:'12px 16px',textAlign:'right',fontWeight:700,fontSize:'11px',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--muted)'}}>Total</td>
+                <td style={{padding:'12px 16px',textAlign:'right',fontFamily:'var(--mono)',fontWeight:700,fontSize:'15px'}}>{money(rev,so.currency)}</td>
+              </tr></tfoot>
+            </table>
+          </div>
+        ) : <div style={{padding:'24px',textAlign:'center',color:'var(--muted)',fontSize:'13px'}}>No line items. <button className="btn btn-ghost btn-sm" onClick={()=>setEditing(true)}>Add items →</button></div>}
+      </div>
+      <div className="section-card" style={{marginBottom:'20px'}}>
+        <div className="section-head"><h3>Linked Factory POs</h3><button className="btn btn-ghost btn-sm" onClick={()=>setEditing(true)}>+ Link PO</button></div>
+        {linkedPos.length ? linkedPos.map(po=>{ const poCost=(po.purchase_order_items||[]).reduce((a,i)=>a+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0); return (
+          <div key={po.id} style={{display:'flex',alignItems:'center',gap:'14px',padding:'14px 18px',borderBottom:'1px solid var(--line-2)',cursor:'pointer'}} onClick={()=>navigate('order-detail',{id:po.id})}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'3px'}}><span style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:'13px',color:'var(--ink)'}}>{po.order_number}</span><Badge status={po.status} /></div>
+              <div style={{fontSize:'12px',color:'var(--muted)'}}>{po.companies?.name||'—'}</div>
+            </div>
+            <div style={{textAlign:'right'}}><div style={{fontFamily:'var(--mono)',fontWeight:600,fontSize:'13px'}}>{money(poCost,po.currency)}</div><div style={{fontSize:'11px',color:'var(--muted)'}}>factory cost</div></div>
+            <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)',flexShrink:0}} onClick={e=>{e.stopPropagation();unlinkPO(po.id);}}>Unlink</button>
+          </div>
+        ); }) : (
+          <div style={{padding:'20px 18px',fontSize:'13px',color:'var(--muted)',display:'flex',alignItems:'center',gap:'12px'}}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <span>No factory POs linked yet — margin data won't show until one is linked. <button className="btn btn-ghost btn-sm" onClick={()=>setEditing(true)}>Link a PO →</button></span>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function CreateSOModal({onClose,onCreated}){
+  const nd=()=>new Date().toISOString().split('T')[0];
+  const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',payment:'',currency:'USD',notes:''});
+  const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
+  const [items,setItems]=useState([{desc:'',sku:'',qty:'',price:''}]);
+  const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
+  const addItem=()=>setItems(prev=>[...prev,{desc:'',sku:'',qty:'',price:''}]);
+  const rmItem=i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
+  const [clients,setClients]=useState([]);
+  const [products,setProducts]=useState([]);
+  const [availPOs,setAvailPOs]=useState([]);
+  const [linkedPOIds,setLinkedPOIds]=useState([]);
+  const [poSearch,setPOSearch]=useState('');
+  const [showNC,setShowNC]=useState(false);
+  const [ncName,setNcName]=useState('');
+  const [srchIdx,setSrchIdx]=useState(-1);
+  const [srchHits,setSrchHits]=useState([]);
+  const [loading,setLoading]=useState(false);
+  useEffect(()=>{
+    Promise.all([
+      SB.from('companies').select('id,name,vendor_number').in('type',['client','brand','customer']).order('name'),
+      SB.from('products').select('id,name,sku').order('name'),
+      SB.from('purchase_orders').select('id,order_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300),
+      SB.from('sales_orders').select('so_number').order('created_at',{ascending:false}).limit(100),
+    ]).then(([{data:cli},{data:pro},{data:pos},{data:sos}])=>{
+      setClients(cli||[]); setProducts(pro||[]); setAvailPOs(pos||[]);
+      setForm(prev=>({...prev,num:genSONum((sos||[]).map(s=>s.so_number))}));
+    });
+  },[]);
+  const addNC=async()=>{ const n=ncName.trim(); if(!n) return; const {data:co}=await SB.from('companies').upsert({name:n,type:'client'},{onConflict:'name,type'}).select('id,name').single(); if(co){setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]);f('clientId')(co.id);} setShowNC(false);setNcName(''); };
+  const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
+  const handleDesc=(i,v)=>{ si(i,'desc',v); if(v.trim().length>1){ const hits=products.filter(p=>(p.name||'').toLowerCase().includes(v.toLowerCase())).slice(0,5); setSrchHits(hits);setSrchIdx(i); } else {setSrchHits([]);setSrchIdx(-1);} };
+  const pickProd=(i,p)=>{ si(i,'desc',p.name||''); if(p.sku)si(i,'sku',p.sku); setSrchHits([]);setSrchIdx(-1); };
+  const prevRev=items.reduce((a,it)=>a+(Number(it.qty)||0)*(Number(it.price)||0),0);
+  const submit=async()=>{
+    if(!form.num.trim()){alert('SO number required');return;}
+    setLoading(true);
+    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,status:'received'}).select().single();
+    if(e0||!so){alert('Error: '+(e0?.message||'unknown'));setLoading(false);return;}
+    const toIns=items.filter(it=>it.desc.trim()).map(it=>({sales_order_id:so.id,description:it.desc.trim(),client_sku:it.sku||null,quantity:Number(it.qty)||null,client_price:Number(it.price)||null,currency:form.currency}));
+    if(toIns.length) await SB.from('sales_order_items').insert(toIns);
+    if(linkedPOIds.length) await SB.from('sales_order_pos').insert(linkedPOIds.map(pid=>({sales_order_id:so.id,purchase_order_id:pid})));
+    setLoading(false); onCreated(so.id);
+  };
+  const filtPOs=availPOs.filter(p=>!poSearch||(p.order_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.companies?.name||'').toLowerCase().includes(poSearch.toLowerCase()));
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal-box" style={{maxWidth:'680px'}}>
+        <div className="modal-head"><h3>New Sales Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-body">
+          <div className="form-row-2">
+            <div><label>SO Number</label><input className="form-input" style={{fontFamily:'var(--mono)'}} value={form.num} onChange={e=>f('num')(e.target.value)} placeholder="KUI-SO-2026-001" /></div>
+            <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}>{['USD','CAD','EUR','GBP','AUD'].map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+          </div>
+          <div style={{marginBottom:'16px'}}>
+            <label>Client</label>
+            <select className="form-select" value={form.clientId} onChange={e=>f('clientId')(e.target.value)}><option value="">— select client —</option>{[...clients].sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=><option key={c.id} value={c.id}>{c.name}{c.vendor_number?' ('+c.vendor_number+')':''}</option>)}</select>
+            {!showNC ? <button className="btn btn-ghost btn-sm" style={{marginTop:'8px'}} onClick={()=>setShowNC(true)}>+ New client</button>
+              : <div style={{display:'flex',gap:'8px',marginTop:'8px',alignItems:'center'}}><input className="form-input" style={{flex:1}} placeholder="Client name…" value={ncName} onChange={e=>setNcName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNC()} autoFocus /><button className="btn btn-dark btn-sm" onClick={addNC}>Add</button><button className="btn btn-ghost btn-sm" onClick={()=>{setShowNC(false);setNcName('');}}>✕</button></div>}
+          </div>
+          <div><label>Client PO #</label><input className="form-input" value={form.clientPO} onChange={e=>f('clientPO')(e.target.value)} placeholder="Client's purchase order number" /></div>
+          <div className="form-row-2">
+            <div><label>Order Date</label><input type="date" className="form-input" value={form.date} onChange={e=>f('date')(e.target.value)} /></div>
+            <div><label>Required Ship Date</label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
+          </div>
+          <div><label>Payment Terms</label><input className="form-input" value={form.payment} onChange={e=>f('payment')(e.target.value)} placeholder="e.g. Net 30, 50% deposit" /></div>
+          <span className="form-section-label">Line Items</span>
+          <div style={{overflowX:'auto',marginBottom:'8px'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:'13px',minWidth:'500px'}}>
+              <thead><tr style={{borderBottom:'1px solid var(--line-2)'}}>
+                {['Product / Description','Client SKU','Qty','Unit Price',''].map((h,i)=><th key={i} style={{padding:'6px 8px',textAlign:h===''||h==='Qty'||h==='Unit Price'?'right':'left',fontSize:'9px',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--muted)',fontWeight:600,whiteSpace:'nowrap'}}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {items.map((it,i)=>(
+                  <tr key={i} style={{borderBottom:'1px solid var(--line-2)'}}>
+                    <td style={{padding:'6px 4px',position:'relative'}}>
+                      <input className="form-input" style={{fontSize:'12px'}} value={it.desc} onChange={e=>handleDesc(i,e.target.value)} placeholder="Product description…" />
+                      {srchIdx===i&&srchHits.length>0&&(
+                        <div style={{position:'absolute',top:'100%',left:0,right:0,background:'var(--surface)',border:'1px solid var(--line-2)',borderRadius:'8px',boxShadow:'0 4px 16px rgba(0,0,0,.15)',zIndex:200}}>
+                          {srchHits.map(p=><div key={p.id} style={{padding:'8px 12px',cursor:'pointer',fontSize:'12.5px'}} onClick={()=>pickProd(i,p)}><span style={{fontWeight:600}}>{p.name}</span>{p.sku&&<span style={{color:'var(--muted)',fontFamily:'var(--mono)',marginLeft:'8px',fontSize:'11px'}}>{p.sku}</span>}</div>)}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{padding:'6px 4px'}}><input className="form-input" style={{fontSize:'12px',width:'90px'}} value={it.sku} onChange={e=>si(i,'sku',e.target.value)} placeholder="SKU" /></td>
+                    <td style={{padding:'6px 4px'}}><input className="form-input" style={{fontSize:'12px',width:'80px',textAlign:'right'}} value={it.qty} onChange={e=>si(i,'qty',e.target.value)} placeholder="0" /></td>
+                    <td style={{padding:'6px 4px'}}><input className="form-input" style={{fontSize:'12px',width:'90px',textAlign:'right'}} value={it.price} onChange={e=>si(i,'price',e.target.value)} placeholder="0.00" /></td>
+                    <td style={{padding:'6px 4px',textAlign:'right'}}>{items.length>1&&<button style={{background:'none',border:'none',cursor:'pointer',color:'var(--muted)',fontSize:'18px',lineHeight:1,padding:'0 4px'}} onClick={()=>rmItem(i)}>×</button>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'16px'}}>
+            <button className="btn btn-ghost btn-sm" onClick={addItem}>+ Add Item</button>
+            {prevRev>0&&<span style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:'14px',color:'var(--ink)'}}>{'Total: '+money(prevRev,form.currency)}</span>}
+          </div>
+          <span className="form-section-label">Link Factory POs (optional)</span>
+          <div style={{marginBottom:'16px'}}>
+            <input className="form-input" placeholder="Search by PO # or factory name…" value={poSearch} onChange={e=>setPOSearch(e.target.value)} style={{marginBottom:'8px'}} />
+            <div style={{maxHeight:'160px',overflowY:'auto',border:'1px solid var(--line-2)',borderRadius:'8px'}}>
+              {filtPOs.length===0&&<div style={{padding:'16px',textAlign:'center',color:'var(--muted)',fontSize:'13px'}}>No POs found</div>}
+              {filtPOs.slice(0,25).map(po=>{ const on=linkedPOIds.includes(po.id); return (
+                <div key={po.id} onClick={()=>togglePO(po.id)} style={{display:'flex',alignItems:'center',gap:'10px',padding:'9px 14px',borderBottom:'1px solid var(--line-2)',cursor:'pointer',background:on?'rgba(52,97,224,.07)':'transparent'}}>
+                  <div style={{width:'16px',height:'16px',borderRadius:'4px',border:'2px solid '+(on?'var(--accent)':'var(--line-2)'),background:on?'var(--accent)':'transparent',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                    {on&&<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/></svg>}
+                  </div>
+                  <span style={{fontFamily:'var(--mono)',fontWeight:600,fontSize:'12px',color:'var(--ink)'}}>{po.order_number}</span>
+                  <span style={{fontSize:'12px',color:'var(--muted)',flex:1}}>{po.companies?.name||'—'}</span>
+                  <Badge status={po.status} />
+                </div>
+              ); })}
+            </div>
+            {linkedPOIds.length>0&&<div style={{fontSize:'12px',color:'var(--accent)',marginTop:'6px',fontWeight:600}}>{linkedPOIds.length+' PO'+(linkedPOIds.length!==1?'s':'')+' linked'}</div>}
+          </div>
+          <div><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>f('notes')(e.target.value)} placeholder="Internal notes…" rows={3} /></div>
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-dark" onClick={submit} disabled={loading}>{loading?'Creating…':'Create Sales Order'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved}){
+  const [form,setForm]=useState({num:so.so_number||'',clientId:so.client_company_id||'',clientPO:so.client_po_number||'',date:so.order_date||'',ship:so.required_ship_date||'',payment:so.payment_terms||'',currency:so.currency||'USD',notes:so.notes||''});
+  const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
+  const [items,setItems]=useState((initItems||[]).map(it=>({id:it.id,desc:it.description||'',sku:it.client_sku||'',qty:it.quantity!=null?String(it.quantity):'',price:it.client_price!=null?String(it.client_price):''})));
+  const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
+  const addItem=()=>setItems(prev=>[...prev,{id:null,desc:'',sku:'',qty:'',price:''}]);
+  const rmItem=i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
+  const [clients,setClients]=useState([]);
+  const [availPOs,setAvailPOs]=useState([]);
+  const [linkedPOIds,setLinkedPOIds]=useState((initLinkedPos||[]).map(p=>p.id));
+  const [poSearch,setPOSearch]=useState('');
+  const [showNC,setShowNC]=useState(false);
+  const [ncName,setNcName]=useState('');
+  const [loading,setLoading]=useState(false);
+  useEffect(()=>{ Promise.all([SB.from('companies').select('id,name').in('type',['client','brand','customer']).order('name'),SB.from('purchase_orders').select('id,order_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300)]).then(([{data:cli},{data:pos}])=>{setClients(cli||[]);setAvailPOs(pos||[]);}); },[]);
+  const addNC=async()=>{ const n=ncName.trim(); if(!n) return; const {data:co}=await SB.from('companies').upsert({name:n,type:'client'},{onConflict:'name,type'}).select('id,name').single(); if(co){setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]);f('clientId')(co.id);} setShowNC(false);setNcName(''); };
+  const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
+  const save=async()=>{
+    setLoading(true);
+    const {error}=await SB.from('sales_orders').update({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,updated_at:new Date().toISOString()}).eq('id',so.id);
+    if(error){alert('Error: '+error.message);setLoading(false);return;}
+    await SB.from('sales_order_items').delete().eq('sales_order_id',so.id);
+    const toIns=items.filter(it=>it.desc.trim()).map(it=>({sales_order_id:so.id,description:it.desc.trim(),client_sku:it.sku||null,quantity:Number(it.qty)||null,client_price:Number(it.price)||null,currency:form.currency}));
+    if(toIns.length) await SB.from('sales_order_items').insert(toIns);
+    await SB.from('sales_order_pos').delete().eq('sales_order_id',so.id);
+    if(linkedPOIds.length) await SB.from('sales_order_pos').insert(linkedPOIds.map(pid=>({sales_order_id:so.id,purchase_order_id:pid})));
+    setLoading(false); onSaved();
+  };
+  const filtPOs=availPOs.filter(p=>!poSearch||(p.order_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.companies?.name||'').toLowerCase().includes(poSearch.toLowerCase()));
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal-box" style={{maxWidth:'680px'}}>
+        <div className="modal-head"><h3>{'Edit '+so.so_number}</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-body">
+          <div className="form-row-2">
+            <div><label>SO Number</label><input className="form-input" style={{fontFamily:'var(--mono)'}} value={form.num} onChange={e=>f('num')(e.target.value)} /></div>
+            <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}>{['USD','CAD','EUR','GBP','AUD'].map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+          </div>
+          <div style={{marginBottom:'16px'}}><label>Client</label>
+            <select className="form-select" value={form.clientId} onChange={e=>f('clientId')(e.target.value)}><option value="">— select client —</option>{[...clients].sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+            {!showNC?<button className="btn btn-ghost btn-sm" style={{marginTop:'8px'}} onClick={()=>setShowNC(true)}>+ New client</button>:<div style={{display:'flex',gap:'8px',marginTop:'8px',alignItems:'center'}}><input className="form-input" style={{flex:1}} placeholder="Client name…" value={ncName} onChange={e=>setNcName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNC()} autoFocus /><button className="btn btn-dark btn-sm" onClick={addNC}>Add</button><button className="btn btn-ghost btn-sm" onClick={()=>{setShowNC(false);setNcName('');}}>✕</button></div>}
+          </div>
+          <div><label>Client PO #</label><input className="form-input" value={form.clientPO} onChange={e=>f('clientPO')(e.target.value)} /></div>
+          <div className="form-row-2">
+            <div><label>Order Date</label><input type="date" className="form-input" value={form.date} onChange={e=>f('date')(e.target.value)} /></div>
+            <div><label>Required Ship Date</label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
+          </div>
+          <div><label>Payment Terms</label><input className="form-input" value={form.payment} onChange={e=>f('payment')(e.target.value)} /></div>
+          <span className="form-section-label">Line Items</span>
+          <div style={{overflowX:'auto',marginBottom:'8px'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:'13px',minWidth:'500px'}}>
+              <thead><tr style={{borderBottom:'1px solid var(--line-2)'}}>{['Product / Description','Client SKU','Qty','Unit Price',''].map((h,i)=><th key={i} style={{padding:'6px 8px',textAlign:h===''||h==='Qty'||h==='Unit Price'?'right':'left',fontSize:'9px',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--muted)',fontWeight:600}}>{h}</th>)}</tr></thead>
+              <tbody>{items.map((it,i)=>(
+                <tr key={i} style={{borderBottom:'1px solid var(--line-2)'}}>
+                  <td style={{padding:'6px 4px'}}><input className="form-input" style={{fontSize:'12px'}} value={it.desc} onChange={e=>si(i,'desc',e.target.value)} /></td>
+                  <td style={{padding:'6px 4px'}}><input className="form-input" style={{fontSize:'12px',width:'90px'}} value={it.sku} onChange={e=>si(i,'sku',e.target.value)} /></td>
+                  <td style={{padding:'6px 4px'}}><input className="form-input" style={{fontSize:'12px',width:'80px',textAlign:'right'}} value={it.qty} onChange={e=>si(i,'qty',e.target.value)} /></td>
+                  <td style={{padding:'6px 4px'}}><input className="form-input" style={{fontSize:'12px',width:'90px',textAlign:'right'}} value={it.price} onChange={e=>si(i,'price',e.target.value)} /></td>
+                  <td style={{padding:'6px 4px',textAlign:'right'}}><button style={{background:'none',border:'none',cursor:'pointer',color:'var(--muted)',fontSize:'18px',lineHeight:1,padding:'0 4px'}} onClick={()=>rmItem(i)}>×</button></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          <button className="btn btn-ghost btn-sm" style={{marginBottom:'16px'}} onClick={addItem}>+ Add Item</button>
+          <span className="form-section-label">Linked Factory POs</span>
+          <div style={{marginBottom:'16px'}}>
+            <input className="form-input" placeholder="Search by PO # or factory…" value={poSearch} onChange={e=>setPOSearch(e.target.value)} style={{marginBottom:'8px'}} />
+            <div style={{maxHeight:'160px',overflowY:'auto',border:'1px solid var(--line-2)',borderRadius:'8px'}}>
+              {filtPOs.length===0&&<div style={{padding:'16px',textAlign:'center',color:'var(--muted)',fontSize:'13px'}}>No POs found</div>}
+              {filtPOs.slice(0,25).map(po=>{ const on=linkedPOIds.includes(po.id); return (
+                <div key={po.id} onClick={()=>togglePO(po.id)} style={{display:'flex',alignItems:'center',gap:'10px',padding:'9px 14px',borderBottom:'1px solid var(--line-2)',cursor:'pointer',background:on?'rgba(52,97,224,.07)':'transparent'}}>
+                  <div style={{width:'16px',height:'16px',borderRadius:'4px',border:'2px solid '+(on?'var(--accent)':'var(--line-2)'),background:on?'var(--accent)':'transparent',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                    {on&&<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/></svg>}
+                  </div>
+                  <span style={{fontFamily:'var(--mono)',fontWeight:600,fontSize:'12px',color:'var(--ink)'}}>{po.order_number}</span>
+                  <span style={{fontSize:'12px',color:'var(--muted)',flex:1}}>{po.companies?.name||'—'}</span>
+                  <Badge status={po.status} />
+                </div>
+              ); })}
+            </div>
+            {linkedPOIds.length>0&&<div style={{fontSize:'12px',color:'var(--accent)',marginTop:'6px',fontWeight:600}}>{linkedPOIds.length+' PO'+(linkedPOIds.length!==1?'s':'')+' linked'}</div>}
+          </div>
+          <div><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>f('notes')(e.target.value)} rows={3} /></div>
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-dark" onClick={save} disabled={loading}>{loading?'Saving…':'Save Changes'}</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2267,7 +2743,7 @@ export default function App() {
   if (loading) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
   if (!user)   return <Login />;
 
-  const titles = {dashboard:'Dashboard',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',shipments:'Shipments',quotes:'Quotes'};
+  const titles = {dashboard:'Dashboard','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',shipments:'Shipments',quotes:'Quotes'};
 
   return (
     <div className="app-shell">
@@ -2290,6 +2766,8 @@ export default function App() {
         </div>
         <div className="page-content">
           {page==='dashboard'    && <Dashboard navigate={navigate} />}
+          {page==='sales-orders' && <SalesOrders navigate={navigate} />}
+          {page==='so-detail'    && <SalesOrderDetail id={params.id} navigate={navigate} />}
           {page==='orders'       && <Orders navigate={navigate} />}
           {page==='order-detail' && <OrderDetail id={params.id} navigate={navigate} />}
           {page==='companies'    && <Companies />}
