@@ -567,9 +567,6 @@ function SalesOrderDetail({id,navigate}){
   const cost=factoryCost+addlCost;
   const gross=rev-cost; const mgn=rev>0?gross/rev*100:null; const mc=mgnColor(mgn);
   const cl=so.client?.name||'—';
-  const addCost=async()=>{ const {data}=await SB.from('order_costs').insert({sales_order_id:id,kind:'freight',amount:0,currency:so.currency||'USD'}).select().single(); if(data) setCosts(prev=>[...prev,data]); };
-  const updCost=async(cid,patch)=>{ setCosts(prev=>prev.map(c=>c.id===cid?{...c,...patch}:c)); await SB.from('order_costs').update(patch).eq('id',cid); };
-  const rmCost=async(cid)=>{ setCosts(prev=>prev.filter(c=>c.id!==cid)); await SB.from('order_costs').delete().eq('id',cid); };
   const updateStatus=async s=>{await SB.from('sales_orders').update({status:s,updated_at:new Date().toISOString()}).eq('id',id); setSo(prev=>({...prev,status:s}));};
   const saveInvoice=async()=>{ setSavingInv(true); await SB.from('sales_orders').update({invoice_number:invoiceNum.trim()||null,updated_at:new Date().toISOString()}).eq('id',id); setSo(prev=>({...prev,invoice_number:invoiceNum.trim()||null})); setSavingInv(false); };
   const deleteSO=async()=>{ await SB.from('sales_order_pos').delete().eq('sales_order_id',id); await SB.from('sales_order_items').delete().eq('sales_order_id',id); await SB.from('sales_orders').delete().eq('id',id); navigate('sales-orders'); };
@@ -678,23 +675,18 @@ function SalesOrderDetail({id,navigate}){
       <div className="card" style={{marginTop:'18px'}}>
         <div className="section-head">
           <h3>Additional Costs <span style={{fontWeight:400,color:'var(--muted)',fontSize:'12px'}}>· internal only — never shown to client</span></h3>
-          <button className="btn btn-ghost btn-sm" onClick={addCost}>+ Add Cost</button>
+          <button className="btn btn-ghost btn-sm" onClick={()=>setEditing(true)}>{costs.length?'Edit Costs':'+ Add Cost'}</button>
         </div>
         {costs.length ? (
           <div style={{padding:'4px 0'}}>
             {costs.map(c=>(
-              <div key={c.id} style={{display:'flex',alignItems:'center',gap:'10px',padding:'10px 18px',borderBottom:'1px solid var(--line-2)'}}>
-                <select className="form-select" style={{width:'130px',fontSize:'13px'}} value={c.kind} onChange={e=>updCost(c.id,{kind:e.target.value})}>
-                  <option value="freight">Freight</option>
-                  <option value="duty">Duty</option>
-                  <option value="other">Other</option>
-                </select>
-                <input className="form-input" style={{flex:1,fontSize:'13px'}} placeholder="Note (optional)" value={c.note||''} onChange={e=>updCost(c.id,{note:e.target.value})} />
-                <input className="form-input" type="number" step="0.01" style={{width:'130px',fontSize:'13px',textAlign:'right'}} value={c.amount} onChange={e=>updCost(c.id,{amount:Number(e.target.value)||0})} />
-                <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)',flexShrink:0}} onClick={()=>rmCost(c.id)}>×</button>
+              <div key={c.id} style={{display:'flex',alignItems:'center',gap:'14px',padding:'12px 18px',borderBottom:'1px solid var(--line-2)'}}>
+                <span className="badge" style={{textTransform:'capitalize',background:c.kind==='freight'?'#e9eefc':c.kind==='duty'?'#fdf3e0':'#eef1f4',color:c.kind==='freight'?'#3b53c4':c.kind==='duty'?'#9a6204':'#5b6470',padding:'3px 10px',borderRadius:'100px',fontSize:'11px',fontWeight:600}}>{c.kind}</span>
+                <span style={{flex:1,fontSize:'13px',color:c.note?'var(--ink)':'var(--muted)'}}>{c.note||'—'}</span>
+                <span className="mono" style={{fontWeight:600,fontSize:'13px'}}>{money(c.amount,so.currency)}</span>
               </div>
             ))}
-            <div style={{display:'flex',justifyContent:'space-between',padding:'12px 18px',fontSize:'13px',fontWeight:600}}>
+            <div style={{display:'flex',justifyContent:'space-between',padding:'12px 18px',fontSize:'13px',fontWeight:700,background:'var(--soft)'}}>
               <span style={{color:'var(--muted)'}}>Total additional costs</span>
               <span className="mono">{money(addlCost,so.currency)}</span>
             </div>
@@ -704,6 +696,21 @@ function SalesOrderDetail({id,navigate}){
             No freight, duty, or other costs added. For DDP orders where duty/freight is already in the client price, leave this empty.
           </div>
         )}
+      </div>
+
+      <div className="card" style={{marginTop:'18px'}}>
+        <div className="section-head"><h3>Cost &amp; Margin Summary <span style={{fontWeight:400,color:'var(--muted)',fontSize:'12px'}}>· internal</span></h3></div>
+        <div style={{padding:'6px 0'}}>
+          <div style={{display:'flex',justifyContent:'space-between',padding:'9px 18px',fontSize:'13px'}}><span style={{color:'var(--muted)'}}>Revenue (client price)</span><span className="mono" style={{fontWeight:600}}>{money(rev,so.currency)}</span></div>
+          <div style={{display:'flex',justifyContent:'space-between',padding:'9px 18px',fontSize:'13px'}}><span style={{color:'var(--muted)'}}>Factory cost</span><span className="mono" style={{color:'var(--hot)'}}>{factoryCost>0?'− '+money(factoryCost,so.currency):'—'}</span></div>
+          {costs.map(c=>(
+            <div key={c.id} style={{display:'flex',justifyContent:'space-between',padding:'9px 18px 9px 30px',fontSize:'12.5px'}}><span style={{color:'var(--muted)',textTransform:'capitalize'}}>{c.kind}{c.note?' · '+c.note:''}</span><span className="mono" style={{color:'var(--hot)'}}>− {money(c.amount,so.currency)}</span></div>
+          ))}
+          <div style={{display:'flex',justifyContent:'space-between',padding:'12px 18px',fontSize:'14px',fontWeight:700,borderTop:'2px solid var(--line-2)',marginTop:'4px'}}>
+            <span>Gross Margin</span>
+            <span className="mono" style={{color:mc}}>{gross!==0||cost>0?money(gross,so.currency):'—'}{mgn!==null?'  ('+mgn.toFixed(1)+'%)':''}</span>
+          </div>
+        </div>
       </div>
     </>
   );
