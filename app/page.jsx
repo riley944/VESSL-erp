@@ -669,6 +669,77 @@ function SalesOrderDetail({id,navigate}){
   );
 }
 
+// ── Shared Quote Picker (pop-up overlay, used by Create/Edit SO & PO) ──────────
+// Search the quotes catalog, pick a product + tier, returns a line item via onPick.
+// priceField: 'client' for sales orders (client price), 'landed' for POs (cost).
+function QuotePickerModal({ onPick, onClose, priceField='client' }){
+  const [quotes,setQuotes]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [search,setSearch]=useState('');
+  const [picked,setPicked]=useState(null);
+  const tOf=q=>{try{return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]);}catch{return [];}};
+  useEffect(()=>{ SB.from('quotes').select('*').order('product').then(({data})=>{setQuotes(data||[]);setLoading(false);}); },[]);
+  const priceOf=t=>{ const v=Number(t[priceField]); if(v>0) return v; const c=Number(t.client),l=Number(t.landed); return c>0?c:(l>0?l:0); };
+  const rangeOf=q=>{ const ps=tOf(q).map(priceOf).filter(Boolean); if(!ps.length) return null; const mn=Math.min(...ps),mx=Math.max(...ps); return mn===mx?money(mn):money(mn)+' – '+money(mx); };
+  const filt=search?quotes.filter(q=>(q.product||'').toLowerCase().includes(search.toLowerCase())||(q.client||'').toLowerCase().includes(search.toLowerCase())||(q.factory||'').toLowerCase().includes(search.toLowerCase())||(q.sku||'').toLowerCase().includes(search.toLowerCase())):quotes;
+  const choose=(q,t)=>{
+    onPick({
+      desc:q.product||'', sku:q.sku||'',
+      qty:t.qty?String(t.qty):'',
+      price:priceOf(t)?String(priceOf(t)):'',
+      quoteId:q.id, client:q.client||'', factory:q.factory||''
+    });
+    onClose();
+  };
+  return (
+    <div className="modal-overlay" style={{zIndex:11000}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal-box" style={{maxWidth:'560px'}}>
+        <div className="modal-head"><h3>{picked?'Pick a quantity tier':'Add product from catalog'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-body">
+          {!picked ? (
+            <>
+              <div className="qp-search">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                <input placeholder="Search — product, client, factory, SKU…" value={search} onChange={e=>setSearch(e.target.value)} autoFocus />
+              </div>
+              <div className="qp-list" style={{maxHeight:'340px',overflowY:'auto'}}>
+                {loading && <div className="empty" style={{padding:'30px'}}><p>Loading…</p></div>}
+                {!loading && filt.length===0 && <div className="empty" style={{padding:'30px'}}><p>No products match.</p></div>}
+                {!loading && filt.map(q=>{ const ts=tOf(q); const pr=rangeOf(q); return (
+                  <button key={q.id} className="qp-card" onClick={()=>{ const t=tOf(q); if(t.length<=1){ choose(q,t[0]||{}); } else { setPicked(q); } }}>
+                    <span className="qp-avatar" style={{background:companyColor(q.client),color:'#0b1120'}}>{initials(q.client)}</span>
+                    <span className="qp-meta">
+                      <div className="qp-prod">{q.product||'Untitled'}</div>
+                      <div className="qp-sub">{q.client||'—'}{q.factory?' · '+q.factory:''}{q.sku?' · '+q.sku:''}</div>
+                    </span>
+                    <span className="qp-right">
+                      <div className="qp-price" style={{color:pr?'var(--ink)':'#d97706'}}>{pr||'No price'}</div>
+                      <div className="qp-tiers">{ts.length} {ts.length===1?'tier':'tiers'}</div>
+                    </span>
+                  </button>
+                );})}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="qp-banner"><span><b>{picked.product||'Quote'}</b>{' · '}{picked.client||'—'}</span><button className="x" onClick={()=>setPicked(null)}>Back</button></div>
+              <div className="form-row"><label>Quantity tier</label>
+                <div className="qp-tierpick">
+                  {tOf(picked).map((t,i)=>(
+                    <button key={i} onClick={()=>choose(picked,t)}>
+                      {t.qty?Number(t.qty).toLocaleString():'—'}{' @ '}{priceOf(t)>0?money(priceOf(t)):'—'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CreateSOModal({onClose,onCreated}){
   const nd=()=>new Date().toISOString().split('T')[0];
   const [mode,setMode]=useState('catalog');
@@ -716,7 +787,9 @@ function CreateSOModal({onClose,onCreated}){
     setTierIdx(i);
     if(picked){const ts=tOf(picked);const tier=ts[i]||{};const noPrice=!tier.client||Number(tier.client)===0;setItems([{desc:picked.product||'',sku:picked.sku||'',qty:tier.qty?String(tier.qty):'',price:tier.client?String(tier.client):'',quoteId:picked.id,tierIdx:i,noPrice}]);}
   };
-  const addExtraItem=()=>setItems(prev=>[...prev,{desc:'',sku:'',qty:'',price:'',quoteId:null,tierIdx:0,noPrice:false}]);
+  const addExtraItem=()=>setShowPicker(true);
+  const [showPicker,setShowPicker]=useState(false);
+  const onPickItem=(li)=>setItems(prev=>[...prev,{desc:li.desc,sku:li.sku,qty:li.qty,price:li.price,quoteId:li.quoteId,tierIdx:0,noPrice:!li.price}]);
   const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
   const prevRev=items.reduce((a,it)=>a+(Number(it.qty)||0)*(Number(it.price)||0),0);
   const filtQ=qSearch?quotes.filter(q=>(q.product||'').toLowerCase().includes(qSearch.toLowerCase())||(q.client||'').toLowerCase().includes(qSearch.toLowerCase())||(q.factory||'').toLowerCase().includes(qSearch.toLowerCase())||(q.sku||'').toLowerCase().includes(qSearch.toLowerCase())):quotes;
@@ -739,6 +812,7 @@ function CreateSOModal({onClose,onCreated}){
   };
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      {showPicker && <QuotePickerModal priceField="client" onPick={onPickItem} onClose={()=>setShowPicker(false)} />}
       <div className="modal-box" style={{maxWidth:'680px'}}>
         <div className="modal-head"><h3>New Sales Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
@@ -885,33 +959,18 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const [items,setItems]=useState((initItems||[]).map(it=>({id:it.id,desc:it.description||'',sku:it.client_sku||'',qty:it.quantity!=null?String(it.quantity):'',price:it.client_price!=null?String(it.client_price):''})));
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
-  const addItem=()=>setItems(prev=>[...prev,{id:null,desc:'',sku:'',qty:'',price:''}]);
+  const addItem=()=>setShowPicker(true);
   const rmItem=i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
   const [clients,setClients]=useState([]);
-  const [quotes,setQuotes]=useState([]);
-  const [srchIdx,setSrchIdx]=useState(-1);
-  const [srchHits,setSrchHits]=useState([]);
-  const tOf=q=>{try{return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]);}catch{return [];}};
+  const [showPicker,setShowPicker]=useState(false);
+  const onPickItem=(li)=>setItems(prev=>[...prev,{id:null,desc:li.desc,sku:li.sku,qty:li.qty,price:li.price}]);
   const [availPOs,setAvailPOs]=useState([]);
   const [linkedPOIds,setLinkedPOIds]=useState((initLinkedPos||[]).map(p=>p.id));
   const [poSearch,setPOSearch]=useState('');
   const [showNC,setShowNC]=useState(false);
   const [ncName,setNcName]=useState('');
   const [loading,setLoading]=useState(false);
-  useEffect(()=>{ Promise.all([SB.from('companies').select('id,name').order('name'),SB.from('purchase_orders').select('id,order_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300),SB.from('quotes').select('*').order('product')]).then(([{data:cli},{data:pos},{data:qs}])=>{setClients(cli||[]);setAvailPOs(pos||[]);setQuotes(qs||[]);}); },[]);
-  const handleSearch=(i,v)=>{
-    si(i,'desc',v);
-    if(v.trim().length>1){
-      const lv=v.toLowerCase();
-      setSrchHits(quotes.filter(q=>(q.product||'').toLowerCase().includes(lv)||(q.sku||'').toLowerCase().includes(lv)||(q.client||'').toLowerCase().includes(lv)).slice(0,6));
-      setSrchIdx(i);
-    } else { setSrchHits([]); setSrchIdx(-1); }
-  };
-  const pickFromCatalog=(i,q)=>{
-    const ts=tOf(q); const best=ts.find(t=>Number(t.client)>0)||ts[0]||{};
-    setItems(prev=>prev.map((it,idx)=>idx===i?{...it,desc:q.product||'',sku:q.sku||'',price:best.client?String(best.client):it.price,qty:best.qty?String(best.qty):it.qty}:it));
-    setSrchHits([]); setSrchIdx(-1);
-  };
+  useEffect(()=>{ Promise.all([SB.from('companies').select('id,name').order('name'),SB.from('purchase_orders').select('id,order_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300)]).then(([{data:cli},{data:pos}])=>{setClients(cli||[]);setAvailPOs(pos||[]);}); },[]);
   const addNC=async()=>{ const n=ncName.trim(); if(!n) return; const {data:co}=await SB.from('companies').upsert({name:n,type:'client'},{onConflict:'name,type'}).select('id,name').single(); if(co){setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]);f('clientId')(co.id);} setShowNC(false);setNcName(''); };
   const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
   const save=async()=>{
@@ -945,6 +1004,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   const filtPOs=availPOs.filter(p=>!poSearch||(p.order_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.companies?.name||'').toLowerCase().includes(poSearch.toLowerCase()));
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      {showPicker && <QuotePickerModal priceField="client" onPick={onPickItem} onClose={()=>setShowPicker(false)} />}
       <div className="modal-box" style={{maxWidth:'680px'}}>
         <div className="modal-head"><h3>{'Edit '+so.so_number}</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
@@ -968,18 +1028,8 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
               <thead><tr style={{borderBottom:'1px solid var(--line-2)'}}>{['Product / Description','Client SKU','Qty','Unit Price',''].map((h,i)=><th key={i} style={{padding:'6px 8px',textAlign:h===''||h==='Qty'||h==='Unit Price'?'right':'left',fontSize:'9px',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--muted)',fontWeight:600}}>{h}</th>)}</tr></thead>
               <tbody>{items.map((it,i)=>(
                 <tr key={i} style={{borderBottom:'1px solid var(--line-2)'}}>
-                  <td style={{padding:'6px 4px',position:'relative'}}>
-                    <input className="form-input" style={{fontSize:'12px'}} value={it.desc} onChange={e=>handleSearch(i,e.target.value)} onBlur={()=>setTimeout(()=>{setSrchHits([]);setSrchIdx(-1);},200)} placeholder="Type to search products…" />
-                    {srchIdx===i&&srchHits.length>0&&(
-                      <div className="prod-suggestions">
-                        {srchHits.map(q=>{ const ts=tOf(q); const best=ts.find(t=>Number(t.client)>0)||ts[0]||{}; return (
-                          <div key={q.id} className="prod-sugg-item" onMouseDown={()=>pickFromCatalog(i,q)}>
-                            <div style={{display:'flex',justifyContent:'space-between',gap:'8px'}}><span style={{fontWeight:600}}>{q.product}</span><span style={{fontFamily:'var(--mono)',fontSize:'11px',color:Number(best.client)>0?'var(--ink)':'#d97706'}}>{Number(best.client)>0?money(best.client):'No price'}</span></div>
-                            <div style={{fontSize:'11px',color:'var(--muted)'}}>{q.client||'—'}{q.sku?' · '+q.sku:''}</div>
-                          </div>
-                        );})}
-                      </div>
-                    )}
+                  <td style={{padding:'6px 4px'}}>
+                    <input className="form-input" style={{fontSize:'12px'}} value={it.desc} onChange={e=>si(i,'desc',e.target.value)} placeholder="Description…" />
                   </td>
                   <td style={{padding:'6px 4px'}}><input className="form-input" style={{fontSize:'12px',width:'90px'}} value={it.sku} onChange={e=>si(i,'sku',e.target.value)} /></td>
                   <td style={{padding:'6px 4px'}}><input className="form-input" style={{fontSize:'12px',width:'80px',textAlign:'right'}} value={it.qty} onChange={e=>si(i,'qty',e.target.value)} /></td>
@@ -1480,7 +1530,9 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   const [items, setItems] = useState((initialItems||[]).map(it=>({id:it.id,prodId:it.product_id||'',desc:it.description||it.products?.name||'',qty:it.quantity!=null?String(it.quantity):'',price:it.unit_price!=null?String(it.unit_price):'',ci:it.ci_value!=null?String(it.ci_value):'',carton:it.carton_info||'',vpn:it.vpn||'',masterSku:it.master_sku||'',packSku:it.pack_sku||'',babySku:it.baby_sku||'',retailPrice:it.retail_price!=null?String(it.retail_price):''})));
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   const setItem=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
-  const addItem=()=>setItems(prev=>[...prev,{id:null,prodId:'',desc:'',qty:'',price:'',ci:'',carton:'',vpn:'',masterSku:'',packSku:'',babySku:'',retailPrice:''}]);
+  const addItem=()=>setShowPicker(true);
+  const [showPicker,setShowPicker]=useState(false);
+  const onPickPOItem=(li)=>setItems(prev=>[...prev,{id:null,prodId:'',desc:li.desc,qty:li.qty,price:li.price,ci:'',carton:'',vpn:'',masterSku:'',packSku:'',babySku:'',retailPrice:''}]);
   const rmItem =i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
   const [products, setProducts] = useState([]);
   const [recentDescs, setRecentDescs] = useState([]);
@@ -1600,6 +1652,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   };
   return (
     <>
+    {showPicker && <QuotePickerModal priceField="landed" onPick={onPickPOItem} onClose={()=>setShowPicker(false)} />}
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal-box modal-lg">
         <div className="modal-head"><h3>Edit Purchase Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
@@ -2237,6 +2290,8 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [srchIdx, setSrchIdx] = useState(-1);
   const [srchHits, setSrchHits] = useState([]);
   const [srchRect, setSrchRect] = useState(null);
+  const [showPicker, setShowPicker] = useState(false);
+  const onPickPOItem = (li) => setItems(prev=>[...prev,{prodId:'',desc:li.desc,qty:li.qty,price:li.price,ci:'',carton:'',vpn:'',masterSku:'',packSku:'',babySku:'',retailPrice:''}]);
   const [recentDescs, setRecentDescs] = useState([]);
   const [form, setForm]  = useState({ factoryId:'', clientId:'', num:'', date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'', needs_samples:false, sample_type:'TOP', sample_qty:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -2455,6 +2510,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
 
   return (
     <>
+    {showPicker && <QuotePickerModal priceField="landed" onPick={onPickPOItem} onClose={()=>setShowPicker(false)} />}
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal-box modal-lg">
         <div className="modal-head"><h3>New Purchase Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
@@ -2664,7 +2720,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
             );
           })()}
           <div style={{display:"flex",gap:"10px",marginBottom:"16px",alignItems:"center",flexWrap:"wrap"}}>
-            <button className="btn btn-ghost btn-sm" onClick={addItem}>+ Add Item</button>
+            <button className="btn btn-ghost btn-sm" onClick={()=>setShowPicker(true)}>+ Add Item</button>
             {mode==='manual' && items.some(it=>it.desc.trim()) && (
               <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)'}} onClick={saveAsProductsAndQuotes}>Save as products &amp; quotes</button>
             )}
