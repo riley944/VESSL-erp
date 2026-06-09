@@ -887,22 +887,56 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   const addItem=()=>setItems(prev=>[...prev,{id:null,desc:'',sku:'',qty:'',price:''}]);
   const rmItem=i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
   const [clients,setClients]=useState([]);
+  const [quotes,setQuotes]=useState([]);
+  const [srchIdx,setSrchIdx]=useState(-1);
+  const [srchHits,setSrchHits]=useState([]);
+  const tOf=q=>{try{return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]);}catch{return [];}};
   const [availPOs,setAvailPOs]=useState([]);
   const [linkedPOIds,setLinkedPOIds]=useState((initLinkedPos||[]).map(p=>p.id));
   const [poSearch,setPOSearch]=useState('');
   const [showNC,setShowNC]=useState(false);
   const [ncName,setNcName]=useState('');
   const [loading,setLoading]=useState(false);
-  useEffect(()=>{ Promise.all([SB.from('companies').select('id,name').order('name'),SB.from('purchase_orders').select('id,order_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300)]).then(([{data:cli},{data:pos}])=>{setClients(cli||[]);setAvailPOs(pos||[]);}); },[]);
+  useEffect(()=>{ Promise.all([SB.from('companies').select('id,name').order('name'),SB.from('purchase_orders').select('id,order_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300),SB.from('quotes').select('*').order('product')]).then(([{data:cli},{data:pos},{data:qs}])=>{setClients(cli||[]);setAvailPOs(pos||[]);setQuotes(qs||[]);}); },[]);
+  const handleSearch=(i,v)=>{
+    si(i,'desc',v);
+    if(v.trim().length>1){
+      const lv=v.toLowerCase();
+      setSrchHits(quotes.filter(q=>(q.product||'').toLowerCase().includes(lv)||(q.sku||'').toLowerCase().includes(lv)||(q.client||'').toLowerCase().includes(lv)).slice(0,6));
+      setSrchIdx(i);
+    } else { setSrchHits([]); setSrchIdx(-1); }
+  };
+  const pickFromCatalog=(i,q)=>{
+    const ts=tOf(q); const best=ts.find(t=>Number(t.client)>0)||ts[0]||{};
+    setItems(prev=>prev.map((it,idx)=>idx===i?{...it,desc:q.product||'',sku:q.sku||'',price:best.client?String(best.client):it.price,qty:best.qty?String(best.qty):it.qty}:it));
+    setSrchHits([]); setSrchIdx(-1);
+  };
   const addNC=async()=>{ const n=ncName.trim(); if(!n) return; const {data:co}=await SB.from('companies').upsert({name:n,type:'client'},{onConflict:'name,type'}).select('id,name').single(); if(co){setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]);f('clientId')(co.id);} setShowNC(false);setNcName(''); };
   const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
   const save=async()=>{
     setLoading(true);
     const {error}=await SB.from('sales_orders').update({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,updated_at:new Date().toISOString()}).eq('id',so.id);
     if(error){alert('Error: '+error.message);setLoading(false);return;}
-    await SB.from('sales_order_items').delete().eq('sales_order_id',so.id);
-    const toIns=items.filter(it=>it.desc.trim()).map(it=>({sales_order_id:so.id,description:it.desc.trim(),client_sku:it.sku||null,quantity:Number(it.qty)||null,client_price:Number(it.price)||null,currency:form.currency}));
-    if(toIns.length) await SB.from('sales_order_items').insert(toIns);
+    const filled=items.filter(it=>it.desc.trim());
+    // SAFETY: never wipe all line items. If the form somehow has none but the
+    // order already has items, skip the item sync entirely rather than delete.
+    const hadItems=(initItems||[]).length>0;
+    if(filled.length===0 && hadItems){
+      alert('No line items to save — leaving existing items untouched to prevent data loss. Add at least one item or remove them individually.');
+      setLoading(false); return;
+    }
+    // Non-destructive diff: update rows that have an id, insert new ones,
+    // delete only the specific rows the user removed.
+    const keepIds=filled.filter(it=>it.id).map(it=>it.id);
+    const origIds=(initItems||[]).map(it=>it.id).filter(Boolean);
+    const removed=origIds.filter(oid=>!keepIds.includes(oid));
+    for(const it of filled){
+      const row={description:it.desc.trim(),client_sku:it.sku||null,quantity:Number(it.qty)||null,client_price:Number(it.price)||null,currency:form.currency};
+      if(it.id){ await SB.from('sales_order_items').update(row).eq('id',it.id); }
+      else { await SB.from('sales_order_items').insert({...row,sales_order_id:so.id}); }
+    }
+    if(removed.length) await SB.from('sales_order_items').delete().in('id',removed);
+    // PO links: safe to replace (junction rows only, no item data)
     await SB.from('sales_order_pos').delete().eq('sales_order_id',so.id);
     if(linkedPOIds.length) await SB.from('sales_order_pos').insert(linkedPOIds.map(pid=>({sales_order_id:so.id,purchase_order_id:pid})));
     setLoading(false); onSaved();
@@ -933,7 +967,19 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
               <thead><tr style={{borderBottom:'1px solid var(--line-2)'}}>{['Product / Description','Client SKU','Qty','Unit Price',''].map((h,i)=><th key={i} style={{padding:'6px 8px',textAlign:h===''||h==='Qty'||h==='Unit Price'?'right':'left',fontSize:'9px',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--muted)',fontWeight:600}}>{h}</th>)}</tr></thead>
               <tbody>{items.map((it,i)=>(
                 <tr key={i} style={{borderBottom:'1px solid var(--line-2)'}}>
-                  <td style={{padding:'6px 4px'}}><input className="form-input" style={{fontSize:'12px'}} value={it.desc} onChange={e=>si(i,'desc',e.target.value)} /></td>
+                  <td style={{padding:'6px 4px',position:'relative'}}>
+                    <input className="form-input" style={{fontSize:'12px'}} value={it.desc} onChange={e=>handleSearch(i,e.target.value)} onBlur={()=>setTimeout(()=>{setSrchHits([]);setSrchIdx(-1);},200)} placeholder="Type to search products…" />
+                    {srchIdx===i&&srchHits.length>0&&(
+                      <div className="prod-suggestions">
+                        {srchHits.map(q=>{ const ts=tOf(q); const best=ts.find(t=>Number(t.client)>0)||ts[0]||{}; return (
+                          <div key={q.id} className="prod-sugg-item" onMouseDown={()=>pickFromCatalog(i,q)}>
+                            <div style={{display:'flex',justifyContent:'space-between',gap:'8px'}}><span style={{fontWeight:600}}>{q.product}</span><span style={{fontFamily:'var(--mono)',fontSize:'11px',color:Number(best.client)>0?'var(--ink)':'#d97706'}}>{Number(best.client)>0?money(best.client):'No price'}</span></div>
+                            <div style={{fontSize:'11px',color:'var(--muted)'}}>{q.client||'—'}{q.sku?' · '+q.sku:''}</div>
+                          </div>
+                        );})}
+                      </div>
+                    )}
+                  </td>
                   <td style={{padding:'6px 4px'}}><input className="form-input" style={{fontSize:'12px',width:'90px'}} value={it.sku} onChange={e=>si(i,'sku',e.target.value)} /></td>
                   <td style={{padding:'6px 4px'}}><input className="form-input" style={{fontSize:'12px',width:'80px',textAlign:'right'}} value={it.qty} onChange={e=>si(i,'qty',e.target.value)} /></td>
                   <td style={{padding:'6px 4px'}}><input className="form-input" style={{fontSize:'12px',width:'90px',textAlign:'right'}} value={it.price} onChange={e=>si(i,'price',e.target.value)} /></td>
@@ -1527,15 +1573,28 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
       updated_at:new Date().toISOString()
     }).eq('id',po.id);
     if(error){alert('Error: '+error.message);return;}
-    // replace line items: delete all, re-insert the valid ones
-    await SB.from('purchase_order_items').delete().eq('purchase_order_id',po.id);
-    for(const it of items){
-      const hasDesc=(it.desc||'').trim();
-      if(!(it.prodId||hasDesc) || !(Number(it.qty)>0)) continue;
-      const base={purchase_order_id:po.id,product_id:it.prodId||null,quantity:Number(it.qty),unit_price:Number(it.price)||0,currency:form.currency,ci_value:Number(it.ci)||null,carton_info:it.carton||null,vpn:it.vpn||null,master_sku:it.masterSku||null,pack_sku:it.packSku||null,baby_sku:it.babySku||null,retail_price:it.retailPrice?Number(it.retailPrice):null};
-      let { error:e1 } = await SB.from('purchase_order_items').insert({...base,description:hasDesc||null});
-      if(e1 && /description/i.test(e1.message)) await SB.from('purchase_order_items').insert(base);
+    // Non-destructive item sync: never wipe all items.
+    const valid=items.filter(it=>(it.prodId||(it.desc||'').trim()) && Number(it.qty)>0);
+    const hadItems=(initialItems||[]).length>0;
+    if(valid.length===0 && hadItems){
+      alert('No valid line items to save — leaving existing items untouched to prevent data loss. Each item needs a product/description and a quantity.');
+      return;
     }
+    const rowFor=it=>({product_id:it.prodId||null,quantity:Number(it.qty),unit_price:Number(it.price)||0,currency:form.currency,ci_value:Number(it.ci)||null,carton_info:it.carton||null,vpn:it.vpn||null,master_sku:it.masterSku||null,pack_sku:it.packSku||null,baby_sku:it.babySku||null,retail_price:it.retailPrice?Number(it.retailPrice):null});
+    for(const it of valid){
+      const base=rowFor(it); const desc=(it.desc||'').trim();
+      if(it.id){
+        let { error:e1 } = await SB.from('purchase_order_items').update({...base,description:desc||null}).eq('id',it.id);
+        if(e1 && /description/i.test(e1.message)) await SB.from('purchase_order_items').update(base).eq('id',it.id);
+      } else {
+        let { error:e1 } = await SB.from('purchase_order_items').insert({...base,purchase_order_id:po.id,description:desc||null});
+        if(e1 && /description/i.test(e1.message)) await SB.from('purchase_order_items').insert({...base,purchase_order_id:po.id});
+      }
+    }
+    // delete only rows the user explicitly removed
+    const keepIds=valid.filter(it=>it.id).map(it=>it.id);
+    const removed=(initialItems||[]).map(it=>it.id).filter(Boolean).filter(oid=>!keepIds.includes(oid));
+    if(removed.length) await SB.from('purchase_order_items').delete().in('id',removed);
     onSaved();
   };
   return (
