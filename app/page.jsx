@@ -42,8 +42,10 @@ const genSONum = (list=[]) => {
 const mgnColor = p => p===null?'#94a3b8':p>=25?'#059669':p>=15?'#d97706':'#dc2626';
 const soMetrics = so => {
   const rev = (so.sales_order_items||[]).reduce((a,i)=>a+(Number(i.quantity)||0)*(Number(i.client_price)||0),0);
-  const cost = (so.sales_order_pos||[]).reduce((a,l)=>a+((l.purchase_orders?.purchase_order_items)||[]).reduce((b,i)=>b+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0),0);
-  return {rev, cost, gross:rev-cost, mgn:rev>0?(rev-cost)/rev*100:null};
+  const factoryCost = (so.sales_order_pos||[]).reduce((a,l)=>a+((l.purchase_orders?.purchase_order_items)||[]).reduce((b,i)=>b+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0),0);
+  const addlCost = (so.order_costs||[]).reduce((a,c)=>a+(Number(c.amount)||0),0);
+  const cost = factoryCost + addlCost;
+  return {rev, cost, factoryCost, addlCost, gross:rev-cost, mgn:rev>0?(rev-cost)/rev*100:null};
 };
 
 // Auto-create shipment when a PO moves to shipped — callable from any component
@@ -480,7 +482,7 @@ function SalesOrders({navigate}){
   const [statusF,setStatusF]=useState('all');
   const [clientF,setClientF]=useState('all');
   const [showCreate,setShowCreate]=useState(false);
-  const load=async()=>{ setLoading(true); const {data}=await SB.from('sales_orders').select('*,client:companies!client_company_id(id,name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(unit_price,quantity)))').order('created_at',{ascending:false}); setRows(data||[]); setLoading(false); };
+  const load=async()=>{ setLoading(true); const {data}=await SB.from('sales_orders').select('*,client:companies!client_company_id(id,name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(unit_price,quantity))),order_costs(amount,kind)').order('created_at',{ascending:false}); setRows(data||[]); setLoading(false); };
   useEffect(()=>{ load(); },[]);
   const clients=[...new Set(rows.map(r=>r.client?.name).filter(Boolean))].sort();
   const shown=rows.filter(r=>{
@@ -503,7 +505,7 @@ function SalesOrders({navigate}){
       </div>
       {shown.length>0 && (
         <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'10px',marginBottom:'20px'}}>
-          {[{l:'Orders',v:String(totals.n),c:'var(--ink)'},{l:'Revenue',v:money(totals.rev),c:'var(--ink)'},{l:'Factory Cost',v:totals.cost>0?money(totals.cost):'No POs linked',c:'var(--muted)'},{l:'Avg Margin',v:totalMgn!==null?totalMgn.toFixed(1)+'%':'—',c:mgnColor(totalMgn)}].map(t=>(
+          {[{l:'Orders',v:String(totals.n),c:'var(--ink)'},{l:'Revenue',v:money(totals.rev),c:'var(--ink)'},{l:'Total Cost',v:totals.cost>0?money(totals.cost):'No POs linked',c:'var(--muted)'},{l:'Avg Margin',v:totalMgn!==null?totalMgn.toFixed(1)+'%':'—',c:mgnColor(totalMgn)}].map(t=>(
             <div key={t.l} className="section-card" style={{padding:'14px 16px',marginBottom:0}}>
               <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.12em',color:'var(--muted)',marginBottom:'6px'}}>{t.l}</div>
               <div style={{fontFamily:'var(--mono)',fontSize:'20px',fontWeight:700,color:t.c,lineHeight:1}}>{t.v}</div>
@@ -542,15 +544,17 @@ function SalesOrderDetail({id,navigate}){
   const [confirmDel,setConfirmDel]=useState(false);
   const [invoiceNum,setInvoiceNum]=useState('');
   const [savingInv,setSavingInv]=useState(false);
+  const [costs,setCosts]=useState([]);
   const load=async()=>{
     setLoading(true);
-    const [{data:soD},{data:itmD,error:itmErr},{data:posD}]=await Promise.all([
+    const [{data:soD},{data:itmD,error:itmErr},{data:posD},{data:costD}]=await Promise.all([
       SB.from('sales_orders').select('*,client:companies!client_company_id(id,name,vendor_number)').eq('id',id).single(),
       SB.from('sales_order_items').select('*').eq('sales_order_id',id),
       SB.from('sales_order_pos').select('purchase_orders(id,order_number,status,currency,companies!factory_company_id(name),purchase_order_items(description,quantity,unit_price))').eq('sales_order_id',id),
+      SB.from('order_costs').select('*').eq('sales_order_id',id).order('created_at'),
     ]);
     if(itmErr) console.error('SO items load error:', itmErr);
-    setSo(soD); setItems(itmD||[]); setInvoiceNum(soD?.invoice_number||'');
+    setSo(soD); setItems(itmD||[]); setInvoiceNum(soD?.invoice_number||''); setCosts(costD||[]);
     setLinkedPos((posD||[]).map(p=>p.purchase_orders).filter(Boolean));
     setLoading(false);
   };
@@ -558,9 +562,14 @@ function SalesOrderDetail({id,navigate}){
   if(loading) return <div className="loading">Loading…</div>;
   if(!so) return null;
   const rev=items.reduce((a,i)=>a+(Number(i.quantity)||0)*(Number(i.client_price)||0),0);
-  const cost=linkedPos.reduce((a,po)=>a+(po.purchase_order_items||[]).reduce((b,i)=>b+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0),0);
+  const factoryCost=linkedPos.reduce((a,po)=>a+(po.purchase_order_items||[]).reduce((b,i)=>b+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0),0);
+  const addlCost=costs.reduce((a,c)=>a+(Number(c.amount)||0),0);
+  const cost=factoryCost+addlCost;
   const gross=rev-cost; const mgn=rev>0?gross/rev*100:null; const mc=mgnColor(mgn);
   const cl=so.client?.name||'—';
+  const addCost=async()=>{ const {data}=await SB.from('order_costs').insert({sales_order_id:id,kind:'freight',amount:0,currency:so.currency||'USD'}).select().single(); if(data) setCosts(prev=>[...prev,data]); };
+  const updCost=async(cid,patch)=>{ setCosts(prev=>prev.map(c=>c.id===cid?{...c,...patch}:c)); await SB.from('order_costs').update(patch).eq('id',cid); };
+  const rmCost=async(cid)=>{ setCosts(prev=>prev.filter(c=>c.id!==cid)); await SB.from('order_costs').delete().eq('id',cid); };
   const updateStatus=async s=>{await SB.from('sales_orders').update({status:s,updated_at:new Date().toISOString()}).eq('id',id); setSo(prev=>({...prev,status:s}));};
   const saveInvoice=async()=>{ setSavingInv(true); await SB.from('sales_orders').update({invoice_number:invoiceNum.trim()||null,updated_at:new Date().toISOString()}).eq('id',id); setSo(prev=>({...prev,invoice_number:invoiceNum.trim()||null})); setSavingInv(false); };
   const deleteSO=async()=>{ await SB.from('sales_order_pos').delete().eq('sales_order_id',id); await SB.from('sales_order_items').delete().eq('sales_order_id',id); await SB.from('sales_orders').delete().eq('id',id); navigate('sales-orders'); };
@@ -576,7 +585,7 @@ function SalesOrderDetail({id,navigate}){
         <button className="btn btn-ghost btn-sm" onClick={()=>setEditing(true)}>Edit</button>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'12px',marginBottom:'22px'}}>
-        {[{l:'Revenue',v:money(rev,so.currency),c:'var(--ink)',t:'var(--line-2)'},{l:'Factory Cost',v:cost>0?money(cost,so.currency):'No POs linked',c:cost>0?'var(--ink)':'var(--muted)',t:'var(--line-2)'},{l:'Gross Margin',v:gross>0?money(gross,so.currency):'—',c:gross>0?'#059669':'var(--muted)',t:gross>0?'#059669':'var(--line-2)'},{l:'Margin %',v:mgn!==null?mgn.toFixed(1)+'%':'—',c:mc,t:mc}].map(t=>(
+        {[{l:'Revenue',v:money(rev,so.currency),c:'var(--ink)',t:'var(--line-2)'},{l:'Total Cost',v:cost>0?money(cost,so.currency):'No POs linked',c:cost>0?'var(--ink)':'var(--muted)',t:'var(--line-2)'},{l:'Gross Margin',v:gross>0?money(gross,so.currency):'—',c:gross>0?'#059669':'var(--muted)',t:gross>0?'#059669':'var(--line-2)'},{l:'Margin %',v:mgn!==null?mgn.toFixed(1)+'%':'—',c:mc,t:mc}].map(t=>(
           <div key={t.l} className="section-card" style={{padding:'16px 18px',marginBottom:0,borderTop:'3px solid '+t.t}}>
             <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.12em',color:'var(--muted)',marginBottom:'8px'}}>{t.l}</div>
             <div style={{fontFamily:'var(--mono)',fontSize:'22px',fontWeight:700,color:t.c,lineHeight:1}}>{t.v}</div>
@@ -665,10 +674,40 @@ function SalesOrderDetail({id,navigate}){
           </div>
         )}
       </div>
+
+      <div className="card" style={{marginTop:'18px'}}>
+        <div className="section-head">
+          <h3>Additional Costs <span style={{fontWeight:400,color:'var(--muted)',fontSize:'12px'}}>· internal only — never shown to client</span></h3>
+          <button className="btn btn-ghost btn-sm" onClick={addCost}>+ Add Cost</button>
+        </div>
+        {costs.length ? (
+          <div style={{padding:'4px 0'}}>
+            {costs.map(c=>(
+              <div key={c.id} style={{display:'flex',alignItems:'center',gap:'10px',padding:'10px 18px',borderBottom:'1px solid var(--line-2)'}}>
+                <select className="form-select" style={{width:'130px',fontSize:'13px'}} value={c.kind} onChange={e=>updCost(c.id,{kind:e.target.value})}>
+                  <option value="freight">Freight</option>
+                  <option value="duty">Duty</option>
+                  <option value="other">Other</option>
+                </select>
+                <input className="form-input" style={{flex:1,fontSize:'13px'}} placeholder="Note (optional)" value={c.note||''} onChange={e=>updCost(c.id,{note:e.target.value})} />
+                <input className="form-input" type="number" step="0.01" style={{width:'130px',fontSize:'13px',textAlign:'right'}} value={c.amount} onChange={e=>updCost(c.id,{amount:Number(e.target.value)||0})} />
+                <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)',flexShrink:0}} onClick={()=>rmCost(c.id)}>×</button>
+              </div>
+            ))}
+            <div style={{display:'flex',justifyContent:'space-between',padding:'12px 18px',fontSize:'13px',fontWeight:600}}>
+              <span style={{color:'var(--muted)'}}>Total additional costs</span>
+              <span className="mono">{money(addlCost,so.currency)}</span>
+            </div>
+          </div>
+        ) : (
+          <div style={{padding:'18px',fontSize:'13px',color:'var(--muted)'}}>
+            No freight, duty, or other costs added. For DDP orders where duty/freight is already in the client price, leave this empty.
+          </div>
+        )}
+      </div>
     </>
   );
 }
-
 // ── Shared Quote Picker (pop-up overlay, used by Create/Edit SO & PO) ──────────
 // Search the quotes catalog, pick a product + tier, returns a line item via onPick.
 // priceField: 'client' for sales orders (client price), 'landed' for POs (cost).
@@ -961,6 +1000,11 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const addItem=()=>setShowPicker(true);
   const rmItem=i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
+  const [costs,setCosts]=useState([]);
+  useEffect(()=>{ SB.from('order_costs').select('*').eq('sales_order_id',so.id).order('created_at').then(({data})=>setCosts(data||[])); },[]);
+  const addCost=async()=>{ const {data}=await SB.from('order_costs').insert({sales_order_id:so.id,kind:'freight',amount:0,currency:form.currency}).select().single(); if(data) setCosts(prev=>[...prev,data]); };
+  const updCost=async(cid,patch)=>{ setCosts(prev=>prev.map(c=>c.id===cid?{...c,...patch}:c)); await SB.from('order_costs').update(patch).eq('id',cid); };
+  const rmCost=async(cid)=>{ setCosts(prev=>prev.filter(c=>c.id!==cid)); await SB.from('order_costs').delete().eq('id',cid); };
   const [clients,setClients]=useState([]);
   const [showPicker,setShowPicker]=useState(false);
   const onPickItem=(li)=>setItems(prev=>[...prev,{id:null,desc:li.desc,sku:li.sku,qty:li.qty,price:li.price}]);
@@ -1057,6 +1101,23 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
               ); })}
             </div>
             {linkedPOIds.length>0&&<div style={{fontSize:'12px',color:'var(--accent)',marginTop:'6px',fontWeight:600}}>{linkedPOIds.length+' PO'+(linkedPOIds.length!==1?'s':'')+' linked'}</div>}
+          </div>
+          <span className="form-section-label">Additional Costs — internal only, never shown to client</span>
+          <div style={{marginBottom:'16px'}}>
+            {costs.map(c=>(
+              <div key={c.id} style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
+                <select className="form-select" style={{width:'110px',fontSize:'12px'}} value={c.kind} onChange={e=>updCost(c.id,{kind:e.target.value})}>
+                  <option value="freight">Freight</option>
+                  <option value="duty">Duty</option>
+                  <option value="other">Other</option>
+                </select>
+                <input className="form-input" style={{flex:1,fontSize:'12px'}} placeholder="Note (optional)" value={c.note||''} onChange={e=>updCost(c.id,{note:e.target.value})} />
+                <input className="form-input" type="number" step="0.01" style={{width:'110px',fontSize:'12px',textAlign:'right'}} value={c.amount} onChange={e=>updCost(c.id,{amount:Number(e.target.value)||0})} />
+                <button style={{background:'none',border:'none',cursor:'pointer',color:'var(--hot)',fontSize:'18px',lineHeight:1,padding:'0 4px'}} onClick={()=>rmCost(c.id)}>×</button>
+              </div>
+            ))}
+            <button className="btn btn-ghost btn-sm" onClick={addCost}>+ Add Cost</button>
+            {costs.length===0 && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'6px'}}>For DDP orders where duty/freight is already in the client price, leave this empty.</div>}
           </div>
           <div><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>f('notes')(e.target.value)} rows={3} /></div>
         </div>
