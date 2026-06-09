@@ -544,11 +544,12 @@ function SalesOrderDetail({id,navigate}){
   const [savingInv,setSavingInv]=useState(false);
   const load=async()=>{
     setLoading(true);
-    const [{data:soD},{data:itmD},{data:posD}]=await Promise.all([
+    const [{data:soD},{data:itmD,error:itmErr},{data:posD}]=await Promise.all([
       SB.from('sales_orders').select('*,client:companies!client_company_id(id,name,vendor_number)').eq('id',id).single(),
-      SB.from('sales_order_items').select('*,products(name,sku)').eq('sales_order_id',id).order('created_at'),
+      SB.from('sales_order_items').select('*').eq('sales_order_id',id),
       SB.from('sales_order_pos').select('purchase_orders(id,order_number,status,currency,companies!factory_company_id(name),purchase_order_items(description,quantity,unit_price))').eq('sales_order_id',id),
     ]);
+    if(itmErr) console.error('SO items load error:', itmErr);
     setSo(soD); setItems(itmD||[]); setInvoiceNum(soD?.invoice_number||'');
     setLinkedPos((posD||[]).map(p=>p.purchase_orders).filter(Boolean));
     setLoading(false);
