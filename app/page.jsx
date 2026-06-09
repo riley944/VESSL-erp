@@ -670,12 +670,18 @@ function SalesOrderDetail({id,navigate}){
 
 function CreateSOModal({onClose,onCreated}){
   const nd=()=>new Date().toISOString().split('T')[0];
+  const [mode,setMode]=useState('catalog');
   const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',payment:'',currency:'USD',notes:''});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
-  const [items,setItems]=useState([{desc:'',sku:'',qty:'',price:'',quoteId:null,tierIdx:0,noPrice:false}]);
+  const [items,setItems]=useState([]);
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const addItem=()=>setItems(prev=>[...prev,{desc:'',sku:'',qty:'',price:'',quoteId:null,tierIdx:0,noPrice:false}]);
   const rmItem=i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
+  // Quote picker state
+  const [picked,setPicked]=useState(null);
+  const [tierIdx,setTierIdx]=useState(0);
+  const [qSearch,setQSearch]=useState('');
+  // Data
   const [clients,setClients]=useState([]);
   const [quotes,setQuotes]=useState([]);
   const [availPOs,setAvailPOs]=useState([]);
@@ -683,10 +689,9 @@ function CreateSOModal({onClose,onCreated}){
   const [poSearch,setPOSearch]=useState('');
   const [showNC,setShowNC]=useState(false);
   const [ncName,setNcName]=useState('');
-  const [srchIdx,setSrchIdx]=useState(-1);
-  const [srchHits,setSrchHits]=useState([]);
   const [loading,setLoading]=useState(false);
   const tOf=q=>{try{return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]);}catch{return [];}};
+  const clientPriceRange=q=>{const ps=tOf(q).map(t=>Number(t.client)||0).filter(Boolean);if(!ps.length)return null;const mn=Math.min(...ps),mx=Math.max(...ps);return mn===mx?money(mn):money(mn)+' – '+money(mx);};
   useEffect(()=>{
     Promise.all([
       SB.from('companies').select('id,name,vendor_number').order('name'),
@@ -699,25 +704,21 @@ function CreateSOModal({onClose,onCreated}){
     });
   },[]);
   const addNC=async()=>{ const n=ncName.trim(); if(!n) return; const {data:co}=await SB.from('companies').upsert({name:n,type:'client'},{onConflict:'name,type'}).select('id,name').single(); if(co){setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]);f('clientId')(co.id);} setShowNC(false);setNcName(''); };
-  const handleSearch=(i,v)=>{
-    si(i,'desc',v);
-    if(v.trim().length>1){
-      const lv=v.toLowerCase();
-      const hits=quotes.filter(q=>(q.product||'').toLowerCase().includes(lv)||(q.sku||'').toLowerCase().includes(lv)||(q.client||'').toLowerCase().includes(lv)).slice(0,6);
-      setSrchHits(hits); setSrchIdx(i);
-    } else { setSrchHits([]); setSrchIdx(-1); }
+  const applyQuote=(q,tIdx)=>{
+    setPicked(q); setTierIdx(tIdx);
+    const ts=tOf(q); const tier=ts[tIdx]||ts[0]||{};
+    const noPrice=!tier.client||Number(tier.client)===0;
+    setItems([{desc:q.product||'',sku:q.sku||'',qty:tier.qty?String(tier.qty):'',price:tier.client?String(tier.client):'',quoteId:q.id,tierIdx:tIdx,noPrice}]);
+    if(q.client&&!form.clientId){const m=clients.find(c=>(c.name||'').toLowerCase()===q.client.toLowerCase());if(m)setForm(prev=>({...prev,clientId:m.id}));}
   };
-  const pickFromCatalog=(i,q)=>{
-    const ts=tOf(q);
-    const best=ts.find(t=>Number(t.client)>0)||ts[0]||{};
-    const tIdx=ts.indexOf(best)>=0?ts.indexOf(best):0;
-    const noPrice=!best.client||Number(best.client)===0;
-    setItems(prev=>prev.map((it,idx)=>idx===i?{...it,desc:q.product||'',sku:q.sku||'',price:best.client?String(best.client):'',qty:best.qty?String(best.qty):it.qty,quoteId:q.id,tierIdx:tIdx,noPrice}:it));
-    if(q.client&&!form.clientId){const m=clients.find(c=>(c.name||'').toLowerCase()===q.client.toLowerCase());if(m)f('clientId')(m.id);}
-    setSrchHits([]); setSrchIdx(-1);
+  const pickTier=i=>{
+    setTierIdx(i);
+    if(picked){const ts=tOf(picked);const tier=ts[i]||{};const noPrice=!tier.client||Number(tier.client)===0;setItems([{desc:picked.product||'',sku:picked.sku||'',qty:tier.qty?String(tier.qty):'',price:tier.client?String(tier.client):'',quoteId:picked.id,tierIdx:i,noPrice}]);}
   };
+  const addExtraItem=()=>setItems(prev=>[...prev,{desc:'',sku:'',qty:'',price:'',quoteId:null,tierIdx:0,noPrice:false}]);
   const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
   const prevRev=items.reduce((a,it)=>a+(Number(it.qty)||0)*(Number(it.price)||0),0);
+  const filtQ=qSearch?quotes.filter(q=>(q.product||'').toLowerCase().includes(qSearch.toLowerCase())||(q.client||'').toLowerCase().includes(qSearch.toLowerCase())||(q.factory||'').toLowerCase().includes(qSearch.toLowerCase())||(q.sku||'').toLowerCase().includes(qSearch.toLowerCase())):quotes;
   const filtPOs=availPOs.filter(p=>!poSearch||(p.order_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.companies?.name||'').toLowerCase().includes(poSearch.toLowerCase()));
   const submit=async()=>{
     if(!form.num.trim()){alert('SO number required');return;}
@@ -730,81 +731,111 @@ function CreateSOModal({onClose,onCreated}){
     if(linkedPOIds.length) await SB.from('sales_order_pos').insert(linkedPOIds.map(pid=>({sales_order_id:so.id,purchase_order_id:pid})));
     for(const it of toIns){
       if(it._quoteId&&Number(it.client_price)>0){
-        try{
-          const {data:q}=await SB.from('quotes').select('tiers').eq('id',it._quoteId).single();
-          if(q){
-            const ts=Array.isArray(q.tiers)?[...q.tiers]:(q.tiers?JSON.parse(q.tiers):[]);
-            if(ts[it._tierIdx]&&(!Number(ts[it._tierIdx].client)||Number(ts[it._tierIdx].client)===0)){
-              ts[it._tierIdx]={...ts[it._tierIdx],client:it.client_price};
-              await SB.from('quotes').update({tiers:ts}).eq('id',it._quoteId);
-            }
-          }
-        }catch(e){}
+        try{const {data:q}=await SB.from('quotes').select('tiers').eq('id',it._quoteId).single();if(q){const ts=Array.isArray(q.tiers)?[...q.tiers]:(q.tiers?JSON.parse(q.tiers):[]);if(ts[it._tierIdx]&&(!Number(ts[it._tierIdx].client)||Number(ts[it._tierIdx].client)===0)){ts[it._tierIdx]={...ts[it._tierIdx],client:it.client_price};await SB.from('quotes').update({tiers:ts}).eq('id',it._quoteId);}}}catch(e){}
       }
     }
     setLoading(false); onCreated(so.id);
   };
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div className="modal-box" style={{maxWidth:'700px'}}>
+      <div className="modal-box" style={{maxWidth:'680px'}}>
         <div className="modal-head"><h3>New Sales Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
-          <div className="form-row-2">
-            <div><label>SO Number</label><input className="form-input" style={{fontFamily:'var(--mono)'}} value={form.num} onChange={e=>f('num')(e.target.value)} placeholder="KUI-SO-2026-001" /></div>
-            <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}>{['USD','CAD','EUR','GBP','AUD'].map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+
+          <div className="qp-toggle">
+            <button className={mode==='catalog'?'on':''} onClick={()=>setMode('catalog')}>Generate from Quote</button>
+            <button className={mode==='manual'?'on':''} onClick={()=>{setMode('manual');setPicked(null);setItems([]);}} >Manual Entry</button>
           </div>
-          <div style={{marginBottom:'16px'}}>
-            <label>Client</label>
-            <select className="form-select" value={form.clientId} onChange={e=>f('clientId')(e.target.value)}><option value="">— select client —</option>{[...clients].sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=><option key={c.id} value={c.id}>{c.name}{c.vendor_number?' ('+c.vendor_number+')':''}</option>)}</select>
+
+          {picked && (
+            <div className="qp-banner">
+              <span><b>{picked.product||'Quote'}</b>{' \u00b7 '}{picked.client||'—'}{picked.sku?' \u00b7 '+picked.sku:''}</span>
+              <button className="x" onClick={()=>{setPicked(null);setItems([]);}}>Change</button>
+            </div>
+          )}
+
+          {mode==='catalog' && !picked && (
+            <>
+              <div className="qp-search">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                <input placeholder="Search quotes — product, client, factory, SKU…" value={qSearch} onChange={e=>setQSearch(e.target.value)} autoFocus />
+              </div>
+              <div className="qp-list">
+                {filtQ.length===0&&<div className="empty" style={{padding:'40px 20px'}}><p>No quotes match.</p></div>}
+                {filtQ.map(q=>{ const pr=clientPriceRange(q); const ts=tOf(q); return (
+                  <button key={q.id} className="qp-card" onClick={()=>applyQuote(q,0)}>
+                    <span className="qp-avatar" style={{background:companyColor(q.client),color:'#0b1120'}}>{initials(q.client)}</span>
+                    <span className="qp-meta">
+                      <div className="qp-prod">{q.product||'Untitled'}</div>
+                      <div className="qp-sub">{q.client||'—'}{q.factory?' · '+q.factory:''}{q.sku?' · '+q.sku:''}</div>
+                    </span>
+                    <span className="qp-right">
+                      <div className="qp-price" style={{color:pr?'var(--ink)':'#d97706'}}>{pr||'No client price'}</div>
+                      <div className="qp-tiers">{ts.length} {ts.length===1?'tier':'tiers'}</div>
+                    </span>
+                  </button>
+                );})}
+              </div>
+            </>
+          )}
+
+          {mode==='catalog' && picked && tOf(picked).length>0 && (
+            <div className="form-row">
+              <label>Pricing Tier — pick the quantity to build this SO from</label>
+              <div className="qp-tierpick">
+                {tOf(picked).map((t,i)=>(
+                  <button key={i} className={i===tierIdx?'on':''} onClick={()=>pickTier(i)}>
+                    {t.qty?Number(t.qty).toLocaleString():'—'}{' @ '}{Number(t.client)>0?money(Number(t.client)):'—'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(mode==='manual'||picked) && (<>
+
+          <div className="form-row"><label>Client *</label>
+            <select className="form-select" value={form.clientId} onChange={e=>f('clientId')(e.target.value)}>
+              <option value="">— select client —</option>
+              {clients.sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=><option key={c.id} value={c.id}>{c.name}{c.vendor_number?' ('+c.vendor_number+')':''}</option>)}
+            </select>
             {!showNC?<button className="btn btn-ghost btn-sm" style={{marginTop:'8px'}} onClick={()=>setShowNC(true)}>+ New client</button>:<div style={{display:'flex',gap:'8px',marginTop:'8px',alignItems:'center'}}><input className="form-input" style={{flex:1}} placeholder="Client name…" value={ncName} onChange={e=>setNcName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNC()} autoFocus /><button className="btn btn-dark btn-sm" onClick={addNC}>Add</button><button className="btn btn-ghost btn-sm" onClick={()=>{setShowNC(false);setNcName('');}}>✕</button></div>}
           </div>
-          <div><label>Client PO #</label><input className="form-input" value={form.clientPO} onChange={e=>f('clientPO')(e.target.value)} placeholder="Client's purchase order number" /></div>
+
           <div className="form-row-2">
+            <div><label>SO Number *</label><input className="form-input" style={{fontFamily:'var(--mono)'}} value={form.num} onChange={e=>f('num')(e.target.value)} /></div>
             <div><label>Order Date</label><input type="date" className="form-input" value={form.date} onChange={e=>f('date')(e.target.value)} /></div>
+          </div>
+          <div className="form-row-2">
+            <div><label>Client PO #</label><input className="form-input" value={form.clientPO} onChange={e=>f('clientPO')(e.target.value)} placeholder="Client's PO number" /></div>
             <div><label>Required Ship Date</label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
           </div>
-          <div><label>Payment Terms</label><input className="form-input" value={form.payment} onChange={e=>f('payment')(e.target.value)} placeholder="e.g. Net 30, 50% deposit" /></div>
+          <div className="form-row-2">
+            <div><label>Payment Terms</label><input className="form-input" value={form.payment} onChange={e=>f('payment')(e.target.value)} placeholder="e.g. Net 30, 50% deposit" /></div>
+            <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}>{['USD','CAD','EUR','GBP','AUD'].map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+          </div>
 
           <span className="form-section-label">Line Items</span>
           <table className="items-table">
-            <thead><tr><th style={{width:'40%'}}>Product</th><th>Qty</th><th>Client Price</th><th style={{width:'36px'}}></th></tr></thead>
+            <thead><tr><th style={{width:'40%'}}>Product</th><th>Qty</th><th>Client Price</th><th style={{textAlign:'right'}}>Amount</th><th style={{width:'36px'}}></th></tr></thead>
             <tbody>
               {items.map((it,i)=>(
                 <React.Fragment key={i}>
                   <tr>
-                    <td>
-                      <div style={{position:'relative'}}>
-                        <input value={it.desc} onChange={e=>handleSearch(i,e.target.value)} onBlur={()=>setTimeout(()=>{setSrchHits([]);setSrchIdx(-1);},200)} placeholder="Type to search products…" />
-                        {srchIdx===i&&srchHits.length>0&&(
-                          <div className="prod-suggestions">
-                            {srchHits.map(q=>{
-                              const ts=tOf(q); const best=ts.find(t=>Number(t.client)>0)||ts[0]||{};
-                              return (
-                                <div key={q.id} className="prod-sugg-item" onMouseDown={()=>pickFromCatalog(i,q)}>
-                                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:'8px'}}>
-                                    <span style={{fontWeight:600}}>{q.product}</span>
-                                    <span style={{fontFamily:'var(--mono)',fontSize:'11px',color:Number(best.client)>0?'var(--ink)':'#d97706',flexShrink:0}}>{Number(best.client)>0?money(best.client):'No price'}</span>
-                                  </div>
-                                  <div style={{fontSize:'11px',color:'var(--muted)'}}>{q.client||'—'}{q.factory?' · '+q.factory:''}{q.sku?' · '+q.sku:''}</div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </td>
+                    <td><input value={it.desc} onChange={e=>si(i,'desc',e.target.value)} placeholder="Description…" /></td>
                     <td><input type="number" value={it.qty} onChange={e=>si(i,'qty',e.target.value)} placeholder="0" /></td>
                     <td>
                       <input type="number" step="0.01" value={it.price} onChange={e=>si(i,'price',e.target.value)} placeholder="0.00" style={{borderColor:it.noPrice&&!it.price?'#f59e0b':''}} />
                       {it.noPrice&&!it.price&&<div style={{fontSize:'10px',color:'#d97706',marginTop:'2px'}}>Enter client price</div>}
                       {it.noPrice&&it.price&&<div style={{fontSize:'10px',color:'#059669',marginTop:'2px'}}>Will save to catalog</div>}
                     </td>
+                    <td className="mono" style={{textAlign:'right',whiteSpace:'nowrap',fontSize:'12.5px'}}>{money((Number(it.qty)||0)*(Number(it.price)||0),form.currency)}</td>
                     <td><button className="rm" onClick={()=>rmItem(i)}>×</button></td>
                   </tr>
                   <tr className="item-sub-row">
-                    <td colSpan={4}>
+                    <td colSpan={5}>
                       <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 8px'}}>
-                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 110px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Client SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.sku||''} onChange={e=>si(i,'sku',e.target.value)} placeholder="Client SKU" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 130px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Client SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.sku||''} onChange={e=>si(i,'sku',e.target.value)} placeholder="Client SKU" /></div>
                       </div>
                     </td>
                   </tr>
@@ -812,10 +843,12 @@ function CreateSOModal({onClose,onCreated}){
               ))}
             </tbody>
           </table>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',margin:'4px 0 16px'}}>
-            <button className="btn btn-ghost btn-sm" onClick={addItem}>+ Add Item</button>
-            {prevRev>0&&<span style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:'14px',color:'var(--ink)'}}>{'Total: '+money(prevRev,form.currency)}</span>}
-          </div>
+          {prevRev>0 && (
+            <div className="po-draft-totals">
+              <div className="pdt-grand"><span>SO Total · {form.currency}</span><span className="mono">{money(prevRev,form.currency)}</span></div>
+            </div>
+          )}
+          <button className="btn btn-ghost btn-sm" style={{marginBottom:'16px'}} onClick={addExtraItem}>+ Add Item</button>
 
           <span className="form-section-label">Link Factory POs (optional)</span>
           <div style={{marginBottom:'16px'}}>
@@ -833,7 +866,9 @@ function CreateSOModal({onClose,onCreated}){
             </div>
             {linkedPOIds.length>0&&<div style={{fontSize:'12px',color:'var(--accent)',marginTop:'6px',fontWeight:600}}>{linkedPOIds.length+' PO'+(linkedPOIds.length!==1?'s':'')+' linked'}</div>}
           </div>
-          <div><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>f('notes')(e.target.value)} placeholder="Internal notes…" rows={3} /></div>
+          <div className="form-row"><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>f('notes')(e.target.value)} placeholder="Internal notes…" rows={3} /></div>
+
+          </>)}
         </div>
         <div className="modal-foot">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
