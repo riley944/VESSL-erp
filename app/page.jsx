@@ -353,97 +353,242 @@ function Login() {
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 function Dashboard({ navigate }) {
-  const [stats, setStats] = useState({active:0,prod:0,rts:0,clients:0});
-  const [recent, setRecent] = useState([]);
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [client, setClient] = useState('all');
-  const [status, setStatusFilter] = useState('all');
-  const [tasks, setTasks] = useState([]);
-  const [showTasks, setShowTasks] = useState(false);
+
   useEffect(() => {
     (async () => {
-      const [{ data: pos }, { data: cos }, { data: rec }] = await Promise.all([
-        SB.from('purchase_orders').select('status'),
-        SB.from('companies').select('type'),
-        SB.from('purchase_orders').select(PO_CARD_SELECT).order('created_at',{ascending:false}).limit(60)
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+      const [
+        { data: sos },
+        { data: pos },
+        { data: ships },
+      ] = await Promise.all([
+        SB.from('sales_orders').select('id,so_number,status,currency,order_date,client_company_id,client:companies!client_company_id(name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(quantity,unit_price))),order_costs(amount)').order('created_at',{ascending:false}).limit(200),
+        SB.from('purchase_orders').select('id,order_number,status').not('status','in','("closed","cancelled")'),
+        SB.from('shipments').select('id,shipment_number,status,estimated_arrival,actual_arrival,origin_port:ports!origin_port_id(name,unlocode),destination_port:ports!destination_port_id(name,unlocode),companies!carrier_company_id(name)').in('status',['created','at_origin_port','in_transit','at_transshipment','at_destination_port','customs','out_for_delivery']).order('estimated_arrival').limit(20),
       ]);
-      setStats({
-        active:(pos||[]).filter(p=>!['closed','cancelled'].includes(p.status)).length,
-        prod:(pos||[]).filter(p=>p.status==='in_production').length,
-        rts:(pos||[]).filter(p=>p.status==='ready_to_ship').length,
-        clients:(cos||[]).filter(c=>c.type==='client').length
+
+      const soList = sos || [];
+      const poList = pos || [];
+      const shipList = ships || [];
+
+      // ── per-SO metrics ────────────────────────────────────────────────
+      const enriched = soList.map(so => {
+        const rev = (so.sales_order_items||[]).reduce((a,i)=>a+(Number(i.quantity)||0)*(Number(i.client_price)||0),0);
+        const factoryCost = (so.sales_order_pos||[]).reduce((a,l)=>a+((l.purchase_orders?.purchase_order_items)||[]).reduce((b,i)=>b+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0),0);
+        const addlCost = (so.order_costs||[]).reduce((a,c)=>a+(Number(c.amount)||0),0);
+        const cost = factoryCost + addlCost;
+        const gross = rev - cost;
+        const mgn = rev > 0 ? gross / rev * 100 : null;
+        return { ...so, rev, cost, gross, mgn };
       });
-      setRecent(rec||[]);
-      try { const { data: t } = await SBQ.from('tasks').select('*').order('created_at',{ascending:false}); setTasks(t||[]); } catch(e){}
+
+      // ── pipeline stages ───────────────────────────────────────────────
+      const SO_STAGES = ['received','confirmed','in_production','shipped','delivered','invoiced'];
+      const pipeline = {};
+      SO_STAGES.forEach(s => { pipeline[s] = { count:0, value:0 }; });
+      enriched.forEach(so => {
+        if (so.status && pipeline[so.status] !== undefined && !['closed'].includes(so.status)) {
+          pipeline[so.status].count++;
+          pipeline[so.status].value += so.rev;
+        }
+      });
+
+      // ── headline metrics ──────────────────────────────────────────────
+      const open = enriched.filter(so => !['closed','delivered','invoiced'].includes(so.status));
+      const pipeline_value = open.reduce((a,so)=>a+so.rev,0);
+      const closedMTD = enriched.filter(so => so.order_date >= monthStart.slice(0,10) && ['delivered','invoiced','closed'].includes(so.status));
+      const rev_mtd = closedMTD.reduce((a,so)=>a+so.rev,0);
+      const withMargin = enriched.filter(so=>so.mgn!==null && so.rev>0 && !['closed'].includes(so.status));
+      const avg_mgn = withMargin.length > 0 ? withMargin.reduce((a,so)=>a+so.mgn,0)/withMargin.length : null;
+      const in_prod = poList.filter(p=>p.status==='in_production').length;
+      const in_transit_count = shipList.length;
+
+      // ── client breakdown ──────────────────────────────────────────────
+      const clientMap = {};
+      enriched.filter(so=>!['closed'].includes(so.status)).forEach(so => {
+        const name = so.client?.name || 'Unknown';
+        if (!clientMap[name]) clientMap[name] = 0;
+        clientMap[name] += so.rev;
+      });
+      const clients = Object.entries(clientMap).sort((a,b)=>b[1]-a[1]).slice(0,6);
+
+      // ── recent open SOs ───────────────────────────────────────────────
+      const recentSOs = enriched.filter(so=>!['closed'].includes(so.status)).slice(0,8);
+
+      setData({ pipeline, pipeline_value, rev_mtd, avg_mgn, in_prod, in_transit_count, clients, recentSOs, shipList });
       setLoading(false);
     })();
-  },[]);
-  const toggleTask = async (t) => {
-    try {
-      const done = !t.done;
-      await SBQ.from('tasks').update({done, done_at: done ? new Date().toISOString() : null}).eq('id',t.id);
-      setTasks(prev=>prev.map(x=>x.id===t.id?{...x,done}:x));
-    } catch(e){}
+  }, []);
+
+  if (loading) return (
+    <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'60vh',flexDirection:'column',gap:'14px'}}>
+      <div style={{width:'32px',height:'32px',borderRadius:'50%',border:'3px solid var(--line)',borderTopColor:'var(--accent)',animation:'spin 0.7s linear infinite'}} />
+      <div style={{fontSize:'13px',color:'var(--muted)'}}>Loading dashboard…</div>
+    </div>
+  );
+
+  const { pipeline, pipeline_value, rev_mtd, avg_mgn, in_prod, in_transit_count, clients, recentSOs, shipList } = data;
+  const maxClientVal = clients[0]?.[1] || 1;
+  const totalPipelineVal = Object.values(pipeline).reduce((a,s)=>a+s.value,0) || 1;
+  const SO_STAGES = ['received','confirmed','in_production','shipped','delivered','invoiced'];
+  const STAGE_LABELS = { received:'Received', confirmed:'Confirmed', in_production:'In Production', shipped:'Shipped', delivered:'Delivered', invoiced:'Invoiced' };
+  const STAGE_COLORS = { received:'#94a3b8', confirmed:'var(--accent)', in_production:'#f59e0b', shipped:'#6366f1', delivered:'var(--ok)', invoiced:'#8b5cf6' };
+  const etaDays = eta => {
+    if (!eta) return null;
+    const d = Math.round((new Date(eta) - new Date()) / 86400000);
+    return d;
   };
-  const openCount = tasks.filter(t=>!t.done).length;
-  if (loading) return <div className="loading">Loading...</div>;
-  const setStatus = async (pid, st) => {
-    await SB.from('purchase_orders').update({status:st,updated_at:new Date().toISOString()}).eq('id',pid);
-    setRecent(prev=>prev.map(p=>p.id===pid?{...p,status:st}:p));
-    if (st==='shipped'){ const r=await createShipmentForPO(pid); if(r?.ok) window._toast?.('Shipment '+r.shipmentNumber+' created','ok'); else if(r?.error) window._toast?.(r.error,'err'); }
-  };
-  const shown = filterPOs(recent,{search,client,status});
+
   return (
     <>
-      {showTasks && (
-        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowTasks(false)}>
-          <div className="modal-box">
-            <div className="modal-head"><h3>Open Tasks</h3><button className="modal-close" onClick={()=>setShowTasks(false)}>×</button></div>
-            <div className="modal-body">
-              {tasks.filter(t=>!t.done).length===0 ? <div className="empty"><h3>All clear</h3><p>No open tasks right now.</p></div> : tasks.filter(t=>!t.done).map(t=>(
-                <div key={t.id} style={{display:'flex',alignItems:'flex-start',gap:'12px',padding:'12px 0',borderBottom:'1px solid var(--line-2)'}}>
-                  <button onClick={()=>toggleTask(t)} style={{marginTop:'2px',flexShrink:0,width:'18px',height:'18px',borderRadius:'50%',border:'2px solid var(--accent)',background:'none',cursor:'pointer'}} />
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:'13.5px',fontWeight:500}}>{t.body||t.title||'Task'}</div>
-                    <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'3px'}}>
-                      {t.assigned_to&&<span style={{marginRight:'8px'}}>{'→ '+t.assigned_to}</span>}
-                      {t.client&&<span>{t.client}</span>}
+      {/* ── Metric Strip ───────────────────────────────────────────────── */}
+      <div className="db-metric-strip">
+        {[
+          { k:'Open Pipeline', v:money(pipeline_value), sub:'across active SOs', color:'var(--accent)' },
+          { k:'Revenue MTD', v:money(rev_mtd), sub:'closed this month', color:'var(--ok)' },
+          { k:'Avg Gross Margin', v:avg_mgn!==null?avg_mgn.toFixed(1)+'%':'—', sub:'across open orders', color:avg_mgn>40?'var(--ok)':avg_mgn>25?'var(--warn)':'var(--hot)' },
+          { k:'In Production', v:String(in_prod), sub:'factory POs active', color:'#f59e0b' },
+          { k:'In Transit', v:String(in_transit_count), sub:'shipments en route', color:'#6366f1' },
+        ].map(m => (
+          <div key={m.k} className="db-metric">
+            <div className="db-metric-bar" style={{background:m.color}} />
+            <div className="db-metric-k">{m.k}</div>
+            <div className="db-metric-v" style={{color:m.k==='Avg Gross Margin'?m.color:'var(--ink)'}}>{m.v}</div>
+            <div className="db-metric-s">{m.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Pipeline Stage Flow ─────────────────────────────────────────── */}
+      <div className="db-card" style={{marginBottom:'22px'}}>
+        <div className="db-card-head">
+          <div className="db-card-title">Revenue Pipeline</div>
+          <button className="btn btn-ghost btn-sm" onClick={()=>navigate('sales-orders')}>View all SOs →</button>
+        </div>
+        <div style={{padding:'0 22px 6px'}}>
+          {/* Stage bar */}
+          <div style={{display:'flex',height:'8px',borderRadius:'6px',overflow:'hidden',marginBottom:'18px',gap:'2px'}}>
+            {SO_STAGES.map(s => {
+              const pct = pipeline[s].value / totalPipelineVal * 100;
+              return pct > 0.5 ? <div key={s} style={{flex:pct,background:STAGE_COLORS[s],transition:'.3s'}} title={STAGE_LABELS[s]+': '+money(pipeline[s].value)} /> : null;
+            })}
+          </div>
+          {/* Stage columns */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:'8px'}}>
+            {SO_STAGES.map(s => (
+              <div key={s} className="db-stage" onClick={()=>navigate('sales-orders')} style={{cursor:'pointer'}}>
+                <div className="db-stage-dot" style={{background:STAGE_COLORS[s]}} />
+                <div className="db-stage-label">{STAGE_LABELS[s]}</div>
+                <div className="db-stage-count" style={{color:pipeline[s].count>0?'var(--ink)':'var(--faint)'}}>{pipeline[s].count}</div>
+                <div className="db-stage-val">{pipeline[s].value>0?money(pipeline[s].value):'—'}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Main Two-Column Grid ────────────────────────────────────────── */}
+      <div className="db-grid">
+
+        {/* Left — Recent Open Orders */}
+        <div className="db-card">
+          <div className="db-card-head">
+            <div className="db-card-title">Active Orders</div>
+            <button className="btn btn-ghost btn-sm" onClick={()=>navigate('sales-orders')}>All →</button>
+          </div>
+          <div>
+            {recentSOs.length === 0 && <div className="empty" style={{padding:'32px'}}><p>No active orders</p></div>}
+            {recentSOs.map((so, i) => (
+              <div key={so.id} className="db-so-row" style={{borderBottom:i<recentSOs.length-1?'1px solid var(--line-2)':'none'}} onClick={()=>navigate('so-detail',{id:so.id})}>
+                <div className="db-so-avatar" style={{background:companyColor(so.client?.name||'')}}>{initials(so.client?.name||'?')}</div>
+                <div className="db-so-main">
+                  <div className="db-so-num">{so.so_number||'—'}</div>
+                  <div className="db-so-client">{so.client?.name||'Unknown'}</div>
+                </div>
+                <div className="db-so-right">
+                  <div className="db-so-rev">{money(so.rev)}</div>
+                  {so.mgn!==null && <div className="db-so-mgn" style={{color:so.mgn>40?'var(--ok)':so.mgn>20?'var(--warn)':'var(--hot)'}}>{so.mgn.toFixed(1)}%</div>}
+                </div>
+                <div className="db-so-badge">
+                  <span className={'badge b-'+so.status}><span className="dot"/>{(so.status||'').replace(/_/g,' ')}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right — Shipments + Client Breakdown */}
+        <div style={{display:'flex',flexDirection:'column',gap:'18px'}}>
+
+          {/* Shipments In Transit */}
+          <div className="db-card">
+            <div className="db-card-head">
+              <div className="db-card-title">Shipments In Transit</div>
+              <button className="btn btn-ghost btn-sm" onClick={()=>navigate('shipments')}>All →</button>
+            </div>
+            {shipList.length === 0 ? (
+              <div className="empty" style={{padding:'24px'}}><div className="ico">🚢</div><p>No active shipments</p></div>
+            ) : (
+              <div>
+                {shipList.slice(0,5).map((sh,i) => {
+                  const days = etaDays(sh.estimated_arrival);
+                  const urgent = days !== null && days <= 7;
+                  return (
+                    <div key={sh.id} className="db-ship-row" style={{borderBottom:i<Math.min(shipList.length,5)-1?'1px solid var(--line-2)':'none'}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'5px'}}>
+                          <span className="mono" style={{fontSize:'12.5px',fontWeight:600}}>{sh.shipment_number}</span>
+                          <span className={'badge b-shipped'} style={{fontSize:'10px',padding:'2px 8px'}}><span className="dot"/>In transit</span>
+                        </div>
+                        <div style={{display:'flex',alignItems:'center',gap:'6px',fontSize:'12px',color:'var(--muted)'}}>
+                          <span>{sh.origin_port?.unlocode||'—'}</span>
+                          <svg width="14" height="8" viewBox="0 0 24 8" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M0 4h20M17 1l4 3-4 3"/></svg>
+                          <span style={{fontWeight:600,color:'var(--ink-2)'}}>{sh.destination_port?.name||'—'}</span>
+                        </div>
+                      </div>
+                      {days !== null && (
+                        <div style={{textAlign:'right',flexShrink:0}}>
+                          <div style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:'20px',lineHeight:1,color:urgent?'var(--hot)':'var(--ink)'}}>{days < 0 ? 'Due' : days}</div>
+                          <div style={{fontSize:'10px',color:'var(--muted)',marginTop:'2px'}}>{days < 0 ? 'days overdue' : days===0?'arrives today':'days to ETA'}</div>
+                        </div>
+                      )}
                     </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Client Revenue Breakdown */}
+          <div className="db-card">
+            <div className="db-card-head">
+              <div className="db-card-title">Clients by Pipeline Value</div>
+            </div>
+            <div style={{padding:'4px 20px 16px'}}>
+              {clients.length === 0 && <div style={{color:'var(--muted)',fontSize:'13px',padding:'12px 0'}}>No data yet</div>}
+              {clients.map(([name, val]) => (
+                <div key={name} style={{marginBottom:'13px'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'5px'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:'7px'}}>
+                      <div style={{width:'8px',height:'8px',borderRadius:'50%',background:companyColor(name),flexShrink:0}} />
+                      <span style={{fontSize:'12.5px',fontWeight:600,color:'var(--ink-2)'}}>{name}</span>
+                    </div>
+                    <span className="mono" style={{fontSize:'12px',color:'var(--muted)'}}>{money(val)}</span>
+                  </div>
+                  <div style={{height:'5px',background:'var(--line-2)',borderRadius:'4px',overflow:'hidden'}}>
+                    <div style={{height:'100%',width:(val/maxClientVal*100)+'%',background:companyColor(name),borderRadius:'4px',transition:'.4s'}} />
                   </div>
                 </div>
               ))}
-              {tasks.filter(t=>t.done).length>0 && (
-                <div style={{marginTop:'16px',fontSize:'12px',color:'var(--muted)'}}>{tasks.filter(t=>t.done).length} completed task{tasks.filter(t=>t.done).length!==1?'s':''} hidden</div>
-              )}
             </div>
-            <div className="modal-foot"><button className="btn btn-ghost" onClick={()=>setShowTasks(false)}>Close</button><button className="btn btn-ghost btn-sm" onClick={()=>navigate('quotes')}>Open in Quotes →</button></div>
           </div>
-        </div>
-      )}
-      <div className="stats-grid">
-        {[['Active Orders',stats.active],['In Production',stats.prod],['Ready to Ship',stats.rts],['Clients',stats.clients]].map(([l,v])=>(
-          <div key={l} className="stat-card"><div className="stat-label">{l}</div><div className="stat-value">{v}</div></div>
-        ))}
-      </div>
-      <div className="section-head" style={{padding:'0 2px 12px'}}>
-        <h3 style={{fontSize:'17px'}}>Orders</h3>
-        <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
-          {openCount > 0 && (
-            <button className="btn btn-ghost btn-sm" style={{position:'relative',gap:'6px'}} onClick={()=>setShowTasks(true)}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-              <span style={{background:'var(--hot)',color:'#fff',borderRadius:'999px',fontSize:'10px',fontWeight:700,padding:'1px 6px',fontFamily:'var(--mono)'}}>{openCount}</span>
-            </button>
-          )}
-          <button className="btn btn-ghost btn-sm" onClick={()=>navigate('orders')}>View all →</button>
+
         </div>
       </div>
-      <PoToolbar rows={recent} search={search} setSearch={setSearch} client={client} setClient={setClient} status={status} setStatus={setStatusFilter} />
-      {shown.length ? (
-        <div className="order-card-grid">
-          {shown.map(p=><OrderCard key={p.id} p={p} navigate={navigate} onStatus={setStatus} />)}
-        </div>
-      ) : <div className="section-card"><div className="empty"><h3>No orders match</h3><p>Try clearing the search or filters.</p></div></div>}
     </>
   );
 }
