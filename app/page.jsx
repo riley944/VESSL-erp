@@ -180,7 +180,7 @@ function Sidebar({ page, navigate, user, open }) {
   ];
   const activeFor = { 'sales-orders':['sales-orders','so-detail'], 'orders':['orders','order-detail'] };
   return (
-    <aside className={`sidebar ${open?'sidebar--open':''}`}>
+    <aside className={'sidebar ' + (open?'sidebar--open':'')}>
       <div className="sb-brand">
         <img className="sb-logo-img" src={LOGO_WHITE} alt="King Universal" />
       </div>
@@ -192,14 +192,50 @@ function Sidebar({ page, navigate, user, open }) {
           </button>
         ))}
       </div>
-      <button className={`nav-link sb-settings ${page==='settings'?'active':''}`} onClick={()=>navigate('settings')}>
-        <span className="ic">{Ic.settings}</span> KUI Settings
-      </button>
-      <div className="sb-user">
-        <span className="sb-email">{user?.email}</span>
-        <button className="btn-signout" onClick={()=>SB.auth.signOut()}>Sign Out</button>
+      <div className="sb-bottom">
+        <button className={'nav-link sb-settings ' + (page==='settings'?'active':'')} onClick={()=>navigate('settings')}>
+          <span className="ic">{Ic.settings}</span> KUI Settings
+        </button>
       </div>
     </aside>
+  );
+}
+
+// ── Top Bar ──────────────────────────────────────────────────────────────────
+function TopBar({ user, title, taskCount=0, onSettings }) {
+  const [drop, setDrop] = useState(false);
+  const initials = (user?.email||'KU').split('@')[0].slice(0,2).toUpperCase();
+  const name = (user?.email||'').split('@')[0].replace(/[._]/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+  return (
+    <div className="topbar">
+      <div className="topbar-title">{title}</div>
+      <button className="tb-bell" title="Tasks">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        {taskCount>0 && <span className="tb-bell-badge">{taskCount>9?'9+':taskCount}</span>}
+      </button>
+      <div className={'tb-profile ' + (drop?'open':'')} onClick={()=>setDrop(p=>!p)}>
+        <div className="tb-avatar">{initials}</div>
+        <div className="tb-uname">{name}</div>
+        <svg className="tb-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+        {drop && (
+          <div className="tb-dropdown" onClick={e=>e.stopPropagation()}>
+            <div className="tb-drop-head">
+              <div className="tb-drop-name">{name}</div>
+              <div className="tb-drop-email">{user?.email}</div>
+            </div>
+            <button className="tb-drop-item" onClick={()=>{setDrop(false);onSettings&&onSettings();}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              Settings
+            </button>
+            <div className="tb-drop-divider" />
+            <button className="tb-drop-item danger" onClick={()=>SB.auth.signOut()}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              Sign Out
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -3184,10 +3220,11 @@ export default function App() {
   return (
     <div className="app-shell">
       <button className="mobile-menu-btn" aria-label="Open menu" onClick={()=>setNavOpen(true)}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
-      <div className={`sidebar-backdrop ${navOpen?'show':''}`} onClick={()=>setNavOpen(false)} />
+      <div className={'sidebar-backdrop ' + (navOpen?'show':'')} onClick={()=>setNavOpen(false)} />
       <Sidebar page={page} navigate={navigate} user={user} open={navOpen} />
+      <TopBar user={user} title={titles[page]||''} onSettings={()=>navigate('settings')} />
       {page==='quotes' ? (
         <div className="main-area">
           <div className="quotes-root" style={{height:'100%',overflowY:'auto'}}>
