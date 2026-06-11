@@ -3463,7 +3463,7 @@ function ClientRelations() {
   const loadAll = useCallback(async () => {
     const [{ data: threads }, { data: cos }, { data: unread }] = await Promise.all([
       SP('threads').select('*').order('last_message_at', { ascending: false }),
-      SB.from('companies').select('id,name').in('type', ['client','other']),
+      SB.from('companies').select('id,name').order('name'),
       SP('messages').select('thread_id,company_id').eq('author_type', 'client').eq('read_by_kui', false),
     ]);
     const coMap = {};
