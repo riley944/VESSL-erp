@@ -3455,7 +3455,9 @@ function ClientRelations() {
   const [draft,       setDraft]       = useState('');
   const [sending,     setSending]     = useState(false);
   const [sendErr,     setSendErr]     = useState('');
+  const [clientSearch, setClientSearch] = useState('');
   const endRef = useRef(null);
+  const draftRef = useRef(null);
 
   // ── load everything ────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
@@ -3562,8 +3564,14 @@ function ClientRelations() {
   const threadsByCompany = {};
   allThreads.forEach(t => { if (!threadsByCompany[t.company_id]) threadsByCompany[t.company_id] = []; threadsByCompany[t.company_id].push(t); });
   const selThread = allThreads.find(t=>t.id===selThreadId);
+  // focus compose when thread selected
+  useEffect(() => { if (selThreadId && draftRef.current) draftRef.current.focus(); }, [selThreadId]);
+
   const companyThreads = selCoId ? (threadsByCompany[selCoId]||[]) : [];
   const totalUnread = Object.values(unreadMap).reduce((a,b)=>a+b,0);
+  const filteredClients = clientSearch.trim()
+    ? sortedClientIds.filter(id => (companies[id]||'').toLowerCase().includes(clientSearch.toLowerCase()))
+    : sortedClientIds;
 
   if (loading) return <div className="loading">Loading client messages…</div>;
 
@@ -3572,24 +3580,25 @@ function ClientRelations() {
 
       {/* ── Panel 1: Clients ───────────────────────────────────────────────── */}
       <div className="cr-panel cr-clients">
-        <div className="cr-panel-head">
-          <span>Clients</span>
+        <div className="cr-search-wrap">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input className="cr-search" placeholder="Search clients…" value={clientSearch} onChange={e=>setClientSearch(e.target.value)} />
           {totalUnread>0 && <span className="cr-panel-badge">{totalUnread}</span>}
         </div>
         <div className="cr-panel-body">
-          {sortedClientIds.length===0 && <div className="cr-empty"><div style={{fontSize:24,marginBottom:10,opacity:.4}}>💬</div><p>No client threads yet</p></div>}
-          {sortedClientIds.map(cid => {
+          {filteredClients.length===0 && <div className="cr-empty" style={{paddingTop:40}}><p>{clientSearch?'No clients match':'No client threads yet'}</p></div>}
+          {filteredClients.map(cid => {
             const name = companies[cid]||'Unknown';
             const threads = threadsByCompany[cid]||[];
             const last = threads[0];
             const count = unreadMap[cid]||0;
             const active = selCoId===cid;
             return (
-              <div key={cid} className={'cr-client-row'+(active?' active':'')} onClick={()=>{ setSelCoId(cid); if(!active) setSelThreadId(null); }}>
+              <div key={cid} className={'cr-client-row'+(active?' active':'')} onClick={()=>{ setSelCoId(cid); if(!active){setSelThreadId(null);setMsgs([]);} }}>
                 <div className="cr-client-av" style={{background:companyColor(name),color:'#0b1120'}}>{initials(name)}</div>
                 <div className="cr-client-meta">
                   <div className="cr-client-name">{name}</div>
-                  <div className="cr-client-sub">{last?.last_message_body ? last.last_message_body.slice(0,40)+'…' : threads.length+' thread'+(threads.length!==1?'s':'')}</div>
+                  <div className="cr-client-sub">{count>0 ? <b style={{color:'var(--ink)'}}>{last?.last_message_body?.slice(0,36)||'New message'}</b> : (last?.last_message_body?.slice(0,36)||threads.length+' thread'+(threads.length!==1?'s':''))}</div>
                 </div>
                 {count>0 && <span className="cr-badge">{count>99?'99+':count}</span>}
               </div>
@@ -3601,31 +3610,38 @@ function ClientRelations() {
       {/* ── Panel 2: Threads ───────────────────────────────────────────────── */}
       <div className="cr-panel cr-threads">
         {!selCoId ? (
-          <div className="cr-empty" style={{paddingTop:70}}>
-            <div style={{fontSize:28,marginBottom:12,opacity:.3}}>←</div>
-            <p>Select a client</p>
+          <div className="cr-empty" style={{paddingTop:80}}>
+            <div style={{fontSize:32,marginBottom:12,opacity:.2}}>←</div>
+            <p style={{fontSize:13}}>Select a client</p>
           </div>
         ) : (
           <>
-            <div className="cr-panel-head">
-              <span>{companies[selCoId]||'Client'}</span>
-              <span style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>{companyThreads.length} thread{companyThreads.length!==1?'s':''}</span>
+            <div className="cr-panel-head" style={{background:companyColor(companies[selCoId]||'')+'22',borderBottom:'1px solid var(--line-2)'}}>
+              <div style={{display:'flex',alignItems:'center',gap:9}}>
+                <div style={{width:22,height:22,borderRadius:6,background:companyColor(companies[selCoId]||''),display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'#0b1120'}}>{initials(companies[selCoId]||'')}</div>
+                <span style={{fontWeight:700,color:'var(--ink)',textTransform:'none',fontSize:13}}>{companies[selCoId]||'Client'}</span>
+              </div>
+              <span style={{fontSize:11,color:'var(--muted)',fontWeight:500,letterSpacing:0}}>{companyThreads.length} thread{companyThreads.length!==1?'s':''}</span>
             </div>
             <div className="cr-panel-body">
-              {companyThreads.map(t => (
-                <div key={t.id} className={'cr-thread-row'+(selThreadId===t.id?' active':'')} onClick={()=>selectThread(t)}>
-                  <div className={'cr-thread-icon'+(t.sales_order_id?' order':' general')}>
-                    {t.sales_order_id
-                      ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-                      : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>}
+              {companyThreads.length===0 && <div className="cr-empty" style={{paddingTop:40}}><p style={{fontSize:13}}>No threads yet</p></div>}
+              {companyThreads.map(t => {
+                const active = selThreadId===t.id;
+                return (
+                  <div key={t.id} className={'cr-thread-row'+(active?' active':'')} onClick={()=>selectThread(t)}>
+                    <div className={'cr-thread-icon'+(t.sales_order_id?' order':' general')}>
+                      {t.sales_order_id
+                        ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                        : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>}
+                    </div>
+                    <div className="cr-thread-meta">
+                      <div className="cr-thread-name">{t.name}</div>
+                      <div className="cr-thread-preview">{t.last_message_body||'No messages yet'}</div>
+                    </div>
+                    <div className="cr-thread-time">{timeAgo(t.last_message_at)}</div>
                   </div>
-                  <div className="cr-thread-meta">
-                    <div className="cr-thread-name">{t.name}</div>
-                    <div className="cr-thread-preview">{t.last_message_body||'No messages yet'}</div>
-                  </div>
-                  <div className="cr-thread-time">{timeAgo(t.last_message_at)}</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}
@@ -3634,46 +3650,47 @@ function ClientRelations() {
       {/* ── Panel 3: Conversation ──────────────────────────────────────────── */}
       <div className="cr-panel cr-convo">
         {!selThreadId ? (
-          <div className="cr-empty" style={{paddingTop:90}}>
-            <div style={{fontSize:36,marginBottom:16,opacity:.25}}>💬</div>
-            <div style={{fontWeight:600,color:'var(--ink-2)',marginBottom:6,fontSize:15}}>No conversation selected</div>
-            <div style={{fontSize:13,color:'var(--muted)'}}>Pick a thread to read and reply</div>
+          <div className="cr-empty" style={{paddingTop:100}}>
+            <div style={{fontSize:40,marginBottom:16,opacity:.15}}>💬</div>
+            <div style={{fontWeight:600,color:'var(--ink-2)',marginBottom:6,fontSize:15}}>Select a conversation</div>
+            <div style={{fontSize:13,color:'var(--muted)'}}>All client messages are isolated — each company sees only their own threads</div>
           </div>
         ) : (
           <>
-            {/* Convo header */}
             <div className="cr-convo-head">
               <div>
                 <div className="cr-convo-title">{selThread?.name||'Conversation'}</div>
                 <div className="cr-convo-sub">{companies[selThread?.company_id]||''}{selThread?.sales_order_id?' · Order thread':' · General'}</div>
               </div>
-              <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                {selThread?.sales_order_id && <span className="badge b-confirmed" style={{fontSize:'11px'}}>Order</span>}
-              </div>
+              {selThread?.sales_order_id && <span className="badge b-confirmed" style={{fontSize:'11px'}}>Order</span>}
             </div>
 
-            {/* Messages */}
             <div className="cr-messages">
-              {msgsLoading ? <div className="loading" style={{padding:'40px 20px'}}>Loading…</div> :
+              {msgsLoading ? <div style={{padding:'40px',textAlign:'center',color:'var(--muted)',fontSize:13}}>Loading…</div> :
                msgs.length===0 ? (
                 <div className="cr-empty" style={{paddingTop:40}}>
-                  <p style={{color:'var(--muted)',fontSize:13.5}}>No messages yet — start the conversation below</p>
+                  <div style={{fontSize:28,marginBottom:12,opacity:.3}}>💬</div>
+                  <p style={{fontSize:13}}>No messages yet — be first to reply</p>
                 </div>
               ) : (
                 <>
-                  {msgs.map(m => (
-                    <div key={m.id} className={'cr-msg'+(m.author_type==='client'?' from-client':' from-staff')}>
-                      <div className="cr-msg-who">{m.author_type==='client'?(m.author_name||companies[m.company_id]||'Client'):(m.author_name||'KUI Team')}</div>
-                      <div className="cr-msg-bubble">{m.body}</div>
-                      <div className="cr-msg-time">{fmtDateTime(m.created_at)}</div>
-                    </div>
-                  ))}
+                  {msgs.map((m, i) => {
+                    const isClient = m.author_type==='client';
+                    const prevSame = i>0 && msgs[i-1].author_type===m.author_type;
+                    const nextSame = i<msgs.length-1 && msgs[i+1].author_type===m.author_type;
+                    return (
+                      <div key={m.id} className={'cr-msg'+(isClient?' from-client':' from-staff')} style={{marginTop:prevSame?3:12}}>
+                        {!prevSame && <div className="cr-msg-who">{isClient?(m.author_name||companies[m.company_id]||'Client'):(m.author_name||'KUI Team')}</div>}
+                        <div className={'cr-msg-bubble'+(prevSame&&!nextSame?' cr-bubble-last':'')+(prevSame?' cr-bubble-mid':'')+(nextSame&&!prevSame?' cr-bubble-first':'')}>{m.body}</div>
+                        {!nextSame && <div className="cr-msg-time">{fmtDateTime(m.created_at)}</div>}
+                      </div>
+                    );
+                  })}
                   <div ref={endRef} />
                 </>
               )}
             </div>
 
-            {/* Error bar */}
             {sendErr && (
               <div className="cr-err-bar">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -3683,30 +3700,23 @@ function ClientRelations() {
               </div>
             )}
 
-            {/* Compose */}
             <div className="cr-compose">
               <textarea
+                ref={draftRef}
                 className="cr-compose-input"
                 value={draft}
-                onChange={e=>setDraft(e.target.value)}
-                placeholder={'Reply to '+(companies[selThread?.company_id]||'client')+'… (Enter to send, Shift+Enter for newline)'}
+                onChange={e=>{setDraft(e.target.value);if(sendErr)setSendErr('');}}
+                placeholder={'Reply to '+(companies[selThread?.company_id]||'client')+'…'}
                 onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();} }}
                 disabled={sending}
-                rows={2}
+                rows={3}
               />
               <div className="cr-compose-foot">
-                <span style={{fontSize:11,color:'var(--faint)'}}>Enter to send · Shift+Enter for newline</span>
-                <button
-                  className={'btn btn-dark btn-sm'+(sending?' opacity-50':'')}
-                  onClick={send}
-                  disabled={sending||!draft.trim()}
-                >
+                <span style={{fontSize:11,color:'var(--faint)'}}>Enter ↵ send · Shift+Enter new line</span>
+                <button className={'btn btn-dark btn-sm'} onClick={send} disabled={sending||!draft.trim()}>
                   {sending
-                    ? <><div style={{width:12,height:12,borderRadius:'50%',border:'2px solid rgba(255,255,255,.3)',borderTopColor:'#fff',animation:'spin .6s linear infinite'}} />Sending…</>
-                    : <>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-                        Send
-                      </>
+                    ? <><div style={{width:11,height:11,borderRadius:'50%',border:'2px solid rgba(255,255,255,.3)',borderTopColor:'#fff',animation:'spin .6s linear infinite',flexShrink:0}} />Sending…</>
+                    : <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send</>
                   }
                 </button>
               </div>
