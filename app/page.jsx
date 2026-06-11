@@ -21,6 +21,7 @@ function initials(name){ return (name||'?').replace(/[^A-Za-z0-9 ]/g,'').split(/
 const money = (n, c='USD') => n == null ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:c}).format(n);
 const fmtDate = s => { if (!s) return '—'; return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
 const fmtDateTime = s => { if (!s) return ''; const d=new Date(s); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); };
+const timeAgo = s => { if(!s) return ''; const m=Math.round((Date.now()-new Date(s))/60000); if(m<2) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<24) return h+'h'; const d=Math.round(h/24); if(d<7) return d+'d'; return fmtDate(s); };
 
 // ── Sales Orders constants ────────────────────────────────────────────────────
 const SO_STATUSES = ['received','confirmed','in_production','shipped','delivered','invoiced','closed'];
@@ -163,20 +164,22 @@ const Ic = {
   shipments:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6h13v9H1zM14 9h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg>,
   inventory:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
   quotes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9.5 14.5h3.5a1.5 1.5 0 0 0 0-3h-2a1.5 1.5 0 0 1 0-3H14"/></svg>,
+  'client-relations':<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M17 8h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2v4l-4-4H9a1.9 1.9 0 0 1-1.4-.6"/><path d="M3 4h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2z"/></svg>,
   settings:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
 };
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ page, navigate, user, open }) {
+function Sidebar({ page, navigate, user, open, badges={} }) {
   const links = [
-    { id:'dashboard',     label:'Dashboard' },
-    { id:'sales-orders',  label:'Sales Orders' },
-    { id:'orders',        label:'Purchase Orders' },
-    { id:'companies',     label:'Companies' },
-    { id:'products',      label:'Products' },
-    { id:'shipments',     label:'Shipments' },
-    { id:'inventory',     label:'Inventory' },
-    { id:'quotes',        label:'Quotes' },
+    { id:'dashboard',          label:'Dashboard' },
+    { id:'sales-orders',       label:'Sales Orders' },
+    { id:'orders',             label:'Purchase Orders' },
+    { id:'companies',          label:'Companies' },
+    { id:'products',           label:'Products' },
+    { id:'shipments',          label:'Shipments' },
+    { id:'inventory',          label:'Inventory' },
+    { id:'quotes',             label:'Quotes' },
+    { id:'client-relations',   label:'Client Relations' },
   ];
   const activeFor = { 'sales-orders':['sales-orders','so-detail'], 'orders':['orders','order-detail'] };
   return (
@@ -188,7 +191,9 @@ function Sidebar({ page, navigate, user, open }) {
         <div className="sb-section">Workspace</div>
         {links.map(l => (
           <button key={l.id} className={'nav-link '+((activeFor[l.id]||[l.id]).includes(page)?'active':'')} onClick={()=>navigate(l.id)}>
-            <span className="ic">{Ic[l.id]}</span> {l.label}
+            <span className="ic">{Ic[l.id]}</span>
+            <span style={{flex:1}}>{l.label}</span>
+            {badges[l.id]>0 && <span className="sb-badge">{badges[l.id]>99?'99+':badges[l.id]}</span>}
           </button>
         ))}
       </div>
@@ -3433,6 +3438,286 @@ function ConfirmModal({ title, message, confirmLabel='Delete', danger=true, onCo
 }
 
 // ── App Root ──────────────────────────────────────────────────────────────────
+// ── Client Relations ──────────────────────────────────────────────────────────
+function ClientRelations() {
+  const SP = t => SB.schema('portal').from(t);
+  const toast = useToast();
+
+  const [allThreads, setAllThreads] = useState([]);
+  const [companies,  setCompanies]  = useState({});        // id → name
+  const [unreadMap,  setUnreadMap]  = useState({});        // companyId → count
+  const [loading,    setLoading]    = useState(true);
+
+  const [selCoId,     setSelCoId]     = useState(null);
+  const [selThreadId, setSelThreadId] = useState(null);
+  const [msgs,        setMsgs]        = useState([]);
+  const [msgsLoading, setMsgsLoading] = useState(false);
+  const [draft,       setDraft]       = useState('');
+  const [sending,     setSending]     = useState(false);
+  const [sendErr,     setSendErr]     = useState('');
+  const endRef = useRef(null);
+
+  // ── load everything ────────────────────────────────────────────────────────
+  const loadAll = useCallback(async () => {
+    const [{ data: threads }, { data: cos }, { data: unread }] = await Promise.all([
+      SP('threads').select('*').order('last_message_at', { ascending: false }),
+      SB.from('companies').select('id,name').in('type', ['client','other']),
+      SP('messages').select('thread_id,company_id').eq('author_type', 'client').eq('read_by_kui', false),
+    ]);
+    const coMap = {};
+    (cos||[]).forEach(c => { coMap[c.id] = c.name; });
+    const uMap = {};
+    (unread||[]).forEach(m => { uMap[m.company_id] = (uMap[m.company_id]||0) + 1; });
+    setAllThreads(threads||[]);
+    setCompanies(coMap);
+    setUnreadMap(uMap);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  // real-time: any new portal message → refresh thread list + live conversation
+  useEffect(() => {
+    let ch;
+    try {
+      ch = SB.channel('cr-rt')
+        .on('postgres_changes', { event:'INSERT', schema:'portal', table:'messages' }, payload => {
+          loadAll();
+          if (payload.new?.thread_id === selThreadId) loadMsgs(selThreadId, false);
+        }).subscribe();
+    } catch(e){}
+    return () => { if(ch) SB.removeChannel(ch); };
+  }, [selThreadId, loadAll]);
+
+  // ── load messages for a thread ─────────────────────────────────────────────
+  const loadMsgs = useCallback(async (threadId, markRead=true) => {
+    if (!threadId) return;
+    setMsgsLoading(true);
+    const { data, error } = await SP('messages').select('*').eq('thread_id', threadId).order('created_at', { ascending: true });
+    if (error) { toast('Error loading messages', 'err'); }
+    setMsgs(data||[]);
+    setMsgsLoading(false);
+    if (markRead) {
+      await SP('messages').update({ read_by_kui: true }).eq('thread_id', threadId).eq('author_type', 'client');
+      setUnreadMap(prev => {
+        const thread = allThreads.find(t => t.id === threadId);
+        if (!thread) return prev;
+        const next = { ...prev };
+        delete next[thread.company_id];
+        return next;
+      });
+    }
+  }, [allThreads]);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs]);
+
+  // ── select thread ──────────────────────────────────────────────────────────
+  const selectThread = t => {
+    setSelThreadId(t.id);
+    setSelCoId(t.company_id);
+    setSendErr('');
+    setDraft('');
+    loadMsgs(t.id, true);
+  };
+
+  // ── send message ───────────────────────────────────────────────────────────
+  const send = async () => {
+    const body = draft.trim();
+    if (!body || !selThreadId || sending) return;
+    setSendErr(''); setSending(true);
+    const selThread = allThreads.find(t => t.id === selThreadId);
+    try {
+      const { error } = await SP('messages').insert({
+        company_id:   selThread?.company_id,
+        thread_id:    selThreadId,
+        author_type:  'kui_staff',
+        author_name:  'KUI Team',
+        body,
+        read_by_client: false,
+      });
+      if (error) throw new Error(error.message);
+      const { error: te } = await SP('threads').update({ last_message_body: body, last_message_at: new Date().toISOString() }).eq('id', selThreadId);
+      if (te) throw new Error('Thread update failed: '+te.message);
+      setDraft('');
+      await Promise.all([ loadMsgs(selThreadId, false), loadAll() ]);
+      toast('Sent', 'ok');
+    } catch(e) {
+      const msg = 'Message failed: '+(e.message||'Unknown error. Check connection.');
+      setSendErr(msg);
+      toast(msg, 'err');
+    }
+    setSending(false);
+  };
+
+  // ── derived data ───────────────────────────────────────────────────────────
+  const clientIds = [...new Set(allThreads.map(t=>t.company_id).filter(Boolean))];
+  // sort clients: most recent message first, unread bump to top
+  const sortedClientIds = [...clientIds].sort((a,b) => {
+    if (unreadMap[b] && !unreadMap[a]) return 1;
+    if (unreadMap[a] && !unreadMap[b]) return -1;
+    const aLast = allThreads.find(t=>t.company_id===a)?.last_message_at||'';
+    const bLast = allThreads.find(t=>t.company_id===b)?.last_message_at||'';
+    return bLast.localeCompare(aLast);
+  });
+  const threadsByCompany = {};
+  allThreads.forEach(t => { if (!threadsByCompany[t.company_id]) threadsByCompany[t.company_id] = []; threadsByCompany[t.company_id].push(t); });
+  const selThread = allThreads.find(t=>t.id===selThreadId);
+  const companyThreads = selCoId ? (threadsByCompany[selCoId]||[]) : [];
+  const totalUnread = Object.values(unreadMap).reduce((a,b)=>a+b,0);
+
+  if (loading) return <div className="loading">Loading client messages…</div>;
+
+  return (
+    <div className="cr-shell">
+
+      {/* ── Panel 1: Clients ───────────────────────────────────────────────── */}
+      <div className="cr-panel cr-clients">
+        <div className="cr-panel-head">
+          <span>Clients</span>
+          {totalUnread>0 && <span className="cr-panel-badge">{totalUnread}</span>}
+        </div>
+        <div className="cr-panel-body">
+          {sortedClientIds.length===0 && <div className="cr-empty"><div style={{fontSize:24,marginBottom:10,opacity:.4}}>💬</div><p>No client threads yet</p></div>}
+          {sortedClientIds.map(cid => {
+            const name = companies[cid]||'Unknown';
+            const threads = threadsByCompany[cid]||[];
+            const last = threads[0];
+            const count = unreadMap[cid]||0;
+            const active = selCoId===cid;
+            return (
+              <div key={cid} className={'cr-client-row'+(active?' active':'')} onClick={()=>{ setSelCoId(cid); if(!active) setSelThreadId(null); }}>
+                <div className="cr-client-av" style={{background:companyColor(name),color:'#0b1120'}}>{initials(name)}</div>
+                <div className="cr-client-meta">
+                  <div className="cr-client-name">{name}</div>
+                  <div className="cr-client-sub">{last?.last_message_body ? last.last_message_body.slice(0,40)+'…' : threads.length+' thread'+(threads.length!==1?'s':'')}</div>
+                </div>
+                {count>0 && <span className="cr-badge">{count>99?'99+':count}</span>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Panel 2: Threads ───────────────────────────────────────────────── */}
+      <div className="cr-panel cr-threads">
+        {!selCoId ? (
+          <div className="cr-empty" style={{paddingTop:70}}>
+            <div style={{fontSize:28,marginBottom:12,opacity:.3}}>←</div>
+            <p>Select a client</p>
+          </div>
+        ) : (
+          <>
+            <div className="cr-panel-head">
+              <span>{companies[selCoId]||'Client'}</span>
+              <span style={{fontSize:11,color:'var(--muted)',fontWeight:500}}>{companyThreads.length} thread{companyThreads.length!==1?'s':''}</span>
+            </div>
+            <div className="cr-panel-body">
+              {companyThreads.map(t => (
+                <div key={t.id} className={'cr-thread-row'+(selThreadId===t.id?' active':'')} onClick={()=>selectThread(t)}>
+                  <div className={'cr-thread-icon'+(t.sales_order_id?' order':' general')}>
+                    {t.sales_order_id
+                      ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                      : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>}
+                  </div>
+                  <div className="cr-thread-meta">
+                    <div className="cr-thread-name">{t.name}</div>
+                    <div className="cr-thread-preview">{t.last_message_body||'No messages yet'}</div>
+                  </div>
+                  <div className="cr-thread-time">{timeAgo(t.last_message_at)}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Panel 3: Conversation ──────────────────────────────────────────── */}
+      <div className="cr-panel cr-convo">
+        {!selThreadId ? (
+          <div className="cr-empty" style={{paddingTop:90}}>
+            <div style={{fontSize:36,marginBottom:16,opacity:.25}}>💬</div>
+            <div style={{fontWeight:600,color:'var(--ink-2)',marginBottom:6,fontSize:15}}>No conversation selected</div>
+            <div style={{fontSize:13,color:'var(--muted)'}}>Pick a thread to read and reply</div>
+          </div>
+        ) : (
+          <>
+            {/* Convo header */}
+            <div className="cr-convo-head">
+              <div>
+                <div className="cr-convo-title">{selThread?.name||'Conversation'}</div>
+                <div className="cr-convo-sub">{companies[selThread?.company_id]||''}{selThread?.sales_order_id?' · Order thread':' · General'}</div>
+              </div>
+              <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                {selThread?.sales_order_id && <span className="badge b-confirmed" style={{fontSize:'11px'}}>Order</span>}
+              </div>
+            </div>
+
+            {/* Messages */}
+            <div className="cr-messages">
+              {msgsLoading ? <div className="loading" style={{padding:'40px 20px'}}>Loading…</div> :
+               msgs.length===0 ? (
+                <div className="cr-empty" style={{paddingTop:40}}>
+                  <p style={{color:'var(--muted)',fontSize:13.5}}>No messages yet — start the conversation below</p>
+                </div>
+              ) : (
+                <>
+                  {msgs.map(m => (
+                    <div key={m.id} className={'cr-msg'+(m.author_type==='client'?' from-client':' from-staff')}>
+                      <div className="cr-msg-who">{m.author_type==='client'?(m.author_name||companies[m.company_id]||'Client'):(m.author_name||'KUI Team')}</div>
+                      <div className="cr-msg-bubble">{m.body}</div>
+                      <div className="cr-msg-time">{fmtDateTime(m.created_at)}</div>
+                    </div>
+                  ))}
+                  <div ref={endRef} />
+                </>
+              )}
+            </div>
+
+            {/* Error bar */}
+            {sendErr && (
+              <div className="cr-err-bar">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <span>{sendErr}</span>
+                <button onClick={send}>Retry →</button>
+                <button className="cr-err-dismiss" onClick={()=>setSendErr('')}>×</button>
+              </div>
+            )}
+
+            {/* Compose */}
+            <div className="cr-compose">
+              <textarea
+                className="cr-compose-input"
+                value={draft}
+                onChange={e=>setDraft(e.target.value)}
+                placeholder={'Reply to '+(companies[selThread?.company_id]||'client')+'… (Enter to send, Shift+Enter for newline)'}
+                onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();} }}
+                disabled={sending}
+                rows={2}
+              />
+              <div className="cr-compose-foot">
+                <span style={{fontSize:11,color:'var(--faint)'}}>Enter to send · Shift+Enter for newline</span>
+                <button
+                  className={'btn btn-dark btn-sm'+(sending?' opacity-50':'')}
+                  onClick={send}
+                  disabled={sending||!draft.trim()}
+                >
+                  {sending
+                    ? <><div style={{width:12,height:12,borderRadius:'50%',border:'2px solid rgba(255,255,255,.3)',borderTopColor:'#fff',animation:'spin .6s linear infinite'}} />Sending…</>
+                    : <>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                        Send
+                      </>
+                  }
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [user,    setUser]    = useState(null);
   const [session, setSession] = useState(null);
@@ -3450,8 +3735,22 @@ export default function App() {
   const [shipmentsRefresh, setShipmentsRefresh] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
+  const [crUnread, setCrUnread] = useState(0);
 
   const navigate = (p, pr={}) => { setPage(p); setParams(pr); setNavOpen(false); };
+
+  // poll unread client messages every 30s
+  useEffect(() => {
+    const fetchUnread = async () => {
+      try {
+        const { count } = await SB.schema('portal').from('messages').select('id',{count:'exact',head:true}).eq('author_type','client').eq('read_by_kui',false);
+        setCrUnread(count||0);
+      } catch(e){}
+    };
+    fetchUnread();
+    const iv = setInterval(fetchUnread, 30000);
+    return () => clearInterval(iv);
+  }, []);
 
   useEffect(()=>{
     SB.auth.getSession().then(({data:{session}})=>{
@@ -3466,7 +3765,8 @@ export default function App() {
   if (loading) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
   if (!user)   return <Login />;
 
-  const titles = {dashboard:'Dashboard','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',shipments:'Shipments',quotes:'Quotes'};
+  const titles = {dashboard:'Dashboard','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',shipments:'Shipments',quotes:'Quotes','client-relations':'Client Relations'};
+  const badges = {'client-relations': crUnread};
 
   return (
     <ToastProvider>
@@ -3475,7 +3775,7 @@ export default function App() {
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <div className={'sidebar-backdrop ' + (navOpen?'show':'')} onClick={()=>setNavOpen(false)} />
-      <Sidebar page={page} navigate={navigate} user={user} open={navOpen} />
+      <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} />
       <TopBar user={user} title={titles[page]||''} taskOpen={taskPanelOpen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
       <TaskPanel open={taskPanelOpen} onClose={()=>setTaskPanelOpen(false)} />
       {page==='quotes' ? (
@@ -3491,16 +3791,17 @@ export default function App() {
           <div className="page-actions">{pageActions[page]}</div>
         </div>
         <div className="page-content">
-          {page==='dashboard'    && <Dashboard navigate={navigate} />}
-          {page==='sales-orders' && <SalesOrders navigate={navigate} />}
-          {page==='so-detail'    && <SalesOrderDetail id={params.id} navigate={navigate} />}
-          {page==='orders'       && <Orders navigate={navigate} />}
-          {page==='order-detail' && <OrderDetail id={params.id} navigate={navigate} />}
-          {page==='companies'    && <Companies />}
-          {page==='products'     && <Products navigate={navigate} />}
-          {page==='shipments'    && <Shipments key={shipmentsRefresh} />}
-          {page==='inventory'    && <Inventory />}
-          {page==='settings'     && <KuiSettings />}
+          {page==='dashboard'        && <Dashboard navigate={navigate} />}
+          {page==='sales-orders'     && <SalesOrders navigate={navigate} />}
+          {page==='so-detail'        && <SalesOrderDetail id={params.id} navigate={navigate} />}
+          {page==='orders'           && <Orders navigate={navigate} />}
+          {page==='order-detail'     && <OrderDetail id={params.id} navigate={navigate} />}
+          {page==='companies'        && <Companies />}
+          {page==='products'         && <Products navigate={navigate} />}
+          {page==='shipments'        && <Shipments key={shipmentsRefresh} />}
+          {page==='inventory'        && <Inventory />}
+          {page==='settings'         && <KuiSettings />}
+          {page==='client-relations' && <ClientRelations />}
         </div>
       </div>
       )}
