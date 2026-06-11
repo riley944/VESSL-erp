@@ -149,13 +149,36 @@ html,body{height:100%;overflow:hidden;font-family:var(--sans);font-size:14px;col
 .btn-ghost:hover{background:var(--soft);border-color:#d6dce8;}
 .btn-sm{padding:6px 12px;font-size:12.5px;}
 
-/* ── STAT CARDS ────────────────────────────────────────── */
-.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px;}
-.stat-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;position:relative;overflow:hidden;box-shadow:var(--shadow-sm);transition:.15s;}
-.stat-card:hover{box-shadow:var(--shadow-md);transform:translateY(-1px);}
-.stat-card::after{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),transparent);}
-.stat-label{font-family:var(--mono);font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-bottom:12px;}
-.stat-value{font-family:var(--mono);font-size:30px;font-weight:500;color:var(--ink);letter-spacing:-.02em;}
+/* ── DASHBOARD ──────────────────────────────────────────── */
+@keyframes spin{to{transform:rotate(360deg);}}
+.db-metric-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:22px;}
+.db-metric{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:18px 18px 16px;position:relative;overflow:hidden;box-shadow:var(--shadow-sm);transition:.15s;}
+.db-metric:hover{box-shadow:var(--shadow-md);transform:translateY(-1px);}
+.db-metric-bar{position:absolute;top:0;left:0;right:0;height:3px;opacity:.85;}
+.db-metric-k{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;font-weight:600;}
+.db-metric-v{font-family:var(--mono);font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1;margin-bottom:6px;}
+.db-metric-s{font-size:11.5px;color:var(--faint);}
+.db-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);overflow:hidden;}
+.db-card-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 14px;border-bottom:1px solid var(--line-2);}
+.db-card-title{font-size:13px;font-weight:700;color:var(--ink);letter-spacing:.01em;}
+.db-stage{padding:12px 10px;border-radius:var(--r-sm);transition:.13s;}
+.db-stage:hover{background:var(--soft);}
+.db-stage-dot{width:8px;height:8px;border-radius:50%;margin-bottom:8px;}
+.db-stage-label{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;}
+.db-stage-count{font-family:var(--mono);font-size:22px;font-weight:600;color:var(--ink);line-height:1;margin-bottom:3px;}
+.db-stage-val{font-size:11.5px;color:var(--muted);font-family:var(--mono);}
+.db-grid{display:grid;grid-template-columns:1fr 380px;gap:18px;}
+.db-so-row{display:flex;align-items:center;gap:13px;padding:13px 20px;cursor:pointer;transition:.13s;}
+.db-so-row:hover{background:var(--soft);}
+.db-so-avatar{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#0b1120;flex-shrink:0;font-family:var(--mono);}
+.db-so-main{flex:1;min-width:0;}
+.db-so-num{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink);}
+.db-so-client{font-size:12px;color:var(--muted);margin-top:2px;}
+.db-so-right{text-align:right;flex-shrink:0;}
+.db-so-rev{font-family:var(--mono);font-size:13.5px;font-weight:600;color:var(--ink);}
+.db-so-mgn{font-size:11.5px;font-family:var(--mono);margin-top:2px;font-weight:600;}
+.db-so-badge{flex-shrink:0;}
+.db-ship-row{display:flex;align-items:center;gap:14px;padding:13px 20px;}
 
 /* ── SECTION CARD ──────────────────────────────────────── */
 .section-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow-sm);}
@@ -341,8 +364,9 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   .quotes-root{padding-top:0;}
 
   /* Dashboard stat cards: 2-up instead of 4-up */
-  .stats-grid{grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;}
-  .stat-value{font-size:25px;}
+  .db-metric-strip{grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px;}
+  .db-metric-v{font-size:22px;}
+  .db-grid{grid-template-columns:1fr;}
 
   /* Tables: let them scroll sideways inside their card instead of clipping */
   .section-card{overflow-x:auto;-webkit-overflow-scrolling:touch;}
@@ -363,9 +387,9 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 
 /* Extra squeeze for very narrow phones */
 @media (max-width: 420px){
-  .stats-grid{grid-template-columns:1fr 1fr;gap:10px;}
+  .db-metric-strip{grid-template-columns:1fr 1fr;gap:10px;}
   .page-title{font-size:19px;}
-  .stat-value{font-size:22px;}
+  .db-metric-v{font-size:20px;}
 }
 
 /* ── Dashboard order cards ───────────────────────────── */
