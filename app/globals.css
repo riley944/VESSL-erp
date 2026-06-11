@@ -529,3 +529,14 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 .cr-compose-foot{display:flex;align-items:center;justify-content:space-between;padding:8px 14px 12px;border-top:1px solid var(--line-2);}
 
 @media(max-width:860px){.cr-shell{grid-template-columns:1fr;height:auto;margin:0;}.cr-panel{height:300px;}.cr-convo{height:400px;}}
+
+/* ── CR search + bubble grouping ── */
+.cr-search-wrap{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line-2);background:#fff;flex-shrink:0;color:var(--muted);}
+.cr-search{flex:1;border:none;outline:none;font-size:13px;font-family:var(--sans);background:transparent;color:var(--ink);}
+.cr-search::placeholder{color:var(--faint);}
+.cr-bubble-first{border-bottom-left-radius:4px!important;}
+.cr-bubble-mid{border-bottom-left-radius:4px!important;border-top-left-radius:4px!important;}
+.cr-bubble-last{border-top-left-radius:4px!important;}
+.from-staff .cr-bubble-first{border-bottom-right-radius:4px!important;border-bottom-left-radius:14px!important;}
+.from-staff .cr-bubble-mid{border-radius:14px 14px 4px 14px!important;}
+.from-staff .cr-bubble-last{border-top-right-radius:4px!important;}
