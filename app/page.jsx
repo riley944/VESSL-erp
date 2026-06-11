@@ -52,7 +52,7 @@ const soMetrics = so => {
 async function createShipmentForPO(poId) {
   try {
     const { data: links } = await SB.from('shipment_pos').select('shipment_id').eq('purchase_order_id',poId).limit(1);
-    if (links && links.length > 0) return false; // already has a shipment
+    if (links && links.length > 0) return false;
     const { data: po } = await SB.from('purchase_orders').select('id,order_number,client_company_id').eq('id',poId).single();
     const base = (po?.order_number||poId.slice(0,8)).toString().replace(/^PO[-\s]?/i,'');
     const num  = 'SHP-'+base+'-'+Date.now().toString(36).slice(-4).toUpperCase();
@@ -61,11 +61,11 @@ async function createShipmentForPO(poId) {
       status: 'in_transit',
       client_company_id: po?.client_company_id||null,
     }).select('id').single();
-    if (sErr||!ship){ alert('Could not create shipment: '+(sErr?.message||'unknown')); return false; }
+    if (sErr||!ship) return { error: sErr?.message||'Could not create shipment' };
     const { error: lErr } = await SB.from('shipment_pos').insert({ shipment_id:ship.id, purchase_order_id:poId });
-    if (lErr){ alert('Shipment created but link failed: '+lErr.message); return false; }
-    return true;
-  } catch(e){ alert('Shipment error: '+e.message); return false; }
+    if (lErr) return { error: 'Shipment created but link failed: '+lErr.message };
+    return { ok: true, shipmentNumber: num };
+  } catch(e){ return { error: e.message }; }
 }
 const fmtNum = n => n == null ? '—' : new Intl.NumberFormat('en-US').format(n);
 const nowDate = () => new Date().toISOString().slice(0,10);
@@ -201,15 +201,101 @@ function Sidebar({ page, navigate, user, open }) {
   );
 }
 
+// ── Toast system ─────────────────────────────────────────────────────────────
+const ToastCtx = React.createContext(null);
+function ToastProvider({ children }) {
+  const [toasts, setToasts] = useState([]);
+  const push = useCallback((msg, type='ok', action=null) => {
+    const id = Date.now();
+    setToasts(p => [...p, { id, msg, type, action }]);
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 5000);
+  }, []);
+  // global bridge for non-hook callers
+  useEffect(() => { window._toast = push; return () => { delete window._toast; }; }, [push]);
+  const dismiss = id => setToasts(p => p.filter(t => t.id !== id));
+  const icons = {
+    ok: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>,
+    err: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+    info: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>,
+  };
+  return (
+    <ToastCtx.Provider value={push}>
+      {children}
+      <div className="toast-stack">
+        {toasts.map(t => (
+          <div key={t.id} className={'toast ' + t.type}>
+            <div className="toast-icon">{icons[t.type]||icons.info}</div>
+            <div className="toast-body">
+              <div className="toast-title">{t.msg}</div>
+              {t.action && <div className="toast-action"><button onClick={t.action.fn}>{t.action.label}</button></div>}
+            </div>
+            <button className="toast-close" onClick={()=>dismiss(t.id)}>×</button>
+          </div>
+        ))}
+      </div>
+    </ToastCtx.Provider>
+  );
+}
+const useToast = () => React.useContext(ToastCtx);
+
+// ── Task Panel ────────────────────────────────────────────────────────────────
+function TaskPanel({ open, onClose }) {
+  const [tasks, setTasks] = useState([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(true);
+  const toast = useToast();
+  useEffect(() => {
+    if (!open) return;
+    SB.from('tasks').select('*').order('created_at').then(({ data }) => { setTasks(data||[]); setLoading(false); });
+  }, [open]);
+  const addTask = async () => {
+    if (!input.trim()) return;
+    const { data } = await SB.from('tasks').insert({ title: input.trim(), done: false }).select().single();
+    if (data) { setTasks(p => [...p, data]); setInput(''); }
+  };
+  const toggleTask = async (t) => {
+    const done = !t.done;
+    setTasks(p => p.map(x => x.id===t.id?{...x,done}:x));
+    await SB.from('tasks').update({ done }).eq('id', t.id);
+    if (done) toast('Task completed', 'ok');
+  };
+  const open_ = tasks.filter(t=>!t.done).length;
+  return (
+    <div className={'task-panel ' + (open?'open':'')}>
+      <div className="task-panel-head">
+        <h3>Tasks {open_>0?'('+open_+' open)':''}</h3>
+        <button className="task-panel-close" onClick={onClose}>×</button>
+      </div>
+      <div className="task-list">
+        {loading ? <div className="task-empty">Loading…</div> :
+         tasks.length===0 ? <div className="task-empty">No tasks yet. Add one below.</div> :
+         tasks.map(t => (
+          <div key={t.id} className="task-item" onClick={()=>toggleTask(t)}>
+            <input type="checkbox" className="task-cb" checked={t.done} readOnly />
+            <div className="task-body">
+              <div className={'task-title'+(t.done?' done':'')}>  {t.title}</div>
+              {t.assignee && <div className="task-meta">{t.assignee}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="task-add">
+        <input placeholder="Add a task…" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addTask()} />
+        <button className="btn btn-dark btn-sm" onClick={addTask}>Add</button>
+      </div>
+    </div>
+  );
+}
+
 // ── Top Bar ──────────────────────────────────────────────────────────────────
-function TopBar({ user, title, taskCount=0, onSettings }) {
+function TopBar({ user, title, taskCount=0, taskOpen=false, onBell, onSettings }) {
   const [drop, setDrop] = useState(false);
   const initials = (user?.email||'KU').split('@')[0].slice(0,2).toUpperCase();
   const name = (user?.email||'').split('@')[0].replace(/[._]/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
   return (
     <div className="topbar">
       <div className="topbar-title">{title}</div>
-      <button className="tb-bell" title="Tasks">
+      <button className={'tb-bell'+(taskOpen?' active':'')} title="Tasks" onClick={onBell}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         {taskCount>0 && <span className="tb-bell-badge">{taskCount>9?'9+':taskCount}</span>}
       </button>
@@ -305,7 +391,7 @@ function Dashboard({ navigate }) {
   const setStatus = async (pid, st) => {
     await SB.from('purchase_orders').update({status:st,updated_at:new Date().toISOString()}).eq('id',pid);
     setRecent(prev=>prev.map(p=>p.id===pid?{...p,status:st}:p));
-    if (st==='shipped'){ const ok=await createShipmentForPO(pid); if(ok) alert('Shipment created — check the Shipments tab.'); }
+    if (st==='shipped'){ const r=await createShipmentForPO(pid); if(r?.ok) window._toast?.('Shipment '+r.shipmentNumber+' created','ok'); else if(r?.error) window._toast?.(r.error,'err'); }
   };
   const shown = filterPOs(recent,{search,client,status});
   return (
@@ -1236,7 +1322,7 @@ function Orders({ navigate }) {
   const setStat = async (pid, st) => {
     await SB.from('purchase_orders').update({status:st,updated_at:new Date().toISOString()}).eq('id',pid);
     setRows(prev=>prev.map(p=>p.id===pid?{...p,status:st}:p));
-    if (st==='shipped'){ const ok=await createShipmentForPO(pid); if(ok) alert('Shipment created — check the Shipments tab.'); }
+    if (st==='shipped'){ const r=await createShipmentForPO(pid); if(r?.ok) window._toast?.('Shipment '+r.shipmentNumber+' created','ok'); else if(r?.error) window._toast?.(r.error,'err'); }
   };
   const shown = filterPOs(rows,{search,client,status});
   return (
@@ -1302,8 +1388,21 @@ function OrderDetail({ id, navigate }) {
     await SB.from('purchase_orders').update({status,updated_at:new Date().toISOString()}).eq('id',id);
     setPO(prev=>({...prev,status}));
     if (status === 'shipped') {
-      const ok = await createShipmentForPO(id);
-      if (ok) alert('Shipment created for '+(po?.order_number||'this PO')+'. Check the Shipments tab.');
+      const r = await createShipmentForPO(id);
+      if (r?.ok) window._toast?.('Shipment '+r.shipmentNumber+' created automatically','ok');
+      else if (r?.error) window._toast?.(r.error,'err');
+    }
+  };
+  const generateShipment = async () => {
+    const r = await createShipmentForPO(id);
+    if (r?.ok) {
+      await updateStatus('shipped');
+      window._toast?.('Shipment '+r.shipmentNumber+' created · PO & SO set to Shipped','ok');
+      load();
+    } else if (r === false) {
+      window._toast?.('This PO already has a linked shipment','info');
+    } else {
+      window._toast?.(r?.error||'Shipment creation failed','err');
     }
   };
   // Turn this PO into a shipment (once). Returns true if a new shipment was made.
@@ -1318,10 +1417,10 @@ function OrderDetail({ id, navigate }) {
         status: 'in_transit',
         client_company_id: po?.client_company_id || null,
       }).select('id').single();
-      if (sErr || !ship) { alert('Shipment creation failed: '+(sErr?.message||'unknown')); return false; }
+      if (sErr || !ship) { window._toast?.('Shipment creation failed: '+(sErr?.message||'unknown'),'err'); return false; }
       await SB.from('shipment_pos').insert({ shipment_id: ship.id, purchase_order_id: id });
       return true;
-    } catch(e){ alert('Shipment creation error: '+e.message); return false; }
+    } catch(e){ window._toast?.('Shipment creation error: '+e.message,'err'); return false; }
   };
   // Find this PO's shipment, creating+linking one if it doesn't exist yet.
   const getOrCreateShipmentId = async () => {
@@ -1453,6 +1552,12 @@ function OrderDetail({ id, navigate }) {
       <div style={{display:'flex',gap:'10px',marginBottom:'20px',flexWrap:'wrap'}}>
         <button className="btn btn-ghost btn-sm" onClick={()=>navigate('orders')}>← Back</button>
         <button className="btn btn-dark btn-sm" onClick={genPO}>Generate PO PDF</button>
+        {po.status !== 'shipped' && po.status !== 'delivered' && po.status !== 'closed' && (
+          <button className="btn btn-accent btn-sm" onClick={generateShipment}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6h13v9H1zM14 9h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg>
+            Generate Shipment
+          </button>
+        )}
         <div style={{flex:1}} />
         <button className="btn btn-ghost btn-sm" onClick={()=>setEditing(true)}>Edit</button>
         <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)'}} onClick={()=>setConfirmDel({title:'Delete purchase order?',message:'This will permanently delete '+( po?.order_number||'this PO')+' and all its line items.',onConfirm:()=>{setConfirmDel(null);deletePO();}})}>Delete</button>
@@ -3199,6 +3304,7 @@ export default function App() {
   const [modal, setModal] = useState(null);
   const [shipmentsRefresh, setShipmentsRefresh] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
+  const [taskPanelOpen, setTaskPanelOpen] = useState(false);
 
   const navigate = (p, pr={}) => { setPage(p); setParams(pr); setNavOpen(false); };
 
@@ -3218,13 +3324,15 @@ export default function App() {
   const titles = {dashboard:'Dashboard','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',shipments:'Shipments',quotes:'Quotes'};
 
   return (
+    <ToastProvider>
     <div className="app-shell">
       <button className="mobile-menu-btn" aria-label="Open menu" onClick={()=>setNavOpen(true)}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <div className={'sidebar-backdrop ' + (navOpen?'show':'')} onClick={()=>setNavOpen(false)} />
       <Sidebar page={page} navigate={navigate} user={user} open={navOpen} />
-      <TopBar user={user} title={titles[page]||''} onSettings={()=>navigate('settings')} />
+      <TopBar user={user} title={titles[page]||''} taskOpen={taskPanelOpen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
+      <TaskPanel open={taskPanelOpen} onClose={()=>setTaskPanelOpen(false)} />
       {page==='quotes' ? (
         <div className="main-area">
           <div className="quotes-root" style={{height:'100%',overflowY:'auto'}}>
@@ -3256,5 +3364,6 @@ export default function App() {
       {modal==='create-product' && <CreateProductModal onClose={()=>setModal(null)} onCreated={()=>setModal(null)} />}
       {modal==='create-shipment'&& <CreateShipmentModal onClose={()=>setModal(null)} onCreated={()=>{setModal(null);setShipmentsRefresh(n=>n+1);navigate('shipments');}} />}
     </div>
+    </ToastProvider>
   );
 }
