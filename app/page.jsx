@@ -54,9 +54,9 @@ async function createShipmentForPO(poId) {
   try {
     const { data: links } = await SB.from('shipment_pos').select('shipment_id').eq('purchase_order_id',poId).limit(1);
     if (links && links.length > 0) return false;
-    const { data: po } = await SB.from('purchase_orders').select('id,order_number,client_company_id').eq('id',poId).single();
-    const base = (po?.order_number||poId.slice(0,8)).toString().replace(/^PO[-\s]?/i,'');
-    const num  = 'SHP-'+base+'-'+Date.now().toString(36).slice(-4).toUpperCase();
+    const { data: po } = await SB.from('purchase_orders').select('id,order_number,client_po_number,client_company_id').eq('id',poId).single();
+    const ref = po?.client_po_number || po?.order_number || poId.slice(0,8).toUpperCase();
+    const num = ref;
     const { data: ship, error: sErr } = await SB.from('shipments').insert({
       shipment_number: num,
       status: 'in_transit',
@@ -511,7 +511,7 @@ function Dashboard({ navigate }) {
               <div key={so.id} className="db-so-row" style={{borderBottom:i<recentSOs.length-1?'1px solid var(--line-2)':'none'}} onClick={()=>navigate('so-detail',{id:so.id})}>
                 <div className="db-so-avatar" style={{background:companyColor(so.client?.name||'')}}>{initials(so.client?.name||'?')}</div>
                 <div className="db-so-main">
-                  <div className="db-so-num">{so.so_number||'—'}</div>
+                  <div className="db-so-num">{so.client_po_number||so.so_number||'—'}</div>
                   <div className="db-so-client">{so.client?.name||'Unknown'}</div>
                 </div>
                 <div className="db-so-right">
@@ -723,14 +723,14 @@ function SOCard({so,onClick}){
   return (
     <div className="order-card" onClick={onClick} style={{cursor:'pointer'}}>
       <div className="oc-top">
-        <span style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:700,color:'var(--ink)'}}>{so.so_number||'—'}</span>
+        <span style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:700,color:'var(--ink)'}}>{so.client_po_number||so.so_number||'—'}</span>
         <SOBadge status={so.status} />
       </div>
       <div className="oc-factory">
         <span className="oc-avatar" style={{background:companyColor(cl)}}>{initials(cl)}</span>
         <span style={{display:'flex',flexDirection:'column',gap:'2px',minWidth:0,overflow:'hidden'}}>
           <span style={{fontWeight:700,fontSize:'14px',color:'var(--ink)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{cl}</span>
-          {so.client_po_number && <span style={{fontSize:'11px',color:'var(--muted)'}}>{'Client PO: '+so.client_po_number}</span>}
+          {so.so_number && <span style={{fontSize:'11px',color:'var(--muted)'}}>{'Internal: '+so.so_number}</span>}
         </span>
       </div>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px 4px'}}>
@@ -846,7 +846,7 @@ function SalesOrderDetail({id,navigate}){
   return (
     <>
       {editing && <EditSOModal so={so} items={items} linkedPos={linkedPos} onClose={()=>setEditing(false)} onSaved={()=>{setEditing(false);load();}} />}
-      {confirmDel && <ConfirmModal title={'Delete '+so.so_number+'?'} message="All line items and factory PO links will be removed. This cannot be undone." onConfirm={()=>{setConfirmDel(false);deleteSO();}} onCancel={()=>setConfirmDel(false)} />}
+      {confirmDel && <ConfirmModal title={'Delete '+(so.client_po_number||so.so_number)+'?'} message="All line items and factory PO links will be removed. This cannot be undone." onConfirm={()=>{setConfirmDel(false);deleteSO();}} onCancel={()=>setConfirmDel(false)} />}
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'20px',flexWrap:'wrap'}}>
         <button className="btn btn-ghost btn-sm" onClick={()=>navigate('sales-orders')}>{'← Back'}</button>
         <span style={{flex:1}} />
@@ -871,7 +871,7 @@ function SalesOrderDetail({id,navigate}){
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',borderTop:'1px solid var(--line-2)'}}>
-            {[['Our SO #',so.so_number||'—'],['Client PO #',so.client_po_number||'—'],['Order Date',fmtDate(so.order_date)],['Ship By',fmtDate(so.required_ship_date)],['Payment',so.payment_terms||'—'],['Currency',so.currency||'USD']].map(([l,v],i)=>(
+            {[['Client PO #',so.client_po_number||'—'],['Internal SO #',so.so_number||'—'],['Order Date',fmtDate(so.order_date)],['Ship By',fmtDate(so.required_ship_date)],['Payment',so.payment_terms||'—'],['Currency',so.currency||'USD']].map(([l,v],i)=>(
               <div key={l} style={{padding:'12px 18px',borderBottom:i<4?'1px solid var(--line-2)':'none',borderRight:i%2===0?'1px solid var(--line-2)':'none'}}>
                 <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'4px'}}>{l}</div>
                 <div style={{fontSize:'13px',fontWeight:600,color:'var(--ink)',fontFamily:l.includes('#')?'var(--mono)':'inherit'}}>{v}</div>
@@ -1113,10 +1113,12 @@ function CreateSOModal({onClose,onCreated}){
   const filtQ=qSearch?quotes.filter(q=>(q.product||'').toLowerCase().includes(qSearch.toLowerCase())||(q.client||'').toLowerCase().includes(qSearch.toLowerCase())||(q.factory||'').toLowerCase().includes(qSearch.toLowerCase())||(q.sku||'').toLowerCase().includes(qSearch.toLowerCase())):quotes;
   const filtPOs=availPOs.filter(p=>!poSearch||(p.order_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.companies?.name||'').toLowerCase().includes(poSearch.toLowerCase()));
   const submit=async()=>{
-    if(!form.num.trim()){alert('SO number required');return;}
-    if(!items.filter(it=>it.desc.trim()).length){alert('Add at least one line item');return;}
+    if(!form.clientPO.trim()){window._toast?.('Client PO number is required','err');return;}
+    if(!items.filter(it=>it.desc.trim()).length){window._toast?.('Add at least one line item','err');return;}
     setLoading(true);
-    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,status:'received'}).select().single();
+    // auto-generate so_number from client PO if not set
+    const soNum = form.num.trim() || ('KUI-'+form.clientPO.trim().replace(/[^A-Za-z0-9]/g,'-').slice(0,20).toUpperCase());
+    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,status:'received'}).select().single();
     if(e0||!so){alert('Error: '+(e0?.message||'unknown'));setLoading(false);return;}
     const toIns=items.filter(it=>it.desc.trim()).map(it=>({sales_order_id:so.id,description:it.desc.trim(),client_sku:it.sku||null,quantity:Number(it.qty)||null,client_price:Number(it.price)||null,currency:form.currency,_quoteId:it.quoteId,_tierIdx:it.tierIdx||0}));
     if(toIns.length) await SB.from('sales_order_items').insert(toIns.map(({_quoteId,_tierIdx,...rest})=>rest));
@@ -1196,12 +1198,12 @@ function CreateSOModal({onClose,onCreated}){
           </div>
 
           <div className="form-row-2">
-            <div><label>SO Number *</label><input className="form-input" style={{fontFamily:'var(--mono)'}} value={form.num} onChange={e=>f('num')(e.target.value)} /></div>
+            <div><label>Client PO # *</label><input className="form-input" value={form.clientPO} onChange={e=>f('clientPO')(e.target.value)} placeholder="Client's PO number — this is the primary reference" autoFocus /></div>
             <div><label>Order Date</label><input type="date" className="form-input" value={form.date} onChange={e=>f('date')(e.target.value)} /></div>
           </div>
           <div className="form-row-2">
-            <div><label>Client PO #</label><input className="form-input" value={form.clientPO} onChange={e=>f('clientPO')(e.target.value)} placeholder="Client's PO number" /></div>
             <div><label>Required Ship Date</label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
+            <div><label>Internal SO # <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>auto-generated if blank</span></label><input className="form-input" style={{fontFamily:'var(--mono)'}} value={form.num} onChange={e=>f('num')(e.target.value)} placeholder="KUI-..." /></div>
           </div>
           <div className="form-row-2">
             <div><label>Payment Terms</label><input className="form-input" value={form.payment} onChange={e=>f('payment')(e.target.value)} placeholder="e.g. Net 30, 50% deposit" /></div>
@@ -1329,7 +1331,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       {showPicker && <QuotePickerModal priceField="client" onPick={onPickItem} onClose={()=>setShowPicker(false)} />}
       <div className="modal-box" style={{maxWidth:'680px'}}>
-        <div className="modal-head"><h3>{'Edit '+so.so_number}</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>{'Edit '+(so.client_po_number||so.so_number)}</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>SO Number</label><input className="form-input" style={{fontFamily:'var(--mono)'}} value={form.num} onChange={e=>f('num')(e.target.value)} /></div>
@@ -1666,27 +1668,48 @@ function OrderDetail({ id, navigate }) {
     setAttachments(prev=>prev.filter(f=>f.name!==name));
   };
   const genPO = async () => {
-    // Open the window SYNCHRONOUSLY, before any await — otherwise iPad/Safari
-    // treats it as a non-user-gesture popup and blocks it (button "does nothing").
     const win = window.open('', '_blank');
-    if (win) {
-      win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating PO…</body>');
-    }
-    const { data, error } = await SB.rpc('po_document_json',{p_po_id:id});
-    if (error||!data){ if(win) win.close(); alert('Error: '+(error?.message||'No data')); return; }
-    const html = buildPODoc(data, { pallet: po?.pallet_info, clientName: po?.client?.name, itemDetails: items, testingRequired: po?.testing_required, deliveryAddress: po?.delivery_address, shippingMethod: po?.shipping_method });
-    if (win) {
-      win.document.open();
-      win.document.write(html);
-      win.document.close();
-      setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 600);
-    } else {
-      // Popup was blocked anyway — fall back to downloading the PO as a file.
+    if (win) win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating PO…</body>');
+    // Build doc data directly from already-loaded state — no RPC needed
+    const docData = {
+      po_number: po.order_number || po.client_po_number || id.slice(0,8).toUpperCase(),
+      currency: po.currency || 'USD',
+      supplier: { name: po.companies?.name || '—', email: po.companies?.email || '', lines: [] },
+      ship_to: { name: 'King Universal Inc.' },
+      totals: {
+        subtotal, mold_fee: mold, grand,
+        deposit_pct: po.deposit_percent || 0, deposit_amt: dep || 0,
+      },
+      lines: items.map(it => ({
+        description: it.description || it.products?.name || '—',
+        sku: it.products?.sku || '',
+        quantity: Number(it.quantity) || 0,
+        unit_price: Number(it.unit_price) || 0,
+        line_amount: (Number(it.quantity)||0) * (Number(it.unit_price)||0),
+        ci_value: it.ci_value,
+        carton_info: it.carton_info || '',
+        vpn: it.vpn || '',
+        master_sku: it.master_sku || '',
+        pack_sku: it.pack_sku || '',
+        baby_sku: it.baby_sku || '',
+        retail_price: it.retail_price,
+      })),
+      order_date: po.order_date,
+      required_ship_date: po.requested_ship_date || po.required_ship_date,
+      payment_terms: po.payment_terms || '—',
+      incoterm: po.incoterm || '—',
+      client_po: po.client_po_number || '',
+    };
+    const html = buildPODoc(docData, {
+      pallet: po.pallet_info, clientName: po.client?.name,
+      testingRequired: po.testing_required,
+      deliveryAddress: po.delivery_address, shippingMethod: po.shipping_method,
+    });
+    if (win) { win.document.open(); win.document.write(html); win.document.close(); setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 600); }
+    else {
       const url = URL.createObjectURL(new Blob([html],{type:'text/html'}));
-      const a = document.createElement('a');
-      a.href = url; a.download = 'PO-'+(po?.order_number||id)+'.html';
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+      const a = document.createElement('a'); a.href=url; a.download='PO-'+(po.order_number||id)+'.html';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(()=>URL.revokeObjectURL(url), 4000);
     }
   };
   if (loading) return <div className="loading">Loading...</div>;
@@ -1760,16 +1783,38 @@ function OrderDetail({ id, navigate }) {
         <div className="section-head"><h3>Line Items</h3></div>
         {items.length ? (
           <table className="data-table">
-            <thead><tr><th>Product</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Product / Description</th>
+                <th>SKU Info</th>
+                <th className="num">Qty</th>
+                <th className="num">CI Value</th>
+                <th className="num">Unit Cost</th>
+                <th className="num">Amount</th>
+              </tr>
+            </thead>
             <tbody>
-              {items.map(it=>(
-                <tr key={it.id}>
-                  <td><div style={{fontWeight:500}}>{it.products?.name||it.description||'—'}</div><div className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>{it.products?.sku||''}</div>{it.carton_info&&<div style={{fontSize:'11px',color:'var(--muted)',marginTop:'2px'}}>{it.carton_info}</div>}</td>
-                  <td className="mono">{fmtNum(it.quantity)}</td>
-                  <td className="mono">{money(it.unit_price,po.currency)}{it.ci_value?<div style={{fontSize:'10px',color:'var(--muted)'}}>CI: {money(it.ci_value,po.currency)}</div>:null}</td>
-                  <td className="mono">{money(Number(it.quantity)*Number(it.unit_price),po.currency)}</td>
-                </tr>
-              ))}
+              {items.map(it=>{
+                const skuParts=[it.master_sku&&('Master: '+it.master_sku),it.pack_sku&&('Pack: '+it.pack_sku),it.baby_sku&&('Baby: '+it.baby_sku)].filter(Boolean);
+                return (
+                  <tr key={it.id}>
+                    <td>
+                      <div style={{fontWeight:500}}>{it.description||it.products?.name||'—'}</div>
+                      {it.products?.sku&&<div className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>SKU: {it.products.sku}</div>}
+                      {it.vpn&&<div className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>VPN# {it.vpn}</div>}
+                      {it.carton_info&&<div style={{fontSize:'11px',color:'var(--muted)',marginTop:'2px'}}>{it.carton_info}</div>}
+                    </td>
+                    <td style={{verticalAlign:'top'}}>
+                      {skuParts.length>0 ? skuParts.map((s,i)=><div key={i} className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>{s}</div>) : <span style={{color:'var(--faint)'}}>—</span>}
+                      {it.retail_price!=null&&<div style={{fontSize:'11px',color:'var(--ok)',marginTop:'2px',fontWeight:600}}>Retail: {money(it.retail_price,po.currency)}</div>}
+                    </td>
+                    <td className="mono num">{fmtNum(it.quantity)}</td>
+                    <td className="mono num">{it.ci_value!=null?money(it.ci_value,po.currency):'—'}</td>
+                    <td className="mono num">{money(it.unit_price,po.currency)}</td>
+                    <td className="mono num" style={{fontWeight:600}}>{money((Number(it.quantity)||0)*(Number(it.unit_price)||0),po.currency)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         ) : <div className="empty"><h3>No items</h3></div>}
@@ -3383,15 +3428,14 @@ function buildPODoc(d, opts={}) {
   const m=(n,c)=>n==null?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:c||'USD'}).format(n);
   const fd=s=>{if(!s)return'—';return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'});};
   const fn=n=>n==null?'—':new Intl.NumberFormat('en-US').format(n);
-  const lines=(d.lines||[]).map((l,idx)=>{
-    const det = itemDetails[idx] || {};
-    const ci = det.ci || (det.ci_value != null ? det.ci_value : null);
-    const carton = det.carton || det.carton_info || '';
-    const vpn = det.vpn || l.vpn || '';
-    const masterSku = det.masterSku || l.master_sku || '';
-    const packSku = det.packSku || l.pack_sku || '';
-    const babySku = det.babySku || l.baby_sku || '';
-    const retailPrice = det.retailPrice != null ? det.retailPrice : (l.retail_price != null ? l.retail_price : null);
+  const lines=(d.lines||[]).map((l)=>{
+    const ci = l.ci_value != null ? l.ci_value : (l.ci != null ? l.ci : null);
+    const carton = l.carton_info || l.carton || '';
+    const vpn = l.vpn || '';
+    const masterSku = l.master_sku || l.masterSku || '';
+    const packSku = l.pack_sku || l.packSku || '';
+    const babySku = l.baby_sku || l.babySku || '';
+    const retailPrice = l.retail_price != null ? l.retail_price : (l.retailPrice != null ? l.retailPrice : null);
     const skuLine = [masterSku?'Master: '+masterSku:'', packSku?'Pack: '+packSku:'', babySku?'Baby: '+babySku:''].filter(Boolean).join(' · ');
     return '<tr>'
       +'<td class="l"><div class="desc">'+(l.description||'')+'</div>'
@@ -3400,7 +3444,7 @@ function buildPODoc(d, opts={}) {
       +(skuLine?'<div class="sku">'+skuLine+'</div>':'')
       +(retailPrice!=null?'<div class="sku">Retail: '+m(retailPrice,d.currency)+'</div>':'')
       +'</td>'
-      +'<td class="num mono" style="font-size:11px;color:#8a9097;">'+(l.sku||det.sku||'—')+'</td>'
+      +'<td class="num mono" style="font-size:11px;color:#8a9097;">'+(l.sku||'—')+'</td>'
       +'<td class="num">'+fn(l.quantity)+'</td>'
       +'<td class="num">'+(ci!=null?m(ci,d.currency):'—')+'</td>'
       +'<td class="num">'+m(l.unit_price,d.currency)+'</td>'
@@ -3449,7 +3493,8 @@ function buildPODoc(d, opts={}) {
 +'</div>'
 +'<div class="terms">'
 +'<div><div class="lbl">Order Date</div><div class="tv">'+fd(d.order_date)+'</div></div>'
-+'<div><div class="lbl">Ship By</div><div class="tv">'+fd(d.requested_ship_date)+'</div></div>'
++'<div><div class="lbl">Ship By</div><div class="tv">'+fd(d.required_ship_date||d.requested_ship_date)+'</div></div>'
++(d.client_po?'<div><div class="lbl">Client PO</div><div class="tv">'+d.client_po+'</div></div>':'')
 +'<div><div class="lbl">Incoterm</div><div class="tv">'+(d.incoterm||'—')+'</div></div>'
 +'<div><div class="lbl">Payment</div><div class="tv">'+(d.payment_terms||'—')+'</div></div>'
 +termsExtra
