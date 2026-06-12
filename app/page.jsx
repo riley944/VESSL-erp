@@ -373,12 +373,18 @@ function Dashboard({ navigate }) {
       ] = await Promise.all([
         SB.from('sales_orders').select('id,so_number,client_po_number,status,currency,order_date,client_company_id,client:companies!client_company_id(name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(quantity,unit_price))),order_costs(amount)').order('created_at',{ascending:false}).limit(200),
         SB.from('purchase_orders').select('id,order_number,client_po_number,status').not('status','in','("closed","cancelled")'),
-        SB.from('shipments').select('id,shipment_number,status,estimated_arrival,actual_arrival,origin_port:ports!origin_port_id(name,unlocode),destination_port:ports!destination_port_id(name,unlocode),companies!carrier_company_id(name),shipment_pos(purchase_orders(client_po_number,order_number))').in('status',['created','at_origin_port','in_transit','at_transshipment','at_destination_port','customs','out_for_delivery']).order('estimated_arrival').limit(20),
+        SB.from('shipments').select('id,shipment_number,status,estimated_departure,estimated_arrival,actual_arrival,origin_port:ports!origin_port_id(name,unlocode),destination_port:ports!destination_port_id(name,unlocode),companies!carrier_company_id(name),shipment_pos(purchase_orders(client_po_number,order_number))').not('status','in','("delivered","cancelled","closed")').order('estimated_arrival',{nullsFirst:false}).limit(20),
       ]);
+      // Fallback: if the shipments join errored (null), retry with a minimal query
+      let shipsData = ships;
+      if (!shipsData) {
+        const retry = await SB.from('shipments').select('id,shipment_number,status,estimated_departure,estimated_arrival,actual_arrival,shipment_pos(purchase_orders(client_po_number,order_number))').not('status','in','("delivered","cancelled","closed")').limit(20);
+        shipsData = retry.data;
+      }
 
       const soList = sos || [];
       const poList = pos || [];
-      const shipList = ships || [];
+      const shipList = shipsData || [];
 
       // ── per-SO metrics ────────────────────────────────────────────────
       const enriched = soList.map(so => {
