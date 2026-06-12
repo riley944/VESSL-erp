@@ -102,10 +102,10 @@ const poProducts = p => (p.purchase_order_items||[]).map(it=>it.products?.name||
 function filterPOs(rows, { search, client, status }){
   const s = (search||'').toLowerCase().trim();
   return (rows||[]).filter(p=>{
-    if (status && status!=='all' && p.status!==status) return false;
+    if (status && status!=='all' && alignStatus(p.status)!==status) return false;
     if (client && client!=='all' && poClient(p)!==client) return false;
     if (s){
-      const hay = `${p.order_number||''} ${poClient(p)} ${poFactory(p)} ${poProducts(p)}`.toLowerCase();
+      const hay = ((p.client_po_number||'')+' '+(p.order_number||'')+' '+poClient(p)+' '+poFactory(p)+' '+poProducts(p)).toLowerCase();
       if (!hay.includes(s)) return false;
     }
     return true;
@@ -119,24 +119,33 @@ const PO_CARD_SELECT = 'id,order_number,client_po_number,status,order_date,reque
 
 function OrderCard({ p, navigate, onStatus }){
   const client = poClient(p), factory = poFactory(p);
+  const items = (p.purchase_order_items||[]);
+  const itemCount = items.length;
+  const go = ()=>navigate('order-detail',{id:p.id});
   return (
-    <div className="order-card">
-      <div className="oc-top" onClick={()=>navigate('order-detail',{id:p.id})}>
-        <span className="oc-num mono">{p.client_po_number||p.order_number||'—'}</span>
-        <Badge status={p.status} />
+    <div className="po-card" onClick={go}>
+      <div className="po-card-stripe" />
+      <div className="po-card-body">
+        <div className="po-card-top">
+          <div style={{minWidth:0}}>
+            <div className="po-card-kicker">Purchase Order</div>
+            <div className="po-card-num">{p.client_po_number||p.order_number||'—'}</div>
+          </div>
+          <Badge status={p.status} />
+        </div>
+        <div className="po-card-parties">
+          <span className="po-card-av" style={{background:companyColor(client||factory)}}>{initials(client||factory)}</span>
+          <div style={{minWidth:0,flex:1}}>
+            <div className="po-card-client">{client||'No client'}</div>
+            {factory && <div className="po-card-factory"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 20h20M4 20V8l5 3V8l5 3V8l5 3v9"/></svg>{factory}</div>}
+          </div>
+        </div>
       </div>
-      <div className="oc-factory" onClick={()=>navigate('order-detail',{id:p.id})}>
-        <span className="oc-avatar" style={{background:companyColor(client||factory)}}>{initials(client||factory)}</span>
-        <span style={{display:'flex',flexDirection:'column',minWidth:0,gap:'2px'}}>
-          <span style={{fontWeight:700,fontSize:'14px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',color:'var(--ink)'}}>{client||'No client'}</span>
-          {factory && <span style={{fontSize:'11px',color:'var(--muted)',fontWeight:400,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{factory}</span>}
-        </span>
-      </div>
-      <div className="oc-foot">
-        <span className="oc-date">{fmtDate(p.order_date)}</span>
+      <div className="po-card-foot">
+        <span className="po-card-meta">{fmtDate(p.order_date)}{itemCount>0?' · '+itemCount+' item'+(itemCount!==1?'s':''):''}</span>
         {onStatus
-          ? <select className="oc-status" value={p.status} onChange={e=>onStatus(p.id,e.target.value)}>{STATUSES.map(s=><option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}</select>
-          : <span className="oc-date">{fmtDate(p.requested_ship_date)}</span>}
+          ? <select className="po-card-select" value={p.status} onClick={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();onStatus(p.id,e.target.value);}}>{SO_STATUSES.map(s=><option key={s} value={s}>{(SO_SM[s]?.label)||s.replace(/_/g,' ')}</option>)}</select>
+          : <span className="po-card-meta">Ship {fmtDate(p.requested_ship_date)}</span>}
       </div>
     </div>
   );
@@ -157,9 +166,9 @@ function PoToolbar({ rows, search, setSearch, client, setClient, status, setStat
         ))}
       </div>
       <div className="filters">
-        {['all',...STATUSES].map(s=>(
-          <button key={s} className={'filter-btn '+(status===s?'active':'')} onClick={()=>setStatus(s)}>{s==='all'?'ALL':s.replace(/_/g,' ').toUpperCase()}</button>
-        ))}
+        {['all',...SO_STATUSES].map(s=>{ const on=status===s; const m=SO_SM[s]; return (
+          <button key={s} onClick={()=>setStatus(s)} style={{padding:'4px 12px',borderRadius:'20px',border:'none',cursor:'pointer',fontSize:'11px',fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',background:on?(m?m.color:'#334155'):(m?m.bg:'var(--line-2)'),color:on?'#fff':(m?m.color:'var(--muted)')}}>{s==='all'?'ALL':s.replace(/_/g,' ')}</button>
+        ); })}
       </div>
     </div>
   );
