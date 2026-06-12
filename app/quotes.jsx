@@ -1646,6 +1646,11 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                 const total = tierTotalCost(t, f.moldFee);
                 const airOff = ship !== "air";
                 const oceanOff = ship !== "ocean";
+                const exwVal = Number(t.landed) || 0;
+                const autoDuty = () => {
+                  const duty = +(0.5 * exwVal * 0.274).toFixed(4);
+                  setF((p) => ({ ...p, tiers: p.tiers.map((x, idx) => idx === i ? { ...x, ship: "ocean", freightAir: "", freightOcean: duty, duty_only: true } : x) }));
+                };
                 return (
                   <div key={i} style={S.tierEditRow}>
                     <div style={{ flex: 0.9 }}><input style={S.tierInput} type="number" value={t.qty ?? ""} onChange={(e) => setTier(i, "qty", e.target.value)} placeholder="Qty" /></div>
@@ -1655,7 +1660,10 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "ocean" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "ocean")}>Ocean</button>
                     </div>
                     <div style={{ flex: 1.0 }}><input style={{ ...S.tierInput, ...(airOff ? S.tierInputOff : {}) }} type="number" value={t.freightAir ?? ""} onChange={(e) => setTier(i, "freightAir", e.target.value)} placeholder="$ air" disabled={airOff} /></div>
-                    <div style={{ flex: 1.0 }}><input style={{ ...S.tierInput, ...(oceanOff ? S.tierInputOff : {}) }} type="number" value={t.freightOcean ?? ""} onChange={(e) => setTier(i, "freightOcean", e.target.value)} placeholder="$ ocean" disabled={oceanOff} /></div>
+                    <div style={{ flex: 1.0, display: "flex", gap: 3 }}>
+                      <input style={{ ...S.tierInput, ...(oceanOff ? S.tierInputOff : {}) }} type="number" value={t.freightOcean ?? ""} onChange={(e) => setTier(i, "freightOcean", e.target.value)} placeholder="$ ocean" disabled={oceanOff} />
+                      <button type="button" onClick={autoDuty} disabled={exwVal <= 0} title="Duty only = 0.5 × EXW × 0.274 (no freight)" style={{ flexShrink: 0, padding: "0 8px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, letterSpacing: ".02em", cursor: exwVal > 0 ? "pointer" : "not-allowed", background: exwVal > 0 ? "#e7edfd" : "#eef1f6", color: exwVal > 0 ? "#3551c4" : "#aab2c0", whiteSpace: "nowrap" }}>duty</button>
+                    </div>
                     <div style={{ flex: 0.9, textAlign: "right", alignSelf: "center", ...S.num, fontWeight: 600, color: "#0f1729" }}>{total ? `$${fmt(total)}` : "—"}</div>
                     <div style={{ flex: 1.1, display: "flex", gap: 4 }}>
                       <input style={S.tierInput} type="number" value={t.client ?? ""} onChange={(e) => setTier(i, "client", e.target.value)} placeholder="$" />
