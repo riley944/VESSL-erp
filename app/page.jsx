@@ -103,14 +103,14 @@ function distinctClients(rows){
   const m={}; (rows||[]).forEach(p=>{ const c=poClient(p); if(c) m[c]=(m[c]||0)+1; });
   return Object.entries(m).sort((a,b)=>a[0].localeCompare(b[0]));
 }
-const PO_CARD_SELECT = 'id,order_number,status,order_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
+const PO_CARD_SELECT = 'id,order_number,client_po_number,status,order_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
 
 function OrderCard({ p, navigate, onStatus }){
   const client = poClient(p), factory = poFactory(p);
   return (
     <div className="order-card">
       <div className="oc-top" onClick={()=>navigate('order-detail',{id:p.id})}>
-        <span className="oc-num mono">{p.order_number||'—'}</span>
+        <span className="oc-num mono">{p.client_po_number||'—'}</span>
         <Badge status={p.status} />
       </div>
       <div className="oc-factory" onClick={()=>navigate('order-detail',{id:p.id})}>
@@ -546,7 +546,6 @@ function Dashboard({ navigate }) {
                     <div key={sh.id} className="db-ship-row" style={{borderBottom:i<Math.min(shipList.length,5)-1?'1px solid var(--line-2)':'none'}}>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'5px'}}>
-                          <span className="mono" style={{fontSize:'12.5px',fontWeight:600}}>{sh.shipment_number}</span>
                           <span className={'badge b-shipped'} style={{fontSize:'10px',padding:'2px 8px'}}><span className="dot"/>In transit</span>
                         </div>
                         <div style={{display:'flex',alignItems:'center',gap:'6px',fontSize:'12px',color:'var(--muted)'}}>
@@ -730,7 +729,7 @@ function SOCard({so,onClick}){
         <span className="oc-avatar" style={{background:companyColor(cl)}}>{initials(cl)}</span>
         <span style={{display:'flex',flexDirection:'column',gap:'2px',minWidth:0,overflow:'hidden'}}>
           <span style={{fontWeight:700,fontSize:'14px',color:'var(--ink)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{cl}</span>
-          {so.so_number && <span style={{fontSize:'11px',color:'var(--muted)'}}>{'Internal: '+so.so_number}</span>}
+          {so.so_number && false && <span style={{fontSize:'11px',color:'var(--muted)'}}>{'Internal: '+so.so_number}</span>}
         </span>
       </div>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px 4px'}}>
@@ -822,7 +821,7 @@ function SalesOrderDetail({id,navigate}){
     const [{data:soD},{data:itmD,error:itmErr},{data:posD},{data:costD}]=await Promise.all([
       SB.from('sales_orders').select('*,client:companies!client_company_id(id,name,vendor_number)').eq('id',id).single(),
       SB.from('sales_order_items').select('*').eq('sales_order_id',id),
-      SB.from('sales_order_pos').select('purchase_orders(id,order_number,status,currency,companies!factory_company_id(name),purchase_order_items(description,quantity,unit_price))').eq('sales_order_id',id),
+      SB.from('sales_order_pos').select('purchase_orders(id,order_number,client_po_number,status,currency,companies!factory_company_id(name),purchase_order_items(description,quantity,unit_price))').eq('sales_order_id',id),
       SB.from('order_costs').select('*').eq('sales_order_id',id).order('created_at'),
     ]);
     if(itmErr) console.error('SO items load error:', itmErr);
@@ -871,7 +870,7 @@ function SalesOrderDetail({id,navigate}){
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',borderTop:'1px solid var(--line-2)'}}>
-            {[['Client PO #',so.client_po_number||'—'],['Internal SO #',so.so_number||'—'],['Order Date',fmtDate(so.order_date)],['Ship By',fmtDate(so.required_ship_date)],['Payment',so.payment_terms||'—'],['Currency',so.currency||'USD']].map(([l,v],i)=>(
+            {[['Client PO #',so.client_po_number||'—'],['Order Date',fmtDate(so.order_date)],['Ship By',fmtDate(so.required_ship_date)],['Payment',so.payment_terms||'—'],['Currency',so.currency||'USD']].map(([l,v],i)=>(
               <div key={l} style={{padding:'12px 18px',borderBottom:i<4?'1px solid var(--line-2)':'none',borderRight:i%2===0?'1px solid var(--line-2)':'none'}}>
                 <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'4px'}}>{l}</div>
                 <div style={{fontSize:'13px',fontWeight:600,color:'var(--ink)',fontFamily:l.includes('#')?'var(--mono)':'inherit'}}>{v}</div>
@@ -930,7 +929,7 @@ function SalesOrderDetail({id,navigate}){
         {linkedPos.length ? linkedPos.map(po=>{ const poCost=(po.purchase_order_items||[]).reduce((a,i)=>a+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0); return (
           <div key={po.id} style={{display:'flex',alignItems:'center',gap:'14px',padding:'14px 18px',borderBottom:'1px solid var(--line-2)',cursor:'pointer'}} onClick={()=>navigate('order-detail',{id:po.id})}>
             <div style={{flex:1,minWidth:0}}>
-              <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'3px'}}><span style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:'13px',color:'var(--ink)'}}>{po.order_number}</span><Badge status={po.status} /></div>
+              <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'3px'}}><span style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:'13px',color:'var(--ink)'}}>{po.client_po_number||po.order_number}</span><Badge status={po.status} /></div>
               <div style={{fontSize:'12px',color:'var(--muted)'}}>{po.companies?.name||'—'}</div>
             </div>
             <div style={{textAlign:'right'}}><div style={{fontFamily:'var(--mono)',fontWeight:600,fontSize:'13px'}}>{money(poCost,po.currency)}</div><div style={{fontSize:'11px',color:'var(--muted)'}}>factory cost</div></div>
@@ -1253,7 +1252,7 @@ function CreateSOModal({onClose,onCreated}){
               {filtPOs.slice(0,25).map(po=>{ const on=linkedPOIds.includes(po.id); return (
                 <div key={po.id} onClick={()=>togglePO(po.id)} style={{display:'flex',alignItems:'center',gap:'10px',padding:'9px 14px',borderBottom:'1px solid var(--line-2)',cursor:'pointer',background:on?'rgba(52,97,224,.07)':'transparent'}}>
                   <div style={{width:'16px',height:'16px',borderRadius:'4px',border:'2px solid '+(on?'var(--accent)':'var(--line-2)'),background:on?'var(--accent)':'transparent',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>{on&&<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/></svg>}</div>
-                  <span style={{fontFamily:'var(--mono)',fontWeight:600,fontSize:'12px',color:'var(--ink)'}}>{po.order_number}</span>
+                  <span style={{fontFamily:'var(--mono)',fontWeight:600,fontSize:'12px',color:'var(--ink)'}}>{po.client_po_number||po.order_number}</span>
                   <span style={{fontSize:'12px',color:'var(--muted)',flex:1}}>{po.companies?.name||'—'}</span>
                   <Badge status={po.status} />
                 </div>
@@ -1375,7 +1374,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
                   <div style={{width:'16px',height:'16px',borderRadius:'4px',border:'2px solid '+(on?'var(--accent)':'var(--line-2)'),background:on?'var(--accent)':'transparent',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
                     {on&&<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/></svg>}
                   </div>
-                  <span style={{fontFamily:'var(--mono)',fontWeight:600,fontSize:'12px',color:'var(--ink)'}}>{po.order_number}</span>
+                  <span style={{fontFamily:'var(--mono)',fontWeight:600,fontSize:'12px',color:'var(--ink)'}}>{po.client_po_number||po.order_number}</span>
                   <span style={{fontSize:'12px',color:'var(--muted)',flex:1}}>{po.companies?.name||'—'}</span>
                   <Badge status={po.status} />
                 </div>
@@ -1766,7 +1765,7 @@ function OrderDetail({ id, navigate }) {
       </div>
 
       <div className="section-card" style={{marginBottom:'20px'}}>
-        <div className="section-head"><h3>Logistics</h3>{ship?.shipment_number && <span className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>{ship.shipment_number}</span>}</div>
+        <div className="section-head"><h3>Logistics</h3></div>
         <div className="logi-grid">
           {[['Vessel / Boat','vessel_name','e.g. MAERSK SELETAR'],['Container #','container_no','e.g. MSKU1234567'],['Voyage #','voyage_no','e.g. 084W'],['Booking #','booking_number',''],['Bill of Lading','bill_of_lading','']].map(([lab,k,ph])=>(
             <div key={k} className="logi-field"><label>{lab}</label><input className="form-input" value={logi[k]||''} placeholder={ph} onChange={e=>setLg(k)(e.target.value)} /></div>
@@ -3420,15 +3419,16 @@ function CreateProductModal({ onClose, onCreated }) {
 function buildPODoc(d, opts={}) {
   const pallet = opts.pallet || d.pallet_info || '';
   const clientName = opts.clientName || d.client_name || '';
-  const itemDetails = opts.itemDetails || [];
   const testingRequired = opts.testingRequired || d.testing_required || false;
   const deliveryAddress = opts.deliveryAddress || d.delivery_address || '';
   const shippingMethod = opts.shippingMethod || d.shipping_method || '';
-  const t=d.totals||{};
-  const m=(n,c)=>n==null?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:c||'USD'}).format(n);
-  const fd=s=>{if(!s)return'—';return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'});};
-  const fn=n=>n==null?'—':new Intl.NumberFormat('en-US').format(n);
-  const lines=(d.lines||[]).map((l)=>{
+  const t = d.totals || {};
+  const cur = d.currency || 'USD';
+  const m = (n,c) => n==null ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:c||cur}).format(n);
+  const fd = s => { if(!s) return '—'; return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
+  const fn = n => n==null ? '—' : new Intl.NumberFormat('en-US').format(n);
+
+  const lines = (d.lines||[]).map((l, i) => {
     const ci = l.ci_value != null ? l.ci_value : (l.ci != null ? l.ci : null);
     const carton = l.carton_info || l.carton || '';
     const vpn = l.vpn || '';
@@ -3436,82 +3436,128 @@ function buildPODoc(d, opts={}) {
     const packSku = l.pack_sku || l.packSku || '';
     const babySku = l.baby_sku || l.babySku || '';
     const retailPrice = l.retail_price != null ? l.retail_price : (l.retailPrice != null ? l.retailPrice : null);
-    const skuLine = [masterSku?'Master: '+masterSku:'', packSku?'Pack: '+packSku:'', babySku?'Baby: '+babySku:''].filter(Boolean).join(' · ');
-    return '<tr>'
-      +'<td class="l"><div class="desc">'+(l.description||'')+'</div>'
-      +(carton?'<div class="carton">'+carton+'</div>':'')
-      +(vpn?'<div class="sku">VPN# '+vpn+'</div>':'')
-      +(skuLine?'<div class="sku">'+skuLine+'</div>':'')
-      +(retailPrice!=null?'<div class="sku">Retail: '+m(retailPrice,d.currency)+'</div>':'')
+    const bg = i % 2 === 0 ? '#fff' : '#f9fafb';
+    return '<tr style="background:'+bg+'">'
+      +'<td style="padding:16px 18px;vertical-align:top;border-bottom:1px solid #e5e7eb;">'
+        +'<div style="font-size:15px;font-weight:600;color:#0f172a;margin-bottom:6px;">'+(l.description||'—')+'</div>'
+        +(carton?'<div style="font-size:12px;color:#6b7280;margin-bottom:3px;">📦 '+carton+'</div>':'')
+        +(vpn?'<div style="font-size:12px;color:#6b7280;font-family:monospace;">VPN# '+vpn+'</div>':'')
+        +(masterSku?'<div style="font-size:12px;color:#6b7280;font-family:monospace;">Master: '+masterSku+'</div>':'')
+        +(packSku?'<div style="font-size:12px;color:#6b7280;font-family:monospace;">Pack: '+packSku+'</div>':'')
+        +(babySku?'<div style="font-size:12px;color:#6b7280;font-family:monospace;">Baby: '+babySku+'</div>':'')
+        +(retailPrice!=null?'<div style="font-size:12px;color:#059669;font-weight:600;margin-top:4px;">Retail: '+m(retailPrice,cur)+'</div>':'')
       +'</td>'
-      +'<td class="num mono" style="font-size:11px;color:#8a9097;">'+(l.sku||'—')+'</td>'
-      +'<td class="num">'+fn(l.quantity)+'</td>'
-      +'<td class="num">'+(ci!=null?m(ci,d.currency):'—')+'</td>'
-      +'<td class="num">'+m(l.unit_price,d.currency)+'</td>'
-      +'<td class="num">'+m(l.line_amount,d.currency)+'</td>'
+      +'<td style="padding:16px 14px;text-align:center;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:16px;font-weight:700;color:#0f172a;font-family:monospace;">'+fn(l.quantity)+'</td>'
+      +'<td style="padding:16px 14px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;font-family:monospace;">'+(ci!=null?m(ci,cur):'—')+'</td>'
+      +'<td style="padding:16px 14px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;font-family:monospace;">'+m(l.unit_price,cur)+'</td>'
+      +'<td style="padding:16px 18px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:15px;font-weight:700;color:#0f172a;font-family:monospace;">'+m(l.line_amount,cur)+'</td>'
       +'</tr>';
   }).join('');
-  const termsExtra = [shippingMethod?'<div><div class="lbl">Shipping</div><div class="tv">'+shippingMethod+'</div></div>':'', testingRequired?'<div><div class="lbl">Testing</div><div class="tv" style="color:#7c3aed;font-weight:600">Required</div></div>':''].filter(Boolean).join('');
-  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+(d.po_number||'PO')+'</title>'
-+'<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Spline+Sans:wght@400;500&family=Spline+Sans+Mono:wght@400&display=swap" rel="stylesheet">'
-+'<style>*{box-sizing:border-box;margin:0;padding:0;}html,body{background:#fff;font-family:\'Spline Sans\',sans-serif;font-size:13px;color:#1a1d1f;}'
-+'.page{max-width:8.5in;margin:0 auto;padding:.9in .9in .8in;min-height:11in;}'
-+'.lbl{font-family:\'Spline Sans Mono\',monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:#8a9097;}'
-+'.num{font-family:\'Spline Sans Mono\',monospace;}.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:48px;}'
-+'.logo{height:52px;}.title-row{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px;}'
-+'h1{font-family:\'Fraunces\',serif;font-weight:400;font-size:30px;}'
-+'.pov{font-family:\'Spline Sans Mono\',monospace;font-size:15px;margin-top:5px;text-align:right;}'
-+'.client-banner{background:#f8f9fa;border-left:3px solid #1a1d1f;padding:10px 16px;margin-bottom:40px;display:flex;align-items:baseline;gap:16px;}'
-+'.client-banner .lbl{margin-bottom:0;}.client-banner .name{font-size:16px;font-weight:600;font-family:\'Fraunces\',serif;}'
-+'.parties{display:grid;grid-template-columns:1fr 1fr;gap:56px;margin-bottom:46px;}'
-+'.party-name{font-size:14px;font-weight:500;margin-bottom:5px;margin-top:11px;}.party-body{font-size:12px;line-height:1.75;color:#8a9097;}'
-+'.terms{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:24px;padding-top:22px;border-top:1px solid #ececec;margin-bottom:50px;}'
-+'.tv{font-size:13px;font-weight:500;margin-top:7px;}'
-+'table{width:100%;border-collapse:collapse;}'
-+'thead th{font-family:\'Spline Sans Mono\',monospace;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:#8a9097;text-align:right;font-weight:400;padding:0 0 14px;}'
-+'thead th.l{text-align:left;}tbody td{font-size:12.5px;padding:16px 0;border-top:1px solid #ececec;text-align:right;vertical-align:top;}'
-+'tbody td.l{text-align:left;padding-right:24px;}.desc{font-weight:500;font-size:13px;}.sku{font-family:\'Spline Sans Mono\',monospace;font-size:10px;color:#c9ccce;margin-top:3px;}'
-+'.carton{font-size:10.5px;color:#8a9097;margin-top:3px;line-height:1.5;}'
-+'.foot{display:grid;grid-template-columns:1fr 280px;gap:60px;margin-top:46px;}'
-+'.nb{font-size:11.5px;line-height:1.8;color:#8a9097;margin-top:12px;}'
-+'.tr{display:flex;justify-content:space-between;padding:9px 0;font-size:12.5px;}.tr .k{color:#8a9097;}.tr .v{font-family:\'Spline Sans Mono\',monospace;}'
-+'.grand{display:flex;justify-content:space-between;padding:16px 0 0;margin-top:8px;border-top:1px solid #1a1d1f;}'
-+'.grand .k{font-family:\'Fraunces\',serif;font-size:14px;}.grand .v{font-family:\'Spline Sans Mono\',monospace;font-size:19px;}'
-+'.dep{display:flex;justify-content:space-between;padding-top:12px;font-size:11.5px;color:#8a9097;}.dep .v{font-family:\'Spline Sans Mono\',monospace;}'
-+'.sign{display:grid;grid-template-columns:1fr 1fr;gap:56px;margin-top:80px;}'
-+'.sline{border-top:1px solid #c9ccce;padding-top:8px;}'
-+'.pf{margin-top:54px;display:flex;justify-content:space-between;font-family:\'Spline Sans Mono\',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#c9ccce;}'
-+'@media print{@page{size:letter;margin:0;}.page{padding:.85in .9in;}}'
-+'</style></head><body>'
-+'<div class="page">'
-+'<div class="head"><img class="logo" src="/logo.png" alt="King Universal"></div>'
-+'<div class="title-row"><h1>Purchase Order</h1><div><div class="lbl">PO Number</div><div class="pov">'+(d.po_number||'—')+'</div></div></div>'
-+(clientName ? '<div class="client-banner"><span class="lbl">Prepared for</span><span class="name">'+clientName+'</span></div>' : '<div style="margin-bottom:40px"></div>')
-+'<div class="parties">'
-+'<div><div class="lbl">Supplier</div><div class="party-name">'+(d.supplier?.name||'—')+'</div><div class="party-body">'+(d.supplier?.contact?'Attn: '+d.supplier.contact+'<br>':'')+(d.supplier?.lines||[]).join('<br>')+(d.supplier?.email?'<br>'+d.supplier.email:'')+'</div></div>'
-+'<div><div class="lbl">Ship To</div><div class="party-name">'+(d.ship_to?.name||'King Universal Inc.')+'</div><div class="party-body">'+(deliveryAddress?deliveryAddress.replace(/\n/g,'<br>'):(d.ship_to?.lines||[]).join('<br>'))+'</div></div>'
+
+  const termBoxes = [
+    ['Order Date', fd(d.order_date)],
+    ['Ship By', fd(d.required_ship_date||d.requested_ship_date)],
+    ['Incoterm', d.incoterm||'—'],
+    ['Payment Terms', d.payment_terms||'—'],
+    shippingMethod ? ['Shipping Method', shippingMethod] : null,
+    testingRequired ? ['Testing', 'REQUIRED'] : null,
+  ].filter(Boolean).map(([l,v]) =>
+    '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;">'
+    +'<div style="font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;">'+l+'</div>'
+    +'<div style="font-size:15px;font-weight:600;color:'+(l==='Testing'?'#7c3aed':'#0f172a')+';">'+v+'</div>'
+    +'</div>'
+  ).join('');
+
+  const subtotal = t.subtotal != null ? t.subtotal : (d.lines||[]).reduce((a,l)=>a+(Number(l.line_amount)||0),0);
+  const grandTotal = t.grand_total != null ? t.grand_total : subtotal + (Number(t.mold_fee)||0);
+
+  return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
++'<title>Purchase Order — '+(d.client_po||d.po_number||'')+'</title>'
++'<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">'
++'<style>'
++'*{box-sizing:border-box;margin:0;padding:0;}'
++'html,body{font-family:\'Inter\',system-ui,sans-serif;font-size:14px;color:#0f172a;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact;}'
++'.page{max-width:820px;margin:0 auto;padding:48px;}'
++'@media print{@page{size:A4;margin:20mm;}.page{padding:0;max-width:none;}}'
++'</style>'
++'</head><body><div class="page">'
+
+// ── Header bar ──
++'<div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:28px;border-bottom:3px solid #0c1322;margin-bottom:32px;">'
+  +'<div>'
+    +'<div style="font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">King Universal Inc.</div>'
+    +'<div style="font-size:36px;font-weight:800;color:#0c1322;letter-spacing:-.02em;line-height:1;">Purchase Order</div>'
+  +'</div>'
+  +'<div style="text-align:right;">'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;">PO Reference</div>'
+    +'<div style="font-size:26px;font-weight:700;color:#0c1322;font-family:\'JetBrains Mono\',monospace;letter-spacing:-.01em;">'+(d.client_po||d.po_number||'—')+'</div>'
+    +'<div style="font-size:12px;color:#94a3b8;margin-top:4px;">Issued '+fd(d.order_date)+'</div>'
+  +'</div>'
 +'</div>'
-+'<div class="terms">'
-+'<div><div class="lbl">Order Date</div><div class="tv">'+fd(d.order_date)+'</div></div>'
-+'<div><div class="lbl">Ship By</div><div class="tv">'+fd(d.required_ship_date||d.requested_ship_date)+'</div></div>'
-+(d.client_po?'<div><div class="lbl">Client PO</div><div class="tv">'+d.client_po+'</div></div>':'')
-+'<div><div class="lbl">Incoterm</div><div class="tv">'+(d.incoterm||'—')+'</div></div>'
-+'<div><div class="lbl">Payment</div><div class="tv">'+(d.payment_terms||'—')+'</div></div>'
-+termsExtra
+
+// ── Client banner ──
++(clientName?'<div style="background:linear-gradient(135deg,#0c1322 0%,#1e3a5f 100%);border-radius:12px;padding:18px 24px;margin-bottom:28px;display:flex;align-items:center;justify-content:space-between;">'
+  +'<div>'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.5);margin-bottom:4px;">Prepared For</div>'
+    +'<div style="font-size:20px;font-weight:700;color:#fff;">'+clientName+'</div>'
+  +'</div>'
+  +(d.client_po?'<div style="background:rgba(255,255,255,.12);border-radius:8px;padding:10px 16px;text-align:center;">'
+    +'<div style="font-size:10px;color:rgba(255,255,255,.5);margin-bottom:2px;">CLIENT PO</div>'
+    +'<div style="font-size:16px;font-weight:700;color:#fff;font-family:\'JetBrains Mono\',monospace;">'+d.client_po+'</div>'
+    +'</div>':'')
++'</div>':'')
+
+// ── Parties ──
++'<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:28px;">'
+  +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:20px 22px;">'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:10px;">Supplier / Factory</div>'
+    +'<div style="font-size:17px;font-weight:700;color:#0f172a;margin-bottom:6px;">'+(d.supplier?.name||'—')+'</div>'
+    +(d.supplier?.email?'<div style="font-size:13px;color:#64748b;">'+d.supplier.email+'</div>':'')
+  +'</div>'
+  +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:20px 22px;">'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:10px;">Ship To</div>'
+    +'<div style="font-size:17px;font-weight:700;color:#0f172a;margin-bottom:6px;">'+(d.ship_to?.name||'King Universal Inc.')+'</div>'
+    +(deliveryAddress?'<div style="font-size:13px;color:#64748b;line-height:1.6;">'+deliveryAddress.replace(/\n/g,'<br>')+'</div>':'')
+  +'</div>'
 +'</div>'
-+'<table><thead><tr><th class="l">Description</th><th>Style / SKU</th><th>Qty</th><th>CI Value</th><th>Unit Cost</th><th>Amount</th></tr></thead><tbody>'+lines+'</tbody></table>'
-+'<div class="foot">'
-+'<div><div class="lbl">Notes</div><div class="nb">'+(d.notes||'')+'</div>'+(pallet?'<div class="lbl" style="margin-top:22px">Palletization</div><div class="nb">'+pallet+'</div>':'')+(t.total_cartons?'<div class="lbl" style="margin-top:22px">Logistics</div><div class="nb">'+fn(t.total_cartons)+' cartons \u00b7 '+t.total_cbm+' CBM \u00b7 '+fn(t.total_gross_weight_kg)+' kg</div>':'')+'</div>'
-+'<div>'
-+'<div class="tr"><span class="k">Goods subtotal</span><span class="v">'+m(t.subtotal,d.currency)+'</span></div>'
-+(t.mold_fee?'<div class="tr"><span class="k">Tooling / mold</span><span class="v">'+m(t.mold_fee,d.currency)+'</span></div>':'')
-+(t.sample_fee?'<div class="tr" style="opacity:.6;font-style:italic"><span class="k">Sample fee (sep.)</span><span class="v">'+m(t.sample_fee,d.currency)+'</span></div>':'')
-+'<div class="grand"><span class="k">Total \u2014 '+(d.currency||'USD')+'</span><span class="v">'+m(t.grand_total,d.currency)+'</span></div>'
-+(t.deposit_amount?'<div class="dep"><span>'+d.deposit_percent+'% deposit</span><span class="v">'+m(t.deposit_amount,d.currency)+'</span></div>':'')
+
+// ── Terms boxes ──
++'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:32px;">'
++termBoxes
 +'</div>'
+
+// ── Line items table ──
++'<div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;margin-bottom:28px;">'
+  +'<div style="background:#0c1322;padding:14px 18px;display:grid;grid-template-columns:1fr 80px 110px 110px 120px;gap:8px;">'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);">Description</div>'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);text-align:center;">Qty</div>'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);text-align:right;">CI Value</div>'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);text-align:right;">Unit Cost</div>'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);text-align:right;">Amount</div>'
+  +'</div>'
+  +'<table style="width:100%;border-collapse:collapse;"><tbody>'+lines+'</tbody></table>'
 +'</div>'
-+'<div class="sign"><div><div class="sline"><div class="lbl">Authorized \u2014 King Universal Inc.</div></div></div><div><div class="sline"><div class="lbl">Accepted \u2014 Supplier</div></div></div></div>'
-+'<div class="pf"><span>King Universal Inc.</span><span>'+(d.po_number||'')+'</span></div>'
+
+// ── Totals + notes ──
++'<div style="display:grid;grid-template-columns:1fr 300px;gap:32px;margin-bottom:40px;">'
+  +'<div>'
+    +(pallet?'<div style="margin-bottom:16px;"><div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;">Palletization</div><div style="font-size:13.5px;color:#374151;line-height:1.6;">'+pallet+'</div></div>':'')
+    +(d.notes?'<div><div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;">Notes</div><div style="font-size:13.5px;color:#374151;line-height:1.6;">'+d.notes+'</div></div>':'')
+  +'</div>'
+  +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:20px 22px;">'
+    +'<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e2e8f0;"><span style="font-size:14px;color:#64748b;">Subtotal</span><span style="font-size:14px;font-family:\'JetBrains Mono\',monospace;color:#374151;">'+m(subtotal,cur)+'</span></div>'
+    +(t.mold_fee?'<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e2e8f0;"><span style="font-size:14px;color:#64748b;">Tooling / Mold</span><span style="font-size:14px;font-family:\'JetBrains Mono\',monospace;color:#374151;">'+m(t.mold_fee,cur)+'</span></div>':'')
+    +'<div style="display:flex;justify-content:space-between;padding:14px 0 0;margin-top:4px;"><span style="font-size:17px;font-weight:700;color:#0f172a;">Total '+cur+'</span><span style="font-size:20px;font-weight:800;color:#0c1322;font-family:\'JetBrains Mono\',monospace;">'+m(grandTotal,cur)+'</span></div>'
+    +(t.deposit_amount?'<div style="display:flex;justify-content:space-between;margin-top:8px;padding:10px 12px;background:#eff6ff;border-radius:8px;"><span style="font-size:13px;color:#3730a3;">'+( d.deposit_percent||'')+'% Deposit Due</span><span style="font-size:13px;font-weight:600;color:#3730a3;font-family:\'JetBrains Mono\',monospace;">'+m(t.deposit_amount,cur)+'</span></div>':'')
+  +'</div>'
++'</div>'
+
+// ── Signature block ──
++'<div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;padding-top:32px;border-top:2px solid #e5e7eb;">'
+  +'<div><div style="border-top:2px solid #0c1322;padding-top:10px;font-size:12px;font-weight:600;color:#64748b;letter-spacing:.06em;text-transform:uppercase;">Authorized — King Universal Inc.</div><div style="margin-top:40px;border-top:1px solid #d1d5db;padding-top:8px;font-size:11px;color:#94a3b8;">Signature / Date</div></div>'
+  +'<div><div style="border-top:2px solid #0c1322;padding-top:10px;font-size:12px;font-weight:600;color:#64748b;letter-spacing:.06em;text-transform:uppercase;">Accepted — Supplier</div><div style="margin-top:40px;border-top:1px solid #d1d5db;padding-top:8px;font-size:11px;color:#94a3b8;">Signature / Date</div></div>'
++'</div>'
+
 +'</div></body></html>';
 }
 
