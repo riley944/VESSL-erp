@@ -2165,44 +2165,100 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
 
 // ── Companies ────────────────────────────────────────────────────────────────
 function Companies() {
-  const types = ['client','factory','carrier','freight_forwarder'];
-  const [tab, setTab]   = useState(0);
-  const [rows, setRows] = useState([]);
+  const TYPE_LABELS = { client:'Clients', factory:'Factories', carrier:'Carriers', freight_forwarder:'Freight Forwarders' };
+  const TYPE_KEYS = Object.keys(TYPE_LABELS);
+  const [tab, setTab]     = useState(0);
+  const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch]   = useState('');
   const [showCreate, setShowCreate] = useState(false);
-  const [openId, setOpenId] = useState(null);
+  const [openId, setOpenId]   = useState(null);
+
   const load = async () => {
     setLoading(true);
-    const { data } = await SB.from('companies').select('*,contacts(full_name,email,phone,is_primary)').eq('type',types[tab]).order('name');
+    const { data } = await SB.from('companies')
+      .select('*,contacts(full_name,email,phone,is_primary)')
+      .eq('type', TYPE_KEYS[tab]).order('name');
     setRows(data||[]); setLoading(false);
   };
-  useEffect(()=>{ load(); },[tab]);
+  useEffect(() => { load(); setSearch(''); }, [tab]);
+
+  const shown = search.trim()
+    ? rows.filter(c => c.name.toLowerCase().includes(search.toLowerCase()) ||
+        (c.email||'').toLowerCase().includes(search.toLowerCase()))
+    : rows;
+
   return (
     <>
-      <div className="tabs">
-        {types.map((t,i)=><button key={t} className={`tab ${i===tab?'active':''}`} onClick={()=>setTab(i)}>{t.replace(/_/g,' ')}</button>)}
+      {/* ── Type tabs ── */}
+      <div className="co-tabs">
+        {TYPE_KEYS.map((t,i) => (
+          <button key={t} className={'co-tab' + (i===tab?' active':'')} onClick={()=>setTab(i)}>
+            {TYPE_LABELS[t]}
+          </button>
+        ))}
       </div>
-      <div className="section-card">
-        {loading ? <div className="loading">Loading...</div> : rows.length ? (
-          <table className="data-table">
-            <thead><tr><th>Company</th><th>Type</th><th>Contact</th><th>Email</th></tr></thead>
-            <tbody>
-              {rows.map(c=>{
-                const p=(c.contacts||[]).find(x=>x.is_primary)||(c.contacts||[])[0]||{};
-                return <tr key={c.id} onClick={()=>setOpenId(c.id)}>
-                  <td><div style={{display:'flex',alignItems:'center',gap:'10px'}}>
-                    <span style={{width:'26px',height:'26px',borderRadius:'7px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'10px',fontWeight:600,fontFamily:'var(--mono)',color:'#0b1120',background:companyColor(c.name)}}>{initials(c.name)}</span>
-                    <span style={{fontWeight:500}}>{c.name}</span>
-                  </div></td>
-                  <td><Badge status={c.type} /></td>
-                  <td>{p.full_name||'—'}</td>
-                  <td>{p.email||'—'}</td>
-                </tr>;
-              })}
-            </tbody>
-          </table>
-        ) : <div className="empty"><h3>No {types[tab].replace(/_/g,' ')}s yet</h3><p>Add your first to get started.</p></div>}
+
+      {/* ── Search + count ── */}
+      <div className="co-toolbar">
+        <div className="co-search-wrap">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input className="co-search" placeholder={'Search ' + TYPE_LABELS[TYPE_KEYS[tab]].toLowerCase() + '…'} value={search} onChange={e=>setSearch(e.target.value)} />
+        </div>
+        <span style={{fontSize:12,color:'var(--muted)',fontFamily:'var(--mono)'}}>{shown.length} {shown.length===1 ? TYPE_KEYS[tab].replace(/_/g,' ') : TYPE_LABELS[TYPE_KEYS[tab]].toLowerCase()}</span>
       </div>
+
+      {/* ── Grid ── */}
+      {loading ? <div className="loading">Loading…</div> : shown.length === 0 ? (
+        <div className="empty">
+          <div className="ico">🏢</div>
+          <h3>{search ? 'No matches' : 'No ' + TYPE_LABELS[TYPE_KEYS[tab]].toLowerCase() + ' yet'}</h3>
+          <p>{search ? 'Try a different search.' : 'Add your first to get started.'}</p>
+        </div>
+      ) : (
+        <div className="co-grid">
+          {shown.map(c => {
+            const primary = (c.contacts||[]).find(x=>x.is_primary) || (c.contacts||[])[0] || {};
+            const col = companyColor(c.name);
+            return (
+              <div key={c.id} className="co-card" onClick={()=>setOpenId(c.id)}>
+                <div className="co-card-head">
+                  <div className="co-avatar" style={{background:col}}>{initials(c.name)}</div>
+                  <div className="co-card-meta">
+                    <div className="co-card-name">{c.name}</div>
+                    {c.vendor_number && <div className="co-card-sub mono">#{c.vendor_number}</div>}
+                  </div>
+                </div>
+                <div className="co-card-body">
+                  {primary.full_name && (
+                    <div className="co-card-row">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                      <span>{primary.full_name}</span>
+                    </div>
+                  )}
+                  {(primary.email||c.email) && (
+                    <div className="co-card-row">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                      <span>{primary.email||c.email}</span>
+                    </div>
+                  )}
+                  {(primary.phone||c.phone) && (
+                    <div className="co-card-row">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.62 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.18 6.18l.97-.87a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 17z"/></svg>
+                      <span>{primary.phone||c.phone}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="co-card-foot">
+                  <span className="co-contact-count">{(c.contacts||[]).length} contact{(c.contacts||[]).length!==1?'s':''}</span>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {showCreate && <CreateCompanyModal onClose={()=>setShowCreate(false)} onCreated={()=>{setShowCreate(false);load();}} />}
       {openId && <CompanyDetailModal id={openId} onClose={()=>setOpenId(null)} onSaved={()=>{setOpenId(null);load();}} />}
     </>
