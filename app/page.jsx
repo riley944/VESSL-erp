@@ -371,9 +371,9 @@ function Dashboard({ navigate }) {
         { data: pos },
         { data: ships },
       ] = await Promise.all([
-        SB.from('sales_orders').select('id,so_number,status,currency,order_date,client_company_id,client:companies!client_company_id(name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(quantity,unit_price))),order_costs(amount)').order('created_at',{ascending:false}).limit(200),
-        SB.from('purchase_orders').select('id,order_number,status').not('status','in','("closed","cancelled")'),
-        SB.from('shipments').select('id,shipment_number,status,estimated_arrival,actual_arrival,origin_port:ports!origin_port_id(name,unlocode),destination_port:ports!destination_port_id(name,unlocode),companies!carrier_company_id(name)').in('status',['created','at_origin_port','in_transit','at_transshipment','at_destination_port','customs','out_for_delivery']).order('estimated_arrival').limit(20),
+        SB.from('sales_orders').select('id,so_number,client_po_number,status,currency,order_date,client_company_id,client:companies!client_company_id(name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(quantity,unit_price))),order_costs(amount)').order('created_at',{ascending:false}).limit(200),
+        SB.from('purchase_orders').select('id,order_number,client_po_number,status').not('status','in','("closed","cancelled")'),
+        SB.from('shipments').select('id,shipment_number,status,estimated_arrival,actual_arrival,origin_port:ports!origin_port_id(name,unlocode),destination_port:ports!destination_port_id(name,unlocode),companies!carrier_company_id(name),shipment_pos(purchase_orders(client_po_number,order_number))').in('status',['created','at_origin_port','in_transit','at_transshipment','at_destination_port','customs','out_for_delivery']).order('estimated_arrival').limit(20),
       ]);
 
       const soList = sos || [];
@@ -542,10 +542,12 @@ function Dashboard({ navigate }) {
                 {shipList.slice(0,5).map((sh,i) => {
                   const days = etaDays(sh.estimated_arrival);
                   const urgent = days !== null && days <= 7;
+                  const poRef = sh.shipment_pos?.[0]?.purchase_orders?.client_po_number || sh.shipment_pos?.[0]?.purchase_orders?.order_number || '—';
                   return (
                     <div key={sh.id} className="db-ship-row" style={{borderBottom:i<Math.min(shipList.length,5)-1?'1px solid var(--line-2)':'none'}}>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'5px'}}>
+                          <span className="mono" style={{fontSize:'12.5px',fontWeight:700,color:'var(--ink)'}}>{poRef}</span>
                           <span className={'badge b-shipped'} style={{fontSize:'10px',padding:'2px 8px'}}><span className="dot"/>In transit</span>
                         </div>
                         <div style={{display:'flex',alignItems:'center',gap:'6px',fontSize:'12px',color:'var(--muted)'}}>
@@ -816,6 +818,7 @@ function SalesOrderDetail({id,navigate}){
   const [invoiceNum,setInvoiceNum]=useState('');
   const [savingInv,setSavingInv]=useState(false);
   const [costs,setCosts]=useState([]);
+  const [shipment,setShipment]=useState(null);
   const load=async()=>{
     setLoading(true);
     const [{data:soD},{data:itmD,error:itmErr},{data:posD},{data:costD}]=await Promise.all([
@@ -826,7 +829,19 @@ function SalesOrderDetail({id,navigate}){
     ]);
     if(itmErr) console.error('SO items load error:', itmErr);
     setSo(soD); setItems(itmD||[]); setInvoiceNum(soD?.invoice_number||''); setCosts(costD||[]);
-    setLinkedPos((posD||[]).map(p=>p.purchase_orders).filter(Boolean));
+    const pos=(posD||[]).map(p=>p.purchase_orders).filter(Boolean);
+    setLinkedPos(pos);
+    // Pull the shipment linked to any of this SO's POs (logistics sync)
+    let sh=null;
+    if(pos.length){
+      const poIds=pos.map(p=>p.id);
+      const {data:links}=await SB.from('shipment_pos').select('shipment_id').in('purchase_order_id',poIds).limit(1);
+      if(links&&links.length){
+        const {data:s}=await SB.from('shipments').select('*,origin_port:ports!origin_port_id(name,unlocode),destination_port:ports!destination_port_id(name,unlocode),carrier:companies!carrier_company_id(name)').eq('id',links[0].shipment_id).single();
+        sh=s;
+      }
+    }
+    setShipment(sh);
     setLoading(false);
   };
   useEffect(()=>{ load(); },[id]);
@@ -939,6 +954,34 @@ function SalesOrderDetail({id,navigate}){
           <div style={{padding:'20px 18px',fontSize:'13px',color:'var(--muted)',display:'flex',alignItems:'center',gap:'12px'}}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             <span>No factory POs linked yet — margin data won't show until one is linked. <button className="btn btn-ghost btn-sm" onClick={()=>setEditing(true)}>Link a PO →</button></span>
+          </div>
+        )}
+      </div>
+
+      <div className="section-card" style={{marginBottom:'20px'}}>
+        <div className="section-head"><h3>Logistics &amp; Shipment</h3>{shipment&&<Badge status={shipment.status==='in_transit'?'shipped':shipment.status==='delivered'?'delivered':'confirmed'} />}</div>
+        {!shipment ? (
+          <div style={{padding:'20px 18px',fontSize:'13px',color:'var(--muted)',display:'flex',alignItems:'center',gap:'12px'}}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M1 6h13v9H1zM14 9h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg>
+            <span>No shipment yet. Logistics filled on a linked PO or its shipment will appear here automatically.</span>
+          </div>
+        ) : (
+          <div style={{padding:'4px 0'}}>
+            <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'10px 18px'}}>
+              <span style={{flex:1}}>
+                <span style={{fontSize:'14px',fontWeight:600,color:'var(--ink)'}}>{shipment.origin_port?.unlocode||shipment.origin_port?.name||'—'}</span>
+                <svg width="16" height="9" viewBox="0 0 24 8" fill="none" stroke="var(--faint)" strokeWidth="1.8" style={{margin:'0 8px'}}><path d="M0 4h20M17 1l4 3-4 3"/></svg>
+                <span style={{fontSize:'14px',fontWeight:600,color:'var(--ink)'}}>{shipment.destination_port?.name||shipment.destination_port?.unlocode||'—'}</span>
+              </span>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',borderTop:'1px solid var(--line-2)'}}>
+              {[['Vessel',shipment.vessel_name],['Voyage #',shipment.voyage_no],['Container #',shipment.container_no],['Booking #',shipment.booking_number],['Bill of Lading',shipment.bill_of_lading],['Carrier',shipment.carrier?.name],['ETD',fmtDate(shipment.estimated_departure)],['ETA',fmtDate(shipment.estimated_arrival)]].map(([l,v],i)=>(
+                <div key={l} style={{padding:'11px 18px',borderBottom:i<6?'1px solid var(--line-2)':'none',borderRight:i%2===0?'1px solid var(--line-2)':'none'}}>
+                  <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'4px'}}>{l}</div>
+                  <div style={{fontSize:'13px',fontWeight:600,color:v?'var(--ink)':'var(--faint)',fontFamily:l.includes('#')||l==='Bill of Lading'?'var(--mono)':'inherit'}}>{v||'—'}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -1085,7 +1128,7 @@ function CreateSOModal({onClose,onCreated}){
     Promise.all([
       SB.from('companies').select('id,name,vendor_number').order('name'),
       SB.from('quotes').select('*').order('product'),
-      SB.from('purchase_orders').select('id,order_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300),
+      SB.from('purchase_orders').select('id,order_number,client_po_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300),
       SB.from('sales_orders').select('so_number').order('created_at',{ascending:false}).limit(100),
     ]).then(([{data:cli},{data:qs},{data:pos},{data:sos}])=>{
       setClients(cli||[]); setQuotes(qs||[]); setAvailPOs(pos||[]);
@@ -1110,7 +1153,7 @@ function CreateSOModal({onClose,onCreated}){
   const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
   const prevRev=items.reduce((a,it)=>a+(Number(it.qty)||0)*(Number(it.price)||0),0);
   const filtQ=qSearch?quotes.filter(q=>(q.product||'').toLowerCase().includes(qSearch.toLowerCase())||(q.client||'').toLowerCase().includes(qSearch.toLowerCase())||(q.factory||'').toLowerCase().includes(qSearch.toLowerCase())||(q.sku||'').toLowerCase().includes(qSearch.toLowerCase())):quotes;
-  const filtPOs=availPOs.filter(p=>!poSearch||(p.order_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.companies?.name||'').toLowerCase().includes(poSearch.toLowerCase()));
+  const filtPOs=availPOs.filter(p=>!poSearch||(p.client_po_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.order_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.companies?.name||'').toLowerCase().includes(poSearch.toLowerCase()));
   const submit=async()=>{
     if(!form.clientPO.trim()){window._toast?.('Client PO number is required','err');return;}
     if(!items.filter(it=>it.desc.trim()).length){window._toast?.('Add at least one line item','err');return;}
@@ -1294,7 +1337,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   const [showNC,setShowNC]=useState(false);
   const [ncName,setNcName]=useState('');
   const [loading,setLoading]=useState(false);
-  useEffect(()=>{ Promise.all([SB.from('companies').select('id,name').order('name'),SB.from('purchase_orders').select('id,order_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300)]).then(([{data:cli},{data:pos}])=>{setClients(cli||[]);setAvailPOs(pos||[]);}); },[]);
+  useEffect(()=>{ Promise.all([SB.from('companies').select('id,name').order('name'),SB.from('purchase_orders').select('id,order_number,client_po_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300)]).then(([{data:cli},{data:pos}])=>{setClients(cli||[]);setAvailPOs(pos||[]);}); },[]);
   const addNC=async()=>{ const n=ncName.trim(); if(!n) return; const {data:co}=await SB.from('companies').upsert({name:n,type:'client'},{onConflict:'name,type'}).select('id,name').single(); if(co){setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]);f('clientId')(co.id);} setShowNC(false);setNcName(''); };
   const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
   const save=async()=>{
@@ -1321,11 +1364,16 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
     }
     if(removed.length) await SB.from('sales_order_items').delete().in('id',removed);
     // PO links: safe to replace (junction rows only, no item data)
-    await SB.from('sales_order_pos').delete().eq('sales_order_id',so.id);
-    if(linkedPOIds.length) await SB.from('sales_order_pos').insert(linkedPOIds.map(pid=>({sales_order_id:so.id,purchase_order_id:pid})));
+    const { error: delErr } = await SB.from('sales_order_pos').delete().eq('sales_order_id',so.id);
+    if(delErr){ window._toast?.('Could not update PO links: '+delErr.message,'err'); setLoading(false); return; }
+    if(linkedPOIds.length){
+      const { error: insErr } = await SB.from('sales_order_pos').insert(linkedPOIds.map(pid=>({sales_order_id:so.id,purchase_order_id:pid})));
+      if(insErr){ window._toast?.('Could not link PO: '+insErr.message,'err'); setLoading(false); return; }
+    }
+    window._toast?.('Saved','ok');
     setLoading(false); onSaved();
   };
-  const filtPOs=availPOs.filter(p=>!poSearch||(p.order_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.companies?.name||'').toLowerCase().includes(poSearch.toLowerCase()));
+  const filtPOs=availPOs.filter(p=>!poSearch||(p.client_po_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.order_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.companies?.name||'').toLowerCase().includes(poSearch.toLowerCase()));
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       {showPicker && <QuotePickerModal priceField="client" onPick={onPickItem} onClose={()=>setShowPicker(false)} />}
@@ -1742,6 +1790,14 @@ function OrderDetail({ id, navigate }) {
       </div>
       {confirmDel && <ConfirmModal title={confirmDel.title} message={confirmDel.message} onConfirm={confirmDel.onConfirm} onCancel={()=>setConfirmDel(null)} />}
       {editing && <PoEditModal po={po} items={items} onClose={()=>setEditing(false)} onSaved={()=>{setEditing(false);load();}} />}
+      <div style={{marginBottom:'22px'}}>
+        <div style={{fontSize:'10px',fontWeight:700,letterSpacing:'.14em',textTransform:'uppercase',color:'var(--muted)',marginBottom:'6px'}}>Purchase Order</div>
+        <div style={{display:'flex',alignItems:'center',gap:'14px',flexWrap:'wrap'}}>
+          <h1 style={{fontFamily:'var(--mono)',fontSize:'30px',fontWeight:700,color:'var(--ink)',letterSpacing:'-.01em',lineHeight:1}}>{po.client_po_number||po.order_number||'—'}</h1>
+          <Badge status={po.status} />
+        </div>
+        {po.client?.name && <div style={{fontSize:'14px',color:'var(--muted)',marginTop:'6px'}}>{po.client.name}{po.companies?.name?' · '+po.companies.name:''}</div>}
+      </div>
       <div className="detail-grid">
         <div className="detail-block">
           <div className="blabel">Factory</div>
