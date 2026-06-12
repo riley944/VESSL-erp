@@ -827,15 +827,23 @@ function SalesOrderDetail({id,navigate}){
   const [shipment,setShipment]=useState(null);
   const load=async()=>{
     setLoading(true);
-    const [{data:soD},{data:itmD,error:itmErr},{data:posD},{data:costD}]=await Promise.all([
+    const [{data:soD},{data:itmD,error:itmErr},{data:posD,error:posErr},{data:costD}]=await Promise.all([
       SB.from('sales_orders').select('*,client:companies!client_company_id(id,name,vendor_number)').eq('id',id).single(),
       SB.from('sales_order_items').select('*').eq('sales_order_id',id),
-      SB.from('sales_order_pos').select('purchase_orders(id,order_number,client_po_number,status,currency,companies!factory_company_id(name),purchase_order_items(description,quantity,unit_price))').eq('sales_order_id',id),
+      SB.from('sales_order_pos').select('purchase_orders(id,order_number,client_po_number,status,currency,factory_company_id,purchase_order_items(description,quantity,unit_price))').eq('sales_order_id',id),
       SB.from('order_costs').select('*').eq('sales_order_id',id).order('created_at'),
     ]);
     if(itmErr) console.error('SO items load error:', itmErr);
+    if(posErr) console.error('SO linked-PO load error:', posErr);
     setSo(soD); setItems(itmD||[]); setInvoiceNum(soD?.invoice_number||''); setCosts(costD||[]);
-    const pos=(posD||[]).map(p=>p.purchase_orders).filter(Boolean);
+    let pos=(posD||[]).map(p=>p.purchase_orders).filter(Boolean);
+    // Resolve factory names separately so a join failure can't blank the PO list
+    const facIds=[...new Set(pos.map(p=>p.factory_company_id).filter(Boolean))];
+    if(facIds.length){
+      const {data:facs}=await SB.from('companies').select('id,name').in('id',facIds);
+      const facMap={}; (facs||[]).forEach(f=>{facMap[f.id]=f.name;});
+      pos=pos.map(p=>({...p,companies:{name:facMap[p.factory_company_id]||'—'}}));
+    }
     setLinkedPos(pos);
     // Pull the shipment linked to any of this SO's POs (logistics sync)
     let sh=null;
@@ -843,7 +851,10 @@ function SalesOrderDetail({id,navigate}){
       const poIds=pos.map(p=>p.id);
       const {data:links}=await SB.from('shipment_pos').select('shipment_id').in('purchase_order_id',poIds).limit(1);
       if(links&&links.length){
-        const {data:s}=await SB.from('shipments').select('*,origin_port:ports!origin_port_id(name,unlocode),destination_port:ports!destination_port_id(name,unlocode),carrier:companies!carrier_company_id(name)').eq('id',links[0].shipment_id).single();
+        let s=null;
+        const shipRes=await SB.from('shipments').select('*,origin_port:ports!origin_port_id(name,unlocode),destination_port:ports!destination_port_id(name,unlocode),carrier:companies!carrier_company_id(name)').eq('id',links[0].shipment_id).single();
+        s=shipRes.data;
+        if(shipRes.error||!s){ const r=await SB.from('shipments').select('*').eq('id',links[0].shipment_id).single(); s=r.data; }
         sh=s;
       }
     }
@@ -1131,15 +1142,23 @@ function CreateSOModal({onClose,onCreated}){
   const tOf=q=>{try{return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]);}catch{return [];}};
   const clientPriceRange=q=>{const ps=tOf(q).map(t=>Number(t.client)||0).filter(Boolean);if(!ps.length)return null;const mn=Math.min(...ps),mx=Math.max(...ps);return mn===mx?money(mn):money(mn)+' – '+money(mx);};
   useEffect(()=>{
-    Promise.all([
-      SB.from('companies').select('id,name,vendor_number').order('name'),
-      SB.from('quotes').select('*').order('product'),
-      SB.from('purchase_orders').select('id,order_number,client_po_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300),
-      SB.from('sales_orders').select('so_number').order('created_at',{ascending:false}).limit(100),
-    ]).then(([{data:cli},{data:qs},{data:pos},{data:sos}])=>{
+    (async()=>{
+      const [{data:cli},{data:qs},{data:sos}] = await Promise.all([
+        SB.from('companies').select('id,name,vendor_number').order('name'),
+        SB.from('quotes').select('*').order('product'),
+        SB.from('sales_orders').select('so_number').order('created_at',{ascending:false}).limit(100),
+      ]);
+      // Load POs separately with a fallback so a join issue can't blank the list
+      let pos = null;
+      const poRes = await SB.from('purchase_orders').select('id,order_number,client_po_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300);
+      pos = poRes.data;
+      if (poRes.error || !pos) {
+        const retry = await SB.from('purchase_orders').select('id,order_number,client_po_number,status,factory_company_id').order('created_at',{ascending:false}).limit(300);
+        pos = retry.data;
+      }
       setClients(cli||[]); setQuotes(qs||[]); setAvailPOs(pos||[]);
       setForm(prev=>({...prev,num:genSONum((sos||[]).map(s=>s.so_number))}));
-    });
+    })();
   },[]);
   const addNC=async()=>{ const n=ncName.trim(); if(!n) return; const {data:co}=await SB.from('companies').upsert({name:n,type:'client'},{onConflict:'name,type'}).select('id,name').single(); if(co){setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]);f('clientId')(co.id);} setShowNC(false);setNcName(''); };
   const applyQuote=(q,tIdx)=>{
@@ -1338,12 +1357,26 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   const [showPicker,setShowPicker]=useState(false);
   const onPickItem=(li)=>setItems(prev=>[...prev,{id:null,desc:li.desc,sku:li.sku,qty:li.qty,price:li.price}]);
   const [availPOs,setAvailPOs]=useState([]);
+  const [poErr,setPoErr]=useState('');
   const [linkedPOIds,setLinkedPOIds]=useState((initLinkedPos||[]).map(p=>p.id));
   const [poSearch,setPOSearch]=useState('');
   const [showNC,setShowNC]=useState(false);
   const [ncName,setNcName]=useState('');
   const [loading,setLoading]=useState(false);
-  useEffect(()=>{ Promise.all([SB.from('companies').select('id,name').order('name'),SB.from('purchase_orders').select('id,order_number,client_po_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300)]).then(([{data:cli},{data:pos}])=>{setClients(cli||[]);setAvailPOs(pos||[]);}); },[]);
+  useEffect(()=>{
+    (async()=>{
+      const { data:cli } = await SB.from('companies').select('id,name').order('name');
+      let pos = null;
+      const poRes = await SB.from('purchase_orders').select('id,order_number,client_po_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300);
+      pos = poRes.data;
+      if (poRes.error || !pos) {
+        const retry = await SB.from('purchase_orders').select('id,order_number,client_po_number,status').order('created_at',{ascending:false}).limit(300);
+        pos = retry.data;
+        if (retry.error) setPoErr(retry.error.message);
+      }
+      setClients(cli||[]); setAvailPOs(pos||[]);
+    })();
+  },[]);
   const addNC=async()=>{ const n=ncName.trim(); if(!n) return; const {data:co}=await SB.from('companies').upsert({name:n,type:'client'},{onConflict:'name,type'}).select('id,name').single(); if(co){setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]);f('clientId')(co.id);} setShowNC(false);setNcName(''); };
   const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
   const save=async()=>{
@@ -1418,11 +1451,12 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
             </table>
           </div>
           <button className="btn btn-ghost btn-sm" style={{marginBottom:'16px'}} onClick={addItem}>+ Add Item</button>
-          <span className="form-section-label">Linked Factory POs</span>
+          <span className="form-section-label">Linked Factory POs <span style={{color:'var(--muted)',fontWeight:400}}>· {availPOs.length} in system</span></span>
           <div style={{marginBottom:'16px'}}>
             <input className="form-input" placeholder="Search by PO # or factory…" value={poSearch} onChange={e=>setPOSearch(e.target.value)} style={{marginBottom:'8px'}} />
+            {poErr && <div style={{padding:'10px 12px',marginBottom:'8px',background:'var(--hot-soft)',color:'var(--hot)',borderRadius:'8px',fontSize:'12px'}}>PO load error: {poErr}</div>}
             <div style={{maxHeight:'160px',overflowY:'auto',border:'1px solid var(--line-2)',borderRadius:'8px'}}>
-              {filtPOs.length===0&&<div style={{padding:'16px',textAlign:'center',color:'var(--muted)',fontSize:'13px'}}>No POs found</div>}
+              {filtPOs.length===0&&<div style={{padding:'16px',textAlign:'center',color:'var(--muted)',fontSize:'13px'}}>{availPOs.length===0?'No POs exist in the system yet':'No POs match your search'}</div>}
               {filtPOs.slice(0,25).map(po=>{ const on=linkedPOIds.includes(po.id); return (
                 <div key={po.id} onClick={()=>togglePO(po.id)} style={{display:'flex',alignItems:'center',gap:'10px',padding:'9px 14px',borderBottom:'1px solid var(--line-2)',cursor:'pointer',background:on?'rgba(52,97,224,.07)':'transparent'}}>
                   <div style={{width:'16px',height:'16px',borderRadius:'4px',border:'2px solid '+(on?'var(--accent)':'var(--line-2)'),background:on?'var(--accent)':'transparent',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
