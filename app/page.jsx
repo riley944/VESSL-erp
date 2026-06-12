@@ -24,16 +24,24 @@ const fmtDateTime = s => { if (!s) return ''; const d=new Date(s); return d.toLo
 const timeAgo = s => { if(!s) return ''; const m=Math.round((Date.now()-new Date(s))/60000); if(m<2) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<24) return h+'h'; const d=Math.round(h/24); if(d<7) return d+'d'; return fmtDate(s); };
 
 // ── Sales Orders constants ────────────────────────────────────────────────────
-const SO_STATUSES = ['received','confirmed','in_production','shipped','delivered','invoiced','closed'];
+const SO_STATUSES = ['received','confirmed','in_production','testing','shipped','delivered','invoiced','closed'];
 const SO_SM = {
   received:     {label:'Received',     color:'#6366f1',bg:'#eef2ff'},
   confirmed:    {label:'Confirmed',    color:'#3461e0',bg:'#eff6ff'},
   in_production:{label:'In Production',color:'#d97706',bg:'#fffbeb'},
+  testing:      {label:'Testing',      color:'#db2777',bg:'#fdf2f8'},
   shipped:      {label:'Shipped',      color:'#0891b2',bg:'#ecfeff'},
   delivered:    {label:'Delivered',    color:'#059669',bg:'#ecfdf5'},
   invoiced:     {label:'Invoiced',     color:'#7c3aed',bg:'#f5f3ff'},
   closed:       {label:'Closed',       color:'#64748b',bg:'#f8fafc'},
 };
+// Map shipment/PO-specific statuses onto the aligned SO status set so every tag matches
+const STATUS_ALIAS = {
+  created:'confirmed', at_origin_port:'shipped', in_transit:'shipped',
+  at_transshipment:'shipped', at_destination_port:'shipped', customs:'shipped',
+  out_for_delivery:'shipped', cancelled:'closed', ready_to_ship:'in_production',
+};
+const alignStatus = s => STATUS_ALIAS[s] || s;
 const genSONum = (list=[]) => {
   const yr = new Date().getFullYear();
   const pfx = 'KUI-SO-'+yr+'-';
@@ -80,7 +88,11 @@ const TEAM = [
 ];
 
 function Badge({ status }) {
-  return <span className={'badge badge-'+(status||'').replace(/ /g,'_')}>{(status||'—').replace(/_/g,' ').toUpperCase()}</span>;
+  const a = alignStatus(status);
+  const m = SO_SM[a] || {label:(status||'—').replace(/_/g,' '),color:'#64748b',bg:'#f8fafc'};
+  return <span style={{display:'inline-flex',alignItems:'center',gap:'5px',padding:'3px 10px',borderRadius:'20px',fontSize:'11px',fontWeight:700,letterSpacing:'.03em',textTransform:'uppercase',background:m.bg,color:m.color,whiteSpace:'nowrap'}}>
+    <span style={{width:'6px',height:'6px',borderRadius:'50%',background:m.color}} />{m.label}
+  </span>;
 }
 
 // ── PO browsing helpers (search + client filter, shared by Orders & Dashboard) ──
@@ -373,26 +385,14 @@ function Dashboard({ navigate }) {
       ] = await Promise.all([
         SB.from('sales_orders').select('id,so_number,client_po_number,status,currency,order_date,client_company_id,client:companies!client_company_id(name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(quantity,unit_price))),order_costs(amount)').order('created_at',{ascending:false}).limit(200),
         SB.from('purchase_orders').select('id,order_number,client_po_number,status').not('status','in','("closed","cancelled")'),
-        SB.from('shipments').select('id,shipment_number,status,estimated_departure,estimated_arrival,actual_arrival,origin_port:ports!origin_port_id(name,unlocode),destination_port:ports!destination_port_id(name,unlocode),companies!carrier_company_id(name),shipment_pos(purchase_orders(client_po_number,order_number))').not('status','in','("delivered","cancelled","closed")').order('estimated_arrival',{nullsFirst:false}).limit(20),
+        SB.from('shipments').select('*,companies!client_company_id(name),shipment_pos(purchase_orders(client_po_number,order_number,client:companies!client_company_id(name)))').order('created_at',{ascending:false}).limit(40),
       ]);
-      // Resilient fallback: if any join broke the main query, reload shipments with NO joins,
-      // then attach the client PO refs separately so a join can never blank the section.
-      let shipsData = ships;
-      if (!shipsData) {
-        const base = await SB.from('shipments').select('id,shipment_number,status,estimated_departure,estimated_arrival,actual_arrival').not('status','in','("delivered","cancelled","closed")').order('estimated_arrival',{nullsFirst:false}).limit(20);
-        shipsData = base.data || [];
-        if (shipsData.length) {
-          const shipIds = shipsData.map(s=>s.id);
-          const { data: spLinks } = await SB.from('shipment_pos').select('shipment_id,purchase_orders(client_po_number,order_number)').in('shipment_id',shipIds);
-          const refMap = {};
-          (spLinks||[]).forEach(l=>{ if(!refMap[l.shipment_id]) refMap[l.shipment_id]=l.purchase_orders; });
-          shipsData = shipsData.map(s=>({...s, shipment_pos:[{purchase_orders:refMap[s.id]||null}]}));
-        }
-      }
+      // Filter to active shipments in JS (avoids fragile PostgREST .not-in syntax)
+      const TERMINAL = ['delivered','cancelled','closed'];
+      const shipList = (ships||[]).filter(s => !TERMINAL.includes((s.status||'').toLowerCase())).slice(0,20);
 
       const soList = sos || [];
       const poList = pos || [];
-      const shipList = shipsData || [];
 
       // ── per-SO metrics ────────────────────────────────────────────────
       const enriched = soList.map(so => {
@@ -556,18 +556,20 @@ function Dashboard({ navigate }) {
                 {shipList.slice(0,5).map((sh,i) => {
                   const days = etaDays(sh.estimated_arrival);
                   const urgent = days !== null && days <= 7;
-                  const poRef = sh.shipment_pos?.[0]?.purchase_orders?.client_po_number || sh.shipment_pos?.[0]?.purchase_orders?.order_number || '—';
+                  const po = sh.shipment_pos?.[0]?.purchase_orders;
+                  const poRef = po?.client_po_number || po?.order_number || '—';
+                  const client = (po?.client?.name || sh.companies?.name || '').toUpperCase();
                   return (
                     <div key={sh.id} className="db-ship-row" style={{borderBottom:i<Math.min(shipList.length,5)-1?'1px solid var(--line-2)':'none'}}>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'5px'}}>
                           <span className="mono" style={{fontSize:'12.5px',fontWeight:700,color:'var(--ink)'}}>{poRef}</span>
-                          <span className={'badge b-shipped'} style={{fontSize:'10px',padding:'2px 8px'}}><span className="dot"/>In transit</span>
+                          <Badge status={sh.status} />
                         </div>
                         <div style={{display:'flex',alignItems:'center',gap:'6px',fontSize:'12px',color:'var(--muted)'}}>
-                          <span>{sh.origin_port?.unlocode||'—'}</span>
-                          <svg width="14" height="8" viewBox="0 0 24 8" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M0 4h20M17 1l4 3-4 3"/></svg>
-                          <span style={{fontWeight:600,color:'var(--ink-2)'}}>{sh.destination_port?.name||'—'}</span>
+                          {client && <span style={{fontWeight:600,color:'var(--ink-2)'}}>{client}</span>}
+                          {sh.vessel_name && <span>· {sh.vessel_name}</span>}
+                          {sh.container_no && <span className="mono">· {sh.container_no}</span>}
                         </div>
                       </div>
                       {days !== null && (
