@@ -19,7 +19,7 @@ function initials(name){ return (name||'?').replace(/[^A-Za-z0-9 ]/g,'').split(/
 
 // ── Utils ────────────────────────────────────────────────────────────────────
 const money = (n, c='USD') => n == null ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:c}).format(n);
-const fmtDate = s => { if (!s) return '—'; return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
+const fmtDate = s => { if (!s) return '—'; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? s+'T12:00:00' : s); return isNaN(d) ? '—' : d.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
 const fmtDateTime = s => { if (!s) return ''; const d=new Date(s); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); };
 const timeAgo = s => { if(!s) return ''; const m=Math.round((Date.now()-new Date(s))/60000); if(m<2) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<24) return h+'h'; const d=Math.round(h/24); if(d<7) return d+'d'; return fmtDate(s); };
 
@@ -375,11 +375,19 @@ function Dashboard({ navigate }) {
         SB.from('purchase_orders').select('id,order_number,client_po_number,status').not('status','in','("closed","cancelled")'),
         SB.from('shipments').select('id,shipment_number,status,estimated_departure,estimated_arrival,actual_arrival,origin_port:ports!origin_port_id(name,unlocode),destination_port:ports!destination_port_id(name,unlocode),companies!carrier_company_id(name),shipment_pos(purchase_orders(client_po_number,order_number))').not('status','in','("delivered","cancelled","closed")').order('estimated_arrival',{nullsFirst:false}).limit(20),
       ]);
-      // Fallback: if the shipments join errored (null), retry with a minimal query
+      // Resilient fallback: if any join broke the main query, reload shipments with NO joins,
+      // then attach the client PO refs separately so a join can never blank the section.
       let shipsData = ships;
       if (!shipsData) {
-        const retry = await SB.from('shipments').select('id,shipment_number,status,estimated_departure,estimated_arrival,actual_arrival,shipment_pos(purchase_orders(client_po_number,order_number))').not('status','in','("delivered","cancelled","closed")').limit(20);
-        shipsData = retry.data;
+        const base = await SB.from('shipments').select('id,shipment_number,status,estimated_departure,estimated_arrival,actual_arrival').not('status','in','("delivered","cancelled","closed")').order('estimated_arrival',{nullsFirst:false}).limit(20);
+        shipsData = base.data || [];
+        if (shipsData.length) {
+          const shipIds = shipsData.map(s=>s.id);
+          const { data: spLinks } = await SB.from('shipment_pos').select('shipment_id,purchase_orders(client_po_number,order_number)').in('shipment_id',shipIds);
+          const refMap = {};
+          (spLinks||[]).forEach(l=>{ if(!refMap[l.shipment_id]) refMap[l.shipment_id]=l.purchase_orders; });
+          shipsData = shipsData.map(s=>({...s, shipment_pos:[{purchase_orders:refMap[s.id]||null}]}));
+        }
       }
 
       const soList = sos || [];
