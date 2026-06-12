@@ -110,7 +110,7 @@ function OrderCard({ p, navigate, onStatus }){
   return (
     <div className="order-card">
       <div className="oc-top" onClick={()=>navigate('order-detail',{id:p.id})}>
-        <span className="oc-num mono">{p.client_po_number||'—'}</span>
+        <span className="oc-num mono">{p.client_po_number||p.order_number||'—'}</span>
         <Badge status={p.status} />
       </div>
       <div className="oc-factory" onClick={()=>navigate('order-detail',{id:p.id})}>
@@ -1465,7 +1465,13 @@ function Orders({ navigate }) {
   const [loading, setLoading] = useState(true);
   const load = async () => {
     setLoading(true);
-    const { data } = await SB.from('purchase_orders').select(PO_CARD_SELECT).order('created_at',{ascending:false});
+    let { data, error } = await SB.from('purchase_orders').select(PO_CARD_SELECT).order('created_at',{ascending:false});
+    // Fallback: if client_po_number isn't recognized by the schema cache yet, retry without it
+    if (error) {
+      const fallback = 'id,order_number,status,order_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
+      const retry = await SB.from('purchase_orders').select(fallback).order('created_at',{ascending:false});
+      data = retry.data;
+    }
     setRows(data||[]);
     setLoading(false);
   };
