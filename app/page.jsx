@@ -2695,9 +2695,23 @@ function ProductDetailModal({quote:initQ, onClose, onCreatePO}){
                 <div><label>Status</label><select className="form-select" value={form.status} onChange={e=>f('status')(e.target.value)}>{['active','draft','archived'].map(s=><option key={s} value={s}>{s}</option>)}</select></div>
               </div>
               <span className="form-section-label">Pricing Tiers</span>
-              {tiers.map((t,i)=>(
+              {tiers.map((t,i)=>{
+                const exwVal=Number(t.exw)||0;
+                const dutyAmt=+(0.5*exwVal*0.274).toFixed(4);
+                const autoDuty=()=>{ const landed=+(exwVal+dutyAmt).toFixed(4); setTiers(prev=>prev.map((x,idx)=>idx===i?{...x,landed,ship:0,freightAir:0,freightOcean:0,duty_only:true}:x)); };
+                return (
                 <div key={i} style={{background:'var(--line-2)',borderRadius:'8px',padding:'12px',marginBottom:'10px'}}>
-                  <div style={{fontSize:'11px',fontWeight:700,color:'var(--muted)',marginBottom:'8px'}}>{'Tier '+(i+1)}</div>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
+                    <span style={{fontSize:'11px',fontWeight:700,color:'var(--muted)'}}>{'Tier '+(i+1)}</span>
+                    <button type="button" onClick={autoDuty} disabled={exwVal<=0} title="Landed = EXW + duty (0.5 × EXW × 0.274), no freight"
+                      style={{display:'flex',alignItems:'center',gap:'5px',background:exwVal>0?'var(--accent-soft)':'var(--line-2)',color:exwVal>0?'var(--accent)':'var(--faint)',border:'none',borderRadius:'6px',padding:'4px 10px',fontSize:'11px',fontWeight:700,cursor:exwVal>0?'pointer':'not-allowed',letterSpacing:'.02em'}}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                      Auto Duty
+                    </button>
+                  </div>
+                  {t.duty_only && Number(t.landed)>0 && <div style={{fontSize:'10.5px',color:'var(--accent)',marginBottom:'8px',display:'flex',alignItems:'center',gap:'5px'}}>
+                    <span style={{width:'5px',height:'5px',borderRadius:'50%',background:'var(--accent)'}} />Duty-only landed cost · {money(dutyAmt)} duty on {money(exwVal)} EXW · no freight
+                  </div>}
                   <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
                     {[['Qty','qty'],['EXW','exw'],['Ship','ship'],['Landed','landed'],['Client Price','client']].map(([lb,key])=>(
                       <div key={key} style={{display:'flex',flexDirection:'column',flex:'1 1 80px'}}>
@@ -2710,7 +2724,7 @@ function ProductDetailModal({quote:initQ, onClose, onCreatePO}){
                     </div>
                   </div>
                 </div>
-              ))}
+              );})}
               <button className="btn btn-ghost btn-sm" style={{marginBottom:'12px'}} onClick={()=>setTiers(prev=>[...prev,{qty:'',exw:'',ship:0,freightAir:0,freightOcean:0,landed:'',client:''}])}>+ Add Tier</button>
               <div><label>Notes</label><textarea className="form-textarea" rows={3} value={form.notes} onChange={e=>f('notes')(e.target.value)} /></div>
             </>
