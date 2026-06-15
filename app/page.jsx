@@ -24,7 +24,7 @@ const fmtDateTime = s => { if (!s) return ''; const d=new Date(s); return d.toLo
 const timeAgo = s => { if(!s) return ''; const m=Math.round((Date.now()-new Date(s))/60000); if(m<2) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<24) return h+'h'; const d=Math.round(h/24); if(d<7) return d+'d'; return fmtDate(s); };
 
 // ── Sales Orders constants ────────────────────────────────────────────────────
-const SO_STATUSES = ['received','confirmed','in_production','testing','shipped','delivered','invoiced','closed'];
+const SO_STATUSES = ['received','confirmed','testing','in_production','shipped','delivered','invoiced','closed'];
 const SO_SM = {
   received:     {label:'Received',     color:'#6366f1',bg:'#eef2ff'},
   confirmed:    {label:'Confirmed',    color:'#3461e0',bg:'#eff6ff'},
