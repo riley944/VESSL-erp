@@ -2117,7 +2117,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   };
   useEffect(()=>{
     Promise.all([
-      SB.from('products').select('id,sku,name').order('name'),
+      SB.from('products').select('id,sku,name').order('sku',{nullsFirst:false}),
       SB.from('purchase_order_items').select('description').not('description','is',null).limit(200),
       SBQ.from('quotes').select('product').not('product','is',null).limit(300),
       SB.from('companies').select('id,name,pallet_info').eq('type','client').order('name')
@@ -2905,7 +2905,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   useEffect(()=>{
     Promise.all([
       SB.from('companies').select('id,name').eq('type','factory').order('name'),
-      SB.from('products').select('id,sku,name').order('name'),
+      SB.from('products').select('id,sku,name').order('sku',{nullsFirst:false}),
       SB.from('companies').select('id,name,vendor_number,pallet_info').eq('type','client').order('name'),
       SB.from('purchase_order_items').select('description').not('description','is',null).limit(200),
       SBQ.from('quotes').select('product').not('product','is',null).limit(300)
@@ -3651,8 +3651,7 @@ function buildPODoc(d, opts={}) {
   +'</div>'
   +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:20px 22px;">'
     +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:10px;">Ship To</div>'
-    +'<div style="font-size:17px;font-weight:700;color:#0f172a;margin-bottom:6px;">'+(d.ship_to?.name||'King Universal Inc.')+'</div>'
-    +(deliveryAddress?'<div style="font-size:13px;color:#64748b;line-height:1.6;">'+deliveryAddress.replace(/\n/g,'<br>')+'</div>':'')
+    +(deliveryAddress?'<div style="font-size:14px;color:#0f172a;line-height:1.7;">'+deliveryAddress.replace(/\n/g,'<br>')+'</div>':'<div style="font-size:13px;color:#94a3b8;">As directed</div>')
   +'</div>'
 +'</div>'
 
