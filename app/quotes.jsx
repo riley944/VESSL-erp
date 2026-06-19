@@ -699,8 +699,8 @@ function Platform({ session }) {
                     {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
                   </div>
                   <div style={{ flex: isMobile ? 1.8 : 2.4, minWidth: 0 }}>
-                    <div style={S.cellPrimary}>{q.product || "Untitled product"}</div>
-                    <div style={S.cellSub}>{view === "search" ? (q.client || "—") : (q.sku || "—")}{view === "search" && q.sku ? ` · ${q.sku}` : ""}</div>
+                    <div style={S.cellPrimary}>{q.sku || "No SKU"}</div>
+                    <div style={S.cellSub}>{q.product || "Untitled product"}{view === "search" && q.client ? ` · ${q.client}` : ""}</div>
                   </div>
                   {!isMobile && (
                     <div style={{ flex: 1.5 }}>
@@ -1201,8 +1201,8 @@ function SendToClientModal({ clients, onClose }) {
                     <button key={q.id} style={{ ...S.sendQuoteRow, opacity: priced ? 1 : 0.5 }} onClick={() => priced && toggle(q.id)} disabled={!priced}>
                       {picked[q.id] ? <CheckCircle2 size={18} color="#3f7d5a" /> : <Circle size={18} color="#bba" />}
                       <span style={{ flex: 1, textAlign: "left" }}>
-                        <span style={{ fontWeight: 600, color: "#0f1729" }}>{q.product || "Untitled"}</span>
-                        {q.sku ? <span style={{ color: "#6a7488", fontSize: 12.5 }}> · {q.sku}</span> : null}
+                        <span style={{ fontWeight: 600, color: "#0f1729" }}>{q.sku || "No SKU"}</span>
+                        {q.product ? <span style={{ color: "#6a7488", fontSize: 12.5 }}> · {q.product}</span> : null}
                         {!priced && <span style={{ color: "#c2683a", fontSize: 11.5, display: "block" }}>No priced tiers — can't include</span>}
                       </span>
                     </button>
