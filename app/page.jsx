@@ -763,8 +763,9 @@ function SOCard({so,onClick}){
         <span style={{fontFamily:'var(--mono)',fontSize:'14px',fontWeight:700,color:'var(--ink)'}}>{rev>0?money(rev,so.currency):'No items'}</span>
         {mgn!==null && <span style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:700,color:mc,background:mc+'22',padding:'2px 8px',borderRadius:'12px'}}>{mgn.toFixed(1)+'%'}</span>}
       </div>
-      {(so.required_ship_date||cost>0) && (
-        <div style={{padding:'2px 16px 12px',fontSize:'11px',color:'var(--muted)',display:'flex',gap:'14px'}}>
+      {(so.required_ship_date||so.cargo_ready_date||cost>0) && (
+        <div style={{padding:'2px 16px 12px',fontSize:'11px',color:'var(--muted)',display:'flex',gap:'14px',flexWrap:'wrap'}}>
+          {so.cargo_ready_date && <span style={{color:'var(--accent)',fontWeight:600}}>{'CRD '+fmtDate(so.cargo_ready_date)}</span>}
           {so.required_ship_date && <span>{'Ship by '+fmtDate(so.required_ship_date)}</span>}
           {cost>0 && <span>{'Cost: '+money(cost,so.currency)}</span>}
         </div>
@@ -794,12 +795,13 @@ function SalesOrders({navigate}){
   return (
     <>
       {showCreate && <CreateSOModal onClose={()=>setShowCreate(false)} onCreated={(id)=>{setShowCreate(false);id?navigate('so-detail',{id}):load();}} />}
-      <div className="po-toolbar">
-        <div className="search-wrap" style={{flex:1,maxWidth:'400px'}}>
-          <svg className="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input className="search-input" placeholder="Search SO#, client PO#, client..." value={search} onChange={e=>setSearch(e.target.value)} />
+      <div className="so-header">
+        <div className="so-searchbar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input placeholder="Search by client PO, client name…" value={search} onChange={e=>setSearch(e.target.value)} />
+          {search && <button className="so-search-clear" onClick={()=>setSearch('')} aria-label="Clear">×</button>}
         </div>
-        <button className="btn btn-dark btn-sm" onClick={()=>setShowCreate(true)}>+ New Sales Order</button>
+        <button className="btn btn-dark" onClick={()=>setShowCreate(true)} style={{flexShrink:0,height:'46px',padding:'0 20px'}}>+ New Sales Order</button>
       </div>
       {shown.length>0 && (
         <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'10px',marginBottom:'20px'}}>
@@ -921,7 +923,7 @@ function SalesOrderDetail({id,navigate}){
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',borderTop:'1px solid var(--line-2)'}}>
-            {[['Client PO #',so.client_po_number||'—'],['Order Date',fmtDate(so.order_date)],['Ship By',fmtDate(so.required_ship_date)],['Payment',so.payment_terms||'—'],['Currency',so.currency||'USD']].map(([l,v],i)=>(
+            {[['Client PO #',so.client_po_number||'—'],['Order Date',fmtDate(so.order_date)],['Cargo Ready Date',so.cargo_ready_date?fmtDate(so.cargo_ready_date):'TBD'],['Ship By',fmtDate(so.required_ship_date)],['Payment',so.payment_terms||'—'],['Currency',so.currency||'USD']].map(([l,v],i)=>(
               <div key={l} style={{padding:'12px 18px',borderBottom:i<4?'1px solid var(--line-2)':'none',borderRight:i%2===0?'1px solid var(--line-2)':'none'}}>
                 <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'4px'}}>{l}</div>
                 <div style={{fontSize:'13px',fontWeight:600,color:'var(--ink)',fontFamily:l.includes('#')?'var(--mono)':'inherit'}}>{v}</div>
@@ -1139,7 +1141,7 @@ function QuotePickerModal({ onPick, onClose, priceField='client' }){
 function CreateSOModal({onClose,onCreated}){
   const nd=()=>new Date().toISOString().split('T')[0];
   const [mode,setMode]=useState('catalog');
-  const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',payment:'',currency:'USD',notes:''});
+  const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',crd:'',payment:'',currency:'USD',notes:''});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const [items,setItems]=useState([]);
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
@@ -1204,7 +1206,7 @@ function CreateSOModal({onClose,onCreated}){
     setLoading(true);
     // auto-generate so_number from client PO if not set
     const soNum = form.num.trim() || ('KUI-'+form.clientPO.trim().replace(/[^A-Za-z0-9]/g,'-').slice(0,20).toUpperCase());
-    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,status:'received'}).select().single();
+    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,cargo_ready_date:form.crd||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,status:'received'}).select().single();
     if(e0||!so){alert('Error: '+(e0?.message||'unknown'));setLoading(false);return;}
     const toIns=items.filter(it=>it.desc.trim()).map(it=>({sales_order_id:so.id,description:it.desc.trim(),client_sku:it.sku||null,quantity:Number(it.qty)||null,client_price:Number(it.price)||null,currency:form.currency,_quoteId:it.quoteId,_tierIdx:it.tierIdx||0}));
     if(toIns.length) await SB.from('sales_order_items').insert(toIns.map(({_quoteId,_tierIdx,...rest})=>rest));
@@ -1288,8 +1290,12 @@ function CreateSOModal({onClose,onCreated}){
             <div><label>Order Date</label><input type="date" className="form-input" value={form.date} onChange={e=>f('date')(e.target.value)} /></div>
           </div>
           <div className="form-row-2">
+            <div><label>Cargo Ready Date <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>when goods are picked up — shown to client</span></label><input type="date" className="form-input" value={form.crd} onChange={e=>f('crd')(e.target.value)} /></div>
             <div><label>Required Ship Date</label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
+          </div>
+          <div className="form-row-2">
             <div><label>Internal SO # <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>auto-generated if blank</span></label><input className="form-input" style={{fontFamily:'var(--mono)'}} value={form.num} onChange={e=>f('num')(e.target.value)} placeholder="KUI-..." /></div>
+            <div></div>
           </div>
           <div className="form-row-2">
             <div><label>Payment Terms</label><input className="form-input" value={form.payment} onChange={e=>f('payment')(e.target.value)} placeholder="e.g. Net 30, 50% deposit" /></div>
@@ -1361,7 +1367,7 @@ function CreateSOModal({onClose,onCreated}){
 }
 
 function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved}){
-  const [form,setForm]=useState({num:so.so_number||'',clientId:so.client_company_id||'',clientPO:so.client_po_number||'',date:so.order_date||'',ship:so.required_ship_date||'',payment:so.payment_terms||'',currency:so.currency||'USD',notes:so.notes||''});
+  const [form,setForm]=useState({num:so.so_number||'',clientId:so.client_company_id||'',clientPO:so.client_po_number||'',date:so.order_date||'',ship:so.required_ship_date||'',crd:so.cargo_ready_date||'',payment:so.payment_terms||'',currency:so.currency||'USD',notes:so.notes||''});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const [items,setItems]=useState((initItems||[]).map(it=>({id:it.id,desc:it.description||'',sku:it.client_sku||'',qty:it.quantity!=null?String(it.quantity):'',price:it.client_price!=null?String(it.client_price):''})));
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
@@ -1400,7 +1406,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
   const save=async()=>{
     setLoading(true);
-    const {error}=await SB.from('sales_orders').update({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,updated_at:new Date().toISOString()}).eq('id',so.id);
+    const {error}=await SB.from('sales_orders').update({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,cargo_ready_date:form.crd||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,updated_at:new Date().toISOString()}).eq('id',so.id);
     if(error){alert('Error: '+error.message);setLoading(false);return;}
     const filled=items.filter(it=>it.desc.trim());
     // SAFETY: never wipe all line items. If the form somehow has none but the
@@ -1451,6 +1457,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
             <div><label>Order Date</label><input type="date" className="form-input" value={form.date} onChange={e=>f('date')(e.target.value)} /></div>
             <div><label>Required Ship Date</label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
           </div>
+          <div><label>Cargo Ready Date <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>when goods are picked up — shown to client</span></label><input type="date" className="form-input" value={form.crd} onChange={e=>f('crd')(e.target.value)} /></div>
           <div><label>Payment Terms</label><input className="form-input" value={form.payment} onChange={e=>f('payment')(e.target.value)} /></div>
           <span className="form-section-label">Line Items</span>
           <div style={{overflowX:'auto',marginBottom:'8px'}}>
