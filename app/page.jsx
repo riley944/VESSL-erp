@@ -2608,7 +2608,7 @@ function Products({ navigate }) {
       <div className="section-card">
         {loading ? <div className="loading">Loading products…</div> : filtered.length ? (
           <table className="data-table">
-            <thead><tr><th>Product</th><th>Factory</th><th>Tiers</th><th>Client Price</th><th>Avg Margin</th><th></th></tr></thead>
+            <thead><tr><th>SKU / Product</th><th>Factory</th><th>Tiers</th><th>Client Price</th><th>Avg Margin</th><th></th></tr></thead>
             <tbody>
               {filtered.map(q=>{
                 const col=companyColor(q.client); const tiers=tiersOf(q); const m=avgMargin(q);
@@ -2618,8 +2618,8 @@ function Products({ navigate }) {
                       <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
                         <span style={{width:'26px',height:'26px',borderRadius:'7px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'9px',fontWeight:600,fontFamily:'var(--mono)',color:'#0b1120',background:col}}>{initials(q.client)}</span>
                         <div style={{minWidth:0}}>
-                          <div style={{fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'260px'}}>{q.product||'Untitled'}</div>
-                          <div style={{fontSize:'11px',color:'var(--muted)'}}>{q.client||'—'}{q.sku?' · '+q.sku:''}</div>
+                          <div style={{fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'260px',fontFamily:'var(--mono)'}}>{q.sku||'No SKU'}</div>
+                          <div style={{fontSize:'11px',color:'var(--muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'260px'}}>{q.product||'Untitled'}{q.client?' · '+q.client:''}</div>
                         </div>
                       </div>
                     </td>
