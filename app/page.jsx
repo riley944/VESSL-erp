@@ -930,7 +930,7 @@ function SalesOrderDetail({id,navigate}){
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',borderTop:'1px solid var(--line-2)'}}>
-            {[['Client PO #',so.client_po_number||'—'],['Order Date',fmtDate(so.order_date)],['Cargo Ready Date',so.cargo_ready_date?fmtDate(so.cargo_ready_date):'TBD'],['Ship By',fmtDate(so.required_ship_date)],['Payment',so.payment_terms||'—'],['Currency',so.currency||'USD']].map(([l,v],i)=>(
+            {[['Client PO #',so.client_po_number||'—'],['Order Date',fmtDate(so.order_date)],['Cargo Ready Date',so.cargo_ready_date?fmtDate(so.cargo_ready_date):'TBD'],['INDC',fmtDate(so.indc_date||so.required_ship_date)],['Cancel Date',so.cancel_date?fmtDate(so.cancel_date):'—'],['Payment',so.payment_terms||'—'],['Currency',so.currency||'USD']].map(([l,v],i)=>(
               <div key={l} style={{padding:'12px 18px',borderBottom:i<4?'1px solid var(--line-2)':'none',borderRight:i%2===0?'1px solid var(--line-2)':'none'}}>
                 <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'4px'}}>{l}</div>
                 <div style={{fontSize:'13px',fontWeight:600,color:'var(--ink)',fontFamily:l.includes('#')?'var(--mono)':'inherit'}}>{v}</div>
@@ -1148,7 +1148,7 @@ function QuotePickerModal({ onPick, onClose, priceField='client' }){
 function CreateSOModal({onClose,onCreated}){
   const nd=()=>new Date().toISOString().split('T')[0];
   const [mode,setMode]=useState('catalog');
-  const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',crd:'',payment:'',currency:'USD',notes:''});
+  const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',crd:'',cancel:'',payment:'',currency:'USD',notes:''});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const [items,setItems]=useState([]);
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
@@ -1213,7 +1213,7 @@ function CreateSOModal({onClose,onCreated}){
     setLoading(true);
     // auto-generate so_number from client PO if not set
     const soNum = form.num.trim() || ('KUI-'+form.clientPO.trim().replace(/[^A-Za-z0-9]/g,'-').slice(0,20).toUpperCase());
-    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,cargo_ready_date:form.crd||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,status:'received'}).select().single();
+    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,status:'received'}).select().single();
     if(e0||!so){alert('Error: '+(e0?.message||'unknown'));setLoading(false);return;}
     const toIns=items.filter(it=>it.desc.trim()).map(it=>({sales_order_id:so.id,description:it.desc.trim(),client_sku:it.sku||null,quantity:Number(it.qty)||null,client_price:Number(it.price)||null,currency:form.currency,_quoteId:it.quoteId,_tierIdx:it.tierIdx||0}));
     if(toIns.length) await SB.from('sales_order_items').insert(toIns.map(({_quoteId,_tierIdx,...rest})=>rest));
@@ -1298,7 +1298,11 @@ function CreateSOModal({onClose,onCreated}){
           </div>
           <div className="form-row-2">
             <div><label>Cargo Ready Date <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>when goods are picked up — shown to client</span></label><input type="date" className="form-input" value={form.crd} onChange={e=>f('crd')(e.target.value)} /></div>
-            <div><label>Required Ship Date</label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
+            <div><label>INDC <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>in-DC / delivery date</span></label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
+          </div>
+          <div className="form-row-2">
+            <div><label>Cancel Date</label><input type="date" className="form-input" value={form.cancel} onChange={e=>f('cancel')(e.target.value)} /></div>
+            <div></div>
           </div>
           <div className="form-row-2">
             <div><label>Internal SO # <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>auto-generated if blank</span></label><input className="form-input" style={{fontFamily:'var(--mono)'}} value={form.num} onChange={e=>f('num')(e.target.value)} placeholder="KUI-..." /></div>
@@ -1374,7 +1378,7 @@ function CreateSOModal({onClose,onCreated}){
 }
 
 function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved}){
-  const [form,setForm]=useState({num:so.so_number||'',clientId:so.client_company_id||'',clientPO:so.client_po_number||'',date:so.order_date||'',ship:so.required_ship_date||'',crd:so.cargo_ready_date||'',payment:so.payment_terms||'',currency:so.currency||'USD',notes:so.notes||''});
+  const [form,setForm]=useState({num:so.so_number||'',clientId:so.client_company_id||'',clientPO:so.client_po_number||'',date:so.order_date||'',ship:so.indc_date||so.required_ship_date||'',crd:so.cargo_ready_date||'',cancel:so.cancel_date||'',payment:so.payment_terms||'',currency:so.currency||'USD',notes:so.notes||''});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const [items,setItems]=useState((initItems||[]).map(it=>({id:it.id,desc:it.description||'',sku:it.client_sku||'',qty:it.quantity!=null?String(it.quantity):'',price:it.client_price!=null?String(it.client_price):''})));
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
@@ -1413,7 +1417,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
   const save=async()=>{
     setLoading(true);
-    const {error}=await SB.from('sales_orders').update({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,cargo_ready_date:form.crd||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,updated_at:new Date().toISOString()}).eq('id',so.id);
+    const {error}=await SB.from('sales_orders').update({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,updated_at:new Date().toISOString()}).eq('id',so.id);
     if(error){alert('Error: '+error.message);setLoading(false);return;}
     const filled=items.filter(it=>it.desc.trim());
     // SAFETY: never wipe all line items. If the form somehow has none but the
@@ -1462,9 +1466,12 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
           <div><label>Client PO #</label><input className="form-input" value={form.clientPO} onChange={e=>f('clientPO')(e.target.value)} /></div>
           <div className="form-row-2">
             <div><label>Order Date</label><input type="date" className="form-input" value={form.date} onChange={e=>f('date')(e.target.value)} /></div>
-            <div><label>Required Ship Date</label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
+            <div><label>INDC <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>in-DC / delivery date</span></label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
           </div>
-          <div><label>Cargo Ready Date <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>when goods are picked up — shown to client</span></label><input type="date" className="form-input" value={form.crd} onChange={e=>f('crd')(e.target.value)} /></div>
+          <div className="form-row-2">
+            <div><label>Cargo Ready Date <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>when goods are picked up — shown to client</span></label><input type="date" className="form-input" value={form.crd} onChange={e=>f('crd')(e.target.value)} /></div>
+            <div><label>Cancel Date</label><input type="date" className="form-input" value={form.cancel} onChange={e=>f('cancel')(e.target.value)} /></div>
+          </div>
           <div><label>Payment Terms</label><input className="form-input" value={form.payment} onChange={e=>f('payment')(e.target.value)} /></div>
           <span className="form-section-label">Line Items</span>
           <div style={{overflowX:'auto',marginBottom:'8px'}}>
@@ -1633,7 +1640,7 @@ function OrderDetail({ id, navigate }) {
   const [uploading, setUploading] = useState(false);
   const load = async () => {
     const [{ data: p },{ data: its }] = await Promise.all([
-      SB.from('purchase_orders').select('*,companies!factory_company_id(name,email),client:companies!client_company_id(name,vendor_number)').eq('id',id).single(),
+      SB.from('purchase_orders').select('*,companies!factory_company_id(name,email),client:companies!client_company_id(name,vendor_number,po_notes)').eq('id',id).single(),
       SB.from('purchase_order_items').select('*,products(sku,name)').eq('purchase_order_id',id)
     ]);
     setPO(p); setItems(its||[]);
@@ -1796,6 +1803,14 @@ function OrderDetail({ id, navigate }) {
   const genPO = async () => {
     const win = window.open('', '_blank');
     if (win) win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating PO…</body>');
+    // Gather attachments — embed images, list PDFs/other files separately
+    const imgExts = ['png','jpg','jpeg','gif','webp','bmp'];
+    const artImages = []; const otherFiles = [];
+    for (const f of (attachments||[])) {
+      const ext = (f.name.split('.').pop()||'').toLowerCase();
+      if (imgExts.includes(ext)) artImages.push({ name: f.name, url: attachUrl(f.name) });
+      else otherFiles.push(f.name);
+    }
     // Build doc data directly from already-loaded state — no RPC needed
     const docData = {
       po_number: po.order_number || po.client_po_number || id.slice(0,8).toUpperCase(),
@@ -1830,6 +1845,9 @@ function OrderDetail({ id, navigate }) {
       pallet: po.pallet_info, clientName: po.client?.name,
       testingRequired: po.testing_required,
       deliveryAddress: po.delivery_address, shippingMethod: po.shipping_method,
+      clientNotes: po.client?.po_notes || '',
+      cancelDate: po.cancel_date,
+      artImages, otherFiles,
     });
     if (win) { win.document.open(); win.document.write(html); win.document.close(); setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 600); }
     else {
@@ -1883,7 +1901,7 @@ function OrderDetail({ id, navigate }) {
         <div className="detail-block">
           <div className="blabel">Order Details</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',fontSize:'13px'}}>
-            {[['ORDER DATE',fmtDate(po.order_date)],['SHIP BY',fmtDate(po.requested_ship_date)],['INCOTERM',po.incoterm||'—'],['PAYMENT',po.payment_terms||'—']].map(([l,v])=>(
+            {[['ORDER DATE',fmtDate(po.order_date)],['CRD',fmtDate(po.cargo_ready_date||po.requested_ship_date)],['CANCEL DATE',po.cancel_date?fmtDate(po.cancel_date):'—'],['INCOTERM',po.incoterm||'—'],['PAYMENT',po.payment_terms||'—']].map(([l,v])=>(
               <div key={l}><div style={{color:'var(--muted)',fontSize:'11px',marginBottom:'3px'}}>{l}</div>{v}</div>
             ))}
           </div>
@@ -2057,7 +2075,7 @@ function OrderAttachments({ attachments, uploading, onFileChange, attachUrl, del
 // ── PO Edit Modal ───────────────────────────────────────────────────────────
 function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   const [form, setForm] = useState({
-    num:po.order_number||'', date:po.order_date||'', ship:po.requested_ship_date||'',
+    num:po.order_number||'', date:po.order_date||'', ship:po.cargo_ready_date||po.requested_ship_date||'', cancel:po.cancel_date||'',
     inco:po.incoterm||'', pay:po.payment_terms||'', dep:po.deposit_percent!=null?String(po.deposit_percent):'',
     mold:po.mold_fee!=null?String(po.mold_fee):'', sample:po.sample_fee!=null?String(po.sample_fee):'',
     currency:po.currency||'USD', notes:po.notes||'', status:po.status||'draft', pallet:po.pallet_info||'',
@@ -2154,7 +2172,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   const save = async () => {
     if(!form.num){alert('PO number required');return;}
     const { error } = await SB.from('purchase_orders').update({
-      order_number:form.num, order_date:form.date||null, requested_ship_date:form.ship||null,
+      order_number:form.num, order_date:form.date||null, requested_ship_date:form.ship||null, cargo_ready_date:form.ship||null, cancel_date:form.cancel||null,
       incoterm:form.inco||null, payment_terms:form.pay||null, deposit_percent:Number(form.dep)||null,
       mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0, currency:form.currency,
       notes:form.notes||null, status:form.status, pallet_info:form.pallet||null,
@@ -2197,15 +2215,19 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>PO Number *</label><input className="form-input" value={form.num} onChange={e=>f('num')(e.target.value)} /></div>
-            <div><label>Status</label><select className="form-select" value={form.status} onChange={e=>f('status')(e.target.value)}>{STATUSES.map(s=><option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}</select></div>
+            <div><label>Status</label><select className="form-select" value={form.status} onChange={e=>f('status')(e.target.value)}>{SO_STATUSES.map(s=><option key={s} value={s}>{(SO_SM[s]?.label)||s.replace(/_/g,' ')}</option>)}</select></div>
           </div>
           <div className="form-row-2">
             <div><label>Order Date</label><input type="date" className="form-input" value={form.date} onChange={e=>f('date')(e.target.value)} /></div>
-            <div><label>Ship By</label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
+            <div><label>CRD <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>cargo ready date</span></label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
           </div>
           <div className="form-row-2">
+            <div><label>Cancel Date</label><input type="date" className="form-input" value={form.cancel} onChange={e=>f('cancel')(e.target.value)} /></div>
             <div><label>Incoterm</label><input className="form-input" value={form.inco} onChange={e=>f('inco')(e.target.value)} /></div>
+          </div>
+          <div className="form-row-2">
             <div><label>Payment Terms</label><input className="form-input" value={form.pay} onChange={e=>f('pay')(e.target.value)} /></div>
+            <div></div>
           </div>
           <span className="form-section-label">Line Items</span>
           <table className="items-table">
@@ -2456,7 +2478,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
       const { data:c } = await SB.from('companies').select('*').eq('id',id).single();
       const { data:cc } = await SB.from('contacts').select('*').eq('company_id',id).order('is_primary',{ascending:false});
       setCo(c); setContacts(cc||[]);
-      setForm({ name:c?.name||'', type:c?.type||'client', email:c?.email||'', phone:c?.phone||'', website:c?.website||'', vendor_number:c?.vendor_number||'', pallet_info:c?.pallet_info||'' });
+      setForm({ name:c?.name||'', type:c?.type||'client', email:c?.email||'', phone:c?.phone||'', website:c?.website||'', vendor_number:c?.vendor_number||'', pallet_info:c?.pallet_info||'', po_notes:c?.po_notes||'' });
     })();
   },[id]);
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -2464,7 +2486,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
   const addContact = () => setContacts(prev=>[...prev,{__new:true,company_id:id,full_name:'',email:'',phone:'',is_primary:prev.length===0}]);
   const save = async () => {
     if(!form.name){alert('Name required');return;}
-    await SB.from('companies').update({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null}).eq('id',id);
+    await SB.from('companies').update({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,po_notes:form.po_notes||null}).eq('id',id);
     for(const c of contacts){
       if(!(c.full_name||'').trim()) continue;
       if(c.__new) await SB.from('contacts').insert({company_id:id,full_name:c.full_name,email:c.email||null,phone:c.phone||null,is_primary:!!c.is_primary});
@@ -2527,6 +2549,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
                 <div className="form-row-2">
                   <div><label>Vendor # <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(internal — our # with this client)</span></label><input className="form-input" value={form.vendor_number} onChange={e=>f('vendor_number')(e.target.value)} /></div>
                   <div><label>Pallet info <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(autofills onto their POs)</span></label><input className="form-input" value={form.pallet_info} onChange={e=>f('pallet_info')(e.target.value)} placeholder="e.g. 48x40 GMA, max 60 cartons/pallet" /></div>
+                  <div style={{gridColumn:'1 / -1'}}><label>PO Notes <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(compliance terms printed on every PO for this client)</span></label><textarea className="form-input" rows={5} value={form.po_notes} onChange={e=>f('po_notes')(e.target.value)} placeholder={'e.g.\\nMust ship even case packs only\\nPacking slip must show PO#, vendor name, weight, carton dims\\nNo phthalates, No PVC'} style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
                 </div>
               )}
               <span className="form-section-label">Contacts</span>
@@ -2887,7 +2910,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [showPicker, setShowPicker] = useState(false);
   const onPickPOItem = (li) => setItems(prev=>[...prev,{prodId:'',desc:li.desc,qty:li.qty,price:li.price,ci:'',carton:'',vpn:'',masterSku:'',packSku:'',babySku:'',retailPrice:''}]);
   const [recentDescs, setRecentDescs] = useState([]);
-  const [form, setForm]  = useState({ factoryId:'', clientId:'', num:'', date:nowDate(), ship:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'', needs_samples:false, sample_type:'TOP', sample_qty:'' });
+  const [form, setForm]  = useState({ factoryId:'', clientId:'', num:'', date:nowDate(), ship:'', cancel:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'', needs_samples:false, sample_type:'TOP', sample_qty:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
 
   // Build the next sequential PO number, e.g. KUI-PO-2026-007, from existing ones.
@@ -3054,7 +3077,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     if (valid.length===0) { alert('Add at least one line item with a quantity greater than 0 before creating the PO.'); return; }
     const baseFields = {
       factory_company_id:form.factoryId, client_company_id:form.clientId||null, pallet_info:form.pallet||null, order_date:form.date,
-      requested_ship_date:form.ship||null, incoterm:form.inco||null, payment_terms:form.pay||null,
+      requested_ship_date:form.ship||null, cargo_ready_date:form.ship||null, cancel_date:form.cancel||null, incoterm:form.inco||null, payment_terms:form.pay||null,
       deposit_percent:Number(form.dep)||null, mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0,
       currency:form.currency, notes:form.notes||null, status:'draft',
       needs_samples:!!form.needs_samples, sample_type:form.needs_samples?(form.sample_type||null):null, sample_qty:form.needs_samples?(Number(form.sample_qty)||null):null,
@@ -3260,8 +3283,12 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
             <div><label>Order Date</label><input type="date" className="form-input" value={form.date} onChange={e=>f('date')(e.target.value)} /></div>
           </div>
           <div className="form-row-2">
-            <div><label>Ship By</label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
+            <div><label>CRD <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>cargo ready date</span></label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
+            <div><label>Cancel Date</label><input type="date" className="form-input" value={form.cancel} onChange={e=>f('cancel')(e.target.value)} /></div>
+          </div>
+          <div className="form-row-2">
             <div><label>Incoterm (EXW / FOB)</label><input className="form-input" placeholder="e.g. FOB HCMC" value={form.inco} onChange={e=>f('inco')(e.target.value)} /></div>
+            <div></div>
           </div>
           <div className="form-row-2">
             <div><label>Payment Terms</label><input className="form-input" placeholder="e.g. 30/70" value={form.pay} onChange={e=>f('pay')(e.target.value)} /></div>
@@ -3557,10 +3584,14 @@ function buildPODoc(d, opts={}) {
   const testingRequired = opts.testingRequired || d.testing_required || false;
   const deliveryAddress = opts.deliveryAddress || d.delivery_address || '';
   const shippingMethod = opts.shippingMethod || d.shipping_method || '';
+  const clientNotes = opts.clientNotes || '';
+  const cancelDate = opts.cancelDate || null;
+  const artImages = opts.artImages || [];
+  const otherFiles = opts.otherFiles || [];
   const t = d.totals || {};
   const cur = d.currency || 'USD';
   const m = (n,c) => n==null ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:c||cur}).format(n);
-  const fd = s => { if(!s) return '—'; return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
+  const fd = s => { if(!s) return '—'; const dt=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(dt)?'—':dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
   const fn = n => n==null ? '—' : new Intl.NumberFormat('en-US').format(n);
 
   const lines = (d.lines||[]).map((l, i) => {
@@ -3591,7 +3622,8 @@ function buildPODoc(d, opts={}) {
 
   const termBoxes = [
     ['Order Date', fd(d.order_date)],
-    ['Ship By', fd(d.required_ship_date||d.requested_ship_date)],
+    ['CRD', fd(d.required_ship_date||d.requested_ship_date)],
+    cancelDate ? ['Cancel Date', fd(cancelDate)] : null,
     ['Incoterm', d.incoterm||'—'],
     ['Payment Terms', d.payment_terms||'—'],
     shippingMethod ? ['Shipping Method', shippingMethod] : null,
@@ -3672,6 +3704,12 @@ function buildPODoc(d, opts={}) {
   +'<table style="width:100%;border-collapse:collapse;"><tbody>'+lines+'</tbody></table>'
 +'</div>'
 
+// ── Client compliance notes (printed on every PO for this client) ──
++(clientNotes?'<div style="background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;border-radius:10px;padding:16px 20px;margin-bottom:28px;">'
+  +'<div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#b45309;margin-bottom:8px;">Client Requirements — '+(clientName||'')+'</div>'
+  +'<div style="font-size:13px;color:#451a03;line-height:1.7;white-space:pre-line;">'+clientNotes+'</div>'
++'</div>':'')
+
 // ── Totals + notes ──
 +'<div style="display:grid;grid-template-columns:1fr 300px;gap:32px;margin-bottom:40px;">'
   +'<div>'
@@ -3691,6 +3729,23 @@ function buildPODoc(d, opts={}) {
   +'<div><div style="border-top:2px solid #0c1322;padding-top:10px;font-size:12px;font-weight:600;color:#64748b;letter-spacing:.06em;text-transform:uppercase;">Authorized — King Universal Inc.</div><div style="margin-top:40px;border-top:1px solid #d1d5db;padding-top:8px;font-size:11px;color:#94a3b8;">Signature / Date</div></div>'
   +'<div><div style="border-top:2px solid #0c1322;padding-top:10px;font-size:12px;font-weight:600;color:#64748b;letter-spacing:.06em;text-transform:uppercase;">Accepted — Supplier</div><div style="margin-top:40px;border-top:1px solid #d1d5db;padding-top:8px;font-size:11px;color:#94a3b8;">Signature / Date</div></div>'
 +'</div>'
+
+// ── Attached art (images embedded on their own pages) ──
++(artImages.length ? artImages.map(function(img){
+  return '<div style="page-break-before:always;padding-top:24px;">'
+    +'<div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:4px;">Attached Artwork — PO '+(d.client_po||d.po_number||'')+'</div>'
+    +'<div style="font-size:14px;font-weight:600;color:#0f172a;margin-bottom:14px;">'+img.name+'</div>'
+    +'<img src="'+img.url+'" style="max-width:100%;max-height:900px;border:1px solid #e5e7eb;border-radius:8px;" />'
+    +'</div>';
+}).join('') : '')
+
+// ── Other attached files (PDFs/AI) listed — they accompany the PO separately ──
++(otherFiles.length ? '<div style="page-break-before:always;padding-top:24px;">'
+  +'<div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:12px;">Attached Files</div>'
+  +'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;">'
+  +'<div style="font-size:13px;color:#64748b;margin-bottom:12px;">The following files are attached to this purchase order and provided alongside this document:</div>'
+  +otherFiles.map(function(n){ return '<div style="font-size:14px;color:#0f172a;padding:7px 0;border-bottom:1px solid #eef1f6;display:flex;align-items:center;gap:8px;"><span style="font-size:11px;font-weight:700;color:#3551c4;background:#e7edfd;padding:2px 7px;border-radius:5px;text-transform:uppercase;">'+((n.split('.').pop()||'file')).toLowerCase()+'</span>'+n+'</div>'; }).join('')
+  +'</div></div>' : '')
 
 +'</div></body></html>';
 }
