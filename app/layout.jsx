@@ -1,6 +1,7 @@
 import './globals.css';
 
 export const metadata = { title: 'Vessl — KUI Operations' };
+export const viewport = { width: 'device-width', initialScale: 1, maximumScale: 5 };
 
 export default function RootLayout({ children }) {
   return (
