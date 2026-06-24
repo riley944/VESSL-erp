@@ -542,7 +542,7 @@ function Dashboard({ navigate }) {
                   {so.mgn!==null && <div className="db-so-mgn" style={{color:so.mgn>40?'var(--ok)':so.mgn>20?'var(--warn)':'var(--hot)'}}>{so.mgn.toFixed(1)}%</div>}
                 </div>
                 <div className="db-so-badge">
-                  <span className={'badge b-'+so.status}><span className="dot"/>{(so.status||'').replace(/_/g,' ')}</span>
+                  <Badge status={so.status} />
                 </div>
               </div>
             ))}
