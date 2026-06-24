@@ -1643,6 +1643,14 @@ function OrderDetail({ id, navigate }) {
       SB.from('purchase_orders').select('*,companies!factory_company_id(name,email),client:companies!client_company_id(name,vendor_number,po_notes)').eq('id',id).single(),
       SB.from('purchase_order_items').select('*,products(sku,name)').eq('purchase_order_id',id)
     ]);
+    // If the PO has no direct client (linked only via SO), resolve client + po_notes through the linked sales order
+    if (p && (!p.client || (!p.client.po_notes && !p.client.name))) {
+      const { data: soLink } = await SB.from('sales_order_pos')
+        .select('sales_orders(client_company_id, client:companies!client_company_id(name,vendor_number,po_notes))')
+        .eq('purchase_order_id', id).limit(1).maybeSingle();
+      const soClient = soLink?.sales_orders?.client;
+      if (soClient) p.client = { ...(p.client||{}), name: p.client?.name || soClient.name, vendor_number: p.client?.vendor_number || soClient.vendor_number, po_notes: p.client?.po_notes || soClient.po_notes };
+    }
     setPO(p); setItems(its||[]);
     // linked shipment (first one), if any
     const { data: links } = await SB.from('shipment_pos').select('shipment_id').eq('purchase_order_id',id).limit(1);
