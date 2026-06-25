@@ -472,20 +472,20 @@ function Dashboard({ navigate }) {
   };
 
   return (
-    <>
+    <div className="db-dark">
       {/* ── Metric Strip ───────────────────────────────────────────────── */}
       <div className="db-metric-strip">
         {[
-          { k:'Open Pipeline', v:money(pipeline_value), sub:'across active SOs', color:'var(--accent)' },
-          { k:'Revenue MTD', v:money(rev_mtd), sub:'closed this month', color:'var(--ok)' },
-          { k:'Avg Gross Margin', v:avg_mgn!==null?avg_mgn.toFixed(1)+'%':'—', sub:'across open orders', color:avg_mgn>40?'var(--ok)':avg_mgn>25?'var(--warn)':'var(--hot)' },
-          { k:'In Production', v:String(in_prod), sub:'factory POs active', color:'#f59e0b' },
-          { k:'In Transit', v:String(in_transit_count), sub:'shipments en route', color:'#6366f1' },
+          { k:'Open Pipeline', v:money(pipeline_value), sub:'across active SOs', color:'#60a5fa' },
+          { k:'Revenue MTD', v:money(rev_mtd), sub:'closed this month', color:'#34d399' },
+          { k:'Avg Gross Margin', v:avg_mgn!==null?avg_mgn.toFixed(1)+'%':'—', sub:'across open orders', color:avg_mgn>40?'#34d399':avg_mgn>25?'#fbbf24':'#f87171' },
+          { k:'In Production', v:String(in_prod), sub:'factory POs active', color:'#fbbf24' },
+          { k:'In Transit', v:String(in_transit_count), sub:'shipments en route', color:'#a78bfa' },
         ].map(m => (
           <div key={m.k} className="db-metric">
             <div className="db-metric-bar" style={{background:m.color}} />
             <div className="db-metric-k">{m.k}</div>
-            <div className="db-metric-v" style={{color:m.k==='Avg Gross Margin'?m.color:'var(--ink)'}}>{m.v}</div>
+            <div className="db-metric-v" style={{color:m.k==='Avg Gross Margin'?m.color:'#f8fafc'}}>{m.v}</div>
             <div className="db-metric-s">{m.sub}</div>
           </div>
         ))}
@@ -620,7 +620,7 @@ function Dashboard({ navigate }) {
 
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
