@@ -900,6 +900,37 @@ function SalesOrderDetail({id,navigate}){
   const cl=so.client?.name||'—';
   const updateStatus=async s=>{await SB.from('sales_orders').update({status:s,updated_at:new Date().toISOString()}).eq('id',id); setSo(prev=>({...prev,status:s}));};
   const saveInvoice=async()=>{ setSavingInv(true); await SB.from('sales_orders').update({invoice_number:invoiceNum.trim()||null,updated_at:new Date().toISOString()}).eq('id',id); setSo(prev=>({...prev,invoice_number:invoiceNum.trim()||null})); setSavingInv(false); };
+
+  const genSO = () => {
+    const win = window.open('', '_blank');
+    if (win) win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating order confirmation…</body>');
+    const docData = {
+      so_ref: so.client_po_number || so.so_number || id.slice(0,8).toUpperCase(),
+      client_po: so.client_po_number || '',
+      currency: so.currency || 'USD',
+      client_name: so.client?.name || '',
+      order_date: so.order_date,
+      cargo_ready_date: so.cargo_ready_date,
+      indc_date: so.indc_date || so.required_ship_date,
+      cancel_date: so.cancel_date,
+      payment_terms: so.payment_terms || '',
+      notes: so.notes || '',
+      lines: items.map(it => ({
+        description: it.description || it.products?.name || '—',
+        sku: it.products?.sku || it.master_sku || '',
+        quantity: Number(it.quantity) || 0,
+        client_price: Number(it.client_price) || 0,
+        line_amount: (Number(it.quantity)||0) * (Number(it.client_price)||0),
+      })),
+    };
+    const html = buildSODoc(docData);
+    if (win) { win.document.open(); win.document.write(html); win.document.close(); setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 500); }
+    else {
+      const url = URL.createObjectURL(new Blob([html],{type:'text/html'}));
+      const a = document.createElement('a'); a.href=url; a.download='Order-'+(so.client_po_number||id)+'.html';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    }
+  };
   const deleteSO=async()=>{ await SB.from('sales_order_pos').delete().eq('sales_order_id',id); await SB.from('sales_order_items').delete().eq('sales_order_id',id); await SB.from('sales_orders').delete().eq('id',id); navigate('sales-orders'); };
   const unlinkPO=async poId=>{ await SB.from('sales_order_pos').delete().eq('sales_order_id',id).eq('purchase_order_id',poId); setLinkedPos(prev=>prev.filter(p=>p.id!==poId)); };
   return (
@@ -911,6 +942,7 @@ function SalesOrderDetail({id,navigate}){
         <span style={{flex:1}} />
         <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)'}} onClick={()=>setConfirmDel(true)}>Delete</button>
         <button className="btn btn-ghost btn-sm" onClick={()=>setEditing(true)}>Edit</button>
+        <button className="btn btn-dark btn-sm" onClick={genSO}>Generate Order Confirmation</button>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'12px',marginBottom:'22px'}}>
         {[{l:'Revenue',v:money(rev,so.currency),c:'var(--ink)',t:'var(--line-2)'},{l:'Total Cost',v:cost>0?money(cost,so.currency):'No POs linked',c:cost>0?'var(--ink)':'var(--muted)',t:'var(--line-2)'},{l:'Gross Margin',v:gross>0?money(gross,so.currency):'—',c:gross>0?'#059669':'var(--muted)',t:gross>0?'#059669':'var(--line-2)'},{l:'Margin %',v:mgn!==null?mgn.toFixed(1)+'%':'—',c:mc,t:mc}].map(t=>(
@@ -3758,7 +3790,94 @@ function buildPODoc(d, opts={}) {
 +'</div></body></html>';
 }
 
-// ── Confirm Modal ─────────────────────────────────────────────────────────────
+// ── Sales Order / Order Confirmation document (client-facing — CLIENT PRICES ONLY) ──
+function buildSODoc(d) {
+  const cur = d.currency || 'USD';
+  const m = (n) => n==null ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:cur,minimumFractionDigits:2,maximumFractionDigits:2}).format(n);
+  const fd = s => { if(!s) return '—'; const dt=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(dt)?'—':dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
+  const fn = n => n==null ? '—' : new Intl.NumberFormat('en-US').format(n);
+  const subtotal = (d.lines||[]).reduce((a,l)=>a+(Number(l.line_amount)||0),0);
+
+  const lines = (d.lines||[]).map((l,i) => {
+    const bg = i % 2 === 0 ? '#fff' : '#f9fafb';
+    return '<tr style="background:'+bg+'">'
+      +'<td style="padding:15px 18px;vertical-align:top;border-bottom:1px solid #e5e7eb;">'
+        +'<div style="font-size:15px;font-weight:600;color:#0f172a;">'+(l.description||'—')+'</div>'
+        +(l.sku?'<div style="font-size:12px;color:#6b7280;font-family:monospace;margin-top:3px;">'+l.sku+'</div>':'')
+      +'</td>'
+      +'<td style="padding:15px 14px;text-align:center;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:16px;font-weight:700;color:#0f172a;font-family:monospace;">'+fn(l.quantity)+'</td>'
+      +'<td style="padding:15px 14px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;font-family:monospace;">'+m(l.client_price)+'</td>'
+      +'<td style="padding:15px 18px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:15px;font-weight:700;color:#0f172a;font-family:monospace;">'+m(l.line_amount)+'</td>'
+      +'</tr>';
+  }).join('');
+
+  const termBoxes = [
+    ['Order Date', fd(d.order_date)],
+    d.cargo_ready_date ? ['Cargo Ready Date', fd(d.cargo_ready_date)] : null,
+    d.indc_date ? ['In-DC Date', fd(d.indc_date)] : null,
+    d.cancel_date ? ['Cancel Date', fd(d.cancel_date)] : null,
+    ['Payment Terms', d.payment_terms||'—'],
+  ].filter(Boolean).map(([l,v]) =>
+    '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;">'
+    +'<div style="font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;">'+l+'</div>'
+    +'<div style="font-size:15px;font-weight:600;color:#0f172a;">'+v+'</div>'
+    +'</div>'
+  ).join('');
+
+  return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
++'<title>Order Confirmation — '+(d.client_po||d.so_ref||'')+'</title>'
++'<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">'
++'<style>*{box-sizing:border-box;margin:0;padding:0;}html,body{font-family:\'Inter\',system-ui,sans-serif;font-size:14px;color:#0f172a;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact;}.page{max-width:820px;margin:0 auto;padding:48px;}@media print{@page{size:A4;margin:20mm;}.page{padding:0;max-width:none;}}</style>'
++'</head><body><div class="page">'
+
+// Header
++'<div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:28px;border-bottom:3px solid #0c1322;margin-bottom:32px;">'
+  +'<div>'
+    +'<div style="font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">King Universal Inc.</div>'
+    +'<div style="font-size:34px;font-weight:800;color:#0c1322;letter-spacing:-.02em;line-height:1;">Order Confirmation</div>'
+  +'</div>'
+  +'<div style="text-align:right;">'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;">PO Reference</div>'
+    +'<div style="font-size:24px;font-weight:700;color:#0c1322;font-family:\'JetBrains Mono\',monospace;">'+(d.client_po||d.so_ref||'—')+'</div>'
+    +'<div style="font-size:12px;color:#94a3b8;margin-top:4px;">Confirmed '+fd(d.order_date)+'</div>'
+  +'</div>'
++'</div>'
+
+// Client banner
++(d.client_name?'<div style="background:linear-gradient(135deg,#0c1322 0%,#1e3a5f 100%);border-radius:12px;padding:18px 24px;margin-bottom:28px;">'
+  +'<div style="font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.5);margin-bottom:4px;">Prepared For</div>'
+  +'<div style="font-size:20px;font-weight:700;color:#fff;">'+d.client_name+'</div>'
++'</div>':'')
+
+// Terms
++'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:32px;">'+termBoxes+'</div>'
+
+// Line items
++'<div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;margin-bottom:28px;">'
+  +'<div style="background:#0c1322;padding:14px 18px;display:grid;grid-template-columns:1fr 80px 120px 130px;gap:8px;">'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);">Description</div>'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);text-align:center;">Qty</div>'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);text-align:right;">Unit Price</div>'
+    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);text-align:right;">Amount</div>'
+  +'</div>'
+  +'<table style="width:100%;border-collapse:collapse;"><tbody>'+lines+'</tbody></table>'
++'</div>'
+
+// Total
++'<div style="display:flex;justify-content:flex-end;margin-bottom:40px;">'
+  +'<div style="width:300px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:18px 22px;">'
+    +'<div style="display:flex;justify-content:space-between;padding:14px 0 0;"><span style="font-size:17px;font-weight:700;color:#0f172a;">Order Total '+cur+'</span><span style="font-size:20px;font-weight:800;color:#0c1322;font-family:\'JetBrains Mono\',monospace;">'+m(subtotal)+'</span></div>'
+  +'</div>'
++'</div>'
+
+// Notes
++(d.notes?'<div style="margin-bottom:32px;"><div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;">Notes</div><div style="font-size:13.5px;color:#374151;line-height:1.6;">'+d.notes+'</div></div>':'')
+
+// Footer
++'<div style="padding-top:24px;border-top:1px solid #e5e7eb;text-align:center;font-size:12px;color:#94a3b8;">Thank you for your business · King Universal Inc.</div>'
+
++'</div></body></html>';
+}
 function ConfirmModal({ title, message, confirmLabel='Delete', danger=true, onConfirm, onCancel }) {
   return (
     <div className="modal-overlay" onClick={onCancel} style={{zIndex:10000}}>
