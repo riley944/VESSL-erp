@@ -647,3 +647,61 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   .so-page-title{font-size:19px;}
   .db-metric-v{font-size:19px;}
 }
+
+/* ═══════════════ DASHBOARD — DARK THEME ═══════════════ */
+.db-dark{
+  background:#0a0e17;
+  margin:-24px -28px -60px;
+  padding:28px 28px 60px;
+  min-height:calc(100vh - 54px);
+}
+/* Metric cards */
+.db-dark .db-metric-strip{grid-template-columns:repeat(5,1fr);gap:13px;margin-bottom:20px;}
+.db-dark .db-metric{
+  background:linear-gradient(160deg,#141b2b 0%,#10151f 100%);
+  border:1px solid #1f2937;border-radius:14px;
+  padding:18px 16px 16px;box-shadow:0 1px 3px rgba(0,0,0,.4);
+}
+.db-dark .db-metric:hover{border-color:#2d3a4f;transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.5);}
+.db-dark .db-metric-bar{height:3px;opacity:1;border-radius:0;}
+.db-dark .db-metric-k{color:#64748b;font-size:9.5px;letter-spacing:.16em;}
+.db-dark .db-metric-v{
+  font-size:clamp(17px,2vw,25px);font-weight:700;color:#f8fafc;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.db-dark .db-metric-s{color:#475569;font-size:11px;}
+/* Cards */
+.db-dark .db-card{
+  background:#10151f;border:1px solid #1f2937;border-radius:14px;
+  box-shadow:0 1px 3px rgba(0,0,0,.4);
+}
+.db-dark .db-card-head{border-bottom:1px solid #1f2937;padding:16px 20px 14px;}
+.db-dark .db-card-title{color:#f1f5f9;font-size:13px;font-weight:700;}
+.db-dark .db-card-head .btn-ghost{color:#60a5fa;}
+.db-dark .db-card-head .btn-ghost:hover{background:rgba(96,165,250,.1);}
+/* Pipeline stages */
+.db-dark .db-stage:hover{background:rgba(255,255,255,.03);}
+.db-dark .db-stage-label{color:#64748b;}
+.db-dark .db-stage-count{color:#f1f5f9;}
+.db-dark .db-stage-val{color:#64748b;}
+/* SO + ship rows */
+.db-dark .db-so-row:hover,.db-dark .db-ship-row:hover{background:rgba(255,255,255,.03);}
+.db-dark .db-so-row{border-bottom-color:#1a2231 !important;}
+.db-dark .db-so-num{color:#f1f5f9;}
+.db-dark .db-so-client{color:#64748b;}
+.db-dark .db-so-rev{color:#f8fafc;}
+.db-dark .db-ship-row{border-bottom-color:#1a2231 !important;}
+/* Inline borders that were light */
+.db-dark [style*="border-bottom:1px solid var(--line-2)"]{border-bottom-color:#1a2231 !important;}
+.db-dark [style*="1px solid var(--line-2)"]{border-color:#1a2231 !important;}
+/* Text inside cards that used dark-on-light */
+.db-dark .db-card [style*="color:var(--ink)"],
+.db-dark .db-card [style*="color:var(--ink-2)"]{color:#e2e8f0 !important;}
+.db-dark .db-card [style*="color:var(--muted)"]{color:#64748b !important;}
+.db-dark .db-card [style*="color:var(--faint)"]{color:#475569 !important;}
+/* Mobile dark */
+@media (max-width:640px){
+  .db-dark{margin:-16px -14px -60px;padding:18px 14px 60px;}
+  .db-dark .db-metric-strip{grid-template-columns:1fr 1fr;}
+  .db-dark .db-metric-v{font-size:clamp(16px,5vw,22px);}
+}
