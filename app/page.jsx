@@ -472,9 +472,10 @@ function Dashboard({ navigate }) {
   };
 
   return (
-    <div className="db-dark">
-      {/* ── Metric Strip ───────────────────────────────────────────────── */}
-      <div className="db-metric-strip">
+    <div style={{background:'#0a0e17',margin:'-24px -28px -60px',padding:'28px',minHeight:'calc(100vh - 54px)'}}>
+
+      {/* ── Metric Strip ── */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'12px',marginBottom:'24px'}}>
         {[
           { k:'Open Pipeline', v:money(pipeline_value), sub:'across active SOs', color:'#60a5fa' },
           { k:'Revenue MTD', v:money(rev_mtd), sub:'closed this month', color:'#34d399' },
@@ -482,84 +483,82 @@ function Dashboard({ navigate }) {
           { k:'In Production', v:String(in_prod), sub:'factory POs active', color:'#fbbf24' },
           { k:'In Transit', v:String(in_transit_count), sub:'shipments en route', color:'#a78bfa' },
         ].map(m => (
-          <div key={m.k} className="db-metric">
-            <div className="db-metric-bar" style={{background:m.color}} />
-            <div className="db-metric-k">{m.k}</div>
-            <div className="db-metric-v" style={{color:m.k==='Avg Gross Margin'?m.color:'#f8fafc'}}>{m.v}</div>
-            <div className="db-metric-s">{m.sub}</div>
+          <div key={m.k} style={{background:'linear-gradient(160deg,#161d2e 0%,#10151f 100%)',border:'1px solid #232d3f',borderRadius:'14px',padding:'0',overflow:'hidden',position:'relative'}}>
+            <div style={{height:'3px',background:m.color}} />
+            <div style={{padding:'16px 16px 15px'}}>
+              <div style={{fontFamily:'var(--mono)',fontSize:'9.5px',letterSpacing:'.14em',textTransform:'uppercase',color:'#64748b',fontWeight:600,marginBottom:'11px'}}>{m.k}</div>
+              <div style={{fontFamily:'var(--mono)',fontSize:'clamp(15px,1.7vw,24px)',fontWeight:700,color:m.k==='Avg Gross Margin'?m.color:'#f8fafc',lineHeight:1,marginBottom:'7px',letterSpacing:'-.02em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'clip'}}>{m.v}</div>
+              <div style={{fontSize:'11px',color:'#475569'}}>{m.sub}</div>
+            </div>
           </div>
         ))}
       </div>
 
-      {/* ── Pipeline Stage Flow ─────────────────────────────────────────── */}
-      <div className="db-card" style={{marginBottom:'22px'}}>
-        <div className="db-card-head">
-          <div className="db-card-title">Revenue Pipeline</div>
-          <button className="btn btn-ghost btn-sm" onClick={()=>navigate('sales-orders')}>View all SOs →</button>
+      {/* ── Revenue Pipeline ── */}
+      <div style={{background:'#10151f',border:'1px solid #232d3f',borderRadius:'16px',marginBottom:'18px',overflow:'hidden'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'17px 22px 15px',borderBottom:'1px solid #1c2535'}}>
+          <div style={{fontSize:'13px',fontWeight:700,color:'#f1f5f9',letterSpacing:'.02em'}}>Revenue Pipeline</div>
+          <button onClick={()=>navigate('sales-orders')} style={{background:'none',border:'none',color:'#60a5fa',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}>View all SOs →</button>
         </div>
-        <div style={{padding:'0 22px 6px'}}>
-          {/* Stage bar */}
-          <div style={{display:'flex',height:'8px',borderRadius:'6px',overflow:'hidden',marginBottom:'18px',gap:'2px'}}>
+        <div style={{padding:'20px 22px'}}>
+          <div style={{display:'flex',height:'8px',borderRadius:'6px',overflow:'hidden',marginBottom:'20px',gap:'2px',background:'#1c2535'}}>
             {SO_STAGES.map(s => {
-              const pct = pipeline[s].value / totalPipelineVal * 100;
+              const pct = totalPipelineVal>0 ? pipeline[s].value / totalPipelineVal * 100 : 0;
               return pct > 0.5 ? <div key={s} style={{flex:pct,background:STAGE_COLORS[s],transition:'.3s'}} title={STAGE_LABELS[s]+': '+money(pipeline[s].value)} /> : null;
             })}
           </div>
-          {/* Stage columns */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:'8px'}}>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:'6px'}}>
             {SO_STAGES.map(s => (
-              <div key={s} className="db-stage" onClick={()=>navigate('sales-orders')} style={{cursor:'pointer'}}>
-                <div className="db-stage-dot" style={{background:STAGE_COLORS[s]}} />
-                <div className="db-stage-label">{STAGE_LABELS[s]}</div>
-                <div className="db-stage-count" style={{color:pipeline[s].count>0?'var(--ink)':'var(--faint)'}}>{pipeline[s].count}</div>
-                <div className="db-stage-val">{pipeline[s].value>0?money(pipeline[s].value):'—'}</div>
+              <div key={s} onClick={()=>navigate('sales-orders')} style={{cursor:'pointer',padding:'12px 10px',borderRadius:'10px',transition:'.13s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.03)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                <div style={{width:'8px',height:'8px',borderRadius:'50%',marginBottom:'9px',background:STAGE_COLORS[s]}} />
+                <div style={{fontSize:'9.5px',fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:'7px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{STAGE_LABELS[s]}</div>
+                <div style={{fontFamily:'var(--mono)',fontSize:'21px',fontWeight:700,color:pipeline[s].count>0?'#f1f5f9':'#374151',lineHeight:1,marginBottom:'4px'}}>{pipeline[s].count}</div>
+                <div style={{fontSize:'11px',color:'#64748b',fontFamily:'var(--mono)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{pipeline[s].value>0?money(pipeline[s].value):'—'}</div>
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      {/* ── Main Two-Column Grid ────────────────────────────────────────── */}
-      <div className="db-grid">
+      {/* ── Main Grid ── */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 380px',gap:'18px'}} className="db-main-grid">
 
-        {/* Left — Recent Open Orders */}
-        <div className="db-card">
-          <div className="db-card-head">
-            <div className="db-card-title">Active Orders</div>
-            <button className="btn btn-ghost btn-sm" onClick={()=>navigate('sales-orders')}>All →</button>
+        {/* Active Orders */}
+        <div style={{background:'#10151f',border:'1px solid #232d3f',borderRadius:'16px',overflow:'hidden',alignSelf:'start'}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'17px 22px 15px',borderBottom:'1px solid #1c2535'}}>
+            <div style={{fontSize:'13px',fontWeight:700,color:'#f1f5f9'}}>Active Orders</div>
+            <button onClick={()=>navigate('sales-orders')} style={{background:'none',border:'none',color:'#60a5fa',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}>All →</button>
           </div>
           <div>
-            {recentSOs.length === 0 && <div className="empty" style={{padding:'32px'}}><p>No active orders</p></div>}
+            {recentSOs.length === 0 && <div style={{padding:'40px',textAlign:'center',color:'#475569',fontSize:'13px'}}>No active orders</div>}
             {recentSOs.map((so, i) => (
-              <div key={so.id} className="db-so-row" style={{borderBottom:i<recentSOs.length-1?'1px solid var(--line-2)':'none'}} onClick={()=>navigate('so-detail',{id:so.id})}>
-                <div className="db-so-avatar" style={{background:companyColor(so.client?.name||'')}}>{initials(so.client?.name||'?')}</div>
-                <div className="db-so-main">
-                  <div className="db-so-num">{so.client_po_number||so.so_number||'—'}</div>
-                  <div className="db-so-client">{so.client?.name||'Unknown'}</div>
+              <div key={so.id} onClick={()=>navigate('so-detail',{id:so.id})} style={{display:'flex',alignItems:'center',gap:'13px',padding:'13px 22px',cursor:'pointer',borderBottom:i<recentSOs.length-1?'1px solid #1a2231':'none',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.025)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                <div style={{width:'34px',height:'34px',borderRadius:'9px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'12px',fontWeight:700,color:'#0b1120',flexShrink:0,fontFamily:'var(--mono)',background:companyColor(so.client?.name||'')}}>{initials(so.client?.name||'?')}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontFamily:'var(--mono)',fontSize:'13px',fontWeight:600,color:'#f1f5f9',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client_po_number||so.so_number||'—'}</div>
+                  <div style={{fontSize:'12px',color:'#64748b',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client?.name||'Unknown'}</div>
                 </div>
-                <div className="db-so-right">
-                  <div className="db-so-rev">{money(so.rev)}</div>
-                  {so.mgn!==null && <div className="db-so-mgn" style={{color:so.mgn>40?'var(--ok)':so.mgn>20?'var(--warn)':'var(--hot)'}}>{so.mgn.toFixed(1)}%</div>}
+                <div style={{textAlign:'right',flexShrink:0,minWidth:'74px'}}>
+                  <div style={{fontFamily:'var(--mono)',fontSize:'13px',fontWeight:600,color:'#f8fafc',whiteSpace:'nowrap'}}>{money(so.rev)}</div>
+                  {so.mgn!==null && <div style={{fontSize:'11px',fontFamily:'var(--mono)',marginTop:'2px',fontWeight:600,color:so.mgn>40?'#34d399':so.mgn>20?'#fbbf24':'#f87171'}}>{so.mgn.toFixed(1)}%</div>}
                 </div>
-                <div className="db-so-badge">
-                  <Badge status={so.status} />
-                </div>
+                <div style={{flexShrink:0}}><Badge status={so.status} /></div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Right — Shipments + Client Breakdown */}
+        {/* Right column */}
         <div style={{display:'flex',flexDirection:'column',gap:'18px'}}>
 
           {/* Shipments In Transit */}
-          <div className="db-card">
-            <div className="db-card-head">
-              <div className="db-card-title">Shipments In Transit</div>
-              <button className="btn btn-ghost btn-sm" onClick={()=>navigate('shipments')}>All →</button>
+          <div style={{background:'#10151f',border:'1px solid #232d3f',borderRadius:'16px',overflow:'hidden'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'17px 22px 15px',borderBottom:'1px solid #1c2535'}}>
+              <div style={{fontSize:'13px',fontWeight:700,color:'#f1f5f9'}}>Shipments In Transit</div>
+              <button onClick={()=>navigate('shipments')} style={{background:'none',border:'none',color:'#60a5fa',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}>All →</button>
             </div>
             {shipList.length === 0 ? (
-              <div className="empty" style={{padding:'24px'}}><div className="ico">🚢</div><p>No active shipments</p></div>
+              <div style={{padding:'32px',textAlign:'center',color:'#475569',fontSize:'13px'}}><div style={{fontSize:'26px',marginBottom:'8px',opacity:.4}}>🚢</div>No active shipments</div>
             ) : (
               <div>
                 {shipList.slice(0,5).map((sh,i) => {
@@ -569,22 +568,21 @@ function Dashboard({ navigate }) {
                   const poRef = po?.client_po_number || po?.order_number || '—';
                   const client = (po?.client?.name || sh.companies?.name || '').toUpperCase();
                   return (
-                    <div key={sh.id} className="db-ship-row" style={{borderBottom:i<Math.min(shipList.length,5)-1?'1px solid var(--line-2)':'none'}}>
+                    <div key={sh.id} style={{display:'flex',alignItems:'center',gap:'12px',padding:'13px 22px',borderBottom:i<Math.min(shipList.length,5)-1?'1px solid #1a2231':'none'}}>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'5px'}}>
-                          <span className="mono" style={{fontSize:'12.5px',fontWeight:700,color:'var(--ink)'}}>{poRef}</span>
+                          <span style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:700,color:'#f1f5f9'}}>{poRef}</span>
                           <Badge status={sh.status} />
                         </div>
-                        <div style={{display:'flex',alignItems:'center',gap:'6px',fontSize:'12px',color:'var(--muted)'}}>
-                          {client && <span style={{fontWeight:600,color:'var(--ink-2)'}}>{client}</span>}
+                        <div style={{display:'flex',alignItems:'center',gap:'6px',fontSize:'11.5px',color:'#64748b',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                          {client && <span style={{fontWeight:600,color:'#94a3b8'}}>{client}</span>}
                           {sh.vessel_name && <span>· {sh.vessel_name}</span>}
-                          {sh.container_no && <span className="mono">· {sh.container_no}</span>}
                         </div>
                       </div>
                       {days !== null && (
                         <div style={{textAlign:'right',flexShrink:0}}>
-                          <div style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:'20px',lineHeight:1,color:urgent?'var(--hot)':'var(--ink)'}}>{days < 0 ? 'Due' : days}</div>
-                          <div style={{fontSize:'10px',color:'var(--muted)',marginTop:'2px'}}>{days < 0 ? 'days overdue' : days===0?'arrives today':'days to ETA'}</div>
+                          <div style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:'19px',lineHeight:1,color:urgent?'#f87171':'#f1f5f9'}}>{days < 0 ? 'Due' : days}</div>
+                          <div style={{fontSize:'9.5px',color:'#475569',marginTop:'2px'}}>{days < 0 ? 'overdue' : days===0?'today':'days to ETA'}</div>
                         </div>
                       )}
                     </div>
@@ -594,24 +592,24 @@ function Dashboard({ navigate }) {
             )}
           </div>
 
-          {/* Client Revenue Breakdown */}
-          <div className="db-card">
-            <div className="db-card-head">
-              <div className="db-card-title">Clients by Pipeline Value</div>
+          {/* Clients by Pipeline Value */}
+          <div style={{background:'#10151f',border:'1px solid #232d3f',borderRadius:'16px',overflow:'hidden'}}>
+            <div style={{padding:'17px 22px 15px',borderBottom:'1px solid #1c2535'}}>
+              <div style={{fontSize:'13px',fontWeight:700,color:'#f1f5f9'}}>Clients by Pipeline Value</div>
             </div>
-            <div style={{padding:'4px 20px 16px'}}>
-              {clients.length === 0 && <div style={{color:'var(--muted)',fontSize:'13px',padding:'12px 0'}}>No data yet</div>}
+            <div style={{padding:'16px 22px'}}>
+              {clients.length === 0 && <div style={{color:'#475569',fontSize:'13px',padding:'8px 0'}}>No data yet</div>}
               {clients.map(([name, val]) => (
-                <div key={name} style={{marginBottom:'13px'}}>
-                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'5px'}}>
-                    <div style={{display:'flex',alignItems:'center',gap:'7px'}}>
+                <div key={name} style={{marginBottom:'14px'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'6px'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:'7px',minWidth:0}}>
                       <div style={{width:'8px',height:'8px',borderRadius:'50%',background:companyColor(name),flexShrink:0}} />
-                      <span style={{fontSize:'12.5px',fontWeight:600,color:'var(--ink-2)'}}>{name}</span>
+                      <span style={{fontSize:'12.5px',fontWeight:600,color:'#cbd5e1',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{name}</span>
                     </div>
-                    <span className="mono" style={{fontSize:'12px',color:'var(--muted)'}}>{money(val)}</span>
+                    <span style={{fontFamily:'var(--mono)',fontSize:'12px',color:'#64748b',flexShrink:0,marginLeft:'10px'}}>{money(val)}</span>
                   </div>
-                  <div style={{height:'5px',background:'var(--line-2)',borderRadius:'4px',overflow:'hidden'}}>
-                    <div style={{height:'100%',width:(val/maxClientVal*100)+'%',background:companyColor(name),borderRadius:'4px',transition:'.4s'}} />
+                  <div style={{height:'5px',background:'#1c2535',borderRadius:'4px',overflow:'hidden'}}>
+                    <div style={{height:'100%',width:(maxClientVal>0?val/maxClientVal*100:0)+'%',background:companyColor(name),borderRadius:'4px',transition:'.4s'}} />
                   </div>
                 </div>
               ))}
@@ -1880,6 +1878,7 @@ function OrderDetail({ id, navigate }) {
       payment_terms: po.payment_terms || '—',
       incoterm: po.incoterm || '—',
       client_po: po.client_po_number || '',
+      notes: po.notes || '',
     };
     const html = buildPODoc(docData, {
       pallet: po.pallet_info, clientName: po.client?.name,
