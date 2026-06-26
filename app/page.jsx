@@ -19,6 +19,13 @@ function initials(name){ return (name||'?').replace(/[^A-Za-z0-9 ]/g,'').split(/
 
 // ── Utils ────────────────────────────────────────────────────────────────────
 const money = (n, c='USD') => n == null ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:c}).format(n);
+const moneyCompact = (n) => {
+  if (n == null) return '—';
+  const a = Math.abs(n);
+  if (a >= 1000000) return '$' + (n/1000000).toFixed(a>=10000000?1:2).replace(/\.0+$/,'') + 'M';
+  if (a >= 1000) return '$' + (n/1000).toFixed(0) + 'K';
+  return '$' + Math.round(n);
+};
 const fmtDate = s => { if (!s) return '—'; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? s+'T12:00:00' : s); return isNaN(d) ? '—' : d.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
 const fmtDateTime = s => { if (!s) return ''; const d=new Date(s); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); };
 const timeAgo = s => { if(!s) return ''; const m=Math.round((Date.now()-new Date(s))/60000); if(m<2) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<24) return h+'h'; const d=Math.round(h/24); if(d<7) return d+'d'; return fmtDate(s); };
@@ -472,13 +479,17 @@ function Dashboard({ navigate }) {
   };
 
   return (
-    <div style={{background:'#0a0e17',margin:'-24px -28px -60px',padding:'28px',minHeight:'calc(100vh - 54px)'}}>
+    <div className="db-shell" style={{background:'#0a0e17',padding:'28px 32px 56px',minHeight:'calc(100vh - 54px)'}}>
+      <div style={{marginBottom:'22px'}}>
+        <div style={{fontSize:'22px',fontWeight:800,color:'#f8fafc',letterSpacing:'-.02em'}}>Dashboard</div>
+        <div style={{fontSize:'13px',color:'#64748b',marginTop:'3px'}}>Live pipeline, production &amp; logistics overview</div>
+      </div>
 
       {/* ── Metric Strip ── */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'12px',marginBottom:'24px'}}>
         {[
-          { k:'Open Pipeline', v:money(pipeline_value), sub:'across active SOs', color:'#60a5fa' },
-          { k:'Revenue MTD', v:money(rev_mtd), sub:'closed this month', color:'#34d399' },
+          { k:'Open Pipeline', v:moneyCompact(pipeline_value), sub:'across active SOs', color:'#60a5fa' },
+          { k:'Revenue MTD', v:moneyCompact(rev_mtd), sub:'closed this month', color:'#34d399' },
           { k:'Avg Gross Margin', v:avg_mgn!==null?avg_mgn.toFixed(1)+'%':'—', sub:'across open orders', color:avg_mgn>40?'#34d399':avg_mgn>25?'#fbbf24':'#f87171' },
           { k:'In Production', v:String(in_prod), sub:'factory POs active', color:'#fbbf24' },
           { k:'In Transit', v:String(in_transit_count), sub:'shipments en route', color:'#a78bfa' },
@@ -486,8 +497,8 @@ function Dashboard({ navigate }) {
           <div key={m.k} style={{background:'linear-gradient(160deg,#161d2e 0%,#10151f 100%)',border:'1px solid #232d3f',borderRadius:'14px',padding:'0',overflow:'hidden',position:'relative'}}>
             <div style={{height:'3px',background:m.color}} />
             <div style={{padding:'16px 16px 15px'}}>
-              <div style={{fontFamily:'var(--mono)',fontSize:'9.5px',letterSpacing:'.14em',textTransform:'uppercase',color:'#64748b',fontWeight:600,marginBottom:'11px'}}>{m.k}</div>
-              <div style={{fontFamily:'var(--mono)',fontSize:'clamp(15px,1.7vw,24px)',fontWeight:700,color:m.k==='Avg Gross Margin'?m.color:'#f8fafc',lineHeight:1,marginBottom:'7px',letterSpacing:'-.02em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'clip'}}>{m.v}</div>
+              <div style={{fontFamily:'var(--mono)',fontSize:'9.5px',letterSpacing:'.14em',textTransform:'uppercase',color:'#64748b',fontWeight:600,marginBottom:'11px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.k}</div>
+              <div style={{fontFamily:'var(--mono)',fontSize:'24px',fontWeight:700,color:m.k==='Avg Gross Margin'?m.color:'#f8fafc',lineHeight:1,marginBottom:'7px',letterSpacing:'-.02em'}}>{m.v}</div>
               <div style={{fontSize:'11px',color:'#475569'}}>{m.sub}</div>
             </div>
           </div>
@@ -4258,11 +4269,11 @@ export default function App() {
         </div>
       ) : (
       <div className="main-area">
-        <div className="page-header">
+        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail')?{display:'none'}:undefined}>
           <h1 className="page-title">{titles[page]||''}</h1>
           <div className="page-actions">{pageActions[page]}</div>
         </div>
-        <div className="page-content">
+        <div className="page-content" style={page==='dashboard'?{padding:0}:(page==='sales-orders'||page==='so-detail'||page==='order-detail')?{paddingTop:'24px'}:undefined}>
           {page==='dashboard'        && <Dashboard navigate={navigate} />}
           {page==='sales-orders'     && <SalesOrders navigate={navigate} />}
           {page==='so-detail'        && <SalesOrderDetail id={params.id} navigate={navigate} />}
