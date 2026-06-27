@@ -650,3 +650,4 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 
 /* Dashboard dark — mobile grid */
 @media (max-width:860px){.db-main-grid{grid-template-columns:1fr !important;}}
+@media (max-width:560px){.db-hide-sm{display:none !important;}}
