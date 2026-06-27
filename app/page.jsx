@@ -550,7 +550,7 @@ function Dashboard({ navigate }) {
               <div style={{width:'34px',height:'34px',borderRadius:'10px',background:m.bg,display:'flex',alignItems:'center',justifyContent:'center'}}>
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={m.tint} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{m.icon.split(' M').map((seg,si)=><path key={si} d={(si>0?'M':'')+seg} />)}</svg>
               </div>
-              {m.delta!==undefined ? <DeltaPill v={m.delta} /> : m.risk ? <span style={{fontSize:'11px',fontWeight:600,color:'#FF3B30',background:'#FEECEB',borderRadius:'6px',padding:'2px 7px'}}>Action</span> : null}
+              {m.risk ? <span style={{fontSize:'11px',fontWeight:600,color:'#FF3B30',background:'#FEECEB',borderRadius:'6px',padding:'2px 7px'}}>Action</span> : null}
             </div>
             <div style={{fontSize:'30px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.025em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
             <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'8px',marginTop:'12px'}}>
@@ -836,53 +836,105 @@ function SalesOrders({navigate}){
   });
   const totals=shown.reduce((a,so)=>{ const m=soMetrics(so); return {rev:a.rev+m.rev,cost:a.cost+m.cost,n:a.n+1}; },{rev:0,cost:0,n:0});
   const totalMgn=totals.rev>0?(totals.rev-totals.cost)/totals.rev*100:null;
+  const totalUnits = shown.reduce((a,so)=>a+(so.sales_order_items||[]).reduce((b,i)=>b+(Number(i.quantity)||0),0),0);
   return (
-    <>
+    <div className="db-wrap" style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
       {showCreate && <CreateSOModal onClose={()=>setShowCreate(false)} onCreated={(id)=>{setShowCreate(false);id?navigate('so-detail',{id}):load();}} />}
-      <div className="so-page-head">
+
+      {/* Title */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'22px',gap:'14px',flexWrap:'wrap'}}>
         <div>
-          <h1 className="so-page-title">Sales Orders</h1>
-          <p className="so-page-sub">Client POs received by KUI — tracking revenue, margin &amp; fulfillment</p>
+          <div style={{fontSize:'24px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em'}}>Sales Orders</div>
+          <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Client POs received by KUI</div>
         </div>
-        <button className="so-new-btn" onClick={()=>setShowCreate(true)}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <button onClick={()=>setShowCreate(true)} style={{display:'inline-flex',alignItems:'center',gap:'7px',background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',flexShrink:0,boxShadow:'0 1px 2px rgba(0,0,0,.08)'}}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           New Sales Order
         </button>
       </div>
-      <div className="so-searchbar">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input placeholder="Search by client PO or client name…" value={search} onChange={e=>setSearch(e.target.value)} />
-        {search && <button className="so-search-clear" onClick={()=>setSearch('')} aria-label="Clear">×</button>}
-      </div>
+
+      {/* Summary tiles */}
       {shown.length>0 && (
-        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'10px',marginBottom:'20px'}}>
-          {[{l:'Orders',v:String(totals.n),c:'var(--ink)'},{l:'Revenue',v:money(totals.rev),c:'var(--ink)'},{l:'Total Cost',v:totals.cost>0?money(totals.cost):'No POs linked',c:'var(--muted)'},{l:'Avg Margin',v:totalMgn!==null?totalMgn.toFixed(1)+'%':'—',c:mgnColor(totalMgn)}].map(t=>(
-            <div key={t.l} className="section-card" style={{padding:'14px 16px',marginBottom:0}}>
-              <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.12em',color:'var(--muted)',marginBottom:'6px'}}>{t.l}</div>
-              <div style={{fontFamily:'var(--mono)',fontSize:'20px',fontWeight:700,color:t.c,lineHeight:1}}>{t.v}</div>
+        <div className="db-kpi-grid" style={{display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:'14px',marginBottom:'16px'}}>
+          {[
+            { k:'Orders', v:String(totals.n), tint:'#5856D6', bg:'#EEEEFC', icon:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8' },
+            { k:'Pipeline revenue', v:moneyCompact(totals.rev), tint:'#0071E3', bg:'#EAF3FE', icon:'M12 1v22 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6' },
+            { k:'Total units', v:fmtNum(totalUnits), tint:'#FF9500', bg:'#FFF3E2', icon:'M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z M3.3 7L12 12l8.7-5 M12 22V12' },
+          ].map(m => (
+            <div key={m.k} style={{background:'#fff',borderRadius:'18px',padding:'18px 20px',boxShadow:'0 0 0 1px rgba(0,0,0,.03), 0 2px 5px rgba(0,0,0,.04), 0 12px 28px -8px rgba(20,20,40,.06)'}}>
+              <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'14px'}}>
+                <div style={{width:'34px',height:'34px',borderRadius:'10px',background:m.bg,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={m.tint} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{m.icon.split(' M').map((seg,si)=><path key={si} d={(si>0?'M':'')+seg} />)}</svg>
+                </div>
+                <div style={{fontSize:'12.5px',fontWeight:500,color:'#8A8A8E'}}>{m.k}</div>
+              </div>
+              <div style={{fontSize:'28px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.025em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
             </div>
           ))}
         </div>
       )}
+
+      {/* Search */}
+      <div style={{display:'flex',alignItems:'center',gap:'10px',background:'#fff',borderRadius:'12px',padding:'0 14px',height:'44px',marginBottom:'12px',boxShadow:'0 0 0 1px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.04)'}}>
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#8A8A8E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input placeholder="Search by client PO or client name…" value={search} onChange={e=>setSearch(e.target.value)} style={{flex:1,border:'none',outline:'none',background:'transparent',fontSize:'14px',color:'#1A1A1C',minWidth:0}} />
+        {search && <button onClick={()=>setSearch('')} style={{flexShrink:0,width:'20px',height:'20px',borderRadius:'50%',border:'none',background:'#F0F0F2',color:'#8A8A8E',fontSize:'14px',lineHeight:1,cursor:'pointer'}}>×</button>}
+      </div>
+
+      {/* Client filter */}
       {clients.length>1 && (
-        <div style={{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'10px'}}>
-          {['all',...clients].map(c=>{ const on=clientF===c; return <button key={c} onClick={()=>setClientF(c)} style={{padding:'4px 12px',borderRadius:'20px',border:'none',cursor:'pointer',fontSize:'12px',fontWeight:600,background:on?companyColor(c):'var(--line-2)',color:on?'#fff':'var(--muted)'}}>{c==='all'?'All clients':c}</button>; })}
+        <div style={{display:'flex',gap:'7px',flexWrap:'wrap',marginBottom:'10px'}}>
+          {['all',...clients].map(c=>{ const on=clientF===c; return (
+            <button key={c} onClick={()=>setClientF(c)} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',borderRadius:'9px',border:'1px solid '+(on?'transparent':'#EAEAEE'),cursor:'pointer',fontSize:'12.5px',fontWeight:500,background:on?'#1A1A1C':'#fff',color:on?'#fff':'#4A4A4E'}}>
+              {c!=='all' && <span style={{width:'7px',height:'7px',borderRadius:'50%',background:companyColor(c)}} />}{c==='all'?'All clients':c}
+            </button>
+          ); })}
         </div>
       )}
-      <div style={{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'20px'}}>
-        {['all',...SO_STATUSES].map(s=>{ const on=statusF===s; const m=SO_SM[s]; return <button key={s} onClick={()=>setStatusF(s)} style={{padding:'4px 12px',borderRadius:'20px',border:'none',cursor:'pointer',fontSize:'11px',fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',background:on?(m?m.color:'#334155'):(m?m.bg:'var(--line-2)'),color:on?'#fff':(m?m.color:'var(--muted)')}}>{s==='all'?'ALL':s.replace(/_/g,' ')}</button>; })}
+
+      {/* Status filter */}
+      <div style={{display:'flex',gap:'7px',flexWrap:'wrap',marginBottom:'18px'}}>
+        {['all',...SO_STATUSES].map(s=>{ const on=statusF===s; const m=SO_SM[s]; return (
+          <button key={s} onClick={()=>setStatusF(s)} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',borderRadius:'9px',border:'1px solid '+(on?'transparent':'#EAEAEE'),cursor:'pointer',fontSize:'12.5px',fontWeight:500,background:on?(m?m.color:'#1A1A1C'):'#fff',color:on?'#fff':'#4A4A4E'}}>
+            {s!=='all'&&m && <span style={{width:'7px',height:'7px',borderRadius:'50%',background:on?'#fff':m.color}} />}{s==='all'?'All':(m?.label||s.replace(/_/g,' '))}
+          </button>
+        ); })}
       </div>
-      {loading ? <div className="loading">Loading…</div> : shown.length ? (
-        <div className="order-card-grid">{shown.map(so=><SOCard key={so.id} so={so} onClick={()=>navigate('so-detail',{id:so.id})} />)}</div>
+
+      {/* Orders list */}
+      {loading ? (
+        <div style={{display:'flex',alignItems:'center',justifyContent:'center',padding:'60px',color:'#8A8A8E',fontSize:'14px'}}>Loading…</div>
+      ) : shown.length ? (
+        <div style={{background:'#fff',borderRadius:'18px',boxShadow:'0 0 0 1px rgba(0,0,0,.03), 0 2px 5px rgba(0,0,0,.04), 0 12px 28px -8px rgba(20,20,40,.06)',overflow:'hidden'}}>
+          {shown.map((so,i) => {
+            const m=soMetrics(so);
+            const units=(so.sales_order_items||[]).reduce((b,it)=>b+(Number(it.quantity)||0),0);
+            return (
+              <div key={so.id} onClick={()=>navigate('so-detail',{id:so.id})} style={{display:'flex',alignItems:'center',gap:'14px',padding:'14px 20px',cursor:'pointer',borderTop:i>0?'1px solid #F4F4F6':'none',transition:'.12s',minWidth:0}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFC'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                <div style={{width:'40px',height:'40px',borderRadius:'11px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'13px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:companyColor(so.client?.name||'')}}>{initials(so.client?.name||'?')}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:'14px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client_po_number||so.so_number||'—'}</div>
+                  <div style={{fontSize:'12.5px',color:'#8A8A8E',marginTop:'1px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client?.name||'Unknown'}{so.order_date?' · '+fmtDate(so.order_date):''}</div>
+                </div>
+                <div className="db-hide-sm" style={{textAlign:'right',flexShrink:0,fontSize:'12.5px',color:'#A0A0A4',fontVariantNumeric:'tabular-nums'}}>{fmtNum(units)} units</div>
+                <div style={{textAlign:'right',flexShrink:0,minWidth:'78px',fontSize:'15px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{money(m.rev)}</div>
+                <div style={{flexShrink:0}}><Badge status={so.status} /></div>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C8C8CC" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
+            );
+          })}
+        </div>
       ) : (
-        <div className="section-card"><div style={{padding:'52px 32px',textAlign:'center'}}>
-          <svg style={{margin:'0 auto 16px',display:'block',opacity:.3}} width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          <h3 style={{marginBottom:'8px',fontSize:'16px',fontWeight:700}}>{'No sales orders'+(statusF!=='all'?' with this status':'')}</h3>
-          <p style={{color:'var(--muted)',fontSize:'13px',marginBottom:'22px',lineHeight:1.6}}>Sales orders are client POs received by KUI. Create one to track revenue and margin.</p>
-          <button className="btn btn-dark btn-sm" onClick={()=>setShowCreate(true)}>+ New Sales Order</button>
-        </div></div>
+        <div style={{background:'#fff',borderRadius:'18px',boxShadow:'0 0 0 1px rgba(0,0,0,.03), 0 2px 5px rgba(0,0,0,.04), 0 12px 28px -8px rgba(20,20,40,.06)',padding:'56px 32px',textAlign:'center'}}>
+          <div style={{width:'52px',height:'52px',borderRadius:'14px',background:'#F2F2F6',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#A0A0A4" strokeWidth="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'8px'}}>{'No sales orders'+(statusF!=='all'?' with this status':'')}</div>
+          <div style={{color:'#8A8A8E',fontSize:'13.5px',marginBottom:'22px',lineHeight:1.6,maxWidth:'340px',marginLeft:'auto',marginRight:'auto'}}>Sales orders are client POs received by KUI. Create one to start tracking.</div>
+          <button onClick={()=>setShowCreate(true)} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>New Sales Order</button>
+        </div>
       )}
-    </>
+    </div>
   );
 }
 
