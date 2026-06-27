@@ -435,12 +435,20 @@ function Dashboard({ navigate }) {
       // ── headline metrics ──────────────────────────────────────────────
       const open = enriched.filter(so => !['closed','delivered','invoiced'].includes(so.status));
       const pipeline_value = open.reduce((a,so)=>a+so.rev,0);
+      const open_cost = open.reduce((a,so)=>a+so.cost,0);
+      const open_gross = open.reduce((a,so)=>a+so.gross,0);
+      const open_units = open.reduce((a,so)=>a+(so.sales_order_items||[]).reduce((b,i)=>b+(Number(i.quantity)||0),0),0);
       const closedMTD = enriched.filter(so => so.order_date >= monthStart.slice(0,10) && ['delivered','invoiced','closed'].includes(so.status));
       const rev_mtd = closedMTD.reduce((a,so)=>a+so.rev,0);
       const withMargin = enriched.filter(so=>so.mgn!==null && so.rev>0 && !['closed'].includes(so.status));
       const avg_mgn = withMargin.length > 0 ? withMargin.reduce((a,so)=>a+so.mgn,0)/withMargin.length : null;
+      const blended_mgn = pipeline_value > 0 ? open_gross / pipeline_value * 100 : null;
       const in_prod = poList.filter(p=>p.status==='in_production').length;
       const in_transit_count = shipList.length;
+      const open_count = open.length;
+      const active_clients = new Set(open.map(so=>so.client?.name).filter(Boolean)).size;
+      // overdue shipments (ETA in the past, not yet delivered)
+      const overdue_ships = shipList.filter(s=>{ if(!s.estimated_arrival) return false; return new Date(s.estimated_arrival) < new Date(); }).length;
 
       // ── client breakdown ──────────────────────────────────────────────
       const clientMap = {};
@@ -454,7 +462,7 @@ function Dashboard({ navigate }) {
       // ── recent open SOs ───────────────────────────────────────────────
       const recentSOs = enriched.filter(so=>!['closed'].includes(so.status)).slice(0,8);
 
-      setData({ pipeline, pipeline_value, rev_mtd, avg_mgn, in_prod, in_transit_count, clients, recentSOs, shipList });
+      setData({ pipeline, pipeline_value, open_cost, open_gross, open_units, rev_mtd, avg_mgn, blended_mgn, in_prod, in_transit_count, open_count, active_clients, overdue_ships, clients, recentSOs, shipList });
       setLoading(false);
     })();
   }, []);
@@ -466,12 +474,13 @@ function Dashboard({ navigate }) {
     </div>
   );
 
-  const { pipeline, pipeline_value, rev_mtd, avg_mgn, in_prod, in_transit_count, clients, recentSOs, shipList } = data;
+  const { pipeline, pipeline_value, open_cost, open_gross, open_units, rev_mtd, avg_mgn, blended_mgn, in_prod, in_transit_count, open_count, active_clients, overdue_ships, clients, recentSOs, shipList } = data;
   const maxClientVal = clients[0]?.[1] || 1;
   const totalPipelineVal = Object.values(pipeline).reduce((a,s)=>a+s.value,0) || 1;
   const SO_STAGES = ['received','confirmed','in_production','shipped','delivered','invoiced'];
   const STAGE_LABELS = { received:'Received', confirmed:'Confirmed', in_production:'In Production', shipped:'Shipped', delivered:'Delivered', invoiced:'Invoiced' };
-  const STAGE_COLORS = { received:'#94a3b8', confirmed:'var(--accent)', in_production:'#f59e0b', shipped:'#6366f1', delivered:'var(--ok)', invoiced:'#8b5cf6' };
+  // Restrained monochrome ramp — single slate-blue accent, varying weight, no rainbow
+  const STAGE_COLORS = { received:'#cbd5e1', confirmed:'#94a3b8', in_production:'#64748b', shipped:'#475569', delivered:'#334155', invoiced:'#1e293b' };
   const etaDays = eta => {
     if (!eta) return null;
     const d = Math.round((new Date(eta) - new Date()) / 86400000);
@@ -479,148 +488,154 @@ function Dashboard({ navigate }) {
   };
 
   return (
-    <div className="db-shell" style={{background:'#0a0e17',padding:'28px 32px 56px',minHeight:'calc(100vh - 54px)'}}>
-      <div style={{marginBottom:'22px'}}>
-        <div style={{fontSize:'22px',fontWeight:800,color:'#f8fafc',letterSpacing:'-.02em'}}>Dashboard</div>
-        <div style={{fontSize:'13px',color:'#64748b',marginTop:'3px'}}>Live pipeline, production &amp; logistics overview</div>
+    <div style={{padding:'26px 30px 60px',maxWidth:'1500px'}}>
+
+      {/* ── Title row ── */}
+      <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',marginBottom:'24px',borderBottom:'1px solid var(--line)',paddingBottom:'18px'}}>
+        <div>
+          <div style={{fontSize:'19px',fontWeight:700,color:'var(--ink)',letterSpacing:'-.01em'}}>Operations Overview</div>
+          <div style={{fontSize:'12.5px',color:'var(--muted)',marginTop:'3px'}}>{open_count} open orders · {active_clients} active clients · updated {new Date().toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
+        </div>
+        <button onClick={()=>navigate('sales-orders')} style={{background:'var(--ink)',color:'#fff',border:'none',borderRadius:'8px',padding:'9px 15px',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}>View all orders →</button>
       </div>
 
-      {/* ── Metric Strip ── */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'12px',marginBottom:'24px'}}>
+      {/* ── KPI row — refined, hairline-divided, tabular figures ── */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',border:'1px solid var(--line)',borderRadius:'12px',overflow:'hidden',marginBottom:'26px',background:'var(--card)'}}>
         {[
-          { k:'Open Pipeline', v:moneyCompact(pipeline_value), sub:'across active SOs', color:'#60a5fa' },
-          { k:'Revenue MTD', v:moneyCompact(rev_mtd), sub:'closed this month', color:'#34d399' },
-          { k:'Avg Gross Margin', v:avg_mgn!==null?avg_mgn.toFixed(1)+'%':'—', sub:'across open orders', color:avg_mgn>40?'#34d399':avg_mgn>25?'#fbbf24':'#f87171' },
-          { k:'In Production', v:String(in_prod), sub:'factory POs active', color:'#fbbf24' },
-          { k:'In Transit', v:String(in_transit_count), sub:'shipments en route', color:'#a78bfa' },
-        ].map(m => (
-          <div key={m.k} style={{background:'linear-gradient(160deg,#161d2e 0%,#10151f 100%)',border:'1px solid #232d3f',borderRadius:'14px',padding:'0',overflow:'hidden',position:'relative'}}>
-            <div style={{height:'3px',background:m.color}} />
-            <div style={{padding:'16px 16px 15px'}}>
-              <div style={{fontFamily:'var(--mono)',fontSize:'9.5px',letterSpacing:'.14em',textTransform:'uppercase',color:'#64748b',fontWeight:600,marginBottom:'11px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.k}</div>
-              <div style={{fontFamily:'var(--mono)',fontSize:'24px',fontWeight:700,color:m.k==='Avg Gross Margin'?m.color:'#f8fafc',lineHeight:1,marginBottom:'7px',letterSpacing:'-.02em'}}>{m.v}</div>
-              <div style={{fontSize:'11px',color:'#475569'}}>{m.sub}</div>
-            </div>
+          { k:'Open Pipeline', v:moneyCompact(pipeline_value), sub:'gross order value' },
+          { k:'Open Orders', v:String(open_count), sub:'active sales orders' },
+          { k:'Units Open', v:fmtNum(open_units), sub:'across the book' },
+          { k:'Revenue MTD', v:moneyCompact(rev_mtd), sub:'closed this month' },
+          { k:'In Production', v:String(in_prod), sub:'factory POs active' },
+          { k:'In Transit', v:String(in_transit_count), sub:overdue_ships>0?overdue_ships+' overdue':'on schedule', accent:overdue_ships>0 },
+        ].map((m,i) => (
+          <div key={m.k} style={{padding:'18px 18px 16px',borderLeft:i>0?'1px solid var(--line-2)':'none'}}>
+            <div style={{fontSize:'10.5px',letterSpacing:'.06em',textTransform:'uppercase',color:'var(--muted)',fontWeight:600,marginBottom:'12px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.k}</div>
+            <div style={{fontFamily:'var(--mono)',fontSize:'23px',fontWeight:600,color:m.accent?'#b91c1c':'var(--ink)',lineHeight:1,letterSpacing:'-.02em',fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
+            <div style={{fontSize:'11px',color:'var(--faint)',marginTop:'7px'}}>{m.sub}</div>
           </div>
         ))}
       </div>
 
-      {/* ── Revenue Pipeline ── */}
-      <div style={{background:'#10151f',border:'1px solid #232d3f',borderRadius:'16px',marginBottom:'18px',overflow:'hidden'}}>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'17px 22px 15px',borderBottom:'1px solid #1c2535'}}>
-          <div style={{fontSize:'13px',fontWeight:700,color:'#f1f5f9',letterSpacing:'.02em'}}>Revenue Pipeline</div>
-          <button onClick={()=>navigate('sales-orders')} style={{background:'none',border:'none',color:'#60a5fa',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}>View all SOs →</button>
+      {/* ── Pipeline ledger table ── */}
+      <div style={{border:'1px solid var(--line)',borderRadius:'12px',overflow:'hidden',marginBottom:'26px',background:'var(--card)'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 20px',borderBottom:'1px solid var(--line-2)'}}>
+          <div style={{fontSize:'13px',fontWeight:700,color:'var(--ink)'}}>Pipeline by Stage</div>
+          <div style={{fontSize:'11.5px',color:'var(--muted)',fontFamily:'var(--mono)'}}>{moneyCompact(totalPipelineVal)} total</div>
         </div>
-        <div style={{padding:'20px 22px'}}>
-          <div style={{display:'flex',height:'8px',borderRadius:'6px',overflow:'hidden',marginBottom:'20px',gap:'2px',background:'#1c2535'}}>
-            {SO_STAGES.map(s => {
-              const pct = totalPipelineVal>0 ? pipeline[s].value / totalPipelineVal * 100 : 0;
-              return pct > 0.5 ? <div key={s} style={{flex:pct,background:STAGE_COLORS[s],transition:'.3s'}} title={STAGE_LABELS[s]+': '+money(pipeline[s].value)} /> : null;
-            })}
-          </div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:'6px'}}>
-            {SO_STAGES.map(s => (
-              <div key={s} onClick={()=>navigate('sales-orders')} style={{cursor:'pointer',padding:'12px 10px',borderRadius:'10px',transition:'.13s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.03)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                <div style={{width:'8px',height:'8px',borderRadius:'50%',marginBottom:'9px',background:STAGE_COLORS[s]}} />
-                <div style={{fontSize:'9.5px',fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:'7px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{STAGE_LABELS[s]}</div>
-                <div style={{fontFamily:'var(--mono)',fontSize:'21px',fontWeight:700,color:pipeline[s].count>0?'#f1f5f9':'#374151',lineHeight:1,marginBottom:'4px'}}>{pipeline[s].count}</div>
-                <div style={{fontSize:'11px',color:'#64748b',fontFamily:'var(--mono)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{pipeline[s].value>0?money(pipeline[s].value):'—'}</div>
-              </div>
-            ))}
-          </div>
+        {/* proportion bar */}
+        <div style={{display:'flex',height:'6px',margin:'0',borderBottom:'1px solid var(--line-2)'}}>
+          {SO_STAGES.map(s => { const pct=pipeline[s].value/totalPipelineVal*100; return pct>0?<div key={s} style={{flex:pct,background:STAGE_COLORS[s]}} title={STAGE_LABELS[s]} />:null; })}
         </div>
+        <table style={{width:'100%',borderCollapse:'collapse',fontSize:'13px'}}>
+          <thead>
+            <tr style={{borderBottom:'1px solid var(--line-2)'}}>
+              <th style={{textAlign:'left',padding:'10px 20px',fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'var(--muted)'}}>Stage</th>
+              <th style={{textAlign:'right',padding:'10px 16px',fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'var(--muted)'}}>Orders</th>
+              <th style={{textAlign:'right',padding:'10px 16px',fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'var(--muted)'}}>Value</th>
+              <th style={{textAlign:'right',padding:'10px 20px',fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'var(--muted)'}}>Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {SO_STAGES.map(s => { const pct=pipeline[s].value/totalPipelineVal*100; return (
+              <tr key={s} onClick={()=>navigate('sales-orders')} style={{borderBottom:'1px solid var(--line-2)',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='var(--soft)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                <td style={{padding:'11px 20px'}}><span style={{display:'inline-flex',alignItems:'center',gap:'9px'}}><span style={{width:'7px',height:'7px',borderRadius:'2px',background:STAGE_COLORS[s]}} /><span style={{fontWeight:500,color:'var(--ink-2)'}}>{STAGE_LABELS[s]}</span></span></td>
+                <td style={{textAlign:'right',padding:'11px 16px',fontFamily:'var(--mono)',color:pipeline[s].count>0?'var(--ink)':'var(--faint)',fontVariantNumeric:'tabular-nums'}}>{pipeline[s].count}</td>
+                <td style={{textAlign:'right',padding:'11px 16px',fontFamily:'var(--mono)',color:'var(--ink)',fontVariantNumeric:'tabular-nums'}}>{pipeline[s].value>0?money(pipeline[s].value):'—'}</td>
+                <td style={{textAlign:'right',padding:'11px 20px',fontFamily:'var(--mono)',color:'var(--muted)',fontVariantNumeric:'tabular-nums'}}>{pct>=0.5?pct.toFixed(0)+'%':'—'}</td>
+              </tr>
+            );})}
+          </tbody>
+          <tfoot>
+            <tr style={{background:'var(--soft)'}}>
+              <td style={{padding:'11px 20px',fontWeight:700,color:'var(--ink)'}}>Total open book</td>
+              <td style={{textAlign:'right',padding:'11px 16px',fontFamily:'var(--mono)',fontWeight:700,color:'var(--ink)',fontVariantNumeric:'tabular-nums'}}>{open_count}</td>
+              <td style={{textAlign:'right',padding:'11px 16px',fontFamily:'var(--mono)',fontWeight:700,color:'var(--ink)',fontVariantNumeric:'tabular-nums'}}>{money(pipeline_value)}</td>
+              <td style={{padding:'11px 20px'}}></td>
+            </tr>
+          </tfoot>
+        </table>
       </div>
 
-      {/* ── Main Grid ── */}
-      <div style={{display:'grid',gridTemplateColumns:'1fr 380px',gap:'18px'}} className="db-main-grid">
+      {/* ── Two-column lower: Active Orders ledger + side rail ── */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 340px',gap:'22px'}} className="db-main-grid">
 
-        {/* Active Orders */}
-        <div style={{background:'#10151f',border:'1px solid #232d3f',borderRadius:'16px',overflow:'hidden',alignSelf:'start'}}>
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'17px 22px 15px',borderBottom:'1px solid #1c2535'}}>
-            <div style={{fontSize:'13px',fontWeight:700,color:'#f1f5f9'}}>Active Orders</div>
-            <button onClick={()=>navigate('sales-orders')} style={{background:'none',border:'none',color:'#60a5fa',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}>All →</button>
+        {/* Active Orders — dense ledger */}
+        <div style={{border:'1px solid var(--line)',borderRadius:'12px',overflow:'hidden',background:'var(--card)',alignSelf:'start'}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 20px',borderBottom:'1px solid var(--line-2)'}}>
+            <div style={{fontSize:'13px',fontWeight:700,color:'var(--ink)'}}>Active Orders</div>
+            <button onClick={()=>navigate('sales-orders')} style={{background:'none',border:'none',color:'var(--accent)',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>All →</button>
           </div>
-          <div>
-            {recentSOs.length === 0 && <div style={{padding:'40px',textAlign:'center',color:'#475569',fontSize:'13px'}}>No active orders</div>}
-            {recentSOs.map((so, i) => (
-              <div key={so.id} onClick={()=>navigate('so-detail',{id:so.id})} style={{display:'flex',alignItems:'center',gap:'13px',padding:'13px 22px',cursor:'pointer',borderBottom:i<recentSOs.length-1?'1px solid #1a2231':'none',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.025)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                <div style={{width:'34px',height:'34px',borderRadius:'9px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'12px',fontWeight:700,color:'#0b1120',flexShrink:0,fontFamily:'var(--mono)',background:companyColor(so.client?.name||'')}}>{initials(so.client?.name||'?')}</div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontFamily:'var(--mono)',fontSize:'13px',fontWeight:600,color:'#f1f5f9',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client_po_number||so.so_number||'—'}</div>
-                  <div style={{fontSize:'12px',color:'#64748b',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client?.name||'Unknown'}</div>
-                </div>
-                <div style={{textAlign:'right',flexShrink:0,minWidth:'74px'}}>
-                  <div style={{fontFamily:'var(--mono)',fontSize:'13px',fontWeight:600,color:'#f8fafc',whiteSpace:'nowrap'}}>{money(so.rev)}</div>
-                  {so.mgn!==null && <div style={{fontSize:'11px',fontFamily:'var(--mono)',marginTop:'2px',fontWeight:600,color:so.mgn>40?'#34d399':so.mgn>20?'#fbbf24':'#f87171'}}>{so.mgn.toFixed(1)}%</div>}
-                </div>
-                <div style={{flexShrink:0}}><Badge status={so.status} /></div>
-              </div>
-            ))}
-          </div>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:'13px'}}>
+            <thead>
+              <tr style={{borderBottom:'1px solid var(--line-2)'}}>
+                <th style={{textAlign:'left',padding:'9px 20px',fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'var(--muted)'}}>Client PO / Client</th>
+                <th style={{textAlign:'right',padding:'9px 14px',fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'var(--muted)'}}>Revenue</th>
+                <th style={{textAlign:'right',padding:'9px 14px',fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'var(--muted)'}}>Units</th>
+                <th style={{textAlign:'right',padding:'9px 20px',fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'var(--muted)'}}>Stage</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentSOs.length===0 && <tr><td colSpan={4} style={{padding:'34px',textAlign:'center',color:'var(--faint)',fontSize:'13px'}}>No active orders</td></tr>}
+              {recentSOs.map((so,i) => (
+                <tr key={so.id} onClick={()=>navigate('so-detail',{id:so.id})} style={{borderBottom:i<recentSOs.length-1?'1px solid var(--line-2)':'none',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='var(--soft)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                  <td style={{padding:'11px 20px',minWidth:0}}>
+                    <div style={{fontFamily:'var(--mono)',fontWeight:600,color:'var(--ink)',fontSize:'12.5px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client_po_number||so.so_number||'—'}</div>
+                    <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'1px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client?.name||'Unknown'}</div>
+                  </td>
+                  <td style={{textAlign:'right',padding:'11px 14px',fontFamily:'var(--mono)',color:'var(--ink)',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{money(so.rev)}</td>
+                  <td style={{textAlign:'right',padding:'11px 14px',fontFamily:'var(--mono)',fontVariantNumeric:'tabular-nums',color:'var(--muted)'}}>{fmtNum((so.sales_order_items||[]).reduce((b,it)=>b+(Number(it.quantity)||0),0))}</td>
+                  <td style={{textAlign:'right',padding:'11px 20px'}}><Badge status={so.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
 
-        {/* Right column */}
-        <div style={{display:'flex',flexDirection:'column',gap:'18px'}}>
+        {/* Side rail */}
+        <div style={{display:'flex',flexDirection:'column',gap:'22px'}}>
 
-          {/* Shipments In Transit */}
-          <div style={{background:'#10151f',border:'1px solid #232d3f',borderRadius:'16px',overflow:'hidden'}}>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'17px 22px 15px',borderBottom:'1px solid #1c2535'}}>
-              <div style={{fontSize:'13px',fontWeight:700,color:'#f1f5f9'}}>Shipments In Transit</div>
-              <button onClick={()=>navigate('shipments')} style={{background:'none',border:'none',color:'#60a5fa',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}>All →</button>
+          {/* In Transit */}
+          <div style={{border:'1px solid var(--line)',borderRadius:'12px',overflow:'hidden',background:'var(--card)'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 18px',borderBottom:'1px solid var(--line-2)'}}>
+              <div style={{fontSize:'13px',fontWeight:700,color:'var(--ink)'}}>In Transit</div>
+              <button onClick={()=>navigate('shipments')} style={{background:'none',border:'none',color:'var(--accent)',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>All →</button>
             </div>
-            {shipList.length === 0 ? (
-              <div style={{padding:'32px',textAlign:'center',color:'#475569',fontSize:'13px'}}><div style={{fontSize:'26px',marginBottom:'8px',opacity:.4}}>🚢</div>No active shipments</div>
-            ) : (
-              <div>
-                {shipList.slice(0,5).map((sh,i) => {
-                  const days = etaDays(sh.estimated_arrival);
-                  const urgent = days !== null && days <= 7;
-                  const po = sh.shipment_pos?.[0]?.purchase_orders;
-                  const poRef = po?.client_po_number || po?.order_number || '—';
-                  const client = (po?.client?.name || sh.companies?.name || '').toUpperCase();
-                  return (
-                    <div key={sh.id} style={{display:'flex',alignItems:'center',gap:'12px',padding:'13px 22px',borderBottom:i<Math.min(shipList.length,5)-1?'1px solid #1a2231':'none'}}>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'5px'}}>
-                          <span style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:700,color:'#f1f5f9'}}>{poRef}</span>
-                          <Badge status={sh.status} />
-                        </div>
-                        <div style={{display:'flex',alignItems:'center',gap:'6px',fontSize:'11.5px',color:'#64748b',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                          {client && <span style={{fontWeight:600,color:'#94a3b8'}}>{client}</span>}
-                          {sh.vessel_name && <span>· {sh.vessel_name}</span>}
-                        </div>
-                      </div>
-                      {days !== null && (
-                        <div style={{textAlign:'right',flexShrink:0}}>
-                          <div style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:'19px',lineHeight:1,color:urgent?'#f87171':'#f1f5f9'}}>{days < 0 ? 'Due' : days}</div>
-                          <div style={{fontSize:'9.5px',color:'#475569',marginTop:'2px'}}>{days < 0 ? 'overdue' : days===0?'today':'days to ETA'}</div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            {shipList.length===0 ? (
+              <div style={{padding:'26px 18px',textAlign:'center',color:'var(--faint)',fontSize:'12.5px'}}>No active shipments</div>
+            ) : shipList.slice(0,6).map((sh,i) => {
+              const days=etaDays(sh.estimated_arrival); const po=sh.shipment_pos?.[0]?.purchase_orders;
+              const ref=po?.client_po_number||po?.order_number||'—'; const overdue=days!==null&&days<0;
+              return (
+                <div key={sh.id} style={{display:'flex',alignItems:'center',gap:'10px',padding:'10px 18px',borderBottom:i<Math.min(shipList.length,6)-1?'1px solid var(--line-2)':'none'}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:600,color:'var(--ink)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{ref}</div>
+                    <div style={{fontSize:'11px',color:'var(--muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{sh.vessel_name||STAGE_LABELS[sh.status]||sh.status||'—'}</div>
+                  </div>
+                  {days!==null && <div style={{textAlign:'right',flexShrink:0}}>
+                    <div style={{fontFamily:'var(--mono)',fontSize:'14px',fontWeight:600,color:overdue?'#b91c1c':'var(--ink)',fontVariantNumeric:'tabular-nums'}}>{overdue?Math.abs(days)+'d':days+'d'}</div>
+                    <div style={{fontSize:'9.5px',color:'var(--faint)'}}>{overdue?'overdue':'to ETA'}</div>
+                  </div>}
+                </div>
+              );
+            })}
           </div>
 
-          {/* Clients by Pipeline Value */}
-          <div style={{background:'#10151f',border:'1px solid #232d3f',borderRadius:'16px',overflow:'hidden'}}>
-            <div style={{padding:'17px 22px 15px',borderBottom:'1px solid #1c2535'}}>
-              <div style={{fontSize:'13px',fontWeight:700,color:'#f1f5f9'}}>Clients by Pipeline Value</div>
+          {/* Top clients */}
+          <div style={{border:'1px solid var(--line)',borderRadius:'12px',overflow:'hidden',background:'var(--card)'}}>
+            <div style={{padding:'14px 18px',borderBottom:'1px solid var(--line-2)'}}>
+              <div style={{fontSize:'13px',fontWeight:700,color:'var(--ink)'}}>Top Clients · Open Value</div>
             </div>
-            <div style={{padding:'16px 22px'}}>
-              {clients.length === 0 && <div style={{color:'#475569',fontSize:'13px',padding:'8px 0'}}>No data yet</div>}
-              {clients.map(([name, val]) => (
-                <div key={name} style={{marginBottom:'14px'}}>
-                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'6px'}}>
-                    <div style={{display:'flex',alignItems:'center',gap:'7px',minWidth:0}}>
-                      <div style={{width:'8px',height:'8px',borderRadius:'50%',background:companyColor(name),flexShrink:0}} />
-                      <span style={{fontSize:'12.5px',fontWeight:600,color:'#cbd5e1',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{name}</span>
-                    </div>
-                    <span style={{fontFamily:'var(--mono)',fontSize:'12px',color:'#64748b',flexShrink:0,marginLeft:'10px'}}>{money(val)}</span>
+            <div style={{padding:'14px 18px'}}>
+              {clients.length===0 && <div style={{color:'var(--faint)',fontSize:'12.5px'}}>No data</div>}
+              {clients.map(([name,val]) => (
+                <div key={name} style={{marginBottom:'12px'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'5px',gap:'10px'}}>
+                    <span style={{fontSize:'12.5px',fontWeight:500,color:'var(--ink-2)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{name}</span>
+                    <span style={{fontFamily:'var(--mono)',fontSize:'12px',color:'var(--muted)',flexShrink:0,fontVariantNumeric:'tabular-nums'}}>{moneyCompact(val)}</span>
                   </div>
-                  <div style={{height:'5px',background:'#1c2535',borderRadius:'4px',overflow:'hidden'}}>
-                    <div style={{height:'100%',width:(maxClientVal>0?val/maxClientVal*100:0)+'%',background:companyColor(name),borderRadius:'4px',transition:'.4s'}} />
+                  <div style={{height:'4px',background:'var(--line-2)',borderRadius:'3px',overflow:'hidden'}}>
+                    <div style={{height:'100%',width:(maxClientVal>0?val/maxClientVal*100:0)+'%',background:'#475569',borderRadius:'3px'}} />
                   </div>
                 </div>
               ))}
