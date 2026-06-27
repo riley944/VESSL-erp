@@ -384,6 +384,24 @@ function Login() {
   );
 }
 
+// ── Sparkline ────────────────────────────────────────────────────────────────
+function Sparkline({ data, color='#0071E3', w=72, h=24 }) {
+  if (!data || data.length < 2) return null;
+  const max = Math.max(...data, 1), min = Math.min(...data, 0);
+  const range = max - min || 1;
+  const pts = data.map((v,i) => [ (i/(data.length-1))*w, h - ((v-min)/range)*(h-3) - 1.5 ]);
+  const d = pts.map((p,i)=>(i===0?'M':'L')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+  const area = d + ' L'+w+' '+h+' L0 '+h+' Z';
+  const gid = 'sg'+color.replace('#','');
+  return (
+    <svg width={w} height={h} viewBox={'0 0 '+w+' '+h} style={{display:'block'}} preserveAspectRatio="none">
+      <defs><linearGradient id={gid} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.18"/><stop offset="100%" stopColor={color} stopOpacity="0"/></linearGradient></defs>
+      <path d={area} fill={'url(#'+gid+')'} />
+      <path d={d} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 // ── Dashboard ────────────────────────────────────────────────────────────────
 function Dashboard({ navigate }) {
   const [data, setData] = useState(null);
@@ -462,7 +480,21 @@ function Dashboard({ navigate }) {
       // ── recent open SOs ───────────────────────────────────────────────
       const recentSOs = enriched.filter(so=>!['closed'].includes(so.status)).slice(0,8);
 
-      setData({ pipeline, pipeline_value, open_cost, open_gross, open_units, rev_mtd, avg_mgn, blended_mgn, in_prod, in_transit_count, open_count, active_clients, overdue_ships, clients, recentSOs, shipList });
+      // ── 6-month trend (order value by month, for sparklines) ───────────
+      const months = [];
+      for (let i=5;i>=0;i--){ const dt=new Date(now.getFullYear(),now.getMonth()-i,1); months.push({ key:dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0'), rev:0, units:0, count:0 }); }
+      const mIndex = {}; months.forEach((m,i)=>mIndex[m.key]=i);
+      enriched.forEach(so => {
+        if (!so.order_date) return;
+        const k = so.order_date.slice(0,7);
+        if (mIndex[k]!==undefined){ months[mIndex[k]].rev += so.rev; months[mIndex[k]].units += (so.sales_order_items||[]).reduce((b,it)=>b+(Number(it.quantity)||0),0); months[mIndex[k]].count++; }
+      });
+      const revTrend = months.map(m=>m.rev);
+      const unitTrend = months.map(m=>m.units);
+      const countTrend = months.map(m=>m.count);
+      const trendDelta = (arr) => { const a=arr[arr.length-2]||0, b=arr[arr.length-1]||0; if(a===0) return b>0?100:0; return Math.round((b-a)/a*100); };
+
+      setData({ pipeline, pipeline_value, open_cost, open_gross, open_units, rev_mtd, avg_mgn, blended_mgn, in_prod, in_transit_count, open_count, active_clients, overdue_ships, clients, recentSOs, shipList, revTrend, unitTrend, countTrend, revDelta:trendDelta(revTrend), unitDelta:trendDelta(unitTrend), countDelta:trendDelta(countTrend) });
       setLoading(false);
     })();
   }, []);
@@ -474,7 +506,7 @@ function Dashboard({ navigate }) {
     </div>
   );
 
-  const { pipeline, pipeline_value, open_cost, open_gross, open_units, rev_mtd, avg_mgn, blended_mgn, in_prod, in_transit_count, open_count, active_clients, overdue_ships, clients, recentSOs, shipList } = data;
+  const { pipeline, pipeline_value, open_cost, open_gross, open_units, rev_mtd, avg_mgn, blended_mgn, in_prod, in_transit_count, open_count, active_clients, overdue_ships, clients, recentSOs, shipList, revTrend, unitTrend, countTrend, revDelta, unitDelta, countDelta } = data;
   const maxClientVal = clients[0]?.[1] || 1;
   const totalPipelineVal = Object.values(pipeline).reduce((a,s)=>a+s.value,0) || 1;
   const SO_STAGES = ['received','confirmed','in_production','shipped','delivered','invoiced'];
@@ -486,55 +518,67 @@ function Dashboard({ navigate }) {
     return d;
   };
 
+  const DeltaPill = ({ v }) => {
+    if (v===undefined||v===null) return null;
+    const up = v>=0; const flat = v===0;
+    const c = flat?'#86868B':up?'#1A7F45':'#C0392B'; const bg = flat?'#F2F2F2':up?'#E8F6EE':'#FBECEA';
+    return <span style={{display:'inline-flex',alignItems:'center',gap:'2px',fontSize:'11px',fontWeight:600,color:c,background:bg,borderRadius:'6px',padding:'2px 6px',fontVariantNumeric:'tabular-nums'}}>{flat?'·':up?'↑':'↓'} {Math.abs(v)}%</span>;
+  };
+
   return (
-    <div style={{padding:'28px 30px 70px',background:'#fff',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
+    <div className="db-wrap" style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
 
       {/* ── Title ── */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'26px',gap:'16px',flexWrap:'wrap'}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'22px',gap:'14px',flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:'25px',fontWeight:700,color:'#111',letterSpacing:'-.02em'}}>Overview</div>
-          <div style={{fontSize:'13.5px',color:'#888',marginTop:'4px'}}>{open_count} open orders across {active_clients} clients</div>
+          <div style={{fontSize:'24px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em'}}>Overview</div>
+          <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>{open_count} open orders · {active_clients} active clients</div>
         </div>
-        <button onClick={()=>navigate('sales-orders')} style={{background:'#111',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',flexShrink:0}}>View orders</button>
+        <button onClick={()=>navigate('sales-orders')} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',flexShrink:0,boxShadow:'0 1px 2px rgba(0,0,0,.08)'}}>View orders</button>
       </div>
 
-      {/* ── KPI cards ── */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(4,minmax(0,1fr))',gap:'14px',marginBottom:'14px'}}>
+      {/* ── KPI cards with icon chip + sparkline + delta ── */}
+      <div className="db-kpi-grid" style={{display:'grid',gridTemplateColumns:'repeat(4,minmax(0,1fr))',gap:'14px',marginBottom:'14px'}}>
         {[
-          { k:'Pipeline value', v:moneyCompact(pipeline_value), sub:'active book', dot:'#3478F6' },
-          { k:'Units in motion', v:fmtNum(open_units), sub:'across open orders', dot:'#8E8E93' },
-          { k:'In production', v:String(in_prod), sub:'factory POs active', dot:'#FF9500' },
-          { k:'In transit', v:String(in_transit_count), sub:overdue_ships>0?overdue_ships+' overdue':'on schedule', dot:overdue_ships>0?'#FF3B30':'#34C759', risk:overdue_ships>0 },
+          { k:'Pipeline value', v:moneyCompact(pipeline_value), spark:revTrend, delta:revDelta, tint:'#0071E3', bg:'#EAF3FE', icon:'M3 3v18h18 M7 14l3-3 3 3 4-5' },
+          { k:'Units in motion', v:fmtNum(open_units), spark:unitTrend, delta:unitDelta, tint:'#5856D6', bg:'#EEEEFC', icon:'M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z M3.3 7L12 12l8.7-5 M12 22V12' },
+          { k:'Open orders', v:String(open_count), spark:countTrend, delta:countDelta, tint:'#FF9500', bg:'#FFF3E2', icon:'M9 11l3 3L22 4 M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11' },
+          { k:'In transit', v:String(in_transit_count), sub:overdue_ships>0?overdue_ships+' overdue':'on schedule', risk:overdue_ships>0, tint:overdue_ships>0?'#FF3B30':'#34C759', bg:overdue_ships>0?'#FEECEB':'#E8F8EE', icon:'M1 3h15v13H1z M16 8h4l3 3v5h-7V8z M5.5 18.5a2.5 2.5 0 1 0 0 .01 M18.5 18.5a2.5 2.5 0 1 0 0 .01' },
         ].map(m => (
-          <div key={m.k} style={{background:'#fff',border:'1px solid #ECECEC',borderRadius:'16px',padding:'20px 22px'}}>
-            <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'15px'}}>
-              <div style={{width:'7px',height:'7px',borderRadius:'50%',background:m.dot}} />
-              <div style={{fontSize:'12.5px',fontWeight:500,color:'#888'}}>{m.k}</div>
+          <div key={m.k} style={{background:'#fff',borderRadius:'18px',padding:'18px 20px',boxShadow:'0 0 0 1px rgba(0,0,0,.03), 0 2px 5px rgba(0,0,0,.04), 0 12px 28px -8px rgba(20,20,40,.06)'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'16px'}}>
+              <div style={{width:'34px',height:'34px',borderRadius:'10px',background:m.bg,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={m.tint} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{m.icon.split(' M').map((seg,si)=><path key={si} d={(si>0?'M':'')+seg} />)}</svg>
+              </div>
+              {m.delta!==undefined ? <DeltaPill v={m.delta} /> : m.risk ? <span style={{fontSize:'11px',fontWeight:600,color:'#FF3B30',background:'#FEECEB',borderRadius:'6px',padding:'2px 7px'}}>Action</span> : null}
             </div>
-            <div style={{fontSize:'32px',fontWeight:700,color:'#111',letterSpacing:'-.025em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
-            <div style={{fontSize:'12.5px',color:m.risk?'#FF3B30':'#999',marginTop:'10px',fontWeight:m.risk?500:400}}>{m.sub}</div>
+            <div style={{fontSize:'30px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.025em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
+            <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'8px',marginTop:'12px'}}>
+              <div style={{fontSize:'12.5px',color:m.risk?'#FF3B30':'#8A8A8E',fontWeight:m.risk?500:400}}>{m.sub||m.k}</div>
+              {m.spark && <Sparkline data={m.spark} color={m.tint} w={64} h={22} />}
+            </div>
           </div>
         ))}
       </div>
 
       {/* ── Pipeline card ── */}
-      <div style={{background:'#fff',border:'1px solid #ECECEC',borderRadius:'16px',padding:'22px 24px',marginBottom:'14px'}}>
+      <div style={{background:'#fff',borderRadius:'18px',padding:'22px 24px',boxShadow:'0 0 0 1px rgba(0,0,0,.03), 0 2px 5px rgba(0,0,0,.04), 0 12px 28px -8px rgba(20,20,40,.06)',marginBottom:'14px'}}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'18px'}}>
-          <div style={{fontSize:'16px',fontWeight:600,color:'#111',letterSpacing:'-.01em'}}>Pipeline</div>
-          <div style={{fontSize:'12.5px',color:'#999'}}>{moneyCompact(totalPipelineVal)} total</div>
+          <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',letterSpacing:'-.01em'}}>Pipeline</div>
+          <div style={{fontSize:'12.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums'}}>{moneyCompact(totalPipelineVal)} total</div>
         </div>
-        <div style={{display:'flex',gap:'4px',marginBottom:'20px'}}>
+        <div style={{display:'flex',gap:'3px',marginBottom:'20px'}}>
           {SO_STAGES.map(s => { const pct=pipeline[s].value/totalPipelineVal*100; return pct>0?<div key={s} style={{flex:pct,height:'8px',borderRadius:'4px',background:STAGE_COLORS[s]}} title={STAGE_LABELS[s]} />:null; })}
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(6,minmax(0,1fr))',gap:'8px'}}>
+        <div className="db-stage-grid" style={{display:'grid',gridTemplateColumns:'repeat(6,minmax(0,1fr))',gap:'8px'}}>
           {SO_STAGES.map(s => (
-            <div key={s} onClick={()=>navigate('sales-orders')} style={{cursor:'pointer',borderRadius:'12px',padding:'13px 13px',border:'1px solid #F0F0F0',transition:'.13s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFA'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+            <div key={s} onClick={()=>navigate('sales-orders')} style={{cursor:'pointer',borderRadius:'12px',padding:'13px',background:'#FAFAFC',transition:'.13s'}} onMouseEnter={e=>e.currentTarget.style.background='#F2F2F6'} onMouseLeave={e=>e.currentTarget.style.background='#FAFAFC'}>
               <div style={{display:'flex',alignItems:'center',gap:'6px',marginBottom:'10px'}}>
                 <div style={{width:'6px',height:'6px',borderRadius:'50%',background:STAGE_COLORS[s],flexShrink:0}} />
-                <div style={{fontSize:'11px',fontWeight:500,color:'#999',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{STAGE_LABELS[s]}</div>
+                <div style={{fontSize:'11px',fontWeight:500,color:'#8A8A8E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{STAGE_LABELS[s]}</div>
               </div>
-              <div style={{fontSize:'22px',fontWeight:700,color:pipeline[s].count>0?'#111':'#D0D0D0',letterSpacing:'-.02em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{pipeline[s].count}</div>
-              <div style={{fontSize:'11px',color:'#AAA',marginTop:'7px',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{pipeline[s].value>0?moneyCompact(pipeline[s].value):'—'}</div>
+              <div style={{fontSize:'22px',fontWeight:700,color:pipeline[s].count>0?'#1A1A1C':'#CECED2',letterSpacing:'-.02em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{pipeline[s].count}</div>
+              <div style={{fontSize:'11px',color:'#A0A0A4',marginTop:'7px',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{pipeline[s].value>0?moneyCompact(pipeline[s].value):'—'}</div>
             </div>
           ))}
         </div>
@@ -544,24 +588,24 @@ function Dashboard({ navigate }) {
       <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 340px',gap:'14px',alignItems:'start'}} className="db-main-grid">
 
         {/* Active orders */}
-        <div style={{background:'#fff',border:'1px solid #ECECEC',borderRadius:'16px',overflow:'hidden',minWidth:0}}>
+        <div style={{background:'#fff',borderRadius:'18px',boxShadow:'0 0 0 1px rgba(0,0,0,.03), 0 2px 5px rgba(0,0,0,.04), 0 12px 28px -8px rgba(20,20,40,.06)',overflow:'hidden',minWidth:0}}>
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'18px 22px 14px'}}>
-            <div style={{fontSize:'16px',fontWeight:600,color:'#111',letterSpacing:'-.01em'}}>Active orders</div>
-            <button onClick={()=>navigate('sales-orders')} style={{background:'none',border:'none',color:'#3478F6',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>See all</button>
+            <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',letterSpacing:'-.01em'}}>Active orders</div>
+            <button onClick={()=>navigate('sales-orders')} style={{background:'none',border:'none',color:'#0071E3',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>See all</button>
           </div>
           <div>
-            {recentSOs.length===0 && <div style={{padding:'28px 22px',color:'#999',fontSize:'13.5px'}}>No active orders yet.</div>}
+            {recentSOs.length===0 && <div style={{padding:'28px 22px',color:'#8A8A8E',fontSize:'13.5px'}}>No active orders yet.</div>}
             {recentSOs.map((so) => {
               const units=(so.sales_order_items||[]).reduce((b,it)=>b+(Number(it.quantity)||0),0);
               return (
-                <div key={so.id} onClick={()=>navigate('so-detail',{id:so.id})} style={{display:'flex',alignItems:'center',gap:'13px',padding:'13px 22px',cursor:'pointer',borderTop:'1px solid #F4F4F4',transition:'.12s',minWidth:0}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFA'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                  <div style={{width:'34px',height:'34px',borderRadius:'9px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11.5px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:companyColor(so.client?.name||'')}}>{initials(so.client?.name||'?')}</div>
+                <div key={so.id} onClick={()=>navigate('so-detail',{id:so.id})} style={{display:'flex',alignItems:'center',gap:'13px',padding:'12px 22px',cursor:'pointer',borderTop:'1px solid #F4F4F6',transition:'.12s',minWidth:0}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFC'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                  <div style={{width:'36px',height:'36px',borderRadius:'10px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'12px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:companyColor(so.client?.name||'')}}>{initials(so.client?.name||'?')}</div>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:'13.5px',fontWeight:600,color:'#111',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client_po_number||so.so_number||'—'}</div>
-                    <div style={{fontSize:'12px',color:'#999',marginTop:'1px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client?.name||'Unknown'}</div>
+                    <div style={{fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client_po_number||so.so_number||'—'}</div>
+                    <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'1px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client?.name||'Unknown'}</div>
                   </div>
-                  <div style={{textAlign:'right',flexShrink:0,fontSize:'12px',color:'#AAA',fontVariantNumeric:'tabular-nums'}} className="db-hide-sm">{fmtNum(units)} units</div>
-                  <div style={{textAlign:'right',flexShrink:0,minWidth:'66px',fontSize:'14px',fontWeight:600,color:'#111',fontVariantNumeric:'tabular-nums'}}>{money(so.rev)}</div>
+                  <div className="db-hide-sm" style={{textAlign:'right',flexShrink:0,fontSize:'12px',color:'#A0A0A4',fontVariantNumeric:'tabular-nums'}}>{fmtNum(units)} units</div>
+                  <div style={{textAlign:'right',flexShrink:0,minWidth:'66px',fontSize:'14px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{money(so.rev)}</div>
                   <div style={{flexShrink:0}}><Badge status={so.status} /></div>
                 </div>
               );
@@ -573,23 +617,26 @@ function Dashboard({ navigate }) {
         <div style={{display:'flex',flexDirection:'column',gap:'14px',minWidth:0}}>
 
           {/* In transit */}
-          <div style={{background:'#fff',border:'1px solid #ECECEC',borderRadius:'16px',overflow:'hidden'}}>
+          <div style={{background:'#fff',borderRadius:'18px',boxShadow:'0 0 0 1px rgba(0,0,0,.03), 0 2px 5px rgba(0,0,0,.04), 0 12px 28px -8px rgba(20,20,40,.06)',overflow:'hidden'}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'18px 20px 12px'}}>
-              <div style={{fontSize:'16px',fontWeight:600,color:'#111',letterSpacing:'-.01em'}}>In transit</div>
-              <span style={{fontSize:'12.5px',color:overdue_ships>0?'#FF3B30':'#999',fontWeight:overdue_ships>0?500:400}}>{overdue_ships>0?overdue_ships+' overdue':in_transit_count+' shipments'}</span>
+              <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',letterSpacing:'-.01em'}}>In transit</div>
+              <span style={{fontSize:'12.5px',color:overdue_ships>0?'#FF3B30':'#8A8A8E',fontWeight:overdue_ships>0?500:400}}>{overdue_ships>0?overdue_ships+' overdue':in_transit_count+' shipments'}</span>
             </div>
-            {shipList.length===0 ? <div style={{padding:'2px 20px 20px',color:'#999',fontSize:'13px'}}>Nothing in transit.</div> :
+            {shipList.length===0 ? <div style={{padding:'2px 20px 20px',color:'#8A8A8E',fontSize:'13px'}}>Nothing in transit.</div> :
               <div style={{padding:'0 10px 10px'}}>
                 {shipList.slice(0,5).map((sh) => {
                   const days=etaDays(sh.estimated_arrival); const po=sh.shipment_pos?.[0]?.purchase_orders;
                   const ref=po?.client_po_number||po?.order_number||'—'; const overdue=days!==null&&days<0;
                   return (
-                    <div key={sh.id} style={{display:'flex',alignItems:'center',gap:'11px',padding:'10px 12px',borderRadius:'10px',transition:'.12s',minWidth:0}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFA'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:'12.5px',fontWeight:600,color:'#111',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{ref}</div>
-                        <div style={{fontSize:'11px',color:'#999',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{sh.vessel_name||STAGE_LABELS[sh.status]||sh.status||''}</div>
+                    <div key={sh.id} style={{display:'flex',alignItems:'center',gap:'11px',padding:'10px 12px',borderRadius:'10px',transition:'.12s',minWidth:0}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFC'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                      <div style={{width:'30px',height:'30px',borderRadius:'8px',background:overdue?'#FEECEB':'#F2F2F6',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={overdue?'#FF3B30':'#8A8A8E'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7V8z"/></svg>
                       </div>
-                      {days!==null && <div style={{textAlign:'right',flexShrink:0,fontSize:'14px',fontWeight:600,color:overdue?'#FF3B30':'#111',fontVariantNumeric:'tabular-nums',lineHeight:1}}>{overdue?'+'+Math.abs(days):days}<span style={{fontSize:'10.5px',color:'#AAA',fontWeight:400}}>d</span></div>}
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{ref}</div>
+                        <div style={{fontSize:'11px',color:'#8A8A8E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{sh.vessel_name||STAGE_LABELS[sh.status]||sh.status||''}</div>
+                      </div>
+                      {days!==null && <div style={{textAlign:'right',flexShrink:0,fontSize:'14px',fontWeight:600,color:overdue?'#FF3B30':'#1A1A1C',fontVariantNumeric:'tabular-nums',lineHeight:1}}>{overdue?'+'+Math.abs(days):days}<span style={{fontSize:'10.5px',color:'#A0A0A4',fontWeight:400}}>d</span></div>}
                     </div>
                   );
                 })}
@@ -597,20 +644,20 @@ function Dashboard({ navigate }) {
           </div>
 
           {/* Top clients */}
-          <div style={{background:'#fff',border:'1px solid #ECECEC',borderRadius:'16px',padding:'18px 22px 22px'}}>
-            <div style={{fontSize:'16px',fontWeight:600,color:'#111',letterSpacing:'-.01em',marginBottom:'16px'}}>Top clients</div>
-            {clients.length===0 && <div style={{color:'#999',fontSize:'13px'}}>No data yet.</div>}
+          <div style={{background:'#fff',borderRadius:'18px',boxShadow:'0 0 0 1px rgba(0,0,0,.03), 0 2px 5px rgba(0,0,0,.04), 0 12px 28px -8px rgba(20,20,40,.06)',padding:'18px 22px 22px'}}>
+            <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',letterSpacing:'-.01em',marginBottom:'16px'}}>Top clients</div>
+            {clients.length===0 && <div style={{color:'#8A8A8E',fontSize:'13px'}}>No data yet.</div>}
             {clients.map(([name,val]) => (
               <div key={name} style={{marginBottom:'14px'}}>
                 <div style={{display:'flex',justifyContent:'space-between',gap:'10px',marginBottom:'6px'}}>
                   <span style={{display:'flex',alignItems:'center',gap:'8px',minWidth:0}}>
-                    <span style={{width:'8px',height:'8px',borderRadius:'2px',background:companyColor(name),flexShrink:0}} />
-                    <span style={{fontSize:'13px',fontWeight:500,color:'#222',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{name}</span>
+                    <span style={{width:'18px',height:'18px',borderRadius:'5px',background:companyColor(name),flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'8.5px',fontWeight:700,color:'#fff',fontFamily:'var(--mono)'}}>{initials(name)}</span>
+                    <span style={{fontSize:'13px',fontWeight:500,color:'#2A2A2E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{name}</span>
                   </span>
-                  <span style={{fontSize:'12px',color:'#999',flexShrink:0,fontVariantNumeric:'tabular-nums'}}>{moneyCompact(val)}</span>
+                  <span style={{fontSize:'12px',color:'#8A8A8E',flexShrink:0,fontVariantNumeric:'tabular-nums'}}>{moneyCompact(val)}</span>
                 </div>
-                <div style={{height:'5px',background:'#F2F2F2',borderRadius:'3px',overflow:'hidden'}}>
-                  <div style={{height:'100%',width:(maxClientVal>0?val/maxClientVal*100:0)+'%',background:'#D8D8D8',borderRadius:'3px'}} />
+                <div style={{height:'5px',background:'#F2F2F6',borderRadius:'3px',overflow:'hidden'}}>
+                  <div style={{height:'100%',width:(maxClientVal>0?val/maxClientVal*100:0)+'%',background:companyColor(name),borderRadius:'3px',opacity:.85,transition:'.4s'}} />
                 </div>
               </div>
             ))}
