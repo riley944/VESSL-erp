@@ -651,3 +651,15 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 /* Dashboard dark — mobile grid */
 @media (max-width:860px){.db-main-grid{grid-template-columns:1fr !important;}}
 @media (max-width:560px){.db-hide-sm{display:none !important;}}
+/* Elevated dashboard responsive */
+@media (max-width:1000px){
+  .db-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}
+}
+@media (max-width:720px){
+  .db-wrap{padding:18px 16px 72px !important;}
+  .db-stage-grid{grid-template-columns:repeat(3,minmax(0,1fr)) !important;}
+}
+@media (max-width:440px){
+  .db-kpi-grid{grid-template-columns:1fr !important;}
+  .db-stage-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}
+}
