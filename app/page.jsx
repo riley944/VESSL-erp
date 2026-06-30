@@ -1013,7 +1013,7 @@ function SalesOrderDetail({id,navigate}){
       notes: so.notes || '',
       lines: items.map(it => ({
         description: it.description || it.products?.name || '—',
-        sku: it.products?.sku || it.master_sku || '',
+        sku: it.client_sku || it.products?.sku || '',
         quantity: Number(it.quantity) || 0,
         client_price: Number(it.client_price) || 0,
         line_amount: (Number(it.quantity)||0) * (Number(it.client_price)||0),
@@ -3900,7 +3900,7 @@ function buildSODoc(d) {
     return '<tr style="background:'+bg+'">'
       +'<td style="padding:15px 18px;vertical-align:top;border-bottom:1px solid #e5e7eb;">'
         +'<div style="font-size:15px;font-weight:600;color:#0f172a;">'+(l.description||'—')+'</div>'
-        +(l.sku?'<div style="font-size:12px;color:#6b7280;font-family:monospace;margin-top:3px;">'+l.sku+'</div>':'')
+        +(l.sku?'<div style="font-size:11.5px;color:#6b7280;font-family:monospace;margin-top:4px;"><span style="color:#9ca3af;">SKU</span> '+l.sku+'</div>':'')
       +'</td>'
       +'<td style="padding:15px 14px;text-align:center;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:16px;font-weight:700;color:#0f172a;font-family:monospace;">'+fn(l.quantity)+'</td>'
       +'<td style="padding:15px 14px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;font-family:monospace;">'+m(l.client_price)+'</td>'
