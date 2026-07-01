@@ -27,6 +27,7 @@ const moneyCompact = (n) => {
   return '$' + Math.round(n);
 };
 const fmtDate = s => { if (!s) return '—'; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? s+'T12:00:00' : s); return isNaN(d) ? '—' : d.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
+const fmtDateShort = s => { if (!s) return '—'; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? s+'T12:00:00' : s); return isNaN(d) ? '—' : d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); };
 const fmtDateTime = s => { if (!s) return ''; const d=new Date(s); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); };
 const timeAgo = s => { if(!s) return ''; const m=Math.round((Date.now()-new Date(s))/60000); if(m<2) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<24) return h+'h'; const d=Math.round(h/24); if(d<7) return d+'d'; return fmtDate(s); };
 
@@ -419,11 +420,20 @@ function Dashboard({ navigate }) {
       ] = await Promise.all([
         SB.from('sales_orders').select('id,so_number,client_po_number,status,currency,order_date,client_company_id,client:companies!client_company_id(name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(quantity,unit_price))),order_costs(amount)').order('created_at',{ascending:false}).limit(200),
         SB.from('purchase_orders').select('id,order_number,client_po_number,status').not('status','in','("closed","cancelled")'),
-        SB.from('shipments').select('*,companies!client_company_id(name),shipment_pos(purchase_orders(client_po_number,order_number,client:companies!client_company_id(name)))').order('created_at',{ascending:false}).limit(40),
+        SB.from('shipments').select('*,companies!client_company_id(name),shipment_pos(purchase_orders(client_po_number,order_number,status,client:companies!client_company_id(name)))').order('created_at',{ascending:false}).limit(40),
       ]);
-      // Filter to active shipments in JS (avoids fragile PostgREST .not-in syntax)
+      // A shipment is "done" if its own status is terminal, OR it has actually arrived,
+      // OR its linked PO/SO is already delivered/closed (covers status-sync gaps).
       const TERMINAL = ['delivered','cancelled','closed'];
-      const shipList = (ships||[]).filter(s => !TERMINAL.includes((s.status||'').toLowerCase())).slice(0,20);
+      const SO_TERMINAL = ['delivered','invoiced','closed','cancelled'];
+      const shipIsDone = (s) => {
+        if (TERMINAL.includes((s.status||'').toLowerCase())) return true;
+        if (s.actual_arrival) return true;
+        const linkedPO = s.shipment_pos?.[0]?.purchase_orders;
+        if (linkedPO && SO_TERMINAL.includes((linkedPO.status||'').toLowerCase())) return true;
+        return false;
+      };
+      const shipList = (ships||[]).filter(s => !shipIsDone(s)).slice(0,20);
 
       const soList = sos || [];
       const poList = pos || [];
@@ -465,8 +475,8 @@ function Dashboard({ navigate }) {
       const in_transit_count = shipList.length;
       const open_count = open.length;
       const active_clients = new Set(open.map(so=>so.client?.name).filter(Boolean)).size;
-      // overdue shipments (ETA in the past, not yet delivered)
-      const overdue_ships = shipList.filter(s=>{ if(!s.estimated_arrival) return false; return new Date(s.estimated_arrival) < new Date(); }).length;
+      // overdue shipments (ETA in the past, not yet arrived, still active)
+      const overdue_ships = shipList.filter(s=>{ if(!s.estimated_arrival||s.actual_arrival) return false; return new Date(s.estimated_arrival) < new Date(); }).length;
 
       // ── client breakdown ──────────────────────────────────────────────
       const clientMap = {};
@@ -626,17 +636,24 @@ function Dashboard({ navigate }) {
               <div style={{padding:'0 10px 10px'}}>
                 {shipList.slice(0,5).map((sh) => {
                   const days=etaDays(sh.estimated_arrival); const po=sh.shipment_pos?.[0]?.purchase_orders;
-                  const ref=po?.client_po_number||po?.order_number||'—'; const overdue=days!==null&&days<0;
+                  const ref=po?.client_po_number||po?.order_number||'—'; const overdue=days!==null&&days<0&&!sh.actual_arrival;
                   return (
-                    <div key={sh.id} style={{display:'flex',alignItems:'center',gap:'11px',padding:'10px 12px',borderRadius:'10px',transition:'.12s',minWidth:0}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFC'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                      <div style={{width:'30px',height:'30px',borderRadius:'8px',background:overdue?'#FEECEB':'#F2F2F6',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={overdue?'#FF3B30':'#8A8A8E'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7V8z"/></svg>
+                    <div key={sh.id} onClick={()=>navigate('shipments')} style={{display:'flex',alignItems:'center',gap:'11px',padding:'11px 12px',borderRadius:'10px',transition:'.12s',minWidth:0,cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFC'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                      <div style={{width:'32px',height:'32px',borderRadius:'8px',background:overdue?'#FEECEB':'#F2F2F6',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={overdue?'#FF3B30':'#8A8A8E'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7V8z"/></svg>
                       </div>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{ref}</div>
-                        <div style={{fontSize:'11px',color:'#8A8A8E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{sh.vessel_name||STAGE_LABELS[sh.status]||sh.status||''}</div>
+                        <div style={{display:'flex',gap:'10px',fontSize:'10.5px',color:'#8A8A8E',marginTop:'2px'}}>
+                          <span style={{whiteSpace:'nowrap'}}><span style={{color:'#B0B0B4'}}>ETD</span> {fmtDateShort(sh.estimated_departure)}</span>
+                          <span style={{whiteSpace:'nowrap'}}><span style={{color:'#B0B0B4'}}>ETA</span> {fmtDateShort(sh.estimated_arrival)}</span>
+                        </div>
                       </div>
-                      {days!==null && <div style={{textAlign:'right',flexShrink:0,fontSize:'14px',fontWeight:600,color:overdue?'#FF3B30':'#1A1A1C',fontVariantNumeric:'tabular-nums',lineHeight:1}}>{overdue?'+'+Math.abs(days):days}<span style={{fontSize:'10.5px',color:'#A0A0A4',fontWeight:400}}>d</span></div>}
+                      {days!==null && <div style={{textAlign:'right',flexShrink:0}}>
+                        <div style={{fontSize:'14px',fontWeight:600,color:overdue?'#FF3B30':'#1A1A1C',fontVariantNumeric:'tabular-nums',lineHeight:1}}>{overdue?'+'+Math.abs(days):days}<span style={{fontSize:'10.5px',color:'#A0A0A4',fontWeight:400}}>d</span></div>
+                        <div style={{fontSize:'9px',color:'#A0A0A4',marginTop:'2px'}}>{overdue?'overdue':'to ETA'}</div>
+                      </div>}
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#C8C8CC" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><polyline points="9 18 15 12 9 6"/></svg>
                     </div>
                   );
                 })}
@@ -901,25 +918,56 @@ function SalesOrders({navigate}){
         ); })}
       </div>
 
-      {/* Orders list */}
+      {/* Orders — distinct 2-col card grid */}
       {loading ? (
         <div style={{display:'flex',alignItems:'center',justifyContent:'center',padding:'60px',color:'#8A8A8E',fontSize:'14px'}}>Loading…</div>
       ) : shown.length ? (
-        <div style={{background:'#fff',borderRadius:'18px',boxShadow:'0 0 0 1px rgba(0,0,0,.03), 0 2px 5px rgba(0,0,0,.04), 0 12px 28px -8px rgba(20,20,40,.06)',overflow:'hidden'}}>
-          {shown.map((so,i) => {
+        <div className="so-card-grid" style={{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:'14px'}}>
+          {shown.map((so) => {
             const m=soMetrics(so);
             const units=(so.sales_order_items||[]).reduce((b,it)=>b+(Number(it.quantity)||0),0);
+            const sm=SO_SM[so.status]||{label:so.status,color:'#8A8A8E'};
+            const stageIdx=SO_STATUSES.indexOf(so.status);
+            const pct=stageIdx>=0?Math.round((stageIdx/(SO_STATUSES.length-1))*100):0;
             return (
-              <div key={so.id} onClick={()=>navigate('so-detail',{id:so.id})} style={{display:'flex',alignItems:'center',gap:'14px',padding:'14px 20px',cursor:'pointer',borderTop:i>0?'1px solid #F4F4F6':'none',transition:'.12s',minWidth:0}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFC'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                <div style={{width:'40px',height:'40px',borderRadius:'11px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'13px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:companyColor(so.client?.name||'')}}>{initials(so.client?.name||'?')}</div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:'14px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client_po_number||so.so_number||'—'}</div>
-                  <div style={{fontSize:'12.5px',color:'#8A8A8E',marginTop:'1px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client?.name||'Unknown'}{so.order_date?' · '+fmtDate(so.order_date):''}</div>
+              <div key={so.id} onClick={()=>navigate('so-detail',{id:so.id})} style={{position:'relative',background:'#fff',borderRadius:'16px',padding:'0',cursor:'pointer',overflow:'hidden',boxShadow:'0 0 0 1px rgba(0,0,0,.03), 0 2px 5px rgba(0,0,0,.04), 0 12px 28px -8px rgba(20,20,40,.06)',transition:'.14s'}} onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-2px)';e.currentTarget.style.boxShadow='0 0 0 1px rgba(0,0,0,.04), 0 6px 14px rgba(0,0,0,.06), 0 20px 40px -10px rgba(20,20,40,.12)';}} onMouseLeave={e=>{e.currentTarget.style.transform='none';e.currentTarget.style.boxShadow='0 0 0 1px rgba(0,0,0,.03), 0 2px 5px rgba(0,0,0,.04), 0 12px 28px -8px rgba(20,20,40,.06)';}}>
+                {/* accent stripe */}
+                <div style={{position:'absolute',left:0,top:0,bottom:0,width:'4px',background:sm.color}} />
+                <div style={{padding:'18px 20px 16px 22px'}}>
+                  {/* header */}
+                  <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'12px',marginBottom:'14px'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:'11px',minWidth:0}}>
+                      <div style={{width:'38px',height:'38px',borderRadius:'10px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'12.5px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:companyColor(so.client?.name||'')}}>{initials(so.client?.name||'?')}</div>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontFamily:'var(--mono)',fontSize:'14.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client_po_number||so.so_number||'—'}</div>
+                        <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client?.name||'Unknown'}</div>
+                      </div>
+                    </div>
+                    <Badge status={so.status} />
+                  </div>
+                  {/* progress bar */}
+                  <div style={{marginBottom:'14px'}}>
+                    <div style={{height:'5px',background:'#F0F0F2',borderRadius:'3px',overflow:'hidden'}}>
+                      <div style={{height:'100%',width:pct+'%',background:sm.color,borderRadius:'3px',transition:'width .4s'}} />
+                    </div>
+                    <div style={{fontSize:'10.5px',color:'#A0A0A4',marginTop:'6px',textTransform:'uppercase',letterSpacing:'.05em'}}>{sm.label}</div>
+                  </div>
+                  {/* footer stats */}
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',paddingTop:'13px',borderTop:'1px solid #F2F2F4'}}>
+                    <div>
+                      <div style={{fontSize:'10px',color:'#A0A0A4',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:'2px'}}>Units</div>
+                      <div style={{fontSize:'14px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(units)}</div>
+                    </div>
+                    <div style={{textAlign:'center'}}>
+                      <div style={{fontSize:'10px',color:'#A0A0A4',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:'2px'}}>Ordered</div>
+                      <div style={{fontSize:'13px',fontWeight:500,color:'#4A4A4E'}}>{so.order_date?fmtDateShort(so.order_date):'—'}</div>
+                    </div>
+                    <div style={{textAlign:'right'}}>
+                      <div style={{fontSize:'10px',color:'#A0A0A4',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:'2px'}}>Value</div>
+                      <div style={{fontSize:'15px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{money(m.rev)}</div>
+                    </div>
+                  </div>
                 </div>
-                <div className="db-hide-sm" style={{textAlign:'right',flexShrink:0,fontSize:'12.5px',color:'#A0A0A4',fontVariantNumeric:'tabular-nums'}}>{fmtNum(units)} units</div>
-                <div style={{textAlign:'right',flexShrink:0,minWidth:'78px',fontSize:'15px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{money(m.rev)}</div>
-                <div style={{flexShrink:0}}><Badge status={so.status} /></div>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C8C8CC" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><polyline points="9 18 15 12 9 6"/></svg>
               </div>
             );
           })}
