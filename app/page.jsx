@@ -28,6 +28,7 @@ const moneyCompact = (n) => {
 };
 const fmtDate = s => { if (!s) return '—'; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? s+'T12:00:00' : s); return isNaN(d) ? '—' : d.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
 const fmtDateShort = s => { if (!s) return '—'; const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? s+'T12:00:00' : s); return isNaN(d) ? '—' : d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); };
+const etaDays = eta => { if (!eta) return null; const d = Math.round((new Date(eta) - new Date()) / 86400000); return isNaN(d) ? null : d; };
 const fmtDateTime = s => { if (!s) return ''; const d=new Date(s); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); };
 const timeAgo = s => { if(!s) return ''; const m=Math.round((Date.now()-new Date(s))/60000); if(m<2) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<24) return h+'h'; const d=Math.round(h/24); if(d<7) return d+'d'; return fmtDate(s); };
 
@@ -522,11 +523,6 @@ function Dashboard({ navigate }) {
   const SO_STAGES = ['received','confirmed','in_production','shipped','delivered','invoiced'];
   const STAGE_LABELS = { received:'Received', confirmed:'Confirmed', in_production:'In Production', shipped:'Shipped', delivered:'Delivered', invoiced:'Invoiced' };
   const STAGE_COLORS = { received:'#AF52DE', confirmed:'#0071E3', in_production:'#FF9F0A', shipped:'#5AC8FA', delivered:'#30B050', invoiced:'#8E8E93' };
-  const etaDays = eta => {
-    if (!eta) return null;
-    const d = Math.round((new Date(eta) - new Date()) / 86400000);
-    return d;
-  };
 
   const DeltaPill = ({ v }) => {
     if (v===undefined||v===null) return null;
