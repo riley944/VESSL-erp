@@ -1010,6 +1010,8 @@ function SalesOrderDetail({id,navigate}){
       indc_date: so.indc_date || so.required_ship_date,
       cancel_date: so.cancel_date,
       payment_terms: so.payment_terms || '',
+      shipping_method: so.shipping_method || '',
+      ship_to: so.delivery_address || '',
       notes: so.notes || '',
       lines: items.map(it => ({
         description: it.description || it.products?.name || '—',
@@ -1058,13 +1060,17 @@ function SalesOrderDetail({id,navigate}){
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',borderTop:'1px solid var(--line-2)'}}>
-            {[['Client PO #',so.client_po_number||'—'],['Order Date',fmtDate(so.order_date)],['Cargo Ready Date',so.cargo_ready_date?fmtDate(so.cargo_ready_date):'TBD'],['INDC',fmtDate(so.indc_date||so.required_ship_date)],['Cancel Date',so.cancel_date?fmtDate(so.cancel_date):'—'],['Payment',so.payment_terms||'—'],['Currency',so.currency||'USD']].map(([l,v],i)=>(
+            {[['Client PO #',so.client_po_number||'—'],['Order Date',fmtDate(so.order_date)],['Cargo Ready Date',so.cargo_ready_date?fmtDate(so.cargo_ready_date):'TBD'],['INDC',fmtDate(so.indc_date||so.required_ship_date)],['Cancel Date',so.cancel_date?fmtDate(so.cancel_date):'—'],['Payment',so.payment_terms||'—'],['Shipping Method',so.shipping_method||'—'],['Currency',so.currency||'USD']].map(([l,v],i)=>(
               <div key={l} style={{padding:'12px 18px',borderBottom:i<4?'1px solid var(--line-2)':'none',borderRight:i%2===0?'1px solid var(--line-2)':'none'}}>
                 <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'4px'}}>{l}</div>
                 <div style={{fontSize:'13px',fontWeight:600,color:'var(--ink)',fontFamily:l.includes('#')?'var(--mono)':'inherit'}}>{v}</div>
               </div>
             ))}
           </div>
+          {so.delivery_address && <div className="section-card" style={{marginTop:'12px',padding:'14px 18px'}}>
+            <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'6px'}}>Ship-To Address</div>
+            <div style={{fontSize:'13px',color:'var(--ink)',lineHeight:1.6,whiteSpace:'pre-line'}}>{so.delivery_address}</div>
+          </div>}
         </div>
         <div>
           <div className="section-card" style={{marginBottom:'12px'}}>
@@ -1276,7 +1282,7 @@ function QuotePickerModal({ onPick, onClose, priceField='client' }){
 function CreateSOModal({onClose,onCreated}){
   const nd=()=>new Date().toISOString().split('T')[0];
   const [mode,setMode]=useState('catalog');
-  const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',crd:'',cancel:'',payment:'',currency:'USD',notes:''});
+  const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',crd:'',cancel:'',payment:'',currency:'USD',notes:'',shipTo:'',shipMethod:''});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const [items,setItems]=useState([]);
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
@@ -1341,7 +1347,7 @@ function CreateSOModal({onClose,onCreated}){
     setLoading(true);
     // auto-generate so_number from client PO if not set
     const soNum = form.num.trim() || ('KUI-'+form.clientPO.trim().replace(/[^A-Za-z0-9]/g,'-').slice(0,20).toUpperCase());
-    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,status:'received'}).select().single();
+    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:form.shipMethod||null,status:'received'}).select().single();
     if(e0||!so){alert('Error: '+(e0?.message||'unknown'));setLoading(false);return;}
     const toIns=items.filter(it=>it.desc.trim()).map(it=>({sales_order_id:so.id,description:it.desc.trim(),client_sku:it.sku||null,quantity:Number(it.qty)||null,client_price:Number(it.price)||null,currency:form.currency,_quoteId:it.quoteId,_tierIdx:it.tierIdx||0}));
     if(toIns.length) await SB.from('sales_order_items').insert(toIns.map(({_quoteId,_tierIdx,...rest})=>rest));
@@ -1440,6 +1446,18 @@ function CreateSOModal({onClose,onCreated}){
             <div><label>Payment Terms</label><input className="form-input" value={form.payment} onChange={e=>f('payment')(e.target.value)} placeholder="e.g. Net 30, 50% deposit" /></div>
             <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}>{['USD','CAD','EUR','GBP','AUD'].map(c=><option key={c} value={c}>{c}</option>)}</select></div>
           </div>
+          <div className="form-row-2">
+            <div><label>Shipping Method</label><select className="form-select" value={form.shipMethod} onChange={e=>f('shipMethod')(e.target.value)}>
+              <option value="">— select —</option>
+              <option value="FedEx">FedEx</option>
+              <option value="Sine Trading">Sine Trading</option>
+              <option value="Ocean Freight">Ocean Freight</option>
+              <option value="Air Freight">Air Freight</option>
+              <option value="Other">Other</option>
+            </select></div>
+            <div></div>
+          </div>
+          <div><label>Ship-To Address <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>prints on order confirmation</span></label><textarea className="form-input" rows={3} value={form.shipTo} onChange={e=>f('shipTo')(e.target.value)} placeholder="Full ship-to address for the client" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
 
           <span className="form-section-label">Line Items</span>
           <table className="items-table">
@@ -1506,7 +1524,7 @@ function CreateSOModal({onClose,onCreated}){
 }
 
 function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved}){
-  const [form,setForm]=useState({num:so.so_number||'',clientId:so.client_company_id||'',clientPO:so.client_po_number||'',date:so.order_date||'',ship:so.indc_date||so.required_ship_date||'',crd:so.cargo_ready_date||'',cancel:so.cancel_date||'',payment:so.payment_terms||'',currency:so.currency||'USD',notes:so.notes||''});
+  const [form,setForm]=useState({num:so.so_number||'',clientId:so.client_company_id||'',clientPO:so.client_po_number||'',date:so.order_date||'',ship:so.indc_date||so.required_ship_date||'',crd:so.cargo_ready_date||'',cancel:so.cancel_date||'',payment:so.payment_terms||'',currency:so.currency||'USD',notes:so.notes||'',shipTo:so.delivery_address||'',shipMethod:so.shipping_method||''});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const [items,setItems]=useState((initItems||[]).map(it=>({id:it.id,desc:it.description||'',sku:it.client_sku||'',qty:it.quantity!=null?String(it.quantity):'',price:it.client_price!=null?String(it.client_price):''})));
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
@@ -1545,7 +1563,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
   const save=async()=>{
     setLoading(true);
-    const {error}=await SB.from('sales_orders').update({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,updated_at:new Date().toISOString()}).eq('id',so.id);
+    const {error}=await SB.from('sales_orders').update({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:form.shipMethod||null,updated_at:new Date().toISOString()}).eq('id',so.id);
     if(error){alert('Error: '+error.message);setLoading(false);return;}
     const filled=items.filter(it=>it.desc.trim());
     // SAFETY: never wipe all line items. If the form somehow has none but the
@@ -1601,6 +1619,18 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
             <div><label>Cancel Date</label><input type="date" className="form-input" value={form.cancel} onChange={e=>f('cancel')(e.target.value)} /></div>
           </div>
           <div><label>Payment Terms</label><input className="form-input" value={form.payment} onChange={e=>f('payment')(e.target.value)} /></div>
+          <div className="form-row-2">
+            <div><label>Shipping Method</label><select className="form-select" value={form.shipMethod} onChange={e=>f('shipMethod')(e.target.value)}>
+              <option value="">— select —</option>
+              <option value="FedEx">FedEx</option>
+              <option value="Sine Trading">Sine Trading</option>
+              <option value="Ocean Freight">Ocean Freight</option>
+              <option value="Air Freight">Air Freight</option>
+              <option value="Other">Other</option>
+            </select></div>
+            <div></div>
+          </div>
+          <div><label>Ship-To Address <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>prints on order confirmation</span></label><textarea className="form-input" rows={3} value={form.shipTo} onChange={e=>f('shipTo')(e.target.value)} placeholder="Full ship-to address for the client" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
           <span className="form-section-label">Line Items</span>
           <div style={{overflowX:'auto',marginBottom:'8px'}}>
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:'13px',minWidth:'500px'}}>
@@ -3914,6 +3944,7 @@ function buildSODoc(d) {
     d.indc_date ? ['In-DC Date', fd(d.indc_date)] : null,
     d.cancel_date ? ['Cancel Date', fd(d.cancel_date)] : null,
     ['Payment Terms', d.payment_terms||'—'],
+    d.shipping_method ? ['Shipping Method', d.shipping_method] : null,
   ].filter(Boolean).map(([l,v]) =>
     '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;">'
     +'<div style="font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;">'+l+'</div>'
@@ -3944,6 +3975,12 @@ function buildSODoc(d) {
 +(d.client_name?'<div style="background:linear-gradient(135deg,#0c1322 0%,#1e3a5f 100%);border-radius:12px;padding:18px 24px;margin-bottom:28px;">'
   +'<div style="font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.5);margin-bottom:4px;">Prepared For</div>'
   +'<div style="font-size:20px;font-weight:700;color:#fff;">'+d.client_name+'</div>'
++'</div>':'')
+
+// Ship-to address
++(d.ship_to?'<div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px;margin-bottom:28px;">'
+  +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:8px;">Ship To</div>'
+  +'<div style="font-size:14px;color:#0f172a;line-height:1.7;">'+d.ship_to.replace(/\n/g,'<br>')+'</div>'
 +'</div>':'')
 
 // Terms
