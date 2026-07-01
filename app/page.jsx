@@ -2985,37 +2985,112 @@ function Shipments() {
   const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState(null);
+  const [tab, setTab] = useState('active');
   const reload = async () => {
     const { data } = await SB.from('shipments')
-      .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client:companies!client_company_id(name)))')
+      .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,client:companies!client_company_id(name)))')
       .order('created_at',{ascending:false});
     setRows(data||[]); setLoading(false);
   };
   useEffect(()=>{ reload(); },[]);
+
+  const TERMINAL = ['delivered','cancelled'];
+  const active = rows.filter(s => !TERMINAL.includes((s.status||'').toLowerCase()) && !s.actual_arrival);
+  const done = rows.filter(s => TERMINAL.includes((s.status||'').toLowerCase()) || s.actual_arrival);
+  const shown = tab==='active' ? active : tab==='delivered' ? done : rows;
+
+  // shipment status → progress fraction along the voyage
+  const progressOf = (st) => {
+    const map = { created:0.06, at_origin_port:0.18, in_transit:0.5, at_transshipment:0.6, at_destination_port:0.82, customs:0.9, out_for_delivery:0.96, delivered:1 };
+    return map[st] ?? 0.1;
+  };
+  const legLabel = (st) => (st||'').replace(/_/g,' ');
+
   return (
-    <div className="section-card">
-      {loading ? <div className="loading">Loading...</div> : rows.length ? (
-        <table className="data-table">
-          <thead><tr><th>PO #</th><th>Client</th><th>Vessel</th><th>Container #</th><th>Status</th><th>ETA</th></tr></thead>
-          <tbody>
-            {rows.map(s=>{
-              const po = s.shipment_pos?.[0]?.purchase_orders;
-              const poNum = po?.order_number || s.shipment_number || '—';
-              const clientName = (po?.client?.name || s.companies?.name || '—').toUpperCase();
-              return (
-                <tr key={s.id} onClick={()=>setOpenId(s.id)} style={{cursor:'pointer'}}>
-                  <td className="mono" style={{fontWeight:600}}>{poNum}</td>
-                  <td style={{fontWeight:500}}>{clientName}</td>
-                  <td>{s.vessel_name||'—'}</td>
-                  <td className="mono">{s.container_no||'—'}</td>
-                  <td><Badge status={s.status} /></td>
-                  <td>{fmtDate(s.estimated_arrival)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      ) : <div className="empty"><h3>No shipments yet</h3><p>Shipments appear here when orders move to the shipping stage.</p></div>}
+    <div style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
+      {/* Title */}
+      <div style={{marginBottom:'20px'}}>
+        <div style={{fontSize:'24px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em'}}>Shipments</div>
+        <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Freight in motion — vessels, containers, and arrival tracking</div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:'flex',gap:'6px',marginBottom:'18px'}}>
+        {[['active','In transit',active.length],['delivered','Delivered',done.length],['all','All',rows.length]].map(([val,label,ct])=>(
+          <button key={val} onClick={()=>setTab(val)} style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'7px 14px',borderRadius:'9px',border:'1px solid '+(tab===val?'transparent':'#EAEAEE'),cursor:'pointer',fontSize:'12.5px',fontWeight:500,background:tab===val?'#1A1A1C':'#fff',color:tab===val?'#fff':'#4A4A4E'}}>
+            {label}<span style={{fontFamily:'var(--mono)',fontSize:'11px',color:tab===val?'rgba(255,255,255,.6)':'#A0A0A4'}}>{ct}</span>
+          </button>
+        ))}
+      </div>
+
+      {loading ? <div style={{padding:'60px',textAlign:'center',color:'#8A8A8E',fontSize:'14px'}}>Loading…</div>
+        : shown.length ? (
+        <div style={{background:'#fff',borderRadius:'16px',border:'1px solid #ECECEE',overflow:'hidden'}}>
+          {/* column header */}
+          <div className="ship-manifest-head" style={{display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Reference</div>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Voyage</div>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>ETD / ETA</div>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>Arrival</div>
+          </div>
+          {shown.map((s,i)=>{
+            const po = s.shipment_pos?.[0]?.purchase_orders;
+            const ref = po?.client_po_number || po?.order_number || s.shipment_number || '—';
+            const clientName = (po?.client?.name || s.companies?.name || '—').toUpperCase();
+            const days = s.actual_arrival ? null : etaDays(s.estimated_arrival);
+            const overdue = days!==null && days<0;
+            const delivered = (s.status==='delivered' || s.actual_arrival);
+            const frac = delivered ? 1 : progressOf(s.status);
+            return (
+              <div key={s.id} onClick={()=>setOpenId(s.id)} className="ship-manifest-row" style={{display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'16px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',cursor:'pointer',transition:'.12s',alignItems:'center'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+              {/* Reference */}
+              <div style={{minWidth:0}}>
+                <div style={{fontFamily:'var(--mono)',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{ref}</div>
+                <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{clientName}</div>
+              </div>
+              {/* Voyage — the signature: vessel + progress leg */}
+              <div style={{minWidth:0}}>
+                <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={overdue?'#DC2626':'#6B7280'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M2 20a6 6 0 0 0 12 0c0-7-6-9-6-14 0 5-6 7-6 14z" opacity="0"/><path d="M3 18h18l-2-6H5l-2 6z"/><path d="M12 12V4M8 8h8"/></svg>
+                  <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.vessel_name||'Vessel TBD'}{s.voyage_no?' · '+s.voyage_no:''}</span>
+                  {s.container_no && <span style={{fontFamily:'var(--mono)',fontSize:'10.5px',color:'#A0A0A4',whiteSpace:'nowrap'}}>{s.container_no}</span>}
+                </div>
+                {/* progress leg */}
+                <div style={{position:'relative',height:'2px',background:'#ECECEE',borderRadius:'2px'}}>
+                  <div style={{position:'absolute',left:0,top:0,height:'100%',width:(frac*100)+'%',background:overdue?'#DC2626':delivered?'#16A34A':'#1A1A1C',borderRadius:'2px',transition:'width .4s'}} />
+                  <div style={{position:'absolute',top:'50%',left:(frac*100)+'%',width:'8px',height:'8px',borderRadius:'50%',background:overdue?'#DC2626':delivered?'#16A34A':'#1A1A1C',transform:'translate(-50%,-50%)',border:'2px solid #fff',boxShadow:'0 1px 2px rgba(0,0,0,.2)'}} />
+                </div>
+                <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'6px',textTransform:'uppercase',letterSpacing:'.05em'}}>{legLabel(s.status)}</div>
+              </div>
+              {/* ETD/ETA */}
+              <div style={{textAlign:'right'}}>
+                <div style={{fontSize:'12px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C0C0C4'}}>ETD</span> {fmtDateShort(s.estimated_departure)}</div>
+                <div style={{fontSize:'13px',fontWeight:600,color:'#1A1A1C',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C0C0C4',fontWeight:400}}>ETA</span> {fmtDateShort(s.estimated_arrival)}</div>
+              </div>
+              {/* Arrival countdown */}
+              <div style={{textAlign:'right'}}>
+                {delivered ? (
+                  <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'12px',fontWeight:600,color:'#16A34A'}}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Delivered
+                  </span>
+                ) : days!==null ? (
+                  <>
+                    <div style={{fontSize:'16px',fontWeight:700,color:overdue?'#DC2626':'#1A1A1C',fontVariantNumeric:'tabular-nums',lineHeight:1}}>{overdue?'+'+Math.abs(days):days}<span style={{fontSize:'11px',color:'#A0A0A4',fontWeight:400}}>d</span></div>
+                    <div style={{fontSize:'9.5px',color:overdue?'#DC2626':'#A0A0A4',marginTop:'2px'}}>{overdue?'overdue':'to ETA'}</div>
+                  </>
+                ) : <span style={{fontSize:'12px',color:'#C0C0C4'}}>—</span>}
+              </div>
+            </div>
+            );
+          })}
+        </div>
+      ) : <div style={{background:'#fff',borderRadius:'16px',border:'1px solid #ECECEE',padding:'56px 32px',textAlign:'center'}}>
+            <div style={{width:'52px',height:'52px',borderRadius:'14px',background:'#F2F2F6',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#A0A0A4" strokeWidth="1.6"><path d="M3 18h18l-2-6H5l-2 6z"/><path d="M12 12V4M8 8h8"/></svg>
+            </div>
+            <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'7px'}}>No {tab==='active'?'active ':tab==='delivered'?'delivered ':''}shipments</div>
+            <div style={{color:'#8A8A8E',fontSize:'13.5px'}}>Shipments appear here when orders move to the shipping stage.</div>
+          </div>}
       {openId && <ShipmentDetailModal id={openId} onClose={()=>setOpenId(null)} onSaved={()=>{setOpenId(null);reload();}} />}
     </div>
   );
