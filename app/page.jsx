@@ -4119,6 +4119,23 @@ function ClientRelations() {
     loadMsgs(t.id, true);
   };
 
+  // ── delete thread ──────────────────────────────────────────────────────────
+  const [confirmDelId, setConfirmDelId] = useState(null);
+  const deleteThread = async (threadId) => {
+    try {
+      // remove messages first (in case no cascade), then the thread
+      await SP('messages').delete().eq('thread_id', threadId);
+      const { error } = await SP('threads').delete().eq('id', threadId);
+      if (error) { toast('Could not delete: ' + error.message, 'err'); return; }
+      setAllThreads(prev => prev.filter(t => t.id !== threadId));
+      if (selThreadId === threadId) { setSelThreadId(null); setMsgs([]); }
+      setConfirmDelId(null);
+      toast('Conversation deleted', 'ok');
+    } catch (e) {
+      toast('Could not delete conversation', 'err');
+    }
+  };
+
   // ── send message ───────────────────────────────────────────────────────────
   const send = async () => {
     const body = draft.trim();
@@ -4259,7 +4276,20 @@ function ClientRelations() {
                 <div className="cr-convo-title">{selThread?.name||'Conversation'}</div>
                 <div className="cr-convo-sub">{companies[selThread?.company_id]||''}{selThread?.sales_order_id?' · Order thread':' · General'}</div>
               </div>
-              {selThread?.sales_order_id && <span className="badge b-confirmed" style={{fontSize:'11px'}}>Order</span>}
+              <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+                {selThread?.sales_order_id && <span className="badge b-confirmed" style={{fontSize:'11px'}}>Order</span>}
+                {confirmDelId===selThreadId ? (
+                  <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+                    <span style={{fontSize:'12px',color:'var(--muted)'}}>Delete this conversation?</span>
+                    <button onClick={()=>deleteThread(selThreadId)} style={{background:'var(--hot)',color:'#fff',border:'none',borderRadius:'7px',padding:'5px 11px',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>Delete</button>
+                    <button onClick={()=>setConfirmDelId(null)} style={{background:'none',border:'1px solid var(--line)',borderRadius:'7px',padding:'5px 11px',fontSize:'12px',fontWeight:600,cursor:'pointer',color:'var(--ink-2)'}}>Cancel</button>
+                  </div>
+                ) : (
+                  <button onClick={()=>setConfirmDelId(selThreadId)} title="Delete conversation" style={{background:'none',border:'none',cursor:'pointer',color:'var(--faint)',display:'flex',alignItems:'center',padding:'6px',borderRadius:'7px',transition:'.12s'}} onMouseEnter={e=>{e.currentTarget.style.background='var(--hot-soft)';e.currentTarget.style.color='var(--hot)';}} onMouseLeave={e=>{e.currentTarget.style.background='none';e.currentTarget.style.color='var(--faint)';}}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="cr-messages">
