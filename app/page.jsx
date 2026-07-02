@@ -2058,6 +2058,7 @@ function OrderDetail({ id, navigate }) {
       deliveryAddress: po.delivery_address, shippingMethod: po.shipping_method,
       clientNotes: po.client?.po_notes || '',
       cancelDate: po.cancel_date,
+      needsSamples: po.needs_samples, sampleType: po.sample_type, sampleQty: po.sample_qty, sampleDate: po.sample_date,
       artImages, otherFiles,
     });
     if (win) { win.document.open(); win.document.write(html); win.document.close(); setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 600); }
@@ -2107,7 +2108,7 @@ function OrderDetail({ id, navigate }) {
           <div className="bsub">{po.companies?.email||''}</div>
           {po.client?.name && <div style={{marginTop:'10px',paddingTop:'10px',borderTop:'1px solid var(--line)'}}><div style={{color:'var(--muted)',fontSize:'11px',marginBottom:'2px'}}>CLIENT</div><div style={{fontSize:'13px',fontWeight:500}}>{po.client.name}</div>{po.client.vendor_number && <div style={{fontSize:'11.5px',color:'var(--muted)'}}>Vendor # {po.client.vendor_number} · internal</div>}</div>}
           {po.pallet_info && <div style={{marginTop:'10px',fontSize:'12px',color:'var(--muted)'}}><span style={{textTransform:'uppercase',fontSize:'10px'}}>Pallet</span> · {po.pallet_info}</div>}
-          {po.needs_samples && <div style={{marginTop:'10px',padding:'8px 10px',background:'#fef9c3',borderRadius:'8px',fontSize:'12px',color:'#854d0e'}}><b>Samples required:</b> {po.sample_type||'TOP'}{po.sample_qty?' \u00b7 '+po.sample_qty+' pcs':''}</div>}
+          {po.needs_samples && <div style={{marginTop:'10px',padding:'8px 10px',background:'#fef9c3',borderRadius:'8px',fontSize:'12px',color:'#854d0e'}}><b>Samples required:</b> {po.sample_type||'Required'}{po.sample_qty?' · '+po.sample_qty+' pcs':''}{po.sample_date?' · due '+fmtDate(po.sample_date):''}</div>}
         </div>
         <div className="detail-block">
           <div className="blabel">Order Details</div>
@@ -2290,7 +2291,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     inco:po.incoterm||'', pay:po.payment_terms||'', dep:po.deposit_percent!=null?String(po.deposit_percent):'',
     mold:po.mold_fee!=null?String(po.mold_fee):'', sample:po.sample_fee!=null?String(po.sample_fee):'',
     currency:po.currency||'USD', notes:po.notes||'', status:po.status||'draft', pallet:po.pallet_info||'',
-    needs_samples:!!po.needs_samples, sample_type:po.sample_type||'TOP', sample_qty:po.sample_qty!=null?String(po.sample_qty):'',
+    needs_samples:!!po.needs_samples, sample_type:po.sample_type||'', sample_qty:po.sample_qty!=null?String(po.sample_qty):'', sample_date:po.sample_date||'',
     clientId: po.client_company_id||'',
     testing_required: !!po.testing_required, delivery_address: po.delivery_address||'', shipping_method: po.shipping_method||''
   });
@@ -2388,7 +2389,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
       mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0, currency:form.currency,
       notes:form.notes||null, status:form.status, pallet_info:form.pallet||null,
       client_company_id: form.clientId||null,
-      needs_samples:!!form.needs_samples, sample_type:form.needs_samples?(form.sample_type||null):null, sample_qty:form.needs_samples?(Number(form.sample_qty)||null):null,
+      needs_samples:!!form.needs_samples, sample_type:form.needs_samples?(form.sample_type||null):null, sample_qty:form.needs_samples?(Number(form.sample_qty)||null):null, sample_date:form.needs_samples?(form.sample_date||null):null,
       testing_required:!!form.testing_required, delivery_address:form.delivery_address||null, shipping_method:form.shipping_method||null,
       updated_at:new Date().toISOString()
     }).eq('id',po.id);
@@ -2492,15 +2493,20 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
               Do we need preproduction samples for this order?
             </label>
             {form.needs_samples && (
-              <div className="form-row-2" style={{marginTop:'12px'}}>
-                <div><label>Sample type</label>
-                  <select className="form-select" value={form.sample_type||'TOP'} onChange={e=>f('sample_type')(e.target.value)}>
-                    <option value="TOP">TOP (Top of Production)</option>
-                    <option value="Preproduction">Preproduction sample</option>
-                  </select>
+              <>
+              <div style={{marginTop:'12px'}}>
+                <label>Sample types <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(select all that apply)</span></label>
+                <div style={{display:'flex',flexWrap:'wrap',gap:'8px',marginTop:'6px'}}>
+                  {['TOP','Model Store','Preproduction','Salesman','Photo/PR'].map(t=>{ const sel=(form.sample_type||'').split(',').map(x=>x.trim()).filter(Boolean); const on=sel.includes(t); return (
+                    <button key={t} type="button" onClick={()=>{ const next=on?sel.filter(x=>x!==t):[...sel,t]; f('sample_type')(next.join(', ')); }} style={{padding:'7px 13px',borderRadius:'9px',border:'1px solid '+(on?'transparent':'var(--line)'),background:on?'var(--accent)':'#fff',color:on?'#fff':'var(--ink-2)',fontSize:'12.5px',fontWeight:500,cursor:'pointer'}}>{on?'✓ ':''}{t}</button>
+                  ); })}
                 </div>
-                <div><label>Quantity needed</label><input type="number" className="form-input" value={form.sample_qty||''} onChange={e=>f('sample_qty')(e.target.value)} placeholder="e.g. 3" /></div>
               </div>
+              <div className="form-row-2" style={{marginTop:'12px'}}>
+                <div><label>Quantity needed</label><input type="number" className="form-input" value={form.sample_qty||''} onChange={e=>f('sample_qty')(e.target.value)} placeholder="e.g. 3" /></div>
+                <div><label>Sample date <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(when due)</span></label><input type="date" className="form-input" value={form.sample_date||''} onChange={e=>f('sample_date')(e.target.value)} /></div>
+              </div>
+              </>
             )}
           </div>
           <span className="form-section-label">Fees & Currency</span>
@@ -3196,7 +3202,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [showPicker, setShowPicker] = useState(false);
   const onPickPOItem = (li) => setItems(prev=>[...prev,{prodId:'',desc:li.desc,qty:li.qty,price:li.price,ci:'',carton:'',vpn:'',masterSku:'',packSku:'',babySku:'',retailPrice:''}]);
   const [recentDescs, setRecentDescs] = useState([]);
-  const [form, setForm]  = useState({ factoryId:'', clientId:'', num:'', date:nowDate(), ship:'', cancel:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'', needs_samples:false, sample_type:'TOP', sample_qty:'' });
+  const [form, setForm]  = useState({ factoryId:'', clientId:'', num:'', date:nowDate(), ship:'', cancel:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'', needs_samples:false, sample_type:'', sample_qty:'', sample_date:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
 
   // Build the next sequential PO number, e.g. KUI-PO-2026-007, from existing ones.
@@ -3366,7 +3372,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       requested_ship_date:form.ship||null, cargo_ready_date:form.ship||null, cancel_date:form.cancel||null, incoterm:form.inco||null, payment_terms:form.pay||null,
       deposit_percent:Number(form.dep)||null, mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0,
       currency:form.currency, notes:form.notes||null, status:'draft',
-      needs_samples:!!form.needs_samples, sample_type:form.needs_samples?(form.sample_type||null):null, sample_qty:form.needs_samples?(Number(form.sample_qty)||null):null,
+      needs_samples:!!form.needs_samples, sample_type:form.needs_samples?(form.sample_type||null):null, sample_qty:form.needs_samples?(Number(form.sample_qty)||null):null, sample_date:form.needs_samples?(form.sample_date||null):null,
       testing_required:!!form.testing_required, delivery_address:form.delivery_address||null, shipping_method:form.shipping_method||null,
       source_quote_id: picked?.id || null
     };
@@ -3640,15 +3646,20 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
               Do we need preproduction samples for this order?
             </label>
             {form.needs_samples && (
-              <div className="form-row-2" style={{marginTop:'12px'}}>
-                <div><label>Sample type</label>
-                  <select className="form-select" value={form.sample_type||'TOP'} onChange={e=>f('sample_type')(e.target.value)}>
-                    <option value="TOP">TOP (Top of Production)</option>
-                    <option value="Preproduction">Preproduction sample</option>
-                  </select>
+              <>
+              <div style={{marginTop:'12px'}}>
+                <label>Sample types <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(select all that apply)</span></label>
+                <div style={{display:'flex',flexWrap:'wrap',gap:'8px',marginTop:'6px'}}>
+                  {['TOP','Model Store','Preproduction','Salesman','Photo/PR'].map(t=>{ const sel=(form.sample_type||'').split(',').map(x=>x.trim()).filter(Boolean); const on=sel.includes(t); return (
+                    <button key={t} type="button" onClick={()=>{ const next=on?sel.filter(x=>x!==t):[...sel,t]; f('sample_type')(next.join(', ')); }} style={{padding:'7px 13px',borderRadius:'9px',border:'1px solid '+(on?'transparent':'var(--line)'),background:on?'var(--accent)':'#fff',color:on?'#fff':'var(--ink-2)',fontSize:'12.5px',fontWeight:500,cursor:'pointer'}}>{on?'✓ ':''}{t}</button>
+                  ); })}
                 </div>
-                <div><label>Quantity needed</label><input type="number" className="form-input" value={form.sample_qty||''} onChange={e=>f('sample_qty')(e.target.value)} placeholder="e.g. 3" /></div>
               </div>
+              <div className="form-row-2" style={{marginTop:'12px'}}>
+                <div><label>Quantity needed</label><input type="number" className="form-input" value={form.sample_qty||''} onChange={e=>f('sample_qty')(e.target.value)} placeholder="e.g. 3" /></div>
+                <div><label>Sample date <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(when due)</span></label><input type="date" className="form-input" value={form.sample_date||''} onChange={e=>f('sample_date')(e.target.value)} /></div>
+              </div>
+              </>
             )}
           </div>
           <span className="form-section-label">Fees &amp; Currency</span>
@@ -3872,6 +3883,10 @@ function buildPODoc(d, opts={}) {
   const shippingMethod = opts.shippingMethod || d.shipping_method || '';
   const clientNotes = opts.clientNotes || '';
   const cancelDate = opts.cancelDate || null;
+  const needsSamples = opts.needsSamples || false;
+  const sampleType = opts.sampleType || '';
+  const sampleQty = opts.sampleQty || null;
+  const sampleDate = opts.sampleDate || null;
   const artImages = opts.artImages || [];
   const otherFiles = opts.otherFiles || [];
   const t = d.totals || {};
@@ -3914,6 +3929,8 @@ function buildPODoc(d, opts={}) {
     ['Payment Terms', d.payment_terms||'—'],
     shippingMethod ? ['Shipping Method', shippingMethod] : null,
     testingRequired ? ['Testing', 'REQUIRED'] : null,
+    needsSamples ? ['Samples', (sampleType||'Required')+(sampleQty?' · '+sampleQty+' pcs':'')] : null,
+    (needsSamples && sampleDate) ? ['Sample Due', fd(sampleDate)] : null,
   ].filter(Boolean).map(([l,v]) =>
     '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;">'
     +'<div style="font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;">'+l+'</div>'
