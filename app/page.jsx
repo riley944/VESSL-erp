@@ -685,52 +685,61 @@ function Dashboard({ navigate }) {
 }
 
 // ── Inventory ─────────────────────────────────────────────────────────────────
+const INV_STAGE = {
+  in_production:{ label:'In Production', color:'#F59E0B', bg:'#FEF3C7' },
+  in_transit:   { label:'In Transit',   color:'#0071E3', bg:'#EAF3FE' },
+  arrived:      { label:'Arrived',      color:'#22C55E', bg:'#DCFCE7' },
+};
+const INV_STAGES = ['in_production','in_transit','arrived'];
+
+function Donut({ segments, size=132, stroke=20 }) {
+  const total = segments.reduce((a,s)=>a+s.value,0) || 1;
+  const r = (size-stroke)/2, c = 2*Math.PI*r;
+  let off = 0;
+  return (
+    <svg width={size} height={size} viewBox={'0 0 '+size+' '+size}>
+      <g transform={'rotate(-90 '+size/2+' '+size/2+')'}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#F0F0F2" strokeWidth={stroke} />
+        {segments.map((s,i)=>{ const len=s.value/total*c; const el=<circle key={i} cx={size/2} cy={size/2} r={r} fill="none" stroke={s.color} strokeWidth={stroke} strokeDasharray={len+' '+(c-len)} strokeDashoffset={-off} strokeLinecap="butt" style={{transition:'stroke-dasharray .5s'}} />; off+=len; return el; })}
+      </g>
+    </svg>
+  );
+}
+
 function Inventory() {
   const [raw, setRaw] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshed, setRefreshed] = useState(null);
   const [search, setSearch] = useState('');
   const [clientF, setClientF] = useState('all');
-  const [groupBy, setGroupBy] = useState('product'); // 'product' | 'client'
+  const [stageF, setStageF] = useState('all');
+  const [groupBy, setGroupBy] = useState('product');
+  const [expanded, setExpanded] = useState(null);
   const load = async () => {
     setLoading(true);
     const { data: pos } = await SB.from('purchase_orders')
-      .select('id,order_number,client_po_number,status,requested_ship_date,client:companies!client_company_id(name),purchase_order_items(description,quantity,products(name,sku)),shipment_pos(shipments(status,estimated_arrival,actual_arrival))')
+      .select('id,order_number,client_po_number,status,requested_ship_date,client:companies!client_company_id(name),factory:companies!factory_company_id(name),purchase_order_items(description,quantity,products(name,sku)),shipment_pos(shipments(status,estimated_arrival,actual_arrival))')
       .not('status','in','("draft","cancelled","closed")');
     setRaw(pos||[]); setRefreshed(new Date()); setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
 
-  // classify each PO into a pipeline stage
   const stageOf = (po) => {
     const ships = (po.shipment_pos||[]).map(sp=>sp.shipments).filter(Boolean);
-    if (ships.some(s=>s?.actual_arrival || s?.status==='delivered')) return 'arrived';
+    if (ships.some(s=>s?.actual_arrival || s?.status==='delivered') || po.status==='delivered') return 'arrived';
     if (ships.some(s=>['in_transit','at_origin_port','at_transshipment','at_destination_port','customs','out_for_delivery','shipped'].includes(s?.status))) return 'in_transit';
-    if (po.status==='delivered') return 'arrived';
     return 'in_production';
-  };
-  const STAGE_META = {
-    in_production:{ label:'In Production', color:'#FF9F0A', bg:'#FFF3E2' },
-    in_transit:   { label:'In Transit',   color:'#0071E3', bg:'#EAF3FE' },
-    arrived:      { label:'Arrived',      color:'#34C759', bg:'#E8F8EE' },
   };
 
   if (loading) return <div style={{padding:'60px',textAlign:'center',color:'#8A8A8E'}}>Loading inventory…</div>;
 
-  // build line records
   const lines = [];
   raw.forEach(po=>{
     const stage = stageOf(po);
     const client = po.client?.name||'Unassigned';
     const eta = (po.shipment_pos||[]).map(sp=>sp.shipments?.estimated_arrival).filter(Boolean).sort()[0] || null;
     (po.purchase_order_items||[]).forEach(it=>{
-      lines.push({
-        prod: it.products?.name||it.description||'—',
-        sku: it.products?.sku||'',
-        qty: Number(it.quantity)||0,
-        client, stage, eta,
-        ref: po.client_po_number||po.order_number||'—',
-      });
+      lines.push({ prod: it.products?.name||it.description||'—', sku: it.products?.sku||'', qty: Number(it.quantity)||0, client, factory:po.factory?.name||'—', stage, eta, ref: po.client_po_number||po.order_number||'—', poId:po.id });
     });
   });
 
@@ -738,70 +747,120 @@ function Inventory() {
   const q = search.trim().toLowerCase();
   const filtered = lines.filter(l=>
     (clientF==='all'||l.client===clientF) &&
-    (!q || l.prod.toLowerCase().includes(q) || l.sku.toLowerCase().includes(q) || l.client.toLowerCase().includes(q))
+    (stageF==='all'||l.stage===stageF) &&
+    (!q || l.prod.toLowerCase().includes(q) || l.sku.toLowerCase().includes(q) || l.client.toLowerCase().includes(q) || l.ref.toLowerCase().includes(q))
   );
 
   const totalUnits = filtered.reduce((a,l)=>a+l.qty,0);
   const byStage = { in_production:0, in_transit:0, arrived:0 };
-  filtered.forEach(l=>{ byStage[l.stage]+=l.qty; });
+  lines.filter(l=>(clientF==='all'||l.client===clientF)&&(!q||l.prod.toLowerCase().includes(q)||l.sku.toLowerCase().includes(q)||l.client.toLowerCase().includes(q))).forEach(l=>{ byStage[l.stage]+=l.qty; });
+  const grandTotal = byStage.in_production+byStage.in_transit+byStage.arrived;
 
-  // group
+  // groups with drill-down detail
   const groups = {};
   filtered.forEach(l=>{
     const key = groupBy==='product' ? l.prod+'|||'+l.sku : l.client;
-    if(!groups[key]) groups[key] = { label: groupBy==='product'?l.prod:l.client, sku: groupBy==='product'?l.sku:'', client:l.client, qty:0, stages:{in_production:0,in_transit:0,arrived:0}, refs:[], eta:null };
+    if(!groups[key]) groups[key] = { key, label: groupBy==='product'?l.prod:l.client, sku: groupBy==='product'?l.sku:'', client:l.client, qty:0, stages:{in_production:0,in_transit:0,arrived:0}, items:[], eta:null };
     groups[key].qty += l.qty;
     groups[key].stages[l.stage] += l.qty;
-    if(!groups[key].refs.includes(l.ref)) groups[key].refs.push(l.ref);
+    groups[key].items.push(l);
     if(l.eta && (!groups[key].eta || l.eta<groups[key].eta)) groups[key].eta = l.eta;
   });
   const groupList = Object.values(groups).sort((a,b)=>b.qty-a.qty);
-  const maxQty = Math.max(1,...groupList.map(g=>g.qty));
+
+  // upcoming arrivals (next 6, transit + production with eta)
+  const arrivals = lines.filter(l=>l.eta && l.stage!=='arrived')
+    .reduce((acc,l)=>{ const k=l.ref; if(!acc[k]) acc[k]={ ref:l.ref, client:l.client, eta:l.eta, qty:0, stage:l.stage }; acc[k].qty+=l.qty; return acc; },{});
+  const arrivalList = Object.values(arrivals).sort((a,b)=>new Date(a.eta)-new Date(b.eta)).slice(0,6);
 
   const cardBase = {background:'#fff',border:'1px solid #ECECEE',borderRadius:'16px',boxShadow:'0 0 0 1px rgba(0,0,0,.02),0 2px 5px rgba(0,0,0,.04),0 12px 28px -8px rgba(20,20,40,.05)'};
+  const donutSegs = INV_STAGES.map(st=>({ value:byStage[st], color:INV_STAGE[st].color }));
 
   return (
     <div className="db-wrap" style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
-      {/* Title */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'22px',gap:'14px',flexWrap:'wrap'}}>
         <div>
           <div style={{fontSize:'24px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em'}}>Inventory</div>
-          <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Units in the pipeline — in production, in transit &amp; arrived · updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+          <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Live pipeline — what's coming, where it is, when it lands · updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
         </div>
         <button onClick={load} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'9px 15px',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>↻ Refresh</button>
       </div>
 
-      {/* Pipeline stage summary */}
-      <div className="db-kpi-grid" style={{display:'grid',gridTemplateColumns:'repeat(4,minmax(0,1fr))',gap:'14px',marginBottom:'18px'}}>
-        <div style={{...cardBase,padding:'18px 20px'}}>
-          <div style={{fontSize:'12.5px',fontWeight:500,color:'#8A8A8E',marginBottom:'13px'}}>Total in pipeline</div>
-          <div style={{fontSize:'30px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{fmtNum(totalUnits)}</div>
-          <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'8px'}}>units across {groupList.length} {groupBy==='product'?'products':'clients'}</div>
+      {/* ── Top: pipeline flow + composition donut ── */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 300px',gap:'14px',marginBottom:'14px'}} className="db-main-grid">
+        {/* Interactive pipeline flow */}
+        <div style={{...cardBase,padding:'22px 24px'}}>
+          <div style={{fontSize:'13px',fontWeight:700,color:'#1A1A1C',marginBottom:'20px'}}>Pipeline flow <span style={{fontWeight:400,color:'#A0A0A4',fontSize:'12px'}}>· click a stage to filter</span></div>
+          <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+            {INV_STAGES.map((st,i)=>{
+              const m=INV_STAGE[st]; const on=stageF===st; const val=byStage[st];
+              const pctW = grandTotal>0?Math.max(8,val/grandTotal*100):33;
+              return (
+                <React.Fragment key={st}>
+                  <button onClick={()=>setStageF(on?'all':st)} style={{flex:pctW,minWidth:0,textAlign:'left',background:on?m.bg:'#FAFAFB',border:'1.5px solid '+(on?m.color:'#EFEFF1'),borderRadius:'13px',padding:'16px 16px',cursor:'pointer',transition:'.14s'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:'7px',marginBottom:'12px'}}>
+                      <span style={{width:'9px',height:'9px',borderRadius:'50%',background:m.color}}/>
+                      <span style={{fontSize:'12px',fontWeight:600,color:on?m.color:'#8A8A8E',whiteSpace:'nowrap'}}>{m.label}</span>
+                    </div>
+                    <div style={{fontSize:'26px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{fmtNum(val)}</div>
+                    <div style={{fontSize:'11px',color:'#A0A0A4',marginTop:'6px'}}>{grandTotal>0?Math.round(val/grandTotal*100):0}% · units</div>
+                  </button>
+                  {i<INV_STAGES.length-1 && <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D0D0D4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><polyline points="9 18 15 12 9 6"/></svg>}
+                </React.Fragment>
+              );
+            })}
+          </div>
         </div>
-        {['in_production','in_transit','arrived'].map(st=>{
-          const m=STAGE_META[st];
-          return (
-            <div key={st} style={{...cardBase,padding:'18px 20px'}}>
-              <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'13px'}}>
-                <span style={{width:'9px',height:'9px',borderRadius:'50%',background:m.color}}/>
-                <span style={{fontSize:'12.5px',fontWeight:500,color:'#8A8A8E'}}>{m.label}</span>
-              </div>
-              <div style={{fontSize:'30px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{fmtNum(byStage[st])}</div>
-              <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'8px'}}>{totalUnits>0?Math.round(byStage[st]/totalUnits*100):0}% of pipeline</div>
+        {/* Composition donut */}
+        <div style={{...cardBase,padding:'22px 24px',display:'flex',alignItems:'center',gap:'18px'}}>
+          <div style={{position:'relative',flexShrink:0}}>
+            <Donut segments={donutSegs} />
+            <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
+              <div style={{fontSize:'22px',fontWeight:700,color:'#1A1A1C',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{fmtNum(grandTotal)}</div>
+              <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'3px'}}>total units</div>
             </div>
-          );
-        })}
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:'11px',minWidth:0}}>
+            {INV_STAGES.map(st=>{ const m=INV_STAGE[st]; return (
+              <div key={st} style={{minWidth:0}}>
+                <div style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'8px',height:'8px',borderRadius:'2px',background:m.color,flexShrink:0}}/><span style={{fontSize:'11.5px',color:'#8A8A8E',whiteSpace:'nowrap'}}>{m.label}</span></div>
+                <div style={{fontSize:'15px',fontWeight:700,color:'#1A1A1C',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}>{fmtNum(byStage[st])}</div>
+              </div>
+            ); })}
+          </div>
+        </div>
       </div>
 
-      {/* Controls */}
-      <div style={{display:'flex',gap:'10px',marginBottom:'16px',flexWrap:'wrap',alignItems:'center'}}>
+      {/* ── Upcoming arrivals timeline ── */}
+      {arrivalList.length>0 && (
+        <div style={{...cardBase,padding:'18px 22px',marginBottom:'14px'}}>
+          <div style={{fontSize:'13px',fontWeight:700,color:'#1A1A1C',marginBottom:'15px'}}>Upcoming arrivals</div>
+          <div style={{display:'flex',gap:'10px',overflowX:'auto',paddingBottom:'4px'}}>
+            {arrivalList.map((a,i)=>{ const d=etaDays(a.eta); const late=d!==null&&d<0; return (
+              <div key={i} style={{flexShrink:0,width:'150px',border:'1px solid #EFEFF1',borderRadius:'12px',padding:'13px 14px',background:'#FAFAFB'}}>
+                <div style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'11px',fontWeight:700,color:late?'#DC2626':d<=7?'#0071E3':'#4A4A4E',background:late?'#FEE2E2':d<=7?'#EAF3FE':'#F0F0F2',borderRadius:'6px',padding:'2px 8px',marginBottom:'10px'}}>{late?Math.abs(d)+'d late':d===0?'Today':'in '+d+'d'}</div>
+                <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{a.ref}</div>
+                <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{a.client}</div>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginTop:'9px',paddingTop:'9px',borderTop:'1px solid #EFEFF1'}}>
+                  <span style={{fontSize:'13px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(a.qty)}</span>
+                  <span style={{fontSize:'10.5px',color:'#A0A0A4'}}>{fmtDateShort(a.eta)}</span>
+                </div>
+              </div>
+            ); })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Controls ── */}
+      <div style={{display:'flex',gap:'10px',marginBottom:'14px',flexWrap:'wrap',alignItems:'center'}}>
         <div style={{display:'flex',alignItems:'center',gap:'9px',background:'#fff',borderRadius:'11px',padding:'0 13px',height:'40px',flex:'1 1 240px',minWidth:0,boxShadow:'0 0 0 1px rgba(0,0,0,.04)'}}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A8A8E" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input placeholder="Search product, SKU or client…" value={search} onChange={e=>setSearch(e.target.value)} style={{flex:1,border:'none',outline:'none',fontSize:'13.5px',minWidth:0}} />
+          <input placeholder="Search product, SKU, client or PO…" value={search} onChange={e=>setSearch(e.target.value)} style={{flex:1,border:'none',outline:'none',fontSize:'13.5px',minWidth:0}} />
+          {(stageF!=='all') && <button onClick={()=>setStageF('all')} style={{flexShrink:0,fontSize:'11px',fontWeight:600,color:INV_STAGE[stageF].color,background:INV_STAGE[stageF].bg,border:'none',borderRadius:'6px',padding:'3px 8px',cursor:'pointer'}}>{INV_STAGE[stageF].label} ✕</button>}
         </div>
         <div style={{display:'inline-flex',background:'#F2F2F6',borderRadius:'10px',padding:'3px'}}>
           {[['product','By product'],['client','By client']].map(([v,l])=>(
-            <button key={v} onClick={()=>setGroupBy(v)} style={{padding:'7px 13px',borderRadius:'8px',border:'none',cursor:'pointer',fontSize:'12.5px',fontWeight:600,background:groupBy===v?'#fff':'transparent',color:groupBy===v?'#1A1A1C':'#8A8A8E',boxShadow:groupBy===v?'0 1px 2px rgba(0,0,0,.08)':'none'}}>{l}</button>
+            <button key={v} onClick={()=>{setGroupBy(v);setExpanded(null);}} style={{padding:'7px 13px',borderRadius:'8px',border:'none',cursor:'pointer',fontSize:'12.5px',fontWeight:600,background:groupBy===v?'#fff':'transparent',color:groupBy===v?'#1A1A1C':'#8A8A8E',boxShadow:groupBy===v?'0 1px 2px rgba(0,0,0,.08)':'none'}}>{l}</button>
           ))}
         </div>
       </div>
@@ -815,46 +874,67 @@ function Inventory() {
         </div>
       )}
 
-      {/* Table */}
+      {/* ── Expandable table ── */}
       {groupList.length===0 ? (
         <div style={{...cardBase,padding:'56px 32px',textAlign:'center'}}>
-          <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'7px'}}>Nothing in the pipeline</div>
-          <div style={{color:'#8A8A8E',fontSize:'13.5px'}}>Live POs appear here automatically. Adjust filters if you expected results.</div>
+          <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'7px'}}>Nothing matches</div>
+          <div style={{color:'#8A8A8E',fontSize:'13.5px'}}>Clear a filter or search to see pipeline inventory.</div>
         </div>
       ) : (
         <div style={{...cardBase,overflow:'hidden'}}>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 100px 220px 120px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
+          <div style={{display:'grid',gridTemplateColumns:'24px 1fr 90px 200px 110px',gap:'14px',padding:'12px 20px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
+            <div/>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4'}}>{groupBy==='product'?'Product':'Client'}</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>Units</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4'}}>Pipeline split</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>Next ETA</div>
           </div>
-          {groupList.map((g,i)=>(
-            <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 100px 220px 120px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center'}}>
-              <div style={{minWidth:0,display:'flex',alignItems:'center',gap:'11px'}}>
-                {groupBy==='client' && <span style={{width:'30px',height:'30px',borderRadius:'8px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:companyColor(g.client)}}>{initials(g.client)}</span>}
-                <div style={{minWidth:0}}>
-                  <div style={{fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{g.label}</div>
-                  <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{groupBy==='product'?(g.sku||'no SKU')+' · '+g.client:g.refs.length+' PO'+(g.refs.length>1?'s':'')}</div>
+          {groupList.map((g,i)=>{
+            const isOpen = expanded===g.key;
+            return (
+              <div key={g.key} style={{borderTop:i>0?'1px solid #F2F2F4':'none'}}>
+                <div onClick={()=>setExpanded(isOpen?null:g.key)} style={{display:'grid',gridTemplateColumns:'24px 1fr 90px 200px 110px',gap:'14px',padding:'14px 20px',alignItems:'center',cursor:'pointer',background:isOpen?'#FAFAFB':'transparent',transition:'.12s'}} onMouseEnter={e=>{if(!isOpen)e.currentTarget.style.background='#FAFAFB';}} onMouseLeave={e=>{if(!isOpen)e.currentTarget.style.background='transparent';}}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#B0B0B4" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{transform:isOpen?'rotate(90deg)':'none',transition:'.15s'}}><polyline points="9 18 15 12 9 6"/></svg>
+                  <div style={{minWidth:0,display:'flex',alignItems:'center',gap:'11px'}}>
+                    {groupBy==='client' && <span style={{width:'30px',height:'30px',borderRadius:'8px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:companyColor(g.client)}}>{initials(g.client)}</span>}
+                    <div style={{minWidth:0}}>
+                      <div style={{fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{g.label}</div>
+                      <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{groupBy==='product'?(g.sku||'no SKU')+' · '+g.client:g.items.length+' line'+(g.items.length>1?'s':'')}</div>
+                    </div>
+                  </div>
+                  <div style={{textAlign:'right',fontSize:'16px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(g.qty)}</div>
+                  <div>
+                    <div style={{display:'flex',height:'8px',borderRadius:'4px',overflow:'hidden',background:'#F0F0F2',gap:'1px'}}>
+                      {INV_STAGES.map(st=> g.stages[st]>0 ? <div key={st} style={{width:(g.stages[st]/g.qty*100)+'%',background:INV_STAGE[st].color}} title={INV_STAGE[st].label+': '+g.stages[st]} /> : null)}
+                    </div>
+                    <div style={{display:'flex',gap:'9px',marginTop:'6px'}}>
+                      {INV_STAGES.map(st=> g.stages[st]>0 ? <span key={st} style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'10px',color:'#8A8A8E'}}><span style={{width:'5px',height:'5px',borderRadius:'50%',background:INV_STAGE[st].color}}/>{fmtNum(g.stages[st])}</span> : null)}
+                    </div>
+                  </div>
+                  <div style={{textAlign:'right',fontSize:'12.5px',color:g.eta?'#1A1A1C':'#C0C0C4',fontWeight:g.eta?500:400}}>{g.eta?fmtDateShort(g.eta):'—'}</div>
                 </div>
+                {/* drill-down */}
+                {isOpen && (
+                  <div style={{padding:'4px 20px 16px 58px',background:'#FAFAFB'}}>
+                    <div style={{border:'1px solid #ECECEE',borderRadius:'10px',overflow:'hidden',background:'#fff'}}>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 90px 130px 110px',gap:'12px',padding:'9px 14px',borderBottom:'1px solid #F2F2F4',background:'#FAFAFB'}}>
+                        {['PO','Factory','Units','Stage','ETA'].map((h,j)=><div key={j} style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.05em',textTransform:'uppercase',color:'#A0A0A4',textAlign:j===2?'right':'left'}}>{h}</div>)}
+                      </div>
+                      {g.items.map((it,j)=>{ const m=INV_STAGE[it.stage]; return (
+                        <div key={j} style={{display:'grid',gridTemplateColumns:'1fr 1fr 90px 130px 110px',gap:'12px',padding:'10px 14px',borderTop:j>0?'1px solid #F5F5F7':'none',alignItems:'center'}}>
+                          <div style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{it.ref}</div>
+                          <div style={{fontSize:'12px',color:'#8A8A8E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{it.factory}</div>
+                          <div style={{textAlign:'right',fontSize:'13px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(it.qty)}</div>
+                          <div><span style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'11px',fontWeight:600,color:m.color,background:m.bg,borderRadius:'6px',padding:'2px 8px'}}><span style={{width:'5px',height:'5px',borderRadius:'50%',background:m.color}}/>{m.label}</span></div>
+                          <div style={{fontSize:'12px',color:it.eta?'#4A4A4E':'#C0C0C4'}}>{it.eta?fmtDateShort(it.eta):'—'}</div>
+                        </div>
+                      ); })}
+                    </div>
+                  </div>
+                )}
               </div>
-              <div style={{textAlign:'right',fontSize:'16px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(g.qty)}</div>
-              {/* stacked stage bar */}
-              <div>
-                <div style={{display:'flex',height:'8px',borderRadius:'4px',overflow:'hidden',background:'#F0F0F2',gap:'1px'}}>
-                  {['in_production','in_transit','arrived'].map(st=> g.stages[st]>0 ? <div key={st} style={{width:(g.stages[st]/g.qty*100)+'%',background:STAGE_META[st].color}} title={STAGE_META[st].label+': '+g.stages[st]} /> : null)}
-                </div>
-                <div style={{display:'flex',gap:'10px',marginTop:'6px'}}>
-                  {['in_production','in_transit','arrived'].map(st=> g.stages[st]>0 ? (
-                    <span key={st} style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'10.5px',color:'#8A8A8E'}}>
-                      <span style={{width:'6px',height:'6px',borderRadius:'50%',background:STAGE_META[st].color}}/>{fmtNum(g.stages[st])}
-                    </span>
-                  ) : null)}
-                </div>
-              </div>
-              <div style={{textAlign:'right',fontSize:'12.5px',color:g.eta?'#1A1A1C':'#C0C0C4',fontWeight:g.eta?500:400}}>{g.eta?fmtDateShort(g.eta):'—'}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
