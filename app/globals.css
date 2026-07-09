@@ -681,11 +681,9 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 /* Apple dashboard — responsive */
 @media (max-width:1000px){
   .db-apple-cols{grid-template-columns:1fr !important;}
-  .db-apple-kpis{grid-template-columns:repeat(3,1fr) !important;}
-  .db-apple-kpis > div:nth-child(4){border-left:none !important;}
+  .db-apple-hero{grid-template-columns:1fr !important;}
 }
 @media (max-width:620px){
   .db-apple{padding:22px 16px 80px !important;}
   .db-apple-kpis{grid-template-columns:repeat(2,1fr) !important;}
-  .db-apple-kpis > div:nth-child(odd){border-left:none !important;}
 }
