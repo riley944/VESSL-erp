@@ -125,7 +125,7 @@ function distinctClients(rows){
   const m={}; (rows||[]).forEach(p=>{ const c=poClient(p); if(c) m[c]=(m[c]||0)+1; });
   return Object.entries(m).sort((a,b)=>a[0].localeCompare(b[0]));
 }
-const PO_CARD_SELECT = 'id,order_number,client_po_number,status,order_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
+const PO_CARD_SELECT = 'id,order_number,client_po_number,status,production_pct,order_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
 
 function OrderCard({ p, navigate, onStatus }){
   const client = poClient(p), factory = poFactory(p);
@@ -1796,6 +1796,7 @@ function Orders({ navigate }) {
   const [search, setSearch] = useState('');
   const [client, setClient] = useState('all');
   const [loading, setLoading] = useState(true);
+  const [view, setView]     = useState('list'); // 'list' | 'board'
   const load = async () => {
     setLoading(true);
     let { data, error } = await SB.from('purchase_orders').select(PO_CARD_SELECT).order('created_at',{ascending:false});
@@ -1814,16 +1815,100 @@ function Orders({ navigate }) {
     setRows(prev=>prev.map(p=>p.id===pid?{...p,status:st}:p));
     if (st==='shipped'){ const r=await createShipmentForPO(pid); if(r?.ok) window._toast?.('Shipment '+r.shipmentNumber+' created','ok'); else if(r?.error) window._toast?.(r.error,'err'); }
   };
+  const setPct = async (pid, pct) => {
+    setRows(prev=>prev.map(p=>p.id===pid?{...p,production_pct:pct}:p));
+    await SB.from('purchase_orders').update({production_pct:pct,updated_at:new Date().toISOString()}).eq('id',pid);
+  };
   const shown = filterPOs(rows,{search,client,status});
   return (
     <>
-      <PoToolbar rows={rows} search={search} setSearch={setSearch} client={client} setClient={setClient} status={status} setStatus={setStatus} />
-      {loading ? <div className="loading">Loading...</div> : shown.length ? (
+      <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'2px'}}>
+        <div style={{flex:1}}><PoToolbar rows={rows} search={search} setSearch={setSearch} client={client} setClient={setClient} status={status} setStatus={setStatus} /></div>
+      </div>
+      <div style={{display:'inline-flex',background:'#F2F2F6',borderRadius:'10px',padding:'3px',marginBottom:'16px'}}>
+        {[['list','List'],['board','Production Board']].map(([v,l])=>(
+          <button key={v} onClick={()=>setView(v)} style={{padding:'7px 15px',borderRadius:'8px',border:'none',cursor:'pointer',fontSize:'12.5px',fontWeight:600,background:view===v?'#fff':'transparent',color:view===v?'#1A1A1C':'#8A8A8E',boxShadow:view===v?'0 1px 2px rgba(0,0,0,.08)':'none'}}>{l}</button>
+        ))}
+      </div>
+      {loading ? <div className="loading">Loading...</div> :
+        view==='board' ? <ProductionBoard rows={shown} navigate={navigate} onStatus={setStat} onPct={setPct} />
+        : shown.length ? (
         <div className="order-card-grid">
           {shown.map(p=><OrderCard key={p.id} p={p} navigate={navigate} onStatus={setStat} />)}
         </div>
       ) : <div className="section-card"><div className="empty"><h3>No orders</h3><p>No purchase orders match your search or filters.</p></div></div>}
     </>
+  );
+}
+
+// ── Production Board ──────────────────────────────────────────────────────────
+const PROD_COLUMNS = [
+  { key:'confirmed',      label:'Confirmed',      color:'#0071E3' },
+  { key:'sampling',       label:'Sampling',       color:'#AF52DE' },
+  { key:'sample_approved',label:'Sample Approved',color:'#5856D6' },
+  { key:'testing',        label:'Testing',        color:'#FF9500' },
+  { key:'in_production',  label:'In Production',  color:'#FF9F0A' },
+  { key:'ready_to_ship',  label:'Ready to Ship',  color:'#34C759' },
+];
+function ProductionBoard({ rows, navigate, onStatus, onPct }) {
+  const [dragId, setDragId] = useState(null);
+  const [overCol, setOverCol] = useState(null);
+  const byCol = {};
+  PROD_COLUMNS.forEach(c=>{ byCol[c.key]=[]; });
+  const other = [];
+  rows.forEach(p=>{ if(byCol[p.status]) byCol[p.status].push(p); else other.push(p); });
+
+  const drop = (colKey) => {
+    if(dragId){ const p=rows.find(r=>r.id===dragId); if(p && p.status!==colKey) onStatus(dragId,colKey); }
+    setDragId(null); setOverCol(null);
+  };
+  const bump = (e,p,delta) => { e.stopPropagation(); const cur=Number(p.production_pct)||0; const next=Math.max(0,Math.min(100,cur+delta)); onPct(p.id,next); };
+
+  return (
+    <div style={{overflowX:'auto',paddingBottom:'8px'}}>
+      <div style={{display:'flex',gap:'12px',minWidth:'min-content'}}>
+        {PROD_COLUMNS.map(col=>{
+          const items=byCol[col.key];
+          const on=overCol===col.key;
+          return (
+            <div key={col.key} onDragOver={e=>{e.preventDefault();setOverCol(col.key);}} onDragLeave={()=>setOverCol(o=>o===col.key?null:o)} onDrop={()=>drop(col.key)}
+              style={{width:'270px',flexShrink:0,background:on?'#F0F4FF':'#F7F7F9',borderRadius:'14px',padding:'12px',transition:'.12s',border:'1px solid '+(on?col.color:'transparent')}}>
+              <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'2px 4px 12px'}}>
+                <span style={{width:'8px',height:'8px',borderRadius:'50%',background:col.color}} />
+                <span style={{fontSize:'12.5px',fontWeight:700,color:'#1A1A1C'}}>{col.label}</span>
+                <span style={{marginLeft:'auto',fontSize:'11px',fontWeight:600,color:'#8A8A8E',background:'#fff',borderRadius:'20px',padding:'2px 8px'}}>{items.length}</span>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:'9px',minHeight:'40px'}}>
+                {items.map(p=>{
+                  const pct=Number(p.production_pct)||0;
+                  const ref=p.client_po_number||p.order_number||'—';
+                  const client=p.client?.name||'—';
+                  return (
+                    <div key={p.id} draggable onDragStart={()=>setDragId(p.id)} onDragEnd={()=>{setDragId(null);setOverCol(null);}} onClick={()=>navigate('order-detail',{id:p.id})}
+                      style={{background:'#fff',borderRadius:'11px',padding:'12px 13px',cursor:'grab',boxShadow:'0 1px 2px rgba(0,0,0,.05),0 1px 3px rgba(0,0,0,.04)',border:'1px solid #EFEFF1',opacity:dragId===p.id?.5:1}}>
+                      <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{ref}</div>
+                      <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'2px',marginBottom:'10px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{client}</div>
+                      {/* % complete */}
+                      <div style={{display:'flex',alignItems:'center',gap:'7px'}}>
+                        <div style={{flex:1,height:'6px',background:'#F0F0F2',borderRadius:'3px',overflow:'hidden'}}>
+                          <div style={{height:'100%',width:pct+'%',background:col.color,borderRadius:'3px',transition:'width .3s'}} />
+                        </div>
+                        <span style={{fontSize:'11px',fontWeight:700,color:'#4A4A4E',fontVariantNumeric:'tabular-nums',minWidth:'30px',textAlign:'right'}}>{pct}%</span>
+                      </div>
+                      <div style={{display:'flex',gap:'4px',marginTop:'8px'}}>
+                        <button onClick={e=>bump(e,p,-10)} style={{flex:1,border:'1px solid #EAEAEE',background:'#FAFAFB',borderRadius:'7px',padding:'4px 0',fontSize:'12px',fontWeight:600,color:'#8A8A8E',cursor:'pointer'}}>−10</button>
+                        <button onClick={e=>bump(e,p,10)} style={{flex:1,border:'1px solid #EAEAEE',background:'#FAFAFB',borderRadius:'7px',padding:'4px 0',fontSize:'12px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>+10</button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {items.length===0 && <div style={{fontSize:'11.5px',color:'#C0C0C4',textAlign:'center',padding:'14px 0'}}>Drop here</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
