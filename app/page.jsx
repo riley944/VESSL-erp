@@ -687,257 +687,135 @@ function Dashboard({ navigate }) {
 }
 
 // ── Inventory ─────────────────────────────────────────────────────────────────
-const INV_STAGE = {
-  in_production:{ label:'In Production', color:'#F59E0B', bg:'#FEF3C7' },
-  in_transit:   { label:'In Transit',   color:'#0071E3', bg:'#EAF3FE' },
-  arrived:      { label:'Arrived',      color:'#22C55E', bg:'#DCFCE7' },
-};
-const INV_STAGES = ['in_production','in_transit','arrived'];
-
-function Donut({ segments, size=132, stroke=20 }) {
-  const total = segments.reduce((a,s)=>a+s.value,0) || 1;
-  const r = (size-stroke)/2, c = 2*Math.PI*r;
-  let off = 0;
-  return (
-    <svg width={size} height={size} viewBox={'0 0 '+size+' '+size}>
-      <g transform={'rotate(-90 '+size/2+' '+size/2+')'}>
-        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#F0F0F2" strokeWidth={stroke} />
-        {segments.map((s,i)=>{ const len=s.value/total*c; const el=<circle key={i} cx={size/2} cy={size/2} r={r} fill="none" stroke={s.color} strokeWidth={stroke} strokeDasharray={len+' '+(c-len)} strokeDashoffset={-off} strokeLinecap="butt" style={{transition:'stroke-dasharray .5s'}} />; off+=len; return el; })}
-      </g>
-    </svg>
-  );
-}
-
+// ── Inventory ─────────────────────────────────────────────────────────────────
 function Inventory() {
-  const [raw, setRaw] = useState([]);
+  const [groups, setGroups] = useState({});
   const [loading, setLoading] = useState(true);
   const [refreshed, setRefreshed] = useState(null);
-  const [search, setSearch] = useState('');
-  const [clientF, setClientF] = useState('all');
-  const [stageF, setStageF] = useState('all');
-  const [groupBy, setGroupBy] = useState('product');
-  const [expanded, setExpanded] = useState(null);
   const load = async () => {
     setLoading(true);
     const { data: pos } = await SB.from('purchase_orders')
-      .select('id,order_number,client_po_number,status,requested_ship_date,client:companies!client_company_id(name),factory:companies!factory_company_id(name),purchase_order_items(description,quantity,products(name,sku)),shipment_pos(shipments(status,estimated_arrival,actual_arrival))')
-      .not('status','in','("draft","cancelled","closed")');
-    setRaw(pos||[]); setRefreshed(new Date()); setLoading(false);
+      .select('id,order_number,client_po_number,status,client:companies!client_company_id(name,id),purchase_order_items(description,quantity,products(name,sku)),shipment_pos(shipments(status,actual_arrival))')
+      .not('status','in','("draft","cancelled","closed","delivered")');
+    const active = (pos||[]).filter(po => {
+      const ships = (po.shipment_pos||[]).map(sp=>sp.shipments).filter(Boolean);
+      return !ships.some(s=>s?.actual_arrival || ['delivered'].includes(s?.status));
+    });
+    const g = {};
+    active.forEach(po=>{
+      const cName = po.client?.name||'Unassigned';
+      if (!g[cName]) g[cName] = { products:{} };
+      (po.purchase_order_items||[]).forEach(it=>{
+        const prod = it.products?.name||it.description||'—';
+        const sku  = it.products?.sku||'';
+        const k = prod+'|||'+sku;
+        if (!g[cName].products[k]) g[cName].products[k] = { prod, sku, qty:0, orders:[] };
+        g[cName].products[k].qty  += Number(it.quantity)||0;
+        g[cName].products[k].orders.push({ num:po.client_po_number||po.order_number||po.id.slice(0,8), status:po.status });
+      });
+    });
+    setGroups(g); setRefreshed(new Date()); setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
 
-  const stageOf = (po) => {
-    const ships = (po.shipment_pos||[]).map(sp=>sp.shipments).filter(Boolean);
-    if (ships.some(s=>s?.actual_arrival || s?.status==='delivered') || po.status==='delivered') return 'arrived';
-    if (ships.some(s=>['in_transit','at_origin_port','at_transshipment','at_destination_port','customs','out_for_delivery','shipped'].includes(s?.status))) return 'in_transit';
-    return 'in_production';
-  };
+  if (loading) return <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading inventory…</div>;
 
-  if (loading) return <div style={{padding:'60px',textAlign:'center',color:'#8A8A8E'}}>Loading inventory…</div>;
-
-  const lines = [];
-  raw.forEach(po=>{
-    const stage = stageOf(po);
-    const client = po.client?.name||'Unassigned';
-    const eta = (po.shipment_pos||[]).map(sp=>sp.shipments?.estimated_arrival).filter(Boolean).sort()[0] || null;
-    (po.purchase_order_items||[]).forEach(it=>{
-      lines.push({ prod: it.products?.name||it.description||'—', sku: it.products?.sku||'', qty: Number(it.quantity)||0, client, factory:po.factory?.name||'—', stage, eta, ref: po.client_po_number||po.order_number||'—', poId:po.id });
-    });
+  const clients = Object.keys(groups).sort((a,b)=>{
+    const av=Object.values(groups[a].products).reduce((x,p)=>x+p.qty,0);
+    const bv=Object.values(groups[b].products).reduce((x,p)=>x+p.qty,0);
+    return bv-av;
   });
+  const clientQty = c => Object.values(groups[c].products).reduce((a,p)=>a+p.qty,0);
+  const totalUnits = clients.reduce((a,c)=>a+clientQty(c),0);
+  const totalSkus  = clients.reduce((a,c)=>a+Object.keys(groups[c].products).length,0);
+  const maxUnits   = Math.max(1,...clients.map(clientQty));
 
-  const clientList = [...new Set(lines.map(l=>l.client))].sort();
-  const q = search.trim().toLowerCase();
-  const filtered = lines.filter(l=>
-    (clientF==='all'||l.client===clientF) &&
-    (stageF==='all'||l.stage===stageF) &&
-    (!q || l.prod.toLowerCase().includes(q) || l.sku.toLowerCase().includes(q) || l.client.toLowerCase().includes(q) || l.ref.toLowerCase().includes(q))
-  );
-
-  const totalUnits = filtered.reduce((a,l)=>a+l.qty,0);
-  const byStage = { in_production:0, in_transit:0, arrived:0 };
-  lines.filter(l=>(clientF==='all'||l.client===clientF)&&(!q||l.prod.toLowerCase().includes(q)||l.sku.toLowerCase().includes(q)||l.client.toLowerCase().includes(q))).forEach(l=>{ byStage[l.stage]+=l.qty; });
-  const grandTotal = byStage.in_production+byStage.in_transit+byStage.arrived;
-
-  // groups with drill-down detail
-  const groups = {};
-  filtered.forEach(l=>{
-    const key = groupBy==='product' ? l.prod+'|||'+l.sku : l.client;
-    if(!groups[key]) groups[key] = { key, label: groupBy==='product'?l.prod:l.client, sku: groupBy==='product'?l.sku:'', client:l.client, qty:0, stages:{in_production:0,in_transit:0,arrived:0}, items:[], eta:null };
-    groups[key].qty += l.qty;
-    groups[key].stages[l.stage] += l.qty;
-    groups[key].items.push(l);
-    if(l.eta && (!groups[key].eta || l.eta<groups[key].eta)) groups[key].eta = l.eta;
-  });
-  const groupList = Object.values(groups).sort((a,b)=>b.qty-a.qty);
-
-  // upcoming arrivals (next 6, transit + production with eta)
-  const arrivals = lines.filter(l=>l.eta && l.stage!=='arrived')
-    .reduce((acc,l)=>{ const k=l.ref; if(!acc[k]) acc[k]={ ref:l.ref, client:l.client, eta:l.eta, qty:0, stage:l.stage }; acc[k].qty+=l.qty; return acc; },{});
-  const arrivalList = Object.values(arrivals).sort((a,b)=>new Date(a.eta)-new Date(b.eta)).slice(0,6);
-
-  const cardBase = {background:'#fff',border:'1px solid #ECECEE',borderRadius:'16px',boxShadow:'0 0 0 1px rgba(0,0,0,.02),0 2px 5px rgba(0,0,0,.04),0 12px 28px -8px rgba(20,20,40,.05)'};
-  const donutSegs = INV_STAGES.map(st=>({ value:byStage[st], color:INV_STAGE[st].color }));
+  const cardShadow = '0 1px 3px rgba(0,0,0,.04)';
 
   return (
-    <div className="db-wrap" style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'22px',gap:'14px',flexWrap:'wrap'}}>
+    <div className="db-apple" style={{padding:'34px 32px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
+
+      {/* ── Header ── */}
+      <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'20px',marginBottom:'30px',flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:'24px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em'}}>Inventory</div>
-          <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Live pipeline — what's coming, where it is, when it lands · updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+          <div style={{fontSize:'28px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.021em',lineHeight:1.05}}>Inventory</div>
+          <div style={{fontSize:'15px',color:'#86868B',marginTop:'6px',letterSpacing:'-.01em'}}>Units on order across live production · updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
         </div>
-        <button onClick={load} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'9px 15px',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>↻ Refresh</button>
+        <button onClick={load} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 18px',fontSize:'14px',fontWeight:500,letterSpacing:'-.01em',cursor:'pointer'}}>Refresh</button>
       </div>
 
-      {/* ── Top: pipeline flow + composition donut ── */}
-      <div style={{display:'grid',gridTemplateColumns:'1fr 290px',gap:'14px',marginBottom:'14px'}} className="inv-top-grid">
-        {/* Interactive pipeline flow */}
-        <div style={{...cardBase,padding:'22px 24px'}}>
-          <div style={{fontSize:'13px',fontWeight:700,color:'#1A1A1C',marginBottom:'20px'}}>Pipeline flow <span style={{fontWeight:400,color:'#A0A0A4',fontSize:'12px'}}>· tap a stage to filter</span></div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'10px'}}>
-            {INV_STAGES.map((st)=>{
-              const m=INV_STAGE[st]; const on=stageF===st; const val=byStage[st];
-              return (
-                <button key={st} onClick={()=>setStageF(on?'all':st)} style={{textAlign:'left',background:on?m.bg:'#FAFAFB',border:'1.5px solid '+(on?m.color:'#EFEFF1'),borderRadius:'13px',padding:'15px 15px',cursor:'pointer',transition:'.14s',minWidth:0}}>
-                  <div style={{display:'flex',alignItems:'center',gap:'7px',marginBottom:'12px'}}>
-                    <span style={{width:'9px',height:'9px',borderRadius:'50%',background:m.color,flexShrink:0}}/>
-                    <span style={{fontSize:'12px',fontWeight:600,color:on?m.color:'#8A8A8E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.label}</span>
-                  </div>
-                  <div style={{fontSize:'25px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{fmtNum(val)}</div>
-                  <div style={{fontSize:'11px',color:'#A0A0A4',marginTop:'6px'}}>{grandTotal>0?Math.round(val/grandTotal*100):0}% of units</div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        {/* Composition donut */}
-        <div style={{...cardBase,padding:'22px 24px',display:'flex',alignItems:'center',gap:'18px'}}>
-          <div style={{position:'relative',flexShrink:0}}>
-            <Donut segments={donutSegs} />
-            <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
-              <div style={{fontSize:'22px',fontWeight:700,color:'#1A1A1C',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{fmtNum(grandTotal)}</div>
-              <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'3px'}}>total units</div>
-            </div>
-          </div>
-          <div style={{display:'flex',flexDirection:'column',gap:'11px',minWidth:0}}>
-            {INV_STAGES.map(st=>{ const m=INV_STAGE[st]; return (
-              <div key={st} style={{minWidth:0}}>
-                <div style={{display:'flex',alignItems:'center',gap:'6px'}}><span style={{width:'8px',height:'8px',borderRadius:'2px',background:m.color,flexShrink:0}}/><span style={{fontSize:'11.5px',color:'#8A8A8E',whiteSpace:'nowrap'}}>{m.label}</span></div>
-                <div style={{fontSize:'15px',fontWeight:700,color:'#1A1A1C',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}>{fmtNum(byStage[st])}</div>
-              </div>
-            ); })}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Upcoming arrivals timeline ── */}
-      {arrivalList.length>0 && (
-        <div style={{...cardBase,padding:'18px 22px',marginBottom:'14px'}}>
-          <div style={{fontSize:'13px',fontWeight:700,color:'#1A1A1C',marginBottom:'15px'}}>Upcoming arrivals</div>
-          <div style={{display:'flex',gap:'10px',overflowX:'auto',paddingBottom:'4px'}}>
-            {arrivalList.map((a,i)=>{ const d=etaDays(a.eta); const late=d!==null&&d<0; return (
-              <div key={i} style={{flexShrink:0,width:'150px',border:'1px solid #EFEFF1',borderRadius:'12px',padding:'13px 14px',background:'#FAFAFB'}}>
-                <div style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'11px',fontWeight:700,color:late?'#DC2626':d<=7?'#0071E3':'#4A4A4E',background:late?'#FEE2E2':d<=7?'#EAF3FE':'#F0F0F2',borderRadius:'6px',padding:'2px 8px',marginBottom:'10px'}}>{late?Math.abs(d)+'d late':d===0?'Today':'in '+d+'d'}</div>
-                <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{a.ref}</div>
-                <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{a.client}</div>
-                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginTop:'9px',paddingTop:'9px',borderTop:'1px solid #EFEFF1'}}>
-                  <span style={{fontSize:'13px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(a.qty)}</span>
-                  <span style={{fontSize:'10.5px',color:'#A0A0A4'}}>{fmtDateShort(a.eta)}</span>
-                </div>
-              </div>
-            ); })}
-          </div>
-        </div>
-      )}
-
-      {/* ── Controls ── */}
-      <div style={{display:'flex',gap:'10px',marginBottom:'14px',flexWrap:'wrap',alignItems:'center'}}>
-        <div style={{display:'flex',alignItems:'center',gap:'9px',background:'#fff',borderRadius:'11px',padding:'0 13px',height:'40px',flex:'1 1 240px',minWidth:0,boxShadow:'0 0 0 1px rgba(0,0,0,.04)'}}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A8A8E" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input placeholder="Search product, SKU, client or PO…" value={search} onChange={e=>setSearch(e.target.value)} style={{flex:1,border:'none',outline:'none',fontSize:'13.5px',minWidth:0}} />
-          {(stageF!=='all') && <button onClick={()=>setStageF('all')} style={{flexShrink:0,fontSize:'11px',fontWeight:600,color:INV_STAGE[stageF].color,background:INV_STAGE[stageF].bg,border:'none',borderRadius:'6px',padding:'3px 8px',cursor:'pointer'}}>{INV_STAGE[stageF].label} ✕</button>}
-        </div>
-        <div style={{display:'inline-flex',background:'#F2F2F6',borderRadius:'10px',padding:'3px'}}>
-          {[['product','By product'],['client','By client']].map(([v,l])=>(
-            <button key={v} onClick={()=>{setGroupBy(v);setExpanded(null);}} style={{padding:'7px 13px',borderRadius:'8px',border:'none',cursor:'pointer',fontSize:'12.5px',fontWeight:600,background:groupBy===v?'#fff':'transparent',color:groupBy===v?'#1A1A1C':'#8A8A8E',boxShadow:groupBy===v?'0 1px 2px rgba(0,0,0,.08)':'none'}}>{l}</button>
-          ))}
-        </div>
-      </div>
-      {clientList.length>1 && (
-        <div style={{display:'flex',gap:'7px',flexWrap:'wrap',marginBottom:'18px'}}>
-          {['all',...clientList].map(c=>{ const on=clientF===c; return (
-            <button key={c} onClick={()=>setClientF(c)} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',borderRadius:'9px',border:'1px solid '+(on?'transparent':'#EAEAEE'),cursor:'pointer',fontSize:'12.5px',fontWeight:500,background:on?'#1A1A1C':'#fff',color:on?'#fff':'#4A4A4E'}}>
-              {c!=='all' && <span style={{width:'7px',height:'7px',borderRadius:'50%',background:companyColor(c)}}/>}{c==='all'?'All clients':c}
-            </button>
-          ); })}
-        </div>
-      )}
-
-      {/* ── Expandable table ── */}
-      {groupList.length===0 ? (
-        <div style={{...cardBase,padding:'56px 32px',textAlign:'center'}}>
-          <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'7px'}}>Nothing matches</div>
-          <div style={{color:'#8A8A8E',fontSize:'13.5px'}}>Clear a filter or search to see pipeline inventory.</div>
+      {clients.length===0 ? (
+        <div style={{background:'#fff',borderRadius:'20px',padding:'56px 32px',textAlign:'center',boxShadow:cardShadow}}>
+          <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',marginBottom:'7px',letterSpacing:'-.018em'}}>Inventory is empty</div>
+          <div style={{color:'#86868B',fontSize:'14px'}}>Live purchase orders appear here automatically. Counts clear once a shipment is delivered.</div>
         </div>
       ) : (
-        <div style={{...cardBase,overflow:'hidden'}}>
-        <div style={{overflowX:'auto'}}>
-        <div style={{minWidth:'620px'}}>
-          <div style={{display:'grid',gridTemplateColumns:'22px minmax(120px,1fr) 74px 170px 90px',gap:'12px',padding:'12px 18px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
-            <div/>
-            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4'}}>{groupBy==='product'?'Product':'Client'}</div>
-            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>Units</div>
-            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4'}}>Pipeline split</div>
-            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>Next ETA</div>
-          </div>
-          {groupList.map((g,i)=>{
-            const isOpen = expanded===g.key;
+      <>
+        {/* ── Summary tiles ── */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'20px',marginBottom:'20px'}} className="inv-summary">
+          {[
+            { k:'Total units on order', v:fmtNum(totalUnits), sub:'across all clients' },
+            { k:'Active SKUs', v:fmtNum(totalSkus), sub:'unique products' },
+            { k:'Active clients', v:String(clients.length), sub:'with live orders' },
+          ].map(m=>(
+            <div key={m.k} style={{background:'#fff',borderRadius:'20px',padding:'22px 24px',boxShadow:cardShadow}}>
+              <div style={{fontSize:'13px',color:'#86868B',fontWeight:400,letterSpacing:'-.006em',marginBottom:'14px'}}>{m.k}</div>
+              <div style={{fontSize:'34px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.03em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
+              <div style={{fontSize:'13px',color:'#A0A0A4',marginTop:'8px',letterSpacing:'-.006em'}}>{m.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* ── Units by client bar chart ── */}
+        <div style={{background:'#fff',borderRadius:'20px',boxShadow:cardShadow,padding:'22px 24px 20px',marginBottom:'20px'}}>
+          <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.018em',marginBottom:'20px'}}>Units on order by client</div>
+          {clients.map((c)=>{
+            const qty=clientQty(c); const pct=qty/maxUnits*100;
             return (
-              <div key={g.key} style={{borderTop:i>0?'1px solid #F2F2F4':'none'}}>
-                <div onClick={()=>setExpanded(isOpen?null:g.key)} style={{display:'grid',gridTemplateColumns:'22px minmax(120px,1fr) 74px 170px 90px',gap:'12px',padding:'14px 18px',alignItems:'center',cursor:'pointer',background:isOpen?'#FAFAFB':'transparent',transition:'.12s'}} onMouseEnter={e=>{if(!isOpen)e.currentTarget.style.background='#FAFAFB';}} onMouseLeave={e=>{if(!isOpen)e.currentTarget.style.background='transparent';}}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#B0B0B4" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{transform:isOpen?'rotate(90deg)':'none',transition:'.15s'}}><polyline points="9 18 15 12 9 6"/></svg>
-                  <div style={{minWidth:0,display:'flex',alignItems:'center',gap:'11px'}}>
-                    {groupBy==='client' && <span style={{width:'30px',height:'30px',borderRadius:'8px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:companyColor(g.client)}}>{initials(g.client)}</span>}
-                    <div style={{minWidth:0}}>
-                      <div style={{fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{g.label}</div>
-                      <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{groupBy==='product'?(g.sku||'no SKU')+' · '+g.client:g.items.length+' line'+(g.items.length>1?'s':'')}</div>
-                    </div>
-                  </div>
-                  <div style={{textAlign:'right',fontSize:'16px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(g.qty)}</div>
-                  <div>
-                    <div style={{display:'flex',height:'8px',borderRadius:'4px',overflow:'hidden',background:'#F0F0F2',gap:'1px'}}>
-                      {INV_STAGES.map(st=> g.stages[st]>0 ? <div key={st} style={{width:(g.stages[st]/g.qty*100)+'%',background:INV_STAGE[st].color}} title={INV_STAGE[st].label+': '+g.stages[st]} /> : null)}
-                    </div>
-                    <div style={{display:'flex',gap:'9px',marginTop:'6px'}}>
-                      {INV_STAGES.map(st=> g.stages[st]>0 ? <span key={st} style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'10px',color:'#8A8A8E'}}><span style={{width:'5px',height:'5px',borderRadius:'50%',background:INV_STAGE[st].color}}/>{fmtNum(g.stages[st])}</span> : null)}
-                    </div>
-                  </div>
-                  <div style={{textAlign:'right',fontSize:'12.5px',color:g.eta?'#1A1A1C':'#C0C0C4',fontWeight:g.eta?500:400}}>{g.eta?fmtDateShort(g.eta):'—'}</div>
+              <div key={c} style={{display:'flex',alignItems:'center',gap:'14px',marginBottom:'13px'}}>
+                <div style={{display:'flex',alignItems:'center',gap:'9px',width:'150px',flexShrink:0,minWidth:0}}>
+                  <span style={{width:'22px',height:'22px',borderRadius:'6px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'9px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:companyColor(c)}}>{initials(c)}</span>
+                  <span style={{fontSize:'14px',color:'#1D1D1F',letterSpacing:'-.01em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c}</span>
                 </div>
-                {/* drill-down */}
-                {isOpen && (
-                  <div style={{padding:'4px 20px 16px 58px',background:'#FAFAFB'}}>
-                    <div style={{border:'1px solid #ECECEE',borderRadius:'10px',overflow:'hidden',background:'#fff'}}>
-                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 90px 130px 110px',gap:'12px',padding:'9px 14px',borderBottom:'1px solid #F2F2F4',background:'#FAFAFB'}}>
-                        {['PO','Factory','Units','Stage','ETA'].map((h,j)=><div key={j} style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.05em',textTransform:'uppercase',color:'#A0A0A4',textAlign:j===2?'right':'left'}}>{h}</div>)}
-                      </div>
-                      {g.items.map((it,j)=>{ const m=INV_STAGE[it.stage]; return (
-                        <div key={j} style={{display:'grid',gridTemplateColumns:'1fr 1fr 90px 130px 110px',gap:'12px',padding:'10px 14px',borderTop:j>0?'1px solid #F5F5F7':'none',alignItems:'center'}}>
-                          <div style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{it.ref}</div>
-                          <div style={{fontSize:'12px',color:'#8A8A8E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{it.factory}</div>
-                          <div style={{textAlign:'right',fontSize:'13px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(it.qty)}</div>
-                          <div><span style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'11px',fontWeight:600,color:m.color,background:m.bg,borderRadius:'6px',padding:'2px 8px'}}><span style={{width:'5px',height:'5px',borderRadius:'50%',background:m.color}}/>{m.label}</span></div>
-                          <div style={{fontSize:'12px',color:it.eta?'#4A4A4E':'#C0C0C4'}}>{it.eta?fmtDateShort(it.eta):'—'}</div>
-                        </div>
-                      ); })}
-                    </div>
-                  </div>
-                )}
+                <div style={{flex:1,height:'8px',background:'#F0F0F2',borderRadius:'4px',overflow:'hidden',minWidth:0}}>
+                  <div style={{height:'100%',width:pct+'%',background:companyColor(c),opacity:.9,borderRadius:'4px',minWidth:qty>0?'4px':'0',transition:'width .45s'}} />
+                </div>
+                <span style={{fontSize:'14px',fontWeight:500,color:'#1D1D1F',width:'62px',textAlign:'right',flexShrink:0,fontVariantNumeric:'tabular-nums',letterSpacing:'-.01em'}}>{fmtNum(qty)}</span>
               </div>
             );
           })}
         </div>
-        </div>
-        </div>
+
+        {/* ── Per-client product tables ── */}
+        {clients.map((c)=>{
+          const rows = Object.values(groups[c].products).sort((a,b)=>b.qty-a.qty);
+          const total = clientQty(c);
+          return (
+            <div key={c} style={{background:'#fff',borderRadius:'20px',boxShadow:cardShadow,overflow:'hidden',marginBottom:'20px'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'18px 24px 16px'}}>
+                <div style={{display:'flex',alignItems:'center',gap:'11px',minWidth:0}}>
+                  <span style={{width:'30px',height:'30px',borderRadius:'8px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:companyColor(c)}}>{initials(c)}</span>
+                  <span style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.018em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c}</span>
+                </div>
+                <span style={{fontSize:'14px',color:'#86868B',fontVariantNumeric:'tabular-nums',letterSpacing:'-.01em',flexShrink:0}}>{fmtNum(total)} units</span>
+              </div>
+              {/* column header */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 130px 90px',gap:'16px',padding:'9px 24px',borderTop:'1px solid rgba(0,0,0,.06)',background:'#FAFAFA'}}>
+                <div style={{fontSize:'11px',fontWeight:500,letterSpacing:'-.004em',color:'#A0A0A4'}}>Product</div>
+                <div style={{fontSize:'11px',fontWeight:500,letterSpacing:'-.004em',color:'#A0A0A4'}}>SKU</div>
+                <div style={{fontSize:'11px',fontWeight:500,letterSpacing:'-.004em',color:'#A0A0A4',textAlign:'right'}}>On order</div>
+              </div>
+              {rows.map((p,i)=>(
+                <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 130px 90px',gap:'16px',padding:'13px 24px',borderTop:'1px solid rgba(0,0,0,.06)',alignItems:'center'}}>
+                  <div style={{fontSize:'15px',color:'#1D1D1F',letterSpacing:'-.01em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.prod}</div>
+                  <div style={{fontSize:'13px',color:'#86868B',fontFamily:'var(--mono)',letterSpacing:'-.006em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.sku||'—'}</div>
+                  <div style={{fontSize:'15px',fontWeight:600,color:'#1D1D1F',textAlign:'right',fontVariantNumeric:'tabular-nums',letterSpacing:'-.01em'}}>{fmtNum(p.qty)}</div>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </>
       )}
     </div>
   );
