@@ -686,114 +686,178 @@ function Dashboard({ navigate }) {
 
 // ── Inventory ─────────────────────────────────────────────────────────────────
 function Inventory() {
-  const [groups, setGroups] = useState({});
+  const [raw, setRaw] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshed, setRefreshed] = useState(null);
+  const [search, setSearch] = useState('');
+  const [clientF, setClientF] = useState('all');
+  const [groupBy, setGroupBy] = useState('product'); // 'product' | 'client'
   const load = async () => {
     setLoading(true);
     const { data: pos } = await SB.from('purchase_orders')
-      .select('id,order_number,status,client:companies!client_company_id(name,id),purchase_order_items(description,quantity,products(name,sku)),shipment_pos(shipments(status))')
-      .not('status','in','("draft","cancelled","closed","delivered")');
-    const active = (pos||[]).filter(po => {
-      const ships = (po.shipment_pos||[]).map(sp=>sp.shipments).filter(Boolean);
-      return !ships.some(s=>['shipped','delivered'].includes(s?.status));
-    });
-    const g = {};
-    active.forEach(po=>{
-      const cName = po.client?.name||'Unassigned';
-      if (!g[cName]) g[cName] = { color:companyColor(cName), products:{} };
-      (po.purchase_order_items||[]).forEach(it=>{
-        const prod = it.products?.name||it.description||'—';
-        const sku  = it.products?.sku||'';
-        const k = prod+'|||'+sku;
-        if (!g[cName].products[k]) g[cName].products[k] = { prod, sku, qty:0, orders:[] };
-        g[cName].products[k].qty  += Number(it.quantity)||0;
-        g[cName].products[k].orders.push({ num:po.order_number||po.id.slice(0,8), status:po.status });
-      });
-    });
-    setGroups(g); setRefreshed(new Date()); setLoading(false);
+      .select('id,order_number,client_po_number,status,requested_ship_date,client:companies!client_company_id(name),purchase_order_items(description,quantity,products(name,sku)),shipment_pos(shipments(status,estimated_arrival,actual_arrival))')
+      .not('status','in','("draft","cancelled","closed")');
+    setRaw(pos||[]); setRefreshed(new Date()); setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
-  if (loading) return <div className="loading">Loading inventory…</div>;
-  const clients = Object.keys(groups).sort();
-  const totalUnits = clients.reduce((a,c)=>a+Object.values(groups[c].products).reduce((b,p)=>b+p.qty,0),0);
-  const totalSkus  = clients.reduce((a,c)=>a+Object.keys(groups[c].products).length,0);
-  const maxUnits   = Math.max(1,...clients.map(c=>Object.values(groups[c].products).reduce((a,p)=>a+p.qty,0)));
-  if (!clients.length) return (
-    <div className="section-card"><div className="empty"><h3>Inventory is empty</h3><p>Live (non-draft) POs appear here automatically. Counts drop once a shipment is marked shipped.</p></div></div>
+
+  // classify each PO into a pipeline stage
+  const stageOf = (po) => {
+    const ships = (po.shipment_pos||[]).map(sp=>sp.shipments).filter(Boolean);
+    if (ships.some(s=>s?.actual_arrival || s?.status==='delivered')) return 'arrived';
+    if (ships.some(s=>['in_transit','at_origin_port','at_transshipment','at_destination_port','customs','out_for_delivery','shipped'].includes(s?.status))) return 'in_transit';
+    if (po.status==='delivered') return 'arrived';
+    return 'in_production';
+  };
+  const STAGE_META = {
+    in_production:{ label:'In Production', color:'#FF9F0A', bg:'#FFF3E2' },
+    in_transit:   { label:'In Transit',   color:'#0071E3', bg:'#EAF3FE' },
+    arrived:      { label:'Arrived',      color:'#34C759', bg:'#E8F8EE' },
+  };
+
+  if (loading) return <div style={{padding:'60px',textAlign:'center',color:'#8A8A8E'}}>Loading inventory…</div>;
+
+  // build line records
+  const lines = [];
+  raw.forEach(po=>{
+    const stage = stageOf(po);
+    const client = po.client?.name||'Unassigned';
+    const eta = (po.shipment_pos||[]).map(sp=>sp.shipments?.estimated_arrival).filter(Boolean).sort()[0] || null;
+    (po.purchase_order_items||[]).forEach(it=>{
+      lines.push({
+        prod: it.products?.name||it.description||'—',
+        sku: it.products?.sku||'',
+        qty: Number(it.quantity)||0,
+        client, stage, eta,
+        ref: po.client_po_number||po.order_number||'—',
+      });
+    });
+  });
+
+  const clientList = [...new Set(lines.map(l=>l.client))].sort();
+  const q = search.trim().toLowerCase();
+  const filtered = lines.filter(l=>
+    (clientF==='all'||l.client===clientF) &&
+    (!q || l.prod.toLowerCase().includes(q) || l.sku.toLowerCase().includes(q) || l.client.toLowerCase().includes(q))
   );
+
+  const totalUnits = filtered.reduce((a,l)=>a+l.qty,0);
+  const byStage = { in_production:0, in_transit:0, arrived:0 };
+  filtered.forEach(l=>{ byStage[l.stage]+=l.qty; });
+
+  // group
+  const groups = {};
+  filtered.forEach(l=>{
+    const key = groupBy==='product' ? l.prod+'|||'+l.sku : l.client;
+    if(!groups[key]) groups[key] = { label: groupBy==='product'?l.prod:l.client, sku: groupBy==='product'?l.sku:'', client:l.client, qty:0, stages:{in_production:0,in_transit:0,arrived:0}, refs:[], eta:null };
+    groups[key].qty += l.qty;
+    groups[key].stages[l.stage] += l.qty;
+    if(!groups[key].refs.includes(l.ref)) groups[key].refs.push(l.ref);
+    if(l.eta && (!groups[key].eta || l.eta<groups[key].eta)) groups[key].eta = l.eta;
+  });
+  const groupList = Object.values(groups).sort((a,b)=>b.qty-a.qty);
+  const maxQty = Math.max(1,...groupList.map(g=>g.qty));
+
+  const cardBase = {background:'#fff',border:'1px solid #ECECEE',borderRadius:'16px',boxShadow:'0 0 0 1px rgba(0,0,0,.02),0 2px 5px rgba(0,0,0,.04),0 12px 28px -8px rgba(20,20,40,.05)'};
+
   return (
-    <>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'20px'}}>
-        <span style={{fontSize:'12.5px',color:'var(--muted)'}}>Live on-order · updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>
-        <button className="btn btn-ghost btn-sm" onClick={load}>↻ Refresh</button>
+    <div className="db-wrap" style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
+      {/* Title */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'22px',gap:'14px',flexWrap:'wrap'}}>
+        <div>
+          <div style={{fontSize:'24px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em'}}>Inventory</div>
+          <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Units in the pipeline — in production, in transit &amp; arrived · updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+        </div>
+        <button onClick={load} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'9px 15px',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>↻ Refresh</button>
       </div>
 
-      {/* Summary stats */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'14px',marginBottom:'24px'}}>
-        {[
-          {label:'Total Units On Order', value:totalUnits.toLocaleString(), sub:'across all clients'},
-          {label:'Active SKUs', value:totalSkus.toLocaleString(), sub:'unique products'},
-          {label:'Active Clients', value:clients.length.toString(), sub:'with live orders'},
-        ].map(s=>(
-          <div key={s.label} className="section-card" style={{padding:'18px 20px',marginBottom:0}}>
-            <div style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'8px'}}>{s.label}</div>
-            <div style={{fontFamily:'var(--mono)',fontSize:'26px',fontWeight:700,color:'var(--ink)',lineHeight:1}}>{s.value}</div>
-            <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'5px'}}>{s.sub}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Visual bar chart by client */}
-      <div className="section-card" style={{marginBottom:'24px',padding:'20px 24px'}}>
-        <div style={{fontSize:'11px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'16px'}}>Units on order by client</div>
-        {clients.map(c=>{
-          const qty = Object.values(groups[c].products).reduce((a,p)=>a+p.qty,0);
-          const pct = (qty/maxUnits*100).toFixed(1);
+      {/* Pipeline stage summary */}
+      <div className="db-kpi-grid" style={{display:'grid',gridTemplateColumns:'repeat(4,minmax(0,1fr))',gap:'14px',marginBottom:'18px'}}>
+        <div style={{...cardBase,padding:'18px 20px'}}>
+          <div style={{fontSize:'12.5px',fontWeight:500,color:'#8A8A8E',marginBottom:'13px'}}>Total in pipeline</div>
+          <div style={{fontSize:'30px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{fmtNum(totalUnits)}</div>
+          <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'8px'}}>units across {groupList.length} {groupBy==='product'?'products':'clients'}</div>
+        </div>
+        {['in_production','in_transit','arrived'].map(st=>{
+          const m=STAGE_META[st];
           return (
-            <div key={c} style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'10px'}}>
-              <span className="oc-avatar" style={{background:groups[c].color,width:'24px',height:'24px',fontSize:'9px',flexShrink:0}}>{initials(c)}</span>
-              <span style={{fontSize:'12px',fontWeight:500,width:'120px',flexShrink:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c}</span>
-              <div style={{flex:1,background:'var(--bg)',borderRadius:'4px',height:'16px',overflow:'hidden'}}>
-                <div style={{width:pct+'%',background:groups[c].color,height:'100%',borderRadius:'4px',transition:'width .4s ease',minWidth:qty>0?'3px':'0'}} />
+            <div key={st} style={{...cardBase,padding:'18px 20px'}}>
+              <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'13px'}}>
+                <span style={{width:'9px',height:'9px',borderRadius:'50%',background:m.color}}/>
+                <span style={{fontSize:'12.5px',fontWeight:500,color:'#8A8A8E'}}>{m.label}</span>
               </div>
-              <span style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:600,width:'50px',textAlign:'right',flexShrink:0}}>{qty.toLocaleString()}</span>
+              <div style={{fontSize:'30px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{fmtNum(byStage[st])}</div>
+              <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'8px'}}>{totalUnits>0?Math.round(byStage[st]/totalUnits*100):0}% of pipeline</div>
             </div>
           );
         })}
       </div>
 
-      {/* Per-client detail tables */}
-      {clients.map(c=>{
-        const { color, products } = groups[c];
-        const rows = Object.values(products);
-        const total = rows.reduce((a,p)=>a+p.qty,0);
-        return (
-          <div key={c} className="section-card" style={{marginBottom:'20px'}}>
-            <div className="section-head">
-              <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
-                <span className="oc-avatar" style={{background:color,width:'30px',height:'30px',fontSize:'11px'}}>{initials(c)}</span>
-                <h3>{c}</h3>
-              </div>
-              <span style={{fontFamily:'var(--mono)',fontSize:'12px',color:'var(--muted)'}}>{total.toLocaleString()} units on order</span>
-            </div>
-            <table className="data-table">
-              <thead><tr><th>Product</th><th>SKU</th><th style={{textAlign:'right'}}>On order</th><th>POs</th></tr></thead>
-              <tbody>
-                {rows.sort((a,b)=>b.qty-a.qty).map((p,i)=>(
-                  <tr key={i}>
-                    <td style={{fontWeight:500}}>{p.prod}</td>
-                    <td className="mono" style={{fontSize:'12px',color:'var(--muted)'}}>{p.sku||'—'}</td>
-                    <td style={{textAlign:'right',fontFamily:'var(--mono)',fontWeight:700,fontSize:'16px'}}>{p.qty.toLocaleString()}</td>
-                    <td>{p.orders.map((o,j)=><span key={j} className={'badge badge-'+o.status} style={{marginRight:'4px',fontSize:'10px'}}>{o.num}</span>)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* Controls */}
+      <div style={{display:'flex',gap:'10px',marginBottom:'16px',flexWrap:'wrap',alignItems:'center'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'9px',background:'#fff',borderRadius:'11px',padding:'0 13px',height:'40px',flex:'1 1 240px',minWidth:0,boxShadow:'0 0 0 1px rgba(0,0,0,.04)'}}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A8A8E" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input placeholder="Search product, SKU or client…" value={search} onChange={e=>setSearch(e.target.value)} style={{flex:1,border:'none',outline:'none',fontSize:'13.5px',minWidth:0}} />
+        </div>
+        <div style={{display:'inline-flex',background:'#F2F2F6',borderRadius:'10px',padding:'3px'}}>
+          {[['product','By product'],['client','By client']].map(([v,l])=>(
+            <button key={v} onClick={()=>setGroupBy(v)} style={{padding:'7px 13px',borderRadius:'8px',border:'none',cursor:'pointer',fontSize:'12.5px',fontWeight:600,background:groupBy===v?'#fff':'transparent',color:groupBy===v?'#1A1A1C':'#8A8A8E',boxShadow:groupBy===v?'0 1px 2px rgba(0,0,0,.08)':'none'}}>{l}</button>
+          ))}
+        </div>
+      </div>
+      {clientList.length>1 && (
+        <div style={{display:'flex',gap:'7px',flexWrap:'wrap',marginBottom:'18px'}}>
+          {['all',...clientList].map(c=>{ const on=clientF===c; return (
+            <button key={c} onClick={()=>setClientF(c)} style={{display:'inline-flex',alignItems:'center',gap:'6px',padding:'6px 12px',borderRadius:'9px',border:'1px solid '+(on?'transparent':'#EAEAEE'),cursor:'pointer',fontSize:'12.5px',fontWeight:500,background:on?'#1A1A1C':'#fff',color:on?'#fff':'#4A4A4E'}}>
+              {c!=='all' && <span style={{width:'7px',height:'7px',borderRadius:'50%',background:companyColor(c)}}/>}{c==='all'?'All clients':c}
+            </button>
+          ); })}
+        </div>
+      )}
+
+      {/* Table */}
+      {groupList.length===0 ? (
+        <div style={{...cardBase,padding:'56px 32px',textAlign:'center'}}>
+          <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'7px'}}>Nothing in the pipeline</div>
+          <div style={{color:'#8A8A8E',fontSize:'13.5px'}}>Live POs appear here automatically. Adjust filters if you expected results.</div>
+        </div>
+      ) : (
+        <div style={{...cardBase,overflow:'hidden'}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 100px 220px 120px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4'}}>{groupBy==='product'?'Product':'Client'}</div>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>Units</div>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4'}}>Pipeline split</div>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>Next ETA</div>
           </div>
-        );
-      })}
-    </>
+          {groupList.map((g,i)=>(
+            <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 100px 220px 120px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center'}}>
+              <div style={{minWidth:0,display:'flex',alignItems:'center',gap:'11px'}}>
+                {groupBy==='client' && <span style={{width:'30px',height:'30px',borderRadius:'8px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:companyColor(g.client)}}>{initials(g.client)}</span>}
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{g.label}</div>
+                  <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{groupBy==='product'?(g.sku||'no SKU')+' · '+g.client:g.refs.length+' PO'+(g.refs.length>1?'s':'')}</div>
+                </div>
+              </div>
+              <div style={{textAlign:'right',fontSize:'16px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(g.qty)}</div>
+              {/* stacked stage bar */}
+              <div>
+                <div style={{display:'flex',height:'8px',borderRadius:'4px',overflow:'hidden',background:'#F0F0F2',gap:'1px'}}>
+                  {['in_production','in_transit','arrived'].map(st=> g.stages[st]>0 ? <div key={st} style={{width:(g.stages[st]/g.qty*100)+'%',background:STAGE_META[st].color}} title={STAGE_META[st].label+': '+g.stages[st]} /> : null)}
+                </div>
+                <div style={{display:'flex',gap:'10px',marginTop:'6px'}}>
+                  {['in_production','in_transit','arrived'].map(st=> g.stages[st]>0 ? (
+                    <span key={st} style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'10.5px',color:'#8A8A8E'}}>
+                      <span style={{width:'6px',height:'6px',borderRadius:'50%',background:STAGE_META[st].color}}/>{fmtNum(g.stages[st])}
+                    </span>
+                  ) : null)}
+                </div>
+              </div>
+              <div style={{textAlign:'right',fontSize:'12.5px',color:g.eta?'#1A1A1C':'#C0C0C4',fontWeight:g.eta?500:400}}>{g.eta?fmtDateShort(g.eta):'—'}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -4647,7 +4711,7 @@ export default function App() {
         </div>
       ) : (
       <div className="main-area">
-        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing')?{display:'none'}:undefined}>
+        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='inventory')?{display:'none'}:undefined}>
           <h1 className="page-title">{titles[page]||''}</h1>
           <div className="page-actions">{pageActions[page]}</div>
         </div>
