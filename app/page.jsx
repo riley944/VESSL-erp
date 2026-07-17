@@ -4267,8 +4267,23 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
 
   useEffect(()=>{
     SB.from('companies').select('id,name,type').order('name').then(({data})=>setCompanies(data||[]));
-    SB.from('purchase_orders').select('id,order_number,client_po_number,requested_ship_date,incoterm,client:companies!client_company_id(id,name)').order('created_at',{ascending:false}).limit(300).then(({data})=>setPos(data||[]));
-    SB.from('products').select('id,name,sku').order('name').limit(500).then(({data})=>setProducts(data||[]));
+    // POs — try with embedded client join; if PostgREST nulls the result, fall back to flat then stitch client name
+    (async()=>{
+      let { data, error } = await SB.from('purchase_orders').select('id,order_number,client_po_number,requested_ship_date,incoterm,client_company_id').order('created_at',{ascending:false}).limit(300);
+      if (error || !data) {
+        const retry = await SB.from('purchase_orders').select('id,order_number,client_po_number,client_company_id').order('created_at',{ascending:false}).limit(300);
+        data = retry.data || [];
+      }
+      // stitch client names from companies (avoids fragile embedded join)
+      const { data: comps } = await SB.from('companies').select('id,name');
+      const cmap = {}; (comps||[]).forEach(c=>{ cmap[c.id]=c.name; });
+      setPos((data||[]).map(p=>({ ...p, client:{ id:p.client_company_id, name:cmap[p.client_company_id]||'' } })));
+    })();
+    // Products
+    (async()=>{
+      let { data } = await SB.from('products').select('id,sku,name').order('sku',{nullsFirst:false}).limit(1000);
+      setProducts(data||[]);
+    })();
   },[]);
   const clients  = companies.filter(c=>['client','brand','customer'].includes(c.type));
   const forwarders = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
@@ -4284,7 +4299,11 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
       incoterm: po.incoterm || form.incoterm,
       ready: po.requested_ship_date ? String(po.requested_ship_date).slice(0,10) : '' };
     setForm(nextForm);
-    const { data } = await SB.from('purchase_order_items').select('description,quantity,carton_info,products(name)').eq('purchase_order_id',po.id);
+    let { data } = await SB.from('purchase_order_items').select('description,quantity,carton_info,products(name)').eq('purchase_order_id',po.id);
+    if (!data) {
+      const retry = await SB.from('purchase_order_items').select('description,quantity,carton_info').eq('purchase_order_id',po.id);
+      data = retry.data;
+    }
     if (data && data.length) {
       setLines(data.map(it=>{
         const hint = parseCartonInfo(it.carton_info);
