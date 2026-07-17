@@ -4250,8 +4250,13 @@ function parseCartonInfo(txt) {
 const CBM_MAX_40HQ = 68;
 
 function ShipmentQuoteModal({ onClose, onSaved }) {
+  const [mode, setMode] = useState('po'); // 'po' | 'product'
+  const [picked, setPicked] = useState(null); // {kind, id, label, sub}
   const [companies, setCompanies] = useState([]);
   const [pos, setPos] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [poSearch, setPoSearch] = useState('');
+  const [prodSearch, setProdSearch] = useState('');
   const [form, setForm] = useState({
     number: 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase(),
     client:'', forwarder:'', poId:'', origin:'', destination:'', incoterm:'FOB', ready:'', notes:''
@@ -4259,9 +4264,11 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
   const [lines, setLines] = useState([{ desc:'', cartons:'', cbmPer:'', weight:'' }]);
   const [saving, setSaving] = useState(false);
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
+
   useEffect(()=>{
     SB.from('companies').select('id,name,type').order('name').then(({data})=>setCompanies(data||[]));
-    SB.from('purchase_orders').select('id,order_number,client_po_number').order('created_at',{ascending:false}).limit(200).then(({data})=>setPos(data||[]));
+    SB.from('purchase_orders').select('id,order_number,client_po_number,requested_ship_date,incoterm,client:companies!client_company_id(id,name)').order('created_at',{ascending:false}).limit(300).then(({data})=>setPos(data||[]));
+    SB.from('products').select('id,name,sku').order('name').limit(500).then(({data})=>setProducts(data||[]));
   },[]);
   const clients  = companies.filter(c=>['client','brand','customer'].includes(c.type));
   const forwarders = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
@@ -4270,35 +4277,46 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
   const addLine = () => setLines(prev=>[...prev,{ desc:'', cartons:'', cbmPer:'', weight:'' }]);
   const rmLine = i => setLines(prev=>prev.filter((_,j)=>j!==i));
 
-  // prefill from a linked PO
-  const pickPO = async (poId) => {
-    f('poId')(poId);
-    if (!poId) return;
-    const { data } = await SB.from('purchase_order_items').select('description,quantity,carton_info,products(name)').eq('purchase_order_id',poId);
+  // ── Generate from a PO — autofill everything ──
+  const applyPO = async (po) => {
+    const clientId = po.client?.id || '';
+    const nextForm = { ...form, poId:po.id, client:clientId,
+      incoterm: po.incoterm || form.incoterm,
+      ready: po.requested_ship_date ? String(po.requested_ship_date).slice(0,10) : '' };
+    setForm(nextForm);
+    const { data } = await SB.from('purchase_order_items').select('description,quantity,carton_info,products(name)').eq('purchase_order_id',po.id);
     if (data && data.length) {
       setLines(data.map(it=>{
         const hint = parseCartonInfo(it.carton_info);
         const qty = Number(it.quantity)||0;
         const cartons = hint.upc ? Math.ceil(qty/hint.upc) : '';
-        return {
-          desc: it.description || it.products?.name || '',
+        return { desc: it.description || it.products?.name || '',
           cartons: cartons!==''?String(cartons):'',
           cbmPer: hint.cbmPer?hint.cbmPer.toFixed(4):'',
-          weight: hint.weight?String(hint.weight):'',
-        };
+          weight: hint.weight?String(hint.weight):'' };
       }));
+    } else {
+      setLines([{ desc:'', cartons:'', cbmPer:'', weight:'' }]);
     }
+    setPicked({ kind:'po', id:po.id, label:po.client_po_number||po.order_number||'PO', sub:po.client?.name||'' });
   };
+
+  // ── Generate from a product — one-product container, blank details ──
+  const applyProduct = (p) => {
+    setForm(prev=>({ ...prev, poId:'' }));
+    setLines([{ desc: p.name || p.sku || '', cartons:'', cbmPer:'', weight:'' }]);
+    setPicked({ kind:'product', id:p.id, label:p.name||p.sku||'Product', sub:p.sku||'' });
+  };
+
+  const resetPick = () => { setPicked(null); setForm(prev=>({...prev,poId:''})); setLines([{ desc:'', cartons:'', cbmPer:'', weight:'' }]); };
+
+  const filteredPOs = pos.filter(p=>{ const q=poSearch.trim().toLowerCase(); if(!q) return true; return (p.client_po_number||'').toLowerCase().includes(q)||(p.order_number||'').toLowerCase().includes(q)||(p.client?.name||'').toLowerCase().includes(q); });
+  const filteredProducts = products.filter(p=>{ const q=prodSearch.trim().toLowerCase(); if(!q) return true; return (p.name||'').toLowerCase().includes(q)||(p.sku||'').toLowerCase().includes(q); });
 
   // totals + container math
   const calc = lines.reduce((acc,l)=>{
-    const cartons = Number(l.cartons)||0;
-    const cbmPer = Number(l.cbmPer)||0;
-    const wt = Number(l.weight)||0;
-    acc.cartons += cartons;
-    acc.cbm += cartons*cbmPer;
-    acc.weight += cartons*wt;
-    return acc;
+    const cartons = Number(l.cartons)||0, cbmPer = Number(l.cbmPer)||0, wt = Number(l.weight)||0;
+    acc.cartons += cartons; acc.cbm += cartons*cbmPer; acc.weight += cartons*wt; return acc;
   }, { cartons:0, cbm:0, weight:0 });
   const containers = calc.cbm>0 ? Math.ceil(calc.cbm / CBM_MAX_40HQ) : 0;
   const utilization = containers>0 ? (calc.cbm/(containers*CBM_MAX_40HQ))*100 : 0;
@@ -4327,11 +4345,9 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
     if (error) { alert('Error: '+error.message); return; }
     onSaved();
   };
-
   const generate = async () => {
-    // save as sent, then open the printable sheet
-    const payload = buildPayload('sent');
     if (!form.client) { alert('Pick a client'); return; }
+    const payload = buildPayload('sent');
     setSaving(true);
     const { data, error } = await SB.from('shipment_quotes').insert(payload).select('id').single();
     setSaving(false);
@@ -4347,25 +4363,85 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
 
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div className="modal-box" style={{maxWidth:'720px'}}>
-        <div className="modal-head"><h3>New Freight Quote Sheet</h3><button className="modal-close" onClick={onClose}>×</button></div>
+      <div className="modal-box modal-lg">
+        <div className="modal-head"><h3>New Freight Quote</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
+
+          {/* mode toggle — identical pattern to New PO */}
+          <div className="qp-toggle">
+            <button className={mode==='po'?'on':''} onClick={()=>{setMode('po');resetPick();}}>Generate from PO</button>
+            <button className={mode==='product'?'on':''} onClick={()=>{setMode('product');resetPick();}}>Generate from Product</button>
+          </div>
+
+          {/* selected banner */}
+          {picked && (
+            <div className="qp-banner">
+              <span><b>{picked.label}</b>{picked.sub?' \u00b7 '+picked.sub:''}{picked.kind==='product'?' \u00b7 single-product container':''}</span>
+              <button className="x" onClick={resetPick}>Change</button>
+            </div>
+          )}
+
+          {/* PO PICKER */}
+          {mode==='po' && !picked && (
+            <>
+              <div className="qp-search">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                <input placeholder="Search POs — number, client…" value={poSearch} onChange={e=>setPoSearch(e.target.value)} autoFocus />
+              </div>
+              <div className="qp-list">
+                {filteredPOs.length===0 && <div className="empty" style={{padding:'40px 20px'}}><p>No POs match.</p></div>}
+                {filteredPOs.map(p=>(
+                  <button key={p.id} className="qp-card" onClick={()=>applyPO(p)}>
+                    <span className="qp-avatar" style={{background:companyColor(p.client?.name||''),color:'#fff'}}>{initials(p.client?.name||'?')}</span>
+                    <span className="qp-meta">
+                      <div className="qp-prod">{p.client_po_number||p.order_number||'PO'}</div>
+                      <div className="qp-sub">{p.client?.name||'—'}{p.requested_ship_date?' · CRD '+String(p.requested_ship_date).slice(0,10):''}</div>
+                    </span>
+                    <span className="qp-right"><div className="qp-tiers">Select →</div></span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* PRODUCT PICKER */}
+          {mode==='product' && !picked && (
+            <>
+              <div className="qp-search">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                <input placeholder="Search products — name, SKU…" value={prodSearch} onChange={e=>setProdSearch(e.target.value)} autoFocus />
+              </div>
+              <div className="qp-list">
+                {filteredProducts.length===0 && <div className="empty" style={{padding:'40px 20px'}}><p>No products match.</p></div>}
+                {filteredProducts.map(p=>(
+                  <button key={p.id} className="qp-card" onClick={()=>applyProduct(p)}>
+                    <span className="qp-avatar" style={{background:companyColor(p.name||''),color:'#fff'}}>{initials(p.name||'?')}</span>
+                    <span className="qp-meta">
+                      <div className="qp-prod">{p.name||'Product'}</div>
+                      <div className="qp-sub">{p.sku||'—'}</div>
+                    </span>
+                    <span className="qp-right"><div className="qp-tiers">Select →</div></span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* SHARED SHEET FORM — only after a PO or product is picked */}
+          {picked && (
+          <>
           <div className="form-row-2">
             <div><label style={lblS}>Quote #</label><input style={inputS} value={form.number} onChange={e=>f('number')(e.target.value)} /></div>
-            <div><label style={lblS}>Prefill from PO</label><select style={inputS} value={form.poId} onChange={e=>pickPO(e.target.value)}><option value="">— none (manual) —</option>{pos.map(p=><option key={p.id} value={p.id}>{p.client_po_number||p.order_number||p.id.slice(0,8)}</option>)}</select></div>
+            <div><label style={lblS}>Client *</label><select style={inputS} value={form.client} onChange={e=>f('client')(e.target.value)}><option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           </div>
           <div className="form-row-2" style={{marginTop:'12px'}}>
-            <div><label style={lblS}>Client *</label><select style={inputS} value={form.client} onChange={e=>f('client')(e.target.value)}><option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
             <div><label style={lblS}>Freight Forwarder</label><select style={inputS} value={form.forwarder} onChange={e=>f('forwarder')(e.target.value)}><option value="">—</option>{forwarders.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+            <div><label style={lblS}>Cargo Ready Date</label><input type="date" style={inputS} value={form.ready} onChange={e=>f('ready')(e.target.value)} /></div>
           </div>
           <div className="form-row-3" style={{marginTop:'12px'}}>
             <div><label style={lblS}>Origin</label><input style={inputS} value={form.origin} onChange={e=>f('origin')(e.target.value)} placeholder="e.g. Ningbo, CN" /></div>
             <div><label style={lblS}>Destination</label><input style={inputS} value={form.destination} onChange={e=>f('destination')(e.target.value)} placeholder="e.g. Savannah, GA" /></div>
             <div><label style={lblS}>Incoterm</label><input style={inputS} value={form.incoterm} onChange={e=>f('incoterm')(e.target.value)} placeholder="FOB, DDP…" /></div>
-          </div>
-          <div className="form-row-2" style={{marginTop:'12px'}}>
-            <div><label style={lblS}>Cargo Ready Date</label><input type="date" style={inputS} value={form.ready} onChange={e=>f('ready')(e.target.value)} /></div>
-            <div></div>
           </div>
 
           {/* Line items */}
@@ -4397,26 +4473,27 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
             <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'14px'}}>
               <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Total cartons</div><div style={{fontSize:'20px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(calc.cartons)}</div></div>
               <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Total CBM</div><div style={{fontSize:'20px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{calc.cbm.toFixed(2)}</div></div>
-              <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>40'HQ needed</div><div style={{fontSize:'20px',fontWeight:700,color:'#0071E3',fontVariantNumeric:'tabular-nums'}}>{containers}</div></div>
+              <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>40&apos;HQ needed</div><div style={{fontSize:'20px',fontWeight:700,color:'#0071E3',fontVariantNumeric:'tabular-nums'}}>{containers}</div></div>
               <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Utilization</div><div style={{fontSize:'20px',fontWeight:700,color:utilization>92?'#D14343':'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{utilization.toFixed(0)}%</div></div>
             </div>
             <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'12px',lineHeight:1.5}}>Based on {CBM_MAX_40HQ} CBM max per 40&apos; High-Cube container. {containers>0 && utilization<70 ? 'Low fill — consider consolidating or LCL.' : containers>0 ? 'Good fill for FCL.' : 'Add cartons and CBM to calculate.'}</div>
           </div>
 
           <div style={{marginTop:'12px'}}><label style={lblS}>Notes for forwarder</label><textarea style={{...inputS,minHeight:'56px',resize:'vertical'}} value={form.notes} onChange={e=>f('notes')(e.target.value)} placeholder="Special handling, stackability, delivery requirements…" /></div>
+          </>
+          )}
         </div>
         <div className="modal-foot" style={{display:'flex',justifyContent:'space-between',gap:'10px'}}>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <div style={{display:'flex',gap:'8px'}}>
+          {picked && <div style={{display:'flex',gap:'8px'}}>
             <button className="btn btn-ghost" onClick={()=>save('draft')} disabled={saving}>Save draft</button>
             <button className="btn btn-dark" onClick={generate} disabled={saving}>{saving?'Working…':'Generate & Send'}</button>
-          </div>
+          </div>}
         </div>
       </div>
     </div>
   );
 }
-
 // Open a printable freight quote sheet in a new window
 function openFreightSheet(q, clientName, forwarderName) {
   const win = window.open('', '_blank');
