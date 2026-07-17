@@ -3100,13 +3100,22 @@ function Shipments() {
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState(null);
   const [tab, setTab] = useState('active');
+  const [viewMode, setViewMode] = useState('shipments'); // 'shipments' | 'quotes'
+  const [quotes, setQuotes] = useState([]);
+  const [showQuoteModal, setShowQuoteModal] = useState(false);
   const reload = async () => {
     const { data } = await SB.from('shipments')
       .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,client:companies!client_company_id(name)))')
       .order('created_at',{ascending:false});
     setRows(data||[]); setLoading(false);
   };
-  useEffect(()=>{ reload(); },[]);
+  const reloadQuotes = async () => {
+    const { data } = await SB.from('shipment_quotes')
+      .select('*,client:companies!client_company_id(name),forwarder:companies!forwarder_company_id(name)')
+      .order('created_at',{ascending:false});
+    setQuotes(data||[]);
+  };
+  useEffect(()=>{ reload(); reloadQuotes(); },[]);
 
   const TERMINAL = ['delivered','cancelled'];
   const active = rows.filter(s => !TERMINAL.includes((s.status||'').toLowerCase()) && !s.actual_arrival);
@@ -3123,11 +3132,25 @@ function Shipments() {
   return (
     <div style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
       {/* Title */}
-      <div style={{marginBottom:'20px'}}>
-        <div style={{fontSize:'24px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em'}}>Shipments</div>
-        <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Freight in motion — vessels, containers, and arrival tracking</div>
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'14px',marginBottom:'18px',flexWrap:'wrap'}}>
+        <div>
+          <div style={{fontSize:'24px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em'}}>Shipments</div>
+          <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Freight in motion — vessels, containers &amp; forwarder quotes</div>
+        </div>
+        {viewMode==='quotes' && <button onClick={()=>setShowQuoteModal(true)} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Freight Quote</button>}
       </div>
 
+      {/* View mode toggle */}
+      <div style={{display:'inline-flex',background:'#F2F2F6',borderRadius:'10px',padding:'3px',marginBottom:'18px'}}>
+        {[['shipments','Shipments'],['quotes','Freight Quotes']].map(([v,l])=>(
+          <button key={v} onClick={()=>setViewMode(v)} style={{padding:'7px 15px',borderRadius:'8px',border:'none',cursor:'pointer',fontSize:'12.5px',fontWeight:600,background:viewMode===v?'#fff':'transparent',color:viewMode===v?'#1A1A1C':'#8A8A8E',boxShadow:viewMode===v?'0 1px 2px rgba(0,0,0,.08)':'none'}}>{l}{v==='quotes'&&quotes.length>0?' ('+quotes.length+')':''}</button>
+        ))}
+      </div>
+
+      {viewMode==='quotes' ? (
+        <FreightQuotesView quotes={quotes} />
+      ) : (
+      <>
       {/* Tabs */}
       <div style={{display:'flex',gap:'6px',marginBottom:'18px'}}>
         {[['active','In transit',active.length],['delivered','Delivered',done.length],['all','All',rows.length]].map(([val,label,ct])=>(
@@ -3205,7 +3228,45 @@ function Shipments() {
             <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'7px'}}>No {tab==='active'?'active ':tab==='delivered'?'delivered ':''}shipments</div>
             <div style={{color:'#8A8A8E',fontSize:'13.5px'}}>Shipments appear here when orders move to the shipping stage.</div>
           </div>}
+      </>
+      )}
       {openId && <ShipmentDetailModal id={openId} onClose={()=>setOpenId(null)} onSaved={()=>{setOpenId(null);reload();}} />}
+      {showQuoteModal && <ShipmentQuoteModal onClose={()=>setShowQuoteModal(false)} onSaved={()=>{setShowQuoteModal(false);reloadQuotes();}} />}
+    </div>
+  );
+}
+
+// ── Freight Quotes list ───────────────────────────────────────────────────────
+function FreightQuotesView({ quotes }) {
+  const fd = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
+  const reopen = (q) => openFreightSheet(q, q.client?.name||'', q.forwarder?.name||'');
+  if (!quotes.length) return (
+    <div style={{background:'#fff',borderRadius:'16px',border:'1px solid #ECECEE',padding:'56px 32px',textAlign:'center'}}>
+      <div style={{width:'52px',height:'52px',borderRadius:'14px',background:'#F2F2F6',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#A0A0A4" strokeWidth="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v16"/></svg>
+      </div>
+      <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'7px'}}>No freight quotes yet</div>
+      <div style={{color:'#8A8A8E',fontSize:'13.5px'}}>Generate a quote sheet to send carton &amp; CBM data to your forwarders.</div>
+    </div>
+  );
+  return (
+    <div style={{background:'#fff',borderRadius:'16px',border:'1px solid #ECECEE',overflow:'hidden'}}>
+      <div style={{display:'grid',gridTemplateColumns:'130px 1fr 150px 110px 100px 90px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
+        {['Quote #','Client / Route','Forwarder','CBM','Containers','Status'].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i>=3&&i<5?'right':'left'}}>{h}</div>)}
+      </div>
+      {quotes.map((q,i)=>(
+        <div key={q.id} onClick={()=>reopen(q)} style={{display:'grid',gridTemplateColumns:'130px 1fr 150px 110px 100px 90px',gap:'16px',padding:'15px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          <div style={{fontFamily:'var(--mono)',fontSize:'13px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.quote_number}</div>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:'13.5px',fontWeight:500,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.client?.name||'—'}</div>
+            <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{(q.origin||'—')+' → '+(q.destination||'—')+' · '+fd(q.created_at)}</div>
+          </div>
+          <div style={{fontSize:'12.5px',color:'#4A4A4E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.forwarder?.name||'—'}</div>
+          <div style={{textAlign:'right',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{Number(q.total_cbm||0).toFixed(1)}</div>
+          <div style={{textAlign:'right',fontSize:'13.5px',color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{q.containers_needed} × 40&apos;HQ</div>
+          <div><span style={{display:'inline-flex',alignItems:'center',fontSize:'11px',fontWeight:600,borderRadius:'6px',padding:'3px 9px',color:q.status==='sent'?'#15803D':'#B45309',background:q.status==='sent'?'#DCFCE7':'#FEF3C7'}}>{q.status==='sent'?'Sent':'Draft'}</span></div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -4163,6 +4224,266 @@ function buildPODoc(d, opts={}) {
   +'</div></div>' : '')
 
 +'</div></body></html>';
+}
+
+// ── Freight Quote helpers ─────────────────────────────────────────────────────
+// Parse free-text carton_info like "12 pcs/ctn, 60×40×30 cm, 11 kg" into structured hints.
+function parseCartonInfo(txt) {
+  const out = { upc:null, cbmPer:null, weight:null };
+  if (!txt) return out;
+  const t = String(txt).toLowerCase().replace(/×/g,'x');
+  const upc = t.match(/(\d+)\s*(?:pcs?|units?|pc)\s*\/?\s*(?:ctn|carton|box)/);
+  if (upc) out.upc = Number(upc[1]);
+  const dims = t.match(/(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(cm|mm|m)?/);
+  if (dims) {
+    let [l,w,h] = [Number(dims[1]),Number(dims[2]),Number(dims[3])];
+    const unit = dims[4]||'cm';
+    let div = 1000000; // cm3 -> m3
+    if (unit==='mm') div = 1000000000;
+    if (unit==='m')  div = 1;
+    out.cbmPer = (l*w*h)/div;
+  }
+  const wt = t.match(/(\d+(?:\.\d+)?)\s*kg/);
+  if (wt) out.weight = Number(wt[1]);
+  return out;
+}
+const CBM_MAX_40HQ = 68;
+
+function ShipmentQuoteModal({ onClose, onSaved }) {
+  const [companies, setCompanies] = useState([]);
+  const [pos, setPos] = useState([]);
+  const [form, setForm] = useState({
+    number: 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase(),
+    client:'', forwarder:'', poId:'', origin:'', destination:'', incoterm:'FOB', ready:'', notes:''
+  });
+  const [lines, setLines] = useState([{ desc:'', cartons:'', cbmPer:'', weight:'' }]);
+  const [saving, setSaving] = useState(false);
+  const f = k => v => setForm(prev=>({...prev,[k]:v}));
+  useEffect(()=>{
+    SB.from('companies').select('id,name,type').order('name').then(({data})=>setCompanies(data||[]));
+    SB.from('purchase_orders').select('id,order_number,client_po_number').order('created_at',{ascending:false}).limit(200).then(({data})=>setPos(data||[]));
+  },[]);
+  const clients  = companies.filter(c=>['client','brand','customer'].includes(c.type));
+  const forwarders = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
+
+  const setLine = (i,k) => e => setLines(prev=>prev.map((l,j)=>j===i?{...l,[k]:e.target.value}:l));
+  const addLine = () => setLines(prev=>[...prev,{ desc:'', cartons:'', cbmPer:'', weight:'' }]);
+  const rmLine = i => setLines(prev=>prev.filter((_,j)=>j!==i));
+
+  // prefill from a linked PO
+  const pickPO = async (poId) => {
+    f('poId')(poId);
+    if (!poId) return;
+    const { data } = await SB.from('purchase_order_items').select('description,quantity,carton_info,products(name)').eq('purchase_order_id',poId);
+    if (data && data.length) {
+      setLines(data.map(it=>{
+        const hint = parseCartonInfo(it.carton_info);
+        const qty = Number(it.quantity)||0;
+        const cartons = hint.upc ? Math.ceil(qty/hint.upc) : '';
+        return {
+          desc: it.description || it.products?.name || '',
+          cartons: cartons!==''?String(cartons):'',
+          cbmPer: hint.cbmPer?hint.cbmPer.toFixed(4):'',
+          weight: hint.weight?String(hint.weight):'',
+        };
+      }));
+    }
+  };
+
+  // totals + container math
+  const calc = lines.reduce((acc,l)=>{
+    const cartons = Number(l.cartons)||0;
+    const cbmPer = Number(l.cbmPer)||0;
+    const wt = Number(l.weight)||0;
+    acc.cartons += cartons;
+    acc.cbm += cartons*cbmPer;
+    acc.weight += cartons*wt;
+    return acc;
+  }, { cartons:0, cbm:0, weight:0 });
+  const containers = calc.cbm>0 ? Math.ceil(calc.cbm / CBM_MAX_40HQ) : 0;
+  const utilization = containers>0 ? (calc.cbm/(containers*CBM_MAX_40HQ))*100 : 0;
+
+  const buildPayload = (status) => ({
+    quote_number: form.number,
+    client_company_id: form.client||null,
+    forwarder_company_id: form.forwarder||null,
+    po_id: form.poId||null,
+    origin: form.origin||null, destination: form.destination||null,
+    incoterm: form.incoterm||null, ready_date: form.ready||null,
+    container_type:'40HQ', cbm_max:CBM_MAX_40HQ,
+    total_cartons: calc.cartons, total_cbm: Number(calc.cbm.toFixed(3)),
+    total_weight_kg: Number(calc.weight.toFixed(2)),
+    containers_needed: containers, utilization_pct: Number(utilization.toFixed(1)),
+    line_items: lines.filter(l=>l.desc||l.cartons).map(l=>({ desc:l.desc, cartons:Number(l.cartons)||0, cbm_per:Number(l.cbmPer)||0, cbm_total:Number(((Number(l.cartons)||0)*(Number(l.cbmPer)||0)).toFixed(3)), weight:Number(l.weight)||0 })),
+    notes: form.notes||null, status,
+    sent_at: status==='sent'? new Date().toISOString() : null,
+  });
+
+  const save = async (status) => {
+    if (!form.client) { alert('Pick a client'); return; }
+    setSaving(true);
+    const { error } = await SB.from('shipment_quotes').insert(buildPayload(status));
+    setSaving(false);
+    if (error) { alert('Error: '+error.message); return; }
+    onSaved();
+  };
+
+  const generate = async () => {
+    // save as sent, then open the printable sheet
+    const payload = buildPayload('sent');
+    if (!form.client) { alert('Pick a client'); return; }
+    setSaving(true);
+    const { data, error } = await SB.from('shipment_quotes').insert(payload).select('id').single();
+    setSaving(false);
+    if (error) { alert('Error: '+error.message); return; }
+    const clientName = clients.find(c=>c.id===form.client)?.name || '';
+    const forwarderName = forwarders.find(c=>c.id===form.forwarder)?.name || '';
+    openFreightSheet(payload, clientName, forwarderName);
+    onSaved();
+  };
+
+  const inputS = {width:'100%',border:'1px solid #E5E7EB',borderRadius:'9px',padding:'9px 11px',fontSize:'13.5px',outline:'none',fontFamily:'inherit',boxSizing:'border-box'};
+  const lblS = {display:'block',fontSize:'10px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'5px'};
+
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal-box" style={{maxWidth:'720px'}}>
+        <div className="modal-head"><h3>New Freight Quote Sheet</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-body">
+          <div className="form-row-2">
+            <div><label style={lblS}>Quote #</label><input style={inputS} value={form.number} onChange={e=>f('number')(e.target.value)} /></div>
+            <div><label style={lblS}>Prefill from PO</label><select style={inputS} value={form.poId} onChange={e=>pickPO(e.target.value)}><option value="">— none (manual) —</option>{pos.map(p=><option key={p.id} value={p.id}>{p.client_po_number||p.order_number||p.id.slice(0,8)}</option>)}</select></div>
+          </div>
+          <div className="form-row-2" style={{marginTop:'12px'}}>
+            <div><label style={lblS}>Client *</label><select style={inputS} value={form.client} onChange={e=>f('client')(e.target.value)}><option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+            <div><label style={lblS}>Freight Forwarder</label><select style={inputS} value={form.forwarder} onChange={e=>f('forwarder')(e.target.value)}><option value="">—</option>{forwarders.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+          </div>
+          <div className="form-row-3" style={{marginTop:'12px'}}>
+            <div><label style={lblS}>Origin</label><input style={inputS} value={form.origin} onChange={e=>f('origin')(e.target.value)} placeholder="e.g. Ningbo, CN" /></div>
+            <div><label style={lblS}>Destination</label><input style={inputS} value={form.destination} onChange={e=>f('destination')(e.target.value)} placeholder="e.g. Savannah, GA" /></div>
+            <div><label style={lblS}>Incoterm</label><input style={inputS} value={form.incoterm} onChange={e=>f('incoterm')(e.target.value)} placeholder="FOB, DDP…" /></div>
+          </div>
+          <div className="form-row-2" style={{marginTop:'12px'}}>
+            <div><label style={lblS}>Cargo Ready Date</label><input type="date" style={inputS} value={form.ready} onChange={e=>f('ready')(e.target.value)} /></div>
+            <div></div>
+          </div>
+
+          {/* Line items */}
+          <div style={{marginTop:'18px'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
+              <span style={{fontSize:'12px',fontWeight:700,color:'#1A1A1C',textTransform:'uppercase',letterSpacing:'.05em'}}>Carton / CBM breakdown</span>
+              <button type="button" onClick={addLine} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'4px 10px',fontSize:'12px',fontWeight:500,color:'#4A4A4E',cursor:'pointer'}}>+ Add line</button>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 78px 92px 78px 92px 26px',gap:'7px',marginBottom:'6px'}}>
+              {['Description','Cartons','CBM/ctn','Kg/ctn','Line CBM',''].map((h,i)=><div key={i} style={{fontSize:'9.5px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',color:'#A0A0A4',textAlign:i>=1&&i<5?'right':'left'}}>{h}</div>)}
+            </div>
+            {lines.map((l,i)=>{
+              const lineCbm = (Number(l.cartons)||0)*(Number(l.cbmPer)||0);
+              return (
+                <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 78px 92px 78px 92px 26px',gap:'7px',marginBottom:'6px',alignItems:'center'}}>
+                  <input style={{...inputS,padding:'8px 9px',fontSize:'12.5px'}} value={l.desc} onChange={setLine(i,'desc')} placeholder="Product / description" />
+                  <input style={{...inputS,padding:'8px 9px',fontSize:'12.5px',textAlign:'right'}} value={l.cartons} onChange={setLine(i,'cartons')} placeholder="0" />
+                  <input style={{...inputS,padding:'8px 9px',fontSize:'12.5px',textAlign:'right'}} value={l.cbmPer} onChange={setLine(i,'cbmPer')} placeholder="0.000" />
+                  <input style={{...inputS,padding:'8px 9px',fontSize:'12.5px',textAlign:'right'}} value={l.weight} onChange={setLine(i,'weight')} placeholder="0" />
+                  <div style={{fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{lineCbm>0?lineCbm.toFixed(3):'—'}</div>
+                  <button type="button" onClick={()=>rmLine(i)} style={{background:'none',border:'none',color:'#C0C0C4',cursor:'pointer',fontSize:'17px',lineHeight:1}}>×</button>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Container calc */}
+          <div style={{marginTop:'18px',background:'#F7F7F9',borderRadius:'13px',padding:'16px 18px'}}>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'14px'}}>
+              <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Total cartons</div><div style={{fontSize:'20px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(calc.cartons)}</div></div>
+              <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Total CBM</div><div style={{fontSize:'20px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{calc.cbm.toFixed(2)}</div></div>
+              <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>40'HQ needed</div><div style={{fontSize:'20px',fontWeight:700,color:'#0071E3',fontVariantNumeric:'tabular-nums'}}>{containers}</div></div>
+              <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Utilization</div><div style={{fontSize:'20px',fontWeight:700,color:utilization>92?'#D14343':'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{utilization.toFixed(0)}%</div></div>
+            </div>
+            <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'12px',lineHeight:1.5}}>Based on {CBM_MAX_40HQ} CBM max per 40&apos; High-Cube container. {containers>0 && utilization<70 ? 'Low fill — consider consolidating or LCL.' : containers>0 ? 'Good fill for FCL.' : 'Add cartons and CBM to calculate.'}</div>
+          </div>
+
+          <div style={{marginTop:'12px'}}><label style={lblS}>Notes for forwarder</label><textarea style={{...inputS,minHeight:'56px',resize:'vertical'}} value={form.notes} onChange={e=>f('notes')(e.target.value)} placeholder="Special handling, stackability, delivery requirements…" /></div>
+        </div>
+        <div className="modal-foot" style={{display:'flex',justifyContent:'space-between',gap:'10px'}}>
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <div style={{display:'flex',gap:'8px'}}>
+            <button className="btn btn-ghost" onClick={()=>save('draft')} disabled={saving}>Save draft</button>
+            <button className="btn btn-dark" onClick={generate} disabled={saving}>{saving?'Working…':'Generate & Send'}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Open a printable freight quote sheet in a new window
+function openFreightSheet(q, clientName, forwarderName) {
+  const win = window.open('', '_blank');
+  if (win) win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating freight sheet…</body>');
+  const html = buildFreightDoc(q, clientName, forwarderName);
+  if (win) { win.document.open(); win.document.write(html); win.document.close(); setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 500); }
+}
+
+function buildFreightDoc(q, clientName, forwarderName) {
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const fd = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
+  const rows = (q.line_items||[]).map(l=>
+    '<tr>'
+    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;">'+esc(l.desc)+'</td>'
+    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;">'+(l.cartons||0).toLocaleString()+'</td>'
+    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;">'+(l.cbm_per||0).toFixed(4)+'</td>'
+    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;">'+(l.weight||0)+'</td>'
+    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;font-weight:600;">'+(l.cbm_total||0).toFixed(3)+'</td>'
+    +'</tr>'
+  ).join('');
+  const box = (label,val) => '<div style="flex:1;min-width:120px;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:4px;">'+label+'</div><div style="font-size:15px;color:#0f172a;font-weight:600;">'+val+'</div></div>';
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+    +'<title>Freight Quote '+esc(q.quote_number)+'</title></head>'
+    +'<body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:#0f172a;background:#fff;">'
+    +'<div style="max-width:820px;margin:0 auto;padding:44px 48px;">'
+    // header
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:20px;margin-bottom:8px;">'
+      +'<div><div style="font-size:24px;font-weight:800;letter-spacing:-.02em;">KING UNIVERSAL INC.</div><div style="font-size:12px;color:#64748b;margin-top:3px;">Freight Quote Request</div></div>'
+      +'<div style="text-align:right;"><div style="font-size:18px;font-weight:700;font-family:ui-monospace,monospace;">'+esc(q.quote_number)+'</div><div style="font-size:12px;color:#64748b;margin-top:3px;">'+fd(new Date().toISOString())+'</div></div>'
+    +'</div>'
+    // parties
+    +'<div style="display:flex;gap:40px;margin:24px 0 20px;">'
+      +'<div style="flex:1;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:5px;">Shipper / Client</div><div style="font-size:14px;font-weight:600;">'+esc(clientName||'—')+'</div></div>'
+      +'<div style="flex:1;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:5px;">Freight Forwarder</div><div style="font-size:14px;font-weight:600;">'+esc(forwarderName||'—')+'</div></div>'
+    +'</div>'
+    // route boxes
+    +'<div style="display:flex;gap:20px;background:#f8fafc;border-radius:12px;padding:18px 20px;margin-bottom:24px;flex-wrap:wrap;">'
+      +box('Origin', esc(q.origin||'—'))
+      +box('Destination', esc(q.destination||'—'))
+      +box('Incoterm', esc(q.incoterm||'—'))
+      +box('Cargo Ready', fd(q.ready_date))
+    +'</div>'
+    // line items
+    +'<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;">'
+      +'<thead><tr style="background:#0f172a;color:#fff;">'
+        +'<th style="padding:10px 12px;text-align:left;font-weight:600;">Description</th>'
+        +'<th style="padding:10px 12px;text-align:right;font-weight:600;">Cartons</th>'
+        +'<th style="padding:10px 12px;text-align:right;font-weight:600;">CBM/ctn</th>'
+        +'<th style="padding:10px 12px;text-align:right;font-weight:600;">Kg/ctn</th>'
+        +'<th style="padding:10px 12px;text-align:right;font-weight:600;">Total CBM</th>'
+      +'</tr></thead><tbody>'+rows+'</tbody></table>'
+    // totals + container recommendation
+    +'<div style="display:flex;gap:20px;margin-top:24px;flex-wrap:wrap;">'
+      +'<div style="flex:2;min-width:260px;background:#f8fafc;border-radius:12px;padding:18px 20px;">'
+        +'<div style="display:flex;justify-content:space-between;margin-bottom:10px;"><span style="color:#64748b;font-size:13px;">Total cartons</span><span style="font-weight:700;font-size:14px;">'+(q.total_cartons||0).toLocaleString()+'</span></div>'
+        +'<div style="display:flex;justify-content:space-between;margin-bottom:10px;"><span style="color:#64748b;font-size:13px;">Total volume</span><span style="font-weight:700;font-size:14px;">'+(q.total_cbm||0).toFixed(2)+' CBM</span></div>'
+        +'<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;font-size:13px;">Total weight</span><span style="font-weight:700;font-size:14px;">'+(q.total_weight_kg||0).toLocaleString()+' kg</span></div>'
+      +'</div>'
+      +'<div style="flex:1;min-width:200px;background:#0f172a;color:#fff;border-radius:12px;padding:18px 20px;">'
+        +'<div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.6);margin-bottom:8px;">Container recommendation</div>'
+        +'<div style="font-size:32px;font-weight:800;letter-spacing:-.02em;">'+(q.containers_needed||0)+' × 40&apos;HQ</div>'
+        +'<div style="font-size:12px;color:rgba(255,255,255,.7);margin-top:6px;">'+(q.utilization_pct||0)+'% utilization · '+(q.cbm_max||68)+' CBM max/container</div>'
+      +'</div>'
+    +'</div>'
+    +(q.notes?'<div style="margin-top:24px;padding:16px 18px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;font-size:13px;color:#78350f;"><b>Notes:</b> '+esc(q.notes)+'</div>':'')
+    +'<div style="margin-top:36px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;">Please quote FCL and, where relevant, LCL rates for the above. King Universal Inc. · Raleigh, NC</div>'
+    +'</div></body></html>';
 }
 
 // ── Sales Order / Order Confirmation document (client-facing — CLIENT PRICES ONLY) ──
