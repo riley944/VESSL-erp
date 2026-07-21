@@ -3095,7 +3095,7 @@ function ProductDetailModal({quote:initQ, onClose, onCreatePO}){
 }
 
 // ── Shipments ─────────────────────────────────────────────────────────────────
-function Shipments() {
+function Shipments({ onNewShipment }) {
   const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState(null);
@@ -3131,19 +3131,24 @@ function Shipments() {
 
   return (
     <div style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
-      {/* Title */}
-      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'14px',marginBottom:'18px',flexWrap:'wrap'}}>
+      {/* Title + actions (both buttons always available) */}
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'14px',marginBottom:'20px',flexWrap:'wrap'}}>
         <div>
           <div style={{fontSize:'24px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em'}}>Shipments</div>
           <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Freight in motion — vessels, containers &amp; forwarder quotes</div>
         </div>
-        {viewMode==='quotes' && <button onClick={()=>setShowQuoteModal(true)} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Freight Quote</button>}
+        <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
+          <button onClick={()=>setShowQuoteModal(true)} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #DCDCE0',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Freight Quote</button>
+          {onNewShipment && <button onClick={onNewShipment} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
+        </div>
       </div>
 
-      {/* View mode toggle */}
-      <div style={{display:'inline-flex',background:'#F2F2F6',borderRadius:'10px',padding:'3px',marginBottom:'18px'}}>
-        {[['shipments','Shipments'],['quotes','Freight Quotes']].map(([v,l])=>(
-          <button key={v} onClick={()=>setViewMode(v)} style={{padding:'7px 15px',borderRadius:'8px',border:'none',cursor:'pointer',fontSize:'12.5px',fontWeight:600,background:viewMode===v?'#fff':'transparent',color:viewMode===v?'#1A1A1C':'#8A8A8E',boxShadow:viewMode===v?'0 1px 2px rgba(0,0,0,.08)':'none'}}>{l}{v==='quotes'&&quotes.length>0?' ('+quotes.length+')':''}</button>
+      {/* View mode toggle — prominent segmented control */}
+      <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',marginBottom:'20px',boxShadow:'inset 0 1px 2px rgba(0,0,0,.05)'}}>
+        {[['shipments','Shipments',rows.length],['quotes','Freight Quotes',quotes.length]].map(([v,l,ct])=>(
+          <button key={v} onClick={()=>setViewMode(v)} style={{display:'inline-flex',alignItems:'center',gap:'8px',padding:'9px 20px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'14px',fontWeight:600,letterSpacing:'-.01em',background:viewMode===v?'#1A1A1C':'transparent',color:viewMode===v?'#fff':'#5A5A5E',boxShadow:viewMode===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
+            {l}<span style={{fontSize:'11.5px',fontWeight:700,borderRadius:'20px',padding:'1px 8px',background:viewMode===v?'rgba(255,255,255,.22)':'#DCDCE0',color:viewMode===v?'#fff':'#6A6A6E'}}>{ct}</span>
+          </button>
         ))}
       </div>
 
@@ -4291,6 +4296,36 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
   const addLine = () => setLines(prev=>[...prev,{ desc:'', cartons:'', cbmPer:'', weight:'' }]);
   const rmLine = i => setLines(prev=>prev.filter((_,j)=>j!==i));
 
+  // Fill one 40'HQ to capacity. Single line → max cartons that fit under the CBM cap.
+  // Multiple lines → scale up proportionally to the current mix until the container is full.
+  const autoFillCartons = () => {
+    const withCbm = lines.filter(l=>(Number(l.cbmPer)||0)>0);
+    if (!withCbm.length) { alert('Enter CBM per carton first — then Auto-fill can calculate how many fit.'); return; }
+    if (withCbm.length===1 && lines.length===1) {
+      const per = Number(lines[0].cbmPer)||0;
+      const fit = Math.floor(CBM_MAX_40HQ / per);
+      setLines([{ ...lines[0], cartons:String(fit) }]);
+      return;
+    }
+    // proportional scale on the existing carton mix
+    const baseCbm = lines.reduce((a,l)=>a+((Number(l.cartons)||0)*(Number(l.cbmPer)||0)),0);
+    if (baseCbm<=0) { alert('Enter carton counts on at least one line, then Auto-fill scales the mix to a full container.'); return; }
+    const factor = CBM_MAX_40HQ / baseCbm;
+    let next = lines.map(l=>{
+      const c=Number(l.cartons)||0;
+      return { ...l, cartons: c>0 ? String(Math.floor(c*factor)) : l.cartons };
+    });
+    // trim if rounding pushed us over the cap
+    let total = next.reduce((a,l)=>a+((Number(l.cartons)||0)*(Number(l.cbmPer)||0)),0);
+    while (total > CBM_MAX_40HQ) {
+      const idx = next.reduce((best,l,j)=>{ const cb=(Number(l.cbmPer)||0); return (Number(l.cartons)||0)>0 && (best<0 || cb>(Number(next[best].cbmPer)||0)) ? j : best; }, -1);
+      if (idx<0) break;
+      next[idx] = { ...next[idx], cartons:String(Math.max(0,(Number(next[idx].cartons)||0)-1)) };
+      total = next.reduce((a,l)=>a+((Number(l.cartons)||0)*(Number(l.cbmPer)||0)),0);
+    }
+    setLines(next);
+  };
+
   // Carton/CBM facts from a quote record
   const cartonFromQuote = (q) => {
     if (!q) return null;
@@ -4496,9 +4531,12 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
 
           {/* Line items */}
           <div style={{marginTop:'18px'}}>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px',gap:'8px',flexWrap:'wrap'}}>
               <span style={{fontSize:'12px',fontWeight:700,color:'#1A1A1C',textTransform:'uppercase',letterSpacing:'.05em'}}>Carton / CBM breakdown</span>
-              <button type="button" onClick={addLine} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'4px 10px',fontSize:'12px',fontWeight:500,color:'#4A4A4E',cursor:'pointer'}}>+ Add line</button>
+              <div style={{display:'flex',gap:'7px'}}>
+                <button type="button" onClick={autoFillCartons} title="Fill one 40'HQ to capacity" style={{background:'#EAF3FE',border:'1px solid #BFDBFE',borderRadius:'7px',padding:'4px 11px',fontSize:'12px',fontWeight:600,color:'#0071E3',cursor:'pointer'}}>⚡ Auto-fill container</button>
+                <button type="button" onClick={addLine} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'4px 10px',fontSize:'12px',fontWeight:500,color:'#4A4A4E',cursor:'pointer'}}>+ Add line</button>
+              </div>
             </div>
             <div style={{display:'grid',gridTemplateColumns:'1fr 78px 92px 78px 92px 26px',gap:'7px',marginBottom:'6px'}}>
               {['Description','Cartons','CBM/ctn','Kg/ctn','Line CBM',''].map((h,i)=><div key={i} style={{fontSize:'9.5px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',color:'#A0A0A4',textAlign:i>=1&&i<5?'right':'left'}}>{h}</div>)}
@@ -5119,7 +5157,7 @@ export default function App() {
         </div>
       ) : (
       <div className="main-area">
-        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='inventory')?{display:'none'}:undefined}>
+        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='inventory'||page==='shipments')?{display:'none'}:undefined}>
           <h1 className="page-title">{titles[page]||''}</h1>
           <div className="page-actions">{pageActions[page]}</div>
         </div>
@@ -5132,7 +5170,7 @@ export default function App() {
           {page==='companies'        && <Companies />}
           {page==='products'         && <Products navigate={navigate} />}
           {page==='testing'          && <Testing />}
-          {page==='shipments'        && <Shipments key={shipmentsRefresh} />}
+          {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} />}
           {page==='inventory'        && <Inventory />}
           {page==='settings'         && <KuiSettings />}
           {page==='client-relations' && <ClientRelations />}
