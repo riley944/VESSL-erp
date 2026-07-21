@@ -4267,21 +4267,20 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
 
   useEffect(()=>{
     SB.from('companies').select('id,name,type').order('name').then(({data})=>setCompanies(data||[]));
-    // POs — try with embedded client join; if PostgREST nulls the result, fall back to flat then stitch client name
+    // POs — flat query + JS stitch (embedded joins can null the whole result)
     (async()=>{
-      let { data, error } = await SB.from('purchase_orders').select('id,order_number,client_po_number,requested_ship_date,incoterm,client_company_id').order('created_at',{ascending:false}).limit(300);
+      let { data, error } = await SB.from('purchase_orders').select('id,order_number,client_po_number,requested_ship_date,incoterm,client_company_id,source_quote_id').order('created_at',{ascending:false}).limit(300);
       if (error || !data) {
         const retry = await SB.from('purchase_orders').select('id,order_number,client_po_number,client_company_id').order('created_at',{ascending:false}).limit(300);
         data = retry.data || [];
       }
-      // stitch client names from companies (avoids fragile embedded join)
       const { data: comps } = await SB.from('companies').select('id,name');
       const cmap = {}; (comps||[]).forEach(c=>{ cmap[c.id]=c.name; });
       setPos((data||[]).map(p=>({ ...p, client:{ id:p.client_company_id, name:cmap[p.client_company_id]||'' } })));
     })();
-    // Products
+    // "Products" in KUI = quote records (same source as the Products tab), which carry carton/CBM data
     (async()=>{
-      let { data } = await SB.from('products').select('id,sku,name').order('sku',{nullsFirst:false}).limit(1000);
+      const { data } = await SBQ.from('quotes').select('*').order('created_at',{ascending:false});
       setProducts(data||[]);
     })();
   },[]);
@@ -4292,27 +4291,56 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
   const addLine = () => setLines(prev=>[...prev,{ desc:'', cartons:'', cbmPer:'', weight:'' }]);
   const rmLine = i => setLines(prev=>prev.filter((_,j)=>j!==i));
 
+  // Carton/CBM facts from a quote record
+  const cartonFromQuote = (q) => {
+    if (!q) return null;
+    const L=Number(q.carton_l)||0, W=Number(q.carton_w)||0, H=Number(q.carton_h)||0;
+    const cbm = (L>0&&W>0&&H>0) ? (L*W*H)/1000000 : 0;
+    return { upc:Number(q.units_per_carton)||0, cbmPer:cbm, weight:Number(q.carton_weight)||0 };
+  };
+  // Best-effort match of a PO line to a quote record
+  const matchQuote = (quotes, { desc, sku, sourceQuoteId }) => {
+    if (sourceQuoteId) { const direct = quotes.find(q=>String(q.id)===String(sourceQuoteId)); if (direct) return direct; }
+    const d=(desc||'').trim().toLowerCase(), s=(sku||'').trim().toLowerCase();
+    if (s) { const bySku = quotes.find(q=>(q.sku||'').trim().toLowerCase()===s); if (bySku) return bySku; }
+    if (d) {
+      const exact = quotes.find(q=>(q.product||'').trim().toLowerCase()===d);
+      if (exact) return exact;
+      const partial = quotes.find(q=>{ const p=(q.product||'').trim().toLowerCase(); return p && (p.includes(d)||d.includes(p)); });
+      if (partial) return partial;
+    }
+    return null;
+  };
+
   // ── Generate from a PO — autofill everything ──
   const applyPO = async (po) => {
     const clientId = po.client?.id || '';
-    const nextForm = { ...form, poId:po.id, client:clientId,
-      incoterm: po.incoterm || form.incoterm,
-      ready: po.requested_ship_date ? String(po.requested_ship_date).slice(0,10) : '' };
-    setForm(nextForm);
-    let { data } = await SB.from('purchase_order_items').select('description,quantity,carton_info,products(name)').eq('purchase_order_id',po.id);
+    setForm(prev=>({ ...prev, poId:po.id, client:clientId,
+      incoterm: po.incoterm || prev.incoterm,
+      ready: po.requested_ship_date ? String(po.requested_ship_date).slice(0,10) : '' }));
+    let { data } = await SB.from('purchase_order_items').select('description,quantity,carton_info,master_sku,products(name,sku)').eq('purchase_order_id',po.id);
     if (!data) {
-      const retry = await SB.from('purchase_order_items').select('description,quantity,carton_info').eq('purchase_order_id',po.id);
+      const retry = await SB.from('purchase_order_items').select('description,quantity,carton_info,master_sku').eq('purchase_order_id',po.id);
       data = retry.data;
     }
+    const quoteList = products; // quote records already loaded
     if (data && data.length) {
       setLines(data.map(it=>{
+        const desc = it.description || it.products?.name || '';
+        const sku  = it.master_sku || it.products?.sku || '';
+        // first try the quote record for structured carton data, else parse carton_info text
+        const q = matchQuote(quoteList, { desc, sku, sourceQuoteId: po.source_quote_id });
+        const fromQ = cartonFromQuote(q);
         const hint = parseCartonInfo(it.carton_info);
+        const upc    = (fromQ&&fromQ.upc)    || hint.upc    || 0;
+        const cbmPer = (fromQ&&fromQ.cbmPer) || hint.cbmPer || 0;
+        const weight = (fromQ&&fromQ.weight) || hint.weight || 0;
         const qty = Number(it.quantity)||0;
-        const cartons = hint.upc ? Math.ceil(qty/hint.upc) : '';
-        return { desc: it.description || it.products?.name || '',
+        const cartons = upc>0 ? Math.ceil(qty/upc) : '';
+        return { desc,
           cartons: cartons!==''?String(cartons):'',
-          cbmPer: hint.cbmPer?hint.cbmPer.toFixed(4):'',
-          weight: hint.weight?String(hint.weight):'' };
+          cbmPer: cbmPer>0?cbmPer.toFixed(4):'',
+          weight: weight>0?String(weight):'' };
       }));
     } else {
       setLines([{ desc:'', cartons:'', cbmPer:'', weight:'' }]);
@@ -4320,17 +4348,20 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
     setPicked({ kind:'po', id:po.id, label:po.client_po_number||po.order_number||'PO', sub:po.client?.name||'' });
   };
 
-  // ── Generate from a product — one-product container, blank details ──
-  const applyProduct = (p) => {
+  // ── Generate from a product (quote record) — single-product container ──
+  const applyProduct = (q) => {
+    const c = cartonFromQuote(q);
     setForm(prev=>({ ...prev, poId:'' }));
-    setLines([{ desc: p.name || p.sku || '', cartons:'', cbmPer:'', weight:'' }]);
-    setPicked({ kind:'product', id:p.id, label:p.name||p.sku||'Product', sub:p.sku||'' });
+    setLines([{ desc: q.product || q.sku || '', cartons:'',
+      cbmPer: c&&c.cbmPer>0 ? c.cbmPer.toFixed(4) : '',
+      weight: c&&c.weight>0 ? String(c.weight) : '' }]);
+    setPicked({ kind:'product', id:q.id, label:q.product||q.sku||'Product', sub:[q.client,q.sku].filter(Boolean).join(' \u00b7 ') });
   };
 
   const resetPick = () => { setPicked(null); setForm(prev=>({...prev,poId:''})); setLines([{ desc:'', cartons:'', cbmPer:'', weight:'' }]); };
 
   const filteredPOs = pos.filter(p=>{ const q=poSearch.trim().toLowerCase(); if(!q) return true; return (p.client_po_number||'').toLowerCase().includes(q)||(p.order_number||'').toLowerCase().includes(q)||(p.client?.name||'').toLowerCase().includes(q); });
-  const filteredProducts = products.filter(p=>{ const q=prodSearch.trim().toLowerCase(); if(!q) return true; return (p.name||'').toLowerCase().includes(q)||(p.sku||'').toLowerCase().includes(q); });
+  const filteredProducts = products.filter(p=>{ const q=prodSearch.trim().toLowerCase(); if(!q) return true; return ((p.product||'')+' '+(p.client||'')+' '+(p.sku||'')+' '+(p.factory||'')).toLowerCase().includes(q); });
 
   // totals + container math
   const calc = lines.reduce((acc,l)=>{
@@ -4434,12 +4465,12 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
                 {filteredProducts.length===0 && <div className="empty" style={{padding:'40px 20px'}}><p>No products match.</p></div>}
                 {filteredProducts.map(p=>(
                   <button key={p.id} className="qp-card" onClick={()=>applyProduct(p)}>
-                    <span className="qp-avatar" style={{background:companyColor(p.name||''),color:'#fff'}}>{initials(p.name||'?')}</span>
+                    <span className="qp-avatar" style={{background:companyColor(p.client||p.product||''),color:'#fff'}}>{initials(p.client||p.product||'?')}</span>
                     <span className="qp-meta">
-                      <div className="qp-prod">{p.name||'Product'}</div>
-                      <div className="qp-sub">{p.sku||'—'}</div>
+                      <div className="qp-prod">{p.product||'Untitled product'}</div>
+                      <div className="qp-sub">{p.client||'—'}{p.factory?' \u00b7 '+p.factory:''}{p.sku?' \u00b7 '+p.sku:''}</div>
                     </span>
-                    <span className="qp-right"><div className="qp-tiers">Select →</div></span>
+                    <span className="qp-right"><div className="qp-tiers">{(Number(p.carton_l)>0)?'carton data ✓':'no carton data'}</div></span>
                   </button>
                 ))}
               </div>
