@@ -3256,22 +3256,26 @@ function FreightQuotesView({ quotes }) {
   );
   return (
     <div style={{background:'#fff',borderRadius:'16px',border:'1px solid #ECECEE',overflow:'hidden'}}>
-      <div style={{display:'grid',gridTemplateColumns:'130px 1fr 150px 110px 100px 90px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
-        {['Quote #','Client / Route','Forwarder','CBM','Containers','Status'].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i>=3&&i<5?'right':'left'}}>{h}</div>)}
+      <div style={{display:'grid',gridTemplateColumns:'120px 1fr 130px 90px 90px 96px 84px',gap:'12px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
+        {['Quote #','Client / Route','Forwarder','Pieces','CBM','Containers','Status'].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i>=3&&i<6?'right':'left'}}>{h}</div>)}
       </div>
-      {quotes.map((q,i)=>(
-        <div key={q.id} onClick={()=>reopen(q)} style={{display:'grid',gridTemplateColumns:'130px 1fr 150px 110px 100px 90px',gap:'16px',padding:'15px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+      {quotes.map((q,i)=>{
+        const pcs = (q.line_items||[]).reduce((a,l)=>a+(Number(l.pieces)||0),0);
+        return (
+        <div key={q.id} onClick={()=>reopen(q)} style={{display:'grid',gridTemplateColumns:'120px 1fr 130px 90px 90px 96px 84px',gap:'12px',padding:'15px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
           <div style={{fontFamily:'var(--mono)',fontSize:'13px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.quote_number}</div>
           <div style={{minWidth:0}}>
             <div style={{fontSize:'13.5px',fontWeight:500,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.client?.name||'—'}</div>
             <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{(q.origin||'—')+' → '+(q.destination||'—')+' · '+fd(q.created_at)}</div>
           </div>
           <div style={{fontSize:'12.5px',color:'#4A4A4E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.forwarder?.name||'—'}</div>
+          <div style={{textAlign:'right',fontSize:'13px',color:'#4A4A4E',fontVariantNumeric:'tabular-nums'}}>{pcs>0?pcs.toLocaleString():'—'}</div>
           <div style={{textAlign:'right',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{Number(q.total_cbm||0).toFixed(1)}</div>
-          <div style={{textAlign:'right',fontSize:'13.5px',color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{q.containers_needed} × 40&apos;HQ</div>
+          <div style={{textAlign:'right',fontSize:'13px',color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{q.containers_needed} × 40&apos;HQ</div>
           <div><span style={{display:'inline-flex',alignItems:'center',fontSize:'11px',fontWeight:600,borderRadius:'6px',padding:'3px 9px',color:q.status==='sent'?'#15803D':'#B45309',background:q.status==='sent'?'#DCFCE7':'#FEF3C7'}}>{q.status==='sent'?'Sent':'Draft'}</span></div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -4266,7 +4270,7 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
     number: 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase(),
     client:'', forwarder:'', poId:'', origin:'', destination:'', incoterm:'FOB', ready:'', notes:''
   });
-  const [lines, setLines] = useState([{ desc:'', cartons:'', cbmPer:'', weight:'' }]);
+  const [lines, setLines] = useState([{ desc:'', upc:'', cartons:'', cbmPer:'', weight:'' }]);
   const [saving, setSaving] = useState(false);
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
 
@@ -4293,7 +4297,7 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
   const forwarders = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
 
   const setLine = (i,k) => e => setLines(prev=>prev.map((l,j)=>j===i?{...l,[k]:e.target.value}:l));
-  const addLine = () => setLines(prev=>[...prev,{ desc:'', cartons:'', cbmPer:'', weight:'' }]);
+  const addLine = () => setLines(prev=>[...prev,{ desc:'', upc:'', cartons:'', cbmPer:'', weight:'' }]);
   const rmLine = i => setLines(prev=>prev.filter((_,j)=>j!==i));
 
   // Fill one 40'HQ to capacity. Single line → max cartons that fit under the CBM cap.
@@ -4373,12 +4377,13 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
         const qty = Number(it.quantity)||0;
         const cartons = upc>0 ? Math.ceil(qty/upc) : '';
         return { desc,
+          upc: upc>0?String(upc):'',
           cartons: cartons!==''?String(cartons):'',
           cbmPer: cbmPer>0?cbmPer.toFixed(4):'',
           weight: weight>0?String(weight):'' };
       }));
     } else {
-      setLines([{ desc:'', cartons:'', cbmPer:'', weight:'' }]);
+      setLines([{ desc:'', upc:'', cartons:'', cbmPer:'', weight:'' }]);
     }
     setPicked({ kind:'po', id:po.id, label:po.client_po_number||po.order_number||'PO', sub:po.client?.name||'' });
   };
@@ -4387,22 +4392,24 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
   const applyProduct = (q) => {
     const c = cartonFromQuote(q);
     setForm(prev=>({ ...prev, poId:'' }));
-    setLines([{ desc: q.product || q.sku || '', cartons:'',
+    setLines([{ desc: q.product || q.sku || '',
+      upc: c&&c.upc>0 ? String(c.upc) : '',
+      cartons:'',
       cbmPer: c&&c.cbmPer>0 ? c.cbmPer.toFixed(4) : '',
       weight: c&&c.weight>0 ? String(c.weight) : '' }]);
     setPicked({ kind:'product', id:q.id, label:q.product||q.sku||'Product', sub:[q.client,q.sku].filter(Boolean).join(' \u00b7 ') });
   };
 
-  const resetPick = () => { setPicked(null); setForm(prev=>({...prev,poId:''})); setLines([{ desc:'', cartons:'', cbmPer:'', weight:'' }]); };
+  const resetPick = () => { setPicked(null); setForm(prev=>({...prev,poId:''})); setLines([{ desc:'', upc:'', cartons:'', cbmPer:'', weight:'' }]); };
 
   const filteredPOs = pos.filter(p=>{ const q=poSearch.trim().toLowerCase(); if(!q) return true; return (p.client_po_number||'').toLowerCase().includes(q)||(p.order_number||'').toLowerCase().includes(q)||(p.client?.name||'').toLowerCase().includes(q); });
   const filteredProducts = products.filter(p=>{ const q=prodSearch.trim().toLowerCase(); if(!q) return true; return ((p.product||'')+' '+(p.client||'')+' '+(p.sku||'')+' '+(p.factory||'')).toLowerCase().includes(q); });
 
   // totals + container math
   const calc = lines.reduce((acc,l)=>{
-    const cartons = Number(l.cartons)||0, cbmPer = Number(l.cbmPer)||0, wt = Number(l.weight)||0;
-    acc.cartons += cartons; acc.cbm += cartons*cbmPer; acc.weight += cartons*wt; return acc;
-  }, { cartons:0, cbm:0, weight:0 });
+    const cartons = Number(l.cartons)||0, cbmPer = Number(l.cbmPer)||0, wt = Number(l.weight)||0, upc = Number(l.upc)||0;
+    acc.cartons += cartons; acc.cbm += cartons*cbmPer; acc.weight += cartons*wt; acc.pieces += cartons*upc; return acc;
+  }, { cartons:0, cbm:0, weight:0, pieces:0 });
   const containers = calc.cbm>0 ? Math.ceil(calc.cbm / CBM_MAX_40HQ) : 0;
   const utilization = containers>0 ? (calc.cbm/(containers*CBM_MAX_40HQ))*100 : 0;
 
@@ -4417,7 +4424,7 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
     total_cartons: calc.cartons, total_cbm: Number(calc.cbm.toFixed(3)),
     total_weight_kg: Number(calc.weight.toFixed(2)),
     containers_needed: containers, utilization_pct: Number(utilization.toFixed(1)),
-    line_items: lines.filter(l=>l.desc||l.cartons).map(l=>({ desc:l.desc, cartons:Number(l.cartons)||0, cbm_per:Number(l.cbmPer)||0, cbm_total:Number(((Number(l.cartons)||0)*(Number(l.cbmPer)||0)).toFixed(3)), weight:Number(l.weight)||0 })),
+    line_items: lines.filter(l=>l.desc||l.cartons).map(l=>({ desc:l.desc, upc:Number(l.upc)||0, cartons:Number(l.cartons)||0, pieces:(Number(l.cartons)||0)*(Number(l.upc)||0), cbm_per:Number(l.cbmPer)||0, cbm_total:Number(((Number(l.cartons)||0)*(Number(l.cbmPer)||0)).toFixed(3)), weight:Number(l.weight)||0 })),
     notes: form.notes||null, status,
     sent_at: status==='sent'? new Date().toISOString() : null,
   });
@@ -4538,19 +4545,24 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
                 <button type="button" onClick={addLine} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'4px 10px',fontSize:'12px',fontWeight:500,color:'#4A4A4E',cursor:'pointer'}}>+ Add line</button>
               </div>
             </div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 78px 92px 78px 92px 26px',gap:'7px',marginBottom:'6px'}}>
-              {['Description','Cartons','CBM/ctn','Kg/ctn','Line CBM',''].map((h,i)=><div key={i} style={{fontSize:'9.5px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',color:'#A0A0A4',textAlign:i>=1&&i<5?'right':'left'}}>{h}</div>)}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 66px 66px 74px 66px 78px 24px',gap:'6px',marginBottom:'6px'}}>
+              {['Description','Pcs/ctn','Cartons','CBM/ctn','Kg/ctn','Line CBM',''].map((h,i)=><div key={i} style={{fontSize:'9.5px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',color:'#A0A0A4',textAlign:i>=1&&i<6?'right':'left'}}>{h}</div>)}
             </div>
             {lines.map((l,i)=>{
               const lineCbm = (Number(l.cartons)||0)*(Number(l.cbmPer)||0);
+              const linePcs = (Number(l.cartons)||0)*(Number(l.upc)||0);
               return (
-                <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 78px 92px 78px 92px 26px',gap:'7px',marginBottom:'6px',alignItems:'center'}}>
+                <div key={i} style={{marginBottom:'6px'}}>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 66px 66px 74px 66px 78px 24px',gap:'6px',alignItems:'center'}}>
                   <input style={{...inputS,padding:'8px 9px',fontSize:'12.5px'}} value={l.desc} onChange={setLine(i,'desc')} placeholder="Product / description" />
+                  <input style={{...inputS,padding:'8px 9px',fontSize:'12.5px',textAlign:'right'}} value={l.upc} onChange={setLine(i,'upc')} placeholder="0" />
                   <input style={{...inputS,padding:'8px 9px',fontSize:'12.5px',textAlign:'right'}} value={l.cartons} onChange={setLine(i,'cartons')} placeholder="0" />
                   <input style={{...inputS,padding:'8px 9px',fontSize:'12.5px',textAlign:'right'}} value={l.cbmPer} onChange={setLine(i,'cbmPer')} placeholder="0.000" />
                   <input style={{...inputS,padding:'8px 9px',fontSize:'12.5px',textAlign:'right'}} value={l.weight} onChange={setLine(i,'weight')} placeholder="0" />
                   <div style={{fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{lineCbm>0?lineCbm.toFixed(3):'—'}</div>
                   <button type="button" onClick={()=>rmLine(i)} style={{background:'none',border:'none',color:'#C0C0C4',cursor:'pointer',fontSize:'17px',lineHeight:1}}>×</button>
+                </div>
+                {linePcs>0 && <div style={{fontSize:'10.5px',color:'#8A8A8E',paddingLeft:'10px',marginTop:'3px'}}>= {fmtNum(linePcs)} pcs</div>}
                 </div>
               );
             })}
@@ -4558,12 +4570,20 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
 
           {/* Container calc */}
           <div style={{marginTop:'18px',background:'#F7F7F9',borderRadius:'13px',padding:'16px 18px'}}>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'14px'}}>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'12px'}}>
+              <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Total pieces</div><div style={{fontSize:'20px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(calc.pieces)}</div></div>
               <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Total cartons</div><div style={{fontSize:'20px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(calc.cartons)}</div></div>
               <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Total CBM</div><div style={{fontSize:'20px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{calc.cbm.toFixed(2)}</div></div>
               <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>40&apos;HQ needed</div><div style={{fontSize:'20px',fontWeight:700,color:'#0071E3',fontVariantNumeric:'tabular-nums'}}>{containers}</div></div>
               <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Utilization</div><div style={{fontSize:'20px',fontWeight:700,color:utilization>92?'#D14343':'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{utilization.toFixed(0)}%</div></div>
             </div>
+            {containers>0 && calc.pieces>0 && (
+              <div style={{display:'flex',gap:'18px',flexWrap:'wrap',marginTop:'14px',paddingTop:'13px',borderTop:'1px solid #E6E6EA'}}>
+                <div style={{fontSize:'12px',color:'#4A4A4E'}}><b style={{color:'#1A1A1C'}}>{fmtNum(Math.round(calc.pieces/containers))}</b> pcs per container</div>
+                <div style={{fontSize:'12px',color:'#4A4A4E'}}><b style={{color:'#1A1A1C'}}>{fmtNum(Math.round(calc.cartons/containers))}</b> cartons per container</div>
+                {lines.length===1 && Number(lines[0].upc)>0 && <div style={{fontSize:'12px',color:'#4A4A4E'}}><b style={{color:'#1A1A1C'}}>{fmtNum(Number(lines[0].upc))}</b> pcs per carton</div>}
+              </div>
+            )}
             <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'12px',lineHeight:1.5}}>Based on {CBM_MAX_40HQ} CBM max per 40&apos; High-Cube container. {containers>0 && utilization<70 ? 'Low fill — consider consolidating or LCL.' : containers>0 ? 'Good fill for FCL.' : 'Add cartons and CBM to calculate.'}</div>
           </div>
 
@@ -4596,12 +4616,15 @@ function buildFreightDoc(q, clientName, forwarderName) {
   const rows = (q.line_items||[]).map(l=>
     '<tr>'
     +'<td style="padding:9px 12px;border-bottom:1px solid #eef;">'+esc(l.desc)+'</td>'
+    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;">'+(l.upc?Number(l.upc).toLocaleString():'—')+'</td>'
     +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;">'+(l.cartons||0).toLocaleString()+'</td>'
+    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;">'+(l.pieces?Number(l.pieces).toLocaleString():'—')+'</td>'
     +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;">'+(l.cbm_per||0).toFixed(4)+'</td>'
     +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;">'+(l.weight||0)+'</td>'
     +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;font-weight:600;">'+(l.cbm_total||0).toFixed(3)+'</td>'
     +'</tr>'
   ).join('');
+  const totalPieces = (q.line_items||[]).reduce((a,l)=>a+(Number(l.pieces)||0),0);
   const box = (label,val) => '<div style="flex:1;min-width:120px;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:4px;">'+label+'</div><div style="font-size:15px;color:#0f172a;font-weight:600;">'+val+'</div></div>';
   return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
     +'<title>Freight Quote '+esc(q.quote_number)+'</title></head>'
@@ -4628,7 +4651,9 @@ function buildFreightDoc(q, clientName, forwarderName) {
     +'<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;">'
       +'<thead><tr style="background:#0f172a;color:#fff;">'
         +'<th style="padding:10px 12px;text-align:left;font-weight:600;">Description</th>'
+        +'<th style="padding:10px 12px;text-align:right;font-weight:600;">Pcs/Ctn</th>'
         +'<th style="padding:10px 12px;text-align:right;font-weight:600;">Cartons</th>'
+        +'<th style="padding:10px 12px;text-align:right;font-weight:600;">Pieces</th>'
         +'<th style="padding:10px 12px;text-align:right;font-weight:600;">CBM/ctn</th>'
         +'<th style="padding:10px 12px;text-align:right;font-weight:600;">Kg/ctn</th>'
         +'<th style="padding:10px 12px;text-align:right;font-weight:600;">Total CBM</th>'
@@ -4636,6 +4661,7 @@ function buildFreightDoc(q, clientName, forwarderName) {
     // totals + container recommendation
     +'<div style="display:flex;gap:20px;margin-top:24px;flex-wrap:wrap;">'
       +'<div style="flex:2;min-width:260px;background:#f8fafc;border-radius:12px;padding:18px 20px;">'
+        +(totalPieces>0?'<div style="display:flex;justify-content:space-between;margin-bottom:10px;"><span style="color:#64748b;font-size:13px;">Total pieces</span><span style="font-weight:700;font-size:14px;">'+totalPieces.toLocaleString()+'</span></div>':'')
         +'<div style="display:flex;justify-content:space-between;margin-bottom:10px;"><span style="color:#64748b;font-size:13px;">Total cartons</span><span style="font-weight:700;font-size:14px;">'+(q.total_cartons||0).toLocaleString()+'</span></div>'
         +'<div style="display:flex;justify-content:space-between;margin-bottom:10px;"><span style="color:#64748b;font-size:13px;">Total volume</span><span style="font-weight:700;font-size:14px;">'+(q.total_cbm||0).toFixed(2)+' CBM</span></div>'
         +'<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;font-size:13px;">Total weight</span><span style="font-weight:700;font-size:14px;">'+(q.total_weight_kg||0).toLocaleString()+' kg</span></div>'
@@ -4644,6 +4670,7 @@ function buildFreightDoc(q, clientName, forwarderName) {
         +'<div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.6);margin-bottom:8px;">Container recommendation</div>'
         +'<div style="font-size:32px;font-weight:800;letter-spacing:-.02em;">'+(q.containers_needed||0)+' × 40&apos;HQ</div>'
         +'<div style="font-size:12px;color:rgba(255,255,255,.7);margin-top:6px;">'+(q.utilization_pct||0)+'% utilization · '+(q.cbm_max||68)+' CBM max/container</div>'
+        +((totalPieces>0&&q.containers_needed>0)?'<div style="font-size:12px;color:rgba(255,255,255,.85);margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.15);">'+Math.round(totalPieces/q.containers_needed).toLocaleString()+' pcs · '+Math.round((q.total_cartons||0)/q.containers_needed).toLocaleString()+' cartons per container</div>':'')
       +'</div>'
     +'</div>'
     +(q.notes?'<div style="margin-top:24px;padding:16px 18px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;font-size:13px;color:#78350f;"><b>Notes:</b> '+esc(q.notes)+'</div>':'')
