@@ -3115,6 +3115,11 @@ function Shipments({ onNewShipment }) {
       .order('created_at',{ascending:false});
     setQuotes(data||[]);
   };
+  const deleteQuote = async (id) => {
+    const { error } = await SB.from('shipment_quotes').delete().eq('id',id);
+    if (error) { alert('Could not delete: '+error.message); return; }
+    setQuotes(prev=>prev.filter(q=>q.id!==id));
+  };
   useEffect(()=>{ reload(); reloadQuotes(); },[]);
 
   const TERMINAL = ['delivered','cancelled'];
@@ -3153,7 +3158,7 @@ function Shipments({ onNewShipment }) {
       </div>
 
       {viewMode==='quotes' ? (
-        <FreightQuotesView quotes={quotes} />
+        <FreightQuotesView quotes={quotes} onDelete={deleteQuote} />
       ) : (
       <>
       {/* Tabs */}
@@ -3242,7 +3247,7 @@ function Shipments({ onNewShipment }) {
 }
 
 // ── Freight Quotes list ───────────────────────────────────────────────────────
-function FreightQuotesView({ quotes }) {
+function FreightQuotesView({ quotes, onDelete }) {
   const fd = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
   const reopen = (q) => openFreightSheet(q, q.client?.name||'', q.forwarder?.name||'');
   if (!quotes.length) return (
@@ -3256,13 +3261,13 @@ function FreightQuotesView({ quotes }) {
   );
   return (
     <div style={{background:'#fff',borderRadius:'16px',border:'1px solid #ECECEE',overflow:'hidden'}}>
-      <div style={{display:'grid',gridTemplateColumns:'120px 1fr 130px 90px 90px 96px 84px',gap:'12px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
-        {['Quote #','Client / Route','Forwarder','Pieces','CBM','Containers','Status'].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i>=3&&i<6?'right':'left'}}>{h}</div>)}
+      <div style={{display:'grid',gridTemplateColumns:'120px 1fr 130px 90px 90px 96px 84px 34px',gap:'12px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
+        {['Quote #','Client / Route','Forwarder','Pieces','CBM','Containers','Status',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i>=3&&i<6?'right':'left'}}>{h}</div>)}
       </div>
       {quotes.map((q,i)=>{
         const pcs = (q.line_items||[]).reduce((a,l)=>a+(Number(l.pieces)||0),0);
         return (
-        <div key={q.id} onClick={()=>reopen(q)} style={{display:'grid',gridTemplateColumns:'120px 1fr 130px 90px 90px 96px 84px',gap:'12px',padding:'15px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+        <div key={q.id} onClick={()=>reopen(q)} style={{display:'grid',gridTemplateColumns:'120px 1fr 130px 90px 90px 96px 84px 34px',gap:'12px',padding:'15px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
           <div style={{fontFamily:'var(--mono)',fontSize:'13px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.quote_number}</div>
           <div style={{minWidth:0}}>
             <div style={{fontSize:'13.5px',fontWeight:500,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.client?.name||'—'}</div>
@@ -3273,6 +3278,9 @@ function FreightQuotesView({ quotes }) {
           <div style={{textAlign:'right',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{Number(q.total_cbm||0).toFixed(1)}</div>
           <div style={{textAlign:'right',fontSize:'13px',color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{q.containers_needed} × 40&apos;HQ</div>
           <div><span style={{display:'inline-flex',alignItems:'center',fontSize:'11px',fontWeight:600,borderRadius:'6px',padding:'3px 9px',color:q.status==='sent'?'#15803D':'#B45309',background:q.status==='sent'?'#DCFCE7':'#FEF3C7'}}>{q.status==='sent'?'Sent':'Draft'}</span></div>
+          <button title="Delete quote sheet" onClick={e=>{e.stopPropagation(); if(window.confirm('Delete freight quote '+q.quote_number+'? This cannot be undone.')) onDelete&&onDelete(q.id);}} style={{background:'none',border:'none',cursor:'pointer',padding:'4px',borderRadius:'6px',display:'flex',alignItems:'center',justifyContent:'center',color:'#C0C0C4'}} onMouseEnter={e=>{e.currentTarget.style.color='#DC2626';e.currentTarget.style.background='#FEE2E2';}} onMouseLeave={e=>{e.currentTarget.style.color='#C0C0C4';e.currentTarget.style.background='none';}}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
+          </button>
         </div>
         );
       })}
@@ -4391,7 +4399,15 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
   // ── Generate from a product (quote record) — single-product container ──
   const applyProduct = (q) => {
     const c = cartonFromQuote(q);
-    setForm(prev=>({ ...prev, poId:'' }));
+    // match the quote's client name to a company record so the client autofills
+    const qName = (q.client||'').trim().toLowerCase();
+    let matchId = '';
+    if (qName) {
+      const exact = companies.find(co=>(co.name||'').trim().toLowerCase()===qName);
+      const partial = exact || companies.find(co=>{ const n=(co.name||'').trim().toLowerCase(); return n && (n.includes(qName)||qName.includes(n)); });
+      if (partial) matchId = partial.id;
+    }
+    setForm(prev=>({ ...prev, poId:'', client: matchId || prev.client }));
     setLines([{ desc: q.product || q.sku || '',
       upc: c&&c.upc>0 ? String(c.upc) : '',
       cartons:'',
