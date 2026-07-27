@@ -371,10 +371,20 @@ function Login() {
   const [email, setEmail] = useState('');
   const [pass,  setPass]  = useState('');
   const [err,   setErr]   = useState('');
+  const [mode,  setMode]  = useState('signin');
+  const [note,  setNote]  = useState('');
+  const [busy,  setBusy]  = useState(false);
   const submit = async () => {
     setErr('');
     const { error } = await SB.auth.signInWithPassword({ email, password: pass });
     if (error) setErr(error.message);
+  };
+  const sendReset = async () => {
+    setErr(''); setNote(''); setBusy(true);
+    const { error } = await SB.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin });
+    setBusy(false);
+    if (error) setErr(error.message);
+    else setNote('If that email has an account, a reset link is on its way. Check your inbox.');
   };
   return (
     <div className="login-wrap">
@@ -382,10 +392,54 @@ function Login() {
         <div className="login-mark">
           <img className="login-logo-img" src="/logo.png" alt="King Universal" />
         </div>
-        <div className="login-sub">Operations Platform · Sign in</div>
-        <input className="login-field" type="email" placeholder="Work email" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()} />
-        <input className="login-field" type="password" placeholder="Password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()} />
-        <button className="btn-login" onClick={submit}>Sign In</button>
+        <div className="login-sub">{mode==='signin' ? 'Operations Platform · Sign in' : 'Operations Platform · Reset password'}</div>
+        <input className="login-field" type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==='Enter'&&(mode==='signin'?submit():sendReset())} />
+        {mode==='signin' ? (
+          <>
+            <input className="login-field" type="password" placeholder="Password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()} />
+            <button className="btn-login" onClick={submit}>Sign In</button>
+            <button className="login-alt" onClick={()=>{setMode('forgot');setErr('');setNote('');}}>Forgot password?</button>
+          </>
+        ) : (
+          <>
+            <button className="btn-login" onClick={sendReset} disabled={busy||!email.trim()}>{busy?'Sending…':'Send reset link'}</button>
+            <button className="login-alt" onClick={()=>{setMode('signin');setErr('');setNote('');}}>← Back to sign in</button>
+          </>
+        )}
+        <div className="login-note">{note}</div>
+        <div className="login-error">{err}</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Reset Password (recovery link landing) ───────────────────────────────────
+function ResetPassword({ onDone }) {
+  const [p1,   setP1]   = useState('');
+  const [p2,   setP2]   = useState('');
+  const [err,  setErr]  = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setErr('');
+    if (p1.length < 8) return setErr('Password must be at least 8 characters.');
+    if (p1 !== p2)     return setErr('Passwords do not match.');
+    setBusy(true);
+    const { error } = await SB.auth.updateUser({ password: p1 });
+    setBusy(false);
+    if (error) return setErr(error.message);
+    try { window.history.replaceState({}, '', window.location.pathname); } catch(e){}
+    onDone();
+  };
+  return (
+    <div className="login-wrap">
+      <div className="login-card">
+        <div className="login-mark">
+          <img className="login-logo-img" src="/logo.png" alt="King Universal" />
+        </div>
+        <div className="login-sub">Operations Platform · Choose a new password</div>
+        <input className="login-field" type="password" placeholder="New password" value={p1} onChange={e=>setP1(e.target.value)} />
+        <input className="login-field" type="password" placeholder="Confirm new password" value={p2} onChange={e=>setP2(e.target.value)} onKeyDown={e=>e.key==='Enter'&&save()} />
+        <button className="btn-login" onClick={save} disabled={busy}>{busy?'Saving…':'Set new password'}</button>
         <div className="login-error">{err}</div>
       </div>
     </div>
@@ -5140,6 +5194,7 @@ export default function App() {
   const [page,    setPage]    = useState('dashboard');
   const [params,  setParams]  = useState({});
   const [loading, setLoading] = useState(true);
+  const [recovery, setRecovery] = useState(false);
 
   const pageActions = {
     orders:    <button className="btn btn-dark" onClick={()=>setModal('create-po')}>+ New PO</button>,
@@ -5169,16 +5224,20 @@ export default function App() {
   }, []);
 
   useEffect(()=>{
+    // recovery links land back here as #access_token=...&type=recovery
+    if (typeof window !== 'undefined' && /type=recovery/.test(window.location.hash)) setRecovery(true);
     SB.auth.getSession().then(({data:{session}})=>{
       setUser(session?.user||null); setSession(session||null); setLoading(false);
     });
-    const {data:{subscription}} = SB.auth.onAuthStateChange((_,session)=>{
+    const {data:{subscription}} = SB.auth.onAuthStateChange((event,session)=>{
+      if (event === 'PASSWORD_RECOVERY') setRecovery(true);
       setUser(session?.user||null); setSession(session||null);
     });
     return ()=>subscription.unsubscribe();
   },[]);
 
   if (loading) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
+  if (recovery) return <ResetPassword onDone={()=>setRecovery(false)} />;
   if (!user)   return <Login />;
 
   const titles = {dashboard:'Dashboard','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',shipments:'Shipments',quotes:'Quotes','client-relations':'Client Relations'};

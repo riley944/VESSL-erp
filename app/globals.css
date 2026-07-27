@@ -43,6 +43,9 @@ html,body{height:100%;overflow:hidden;font-family:var(--sans);font-size:14px;col
   font-family:var(--sans);font-size:14px;font-weight:600;cursor:pointer;margin-top:6px;letter-spacing:.01em;transition:.15s;box-shadow:var(--shadow-md);}
 .btn-login:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(11,21,48,.3);}
 .login-error{color:var(--hot);font-size:13px;margin-top:12px;min-height:18px;}
+.login-alt{width:100%;background:none;border:none;margin-top:12px;font-family:var(--sans);font-size:12.5px;color:var(--muted);cursor:pointer;text-decoration:underline;text-underline-offset:3px;}
+.login-alt:hover{color:var(--ink);}
+.login-note{color:var(--muted);font-size:12.5px;margin-top:12px;line-height:1.5;}
 
 /* ── SHELL (CSS Grid — sidebar & topbar never scroll) ───── */
 .app-shell{
