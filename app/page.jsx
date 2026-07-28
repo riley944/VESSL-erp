@@ -167,19 +167,19 @@ function OrderCard({ p, navigate, onStatus }){
 function PoToolbar({ rows, search, setSearch, client, setClient, status, setStatus }){
   const clients = distinctClients(rows);
   const clientOptions = [
-    { value:'all', label:'All clients' },
+    { value:'all', label:'All Clients' },
     ...clients.map(([c,n])=>({ value:c, label:c, color:companyColor(c), count:n })),
   ];
   const statusOptions = [
-    { value:'all', label:'All statuses' },
+    { value:'all', label:'All Statuses' },
     ...SO_STATUSES.map(s=>{ const m=SO_SM[s]; return { value:s, label:(m&&m.label)||s.replace(/_/g,' '), color:m&&m.color, bg:m&&m.bg }; }),
   ];
   return (
     <div className="po-toolbar">
       <input className="po-search" placeholder="Search PO #, client, or product…" value={search} onChange={e=>setSearch(e.target.value)} />
       <div className="fs-row">
-        <FilterSelect label="All clients"  value={client} onChange={setClient} options={clientOptions} />
-        <FilterSelect label="All statuses" value={status} onChange={setStatus} options={statusOptions} />
+        <FilterSelect label="All Clients"  value={client} onChange={setClient} options={clientOptions} />
+        <FilterSelect label="All Statuses" value={status} onChange={setStatus} options={statusOptions} />
       </div>
     </div>
   );
@@ -935,11 +935,11 @@ function SalesOrders({navigate}){
   const totalMgn=totals.rev>0?(totals.rev-totals.cost)/totals.rev*100:null;
   const totalUnits = shown.reduce((a,so)=>a+(so.sales_order_items||[]).reduce((b,i)=>b+(Number(i.quantity)||0),0),0);
   const clientOptions = [
-    { value:'all', label:'All clients' },
+    { value:'all', label:'All Clients' },
     ...clients.map(c=>({ value:c, label:c, color:companyColor(c) })),
   ];
   const statusOptions = [
-    { value:'all', label:'All statuses' },
+    { value:'all', label:'All Statuses' },
     ...SO_STATUSES.map(s=>{ const m=SO_SM[s]; return { value:s, label:(m&&m.label)||s.replace(/_/g,' '), color:m&&m.color, bg:m&&m.bg }; }),
   ];
   return (
@@ -989,9 +989,9 @@ function SalesOrders({navigate}){
       {/* Client + status filters */}
       <div className="fs-row" style={{marginBottom:'18px'}}>
         {clients.length>1 && (
-          <FilterSelect label="All clients" value={clientF} onChange={setClientF} options={clientOptions} />
+          <FilterSelect label="All Clients" value={clientF} onChange={setClientF} options={clientOptions} />
         )}
-        <FilterSelect label="All statuses" value={statusF} onChange={setStatusF} options={statusOptions} />
+        <FilterSelect label="All Statuses" value={statusF} onChange={setStatusF} options={statusOptions} />
       </div>
 
       {/* Orders — distinct 2-col card grid */}

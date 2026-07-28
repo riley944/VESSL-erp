@@ -695,14 +695,16 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
    Trigger reuses the search-bar shadow from SalesOrders; the floating panel
    reuses the elevation already used by .tb-dropdown. Dots and counts reuse the
    existing .chip-dot / .chip-count classes. */
-.fs-btn{display:inline-flex;align-items:center;max-width:100%;padding:7px 10px 7px 12px;border:1px solid #EAEAEE;border-radius:10px;background:#fff;font-family:var(--sans);font-size:12.5px;font-weight:500;color:#1A1A1C;cursor:pointer;transition:.13s;box-shadow:0 0 0 1px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.04);}
+.fs-btn{display:inline-flex;align-items:center;min-width:200px;max-width:100%;padding:11px 12px 11px 14px;border:1px solid #EAEAEE;border-radius:10px;background:#fff;font-family:var(--sans);font-size:13.5px;font-weight:500;color:#1A1A1C;cursor:pointer;transition:.13s;box-shadow:0 0 0 1px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.04);}
 .fs-btn:hover{border-color:#d6dce8;}
 .fs-btn:focus-visible{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
 .fs-btn.open{border-color:var(--accent);}
 .fs-btn-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .fs-caret{flex-shrink:0;margin-left:6px;color:#8A8A8E;}
-.fs-panel{position:fixed;z-index:200;padding:5px;background:#fff;border:1px solid #EAEAEE;border-radius:12px;max-width:calc(100vw - 16px);overflow-y:auto;box-shadow:0 0 0 1px rgba(0,0,0,.02), 0 8px 28px -6px rgba(20,20,40,.16);}
-.fs-opt{display:flex;align-items:center;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:12.5px;color:#1A1A1C;}
+/* Sized to its widest option, not to the trigger. The 380px cap is mirrored by
+   PANEL_MAX in FilterSelect.jsx, which clamps `left` so the panel stays on screen. */
+.fs-panel{position:fixed;z-index:200;padding:5px;background:#fff;border:1px solid #EAEAEE;border-radius:12px;width:max-content;max-width:min(380px, calc(100vw - 16px));overflow-y:auto;box-shadow:0 0 0 1px rgba(0,0,0,.02), 0 8px 28px -6px rgba(20,20,40,.16);}
+.fs-opt{display:flex;align-items:center;padding:9px 11px;border-radius:8px;cursor:pointer;font-size:13.5px;color:#1A1A1C;}
 .fs-opt.active{background:var(--soft-2);}
 .fs-opt.sel{font-weight:600;}
 .fs-opt-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -723,4 +725,6 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 .fs-row{display:flex;flex-wrap:wrap;gap:8px;}
 @media (max-width: 640px){
   .fs-row{flex-direction:column;align-items:stretch;}
+  /* full width when stacked; drop the min-width so it can never force overflow */
+  .fs-btn{min-width:0;width:100%;}
 }

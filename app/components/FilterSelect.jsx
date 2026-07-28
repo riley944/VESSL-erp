@@ -7,6 +7,9 @@ import { createPortal } from 'react-dom';
 // becomes an overflow-x:auto scroll container on narrow screens (globals.css,
 // mobile media query), which would clip an in-flow panel.
 let fsSeq = 0;
+// Panel is content-sized in CSS (width:max-content). This cap must stay in sync with
+// the max-width on .fs-panel in globals.css — it is what the viewport clamp measures against.
+const PANEL_MAX = 380;
 export function FilterSelect({ label, value, onChange, options = [] }){
   const [open,   setOpen]   = useState(false);
   const [active, setActive] = useState(-1);
@@ -25,13 +28,15 @@ export function FilterSelect({ label, value, onChange, options = [] }){
     const el = btnRef.current; if (!el) return;
     const r = el.getBoundingClientRect();
     const gutter = 8;
-    const width  = Math.max(r.width, 200);
-    const left   = Math.max(gutter, Math.min(r.left, window.innerWidth - width - gutter));
+    // clamp against the widest the panel is allowed to get, so it can never overflow the
+    // viewport whatever the longest label turns out to be
+    const cap    = Math.min(PANEL_MAX, window.innerWidth - gutter*2);
+    const left   = Math.max(gutter, Math.min(r.left, window.innerWidth - cap - gutter));
     const below  = window.innerHeight - r.bottom - 12;
     const above  = r.top - 12;
     const flip   = below < 180 && above > below;
     setPos({
-      left, width,
+      left, minW: r.width,
       top:    flip ? null : r.bottom + 6,
       bottom: flip ? window.innerHeight - r.top + 6 : null,
       maxH:   Math.max(140, Math.min(320, flip ? above : below)),
@@ -98,7 +103,7 @@ export function FilterSelect({ label, value, onChange, options = [] }){
       </button>
       {open && pos && createPortal(
         <div ref={panelRef} id={listId} role="listbox" className="fs-panel"
-          style={{ left:pos.left+'px', width:pos.width+'px', maxHeight:pos.maxH+'px',
+          style={{ left:pos.left+'px', minWidth:pos.minW+'px', maxHeight:pos.maxH+'px',
                    ...(pos.top != null ? { top:pos.top+'px' } : { bottom:pos.bottom+'px' }) }}>
           {options.map((o,i)=>(
             <div key={o.value} id={listId+'-'+i} data-idx={i} role="option" aria-selected={o.value === value}
