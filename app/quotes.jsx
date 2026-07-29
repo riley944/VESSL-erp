@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { SBQ } from "@/lib/supabaseQuotes";
 import { SB } from "@/lib/supabase";
+import { FilterSelect } from "@/app/components/FilterSelect";
 
 // ============================================================
 //  SUPABASE CONNECTION
@@ -245,6 +246,10 @@ function quoteSummary(q) {
     avgMargin: margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : 0,
   };
 }
+
+// Dropdown-only sentinel for "show every client". activeClient itself stays null in that
+// case — it is a view selector, and a string here would flip the router to "clientQuotes".
+const ALL = "__all_clients__";
 
 // ---------- main platform ----------
 function Platform({ session }) {
@@ -521,6 +526,16 @@ function Platform({ session }) {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [quotes]);
 
+  const clientOptions = [
+    { value: ALL, label: "All Clients", count: quotes.length },
+    ...clients.map((c) => ({
+      value: c.name,
+      label: c.name,
+      color: clientColor(c.name).accent,
+      count: c.quotes.length,
+    })),
+  ];
+
   const searching = search.trim() !== "";
   const searchResults = useMemo(() => {
     const s = search.toLowerCase();
@@ -604,19 +619,13 @@ function Platform({ session }) {
       </div>
 
       {!searching && (
-        <div style={S.chipRow}>
-          <button style={{ ...S.chip, ...(activeClient === null ? S.chipActive : {}) }} onClick={() => { setActiveClient(null); setExpanded(null); }}>
-            <Users size={13} /> All Clients
-          </button>
-          {clients.map((c) => {
-            const col = clientColor(c.name);
-            const on = activeClient === c.name;
-            return (
-              <button key={c.name} style={{ ...S.chip, ...(on ? { ...S.chipActive, background: col.accent, borderColor: col.accent, color: "#0b1120" } : { background: "#ffffff", borderColor: "#e7eaf0", color: col.accent }) }} onClick={() => { setActiveClient(c.name); setExpanded(null); }}>
-                {c.name} <span style={S.chipCount}>{c.quotes.length}</span>
-              </button>
-            );
-          })}
+        <div className="fs-row" style={{ maxWidth: 1280, margin: "0 auto 20px" }}>
+          <FilterSelect
+            label="All Clients"
+            value={activeClient ?? ALL}
+            onChange={(v) => { setActiveClient(v === ALL ? null : v); setExpanded(null); }}
+            options={clientOptions}
+          />
         </div>
       )}
 
