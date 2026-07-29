@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 
 // ── FilterSelect (shared dropdown for client / status filters) ───────────────
@@ -28,20 +28,32 @@ export function FilterSelect({ label, value, onChange, options = [] }){
     const el = btnRef.current; if (!el) return;
     const r = el.getBoundingClientRect();
     const gutter = 8;
-    // clamp against the widest the panel is allowed to get, so it can never overflow the
-    // viewport whatever the longest label turns out to be
+    // Once the panel is mounted, clamp against its real width. On the first frame it does
+    // not exist yet, so fall back to the cap — the widest it can possibly be — which errs
+    // toward keeping it on screen. The layout effect below re-places with the measurement.
     const cap    = Math.min(PANEL_MAX, window.innerWidth - gutter*2);
-    const left   = Math.max(gutter, Math.min(r.left, window.innerWidth - cap - gutter));
+    const width  = panelRef.current ? panelRef.current.offsetWidth : cap;
+    const left   = Math.max(gutter, Math.min(r.left, window.innerWidth - width - gutter));
     const below  = window.innerHeight - r.bottom - 12;
     const above  = r.top - 12;
     const flip   = below < 180 && above > below;
-    setPos({
+    const next   = {
       left, minW: r.width,
       top:    flip ? null : r.bottom + 6,
       bottom: flip ? window.innerHeight - r.top + 6 : null,
       maxH:   Math.max(140, Math.min(320, flip ? above : below)),
-    });
+    };
+    // Returning the same object when nothing moved lets React bail out of the re-render,
+    // so the measure pass settles after one extra frame instead of looping.
+    setPos(p => (p && p.left === next.left && p.minW === next.minW && p.top === next.top
+              && p.bottom === next.bottom && p.maxH === next.maxH) ? p : next);
   },[]);
+
+  // Re-place as soon as the panel exists, now that its width can be measured. useLayoutEffect
+  // so the correction is applied before paint rather than showing as a visible jump.
+  useLayoutEffect(()=>{
+    if (open && pos) place();
+  },[open, pos, place]);
 
   useEffect(()=>{
     if (!open) return;
