@@ -1466,6 +1466,7 @@ function CreateSOModal({onClose,onCreated}){
   const filtQ=qSearch?quotes.filter(q=>(q.product||'').toLowerCase().includes(qSearch.toLowerCase())||(q.client||'').toLowerCase().includes(qSearch.toLowerCase())||(q.factory||'').toLowerCase().includes(qSearch.toLowerCase())||(q.sku||'').toLowerCase().includes(qSearch.toLowerCase())):quotes;
   const filtPOs=availPOs.filter(p=>!poSearch||(p.client_po_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.order_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.companies?.name||'').toLowerCase().includes(poSearch.toLowerCase()));
   const submit=async()=>{
+    if(!form.clientId){window._toast?.('Client is required','err');return;}
     if(!form.clientPO.trim()){window._toast?.('Client PO number is required','err');return;}
     if(!items.filter(it=>it.desc.trim()).length){window._toast?.('Add at least one line item','err');return;}
     setLoading(true);
@@ -3434,6 +3435,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [extraPick, setExtraPick] = useState(null);
   const [extraTierIdx, setExtraTierIdx] = useState(0);
   const [extraMsg, setExtraMsg] = useState('');
+  const [clientNote, setClientNote] = useState('');
   const [refsReady, setRefsReady] = useState(false);
   const [seeded, setSeeded] = useState(false);
   const [items, setItems] = useState([{prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
@@ -3553,22 +3555,22 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     return `${q.product} ${q.client} ${q.factory} ${q.sku} ${q.country}`.toLowerCase().includes(s);
   });
 
+  // Resolve a quote's free-text client name to an existing company row.
+  // Exact match only — trimmed and case-insensitive. No fuzzy contains match
+  // (it resolved any "Legoland <region>" variant to the generic "Legoland" row)
+  // and no auto-create; an unmatched client is left for the user to pick.
+  const findClient = name => {
+    const n = (name||'').trim().toLowerCase();
+    return n ? clients.find(c=>(c.name||'').trim().toLowerCase()===n) : undefined;
+  };
+
   // when a quote+tier is chosen, prefill the PO form & line item
   const applyQuote = async (q, ti=0) => {
     setPicked(q); setTierIdx(ti);
     const tiers=tiersOf(q); const t=tiers[ti]||{};
     const matchFactory = factories.find(fc=>(fc.name||'').toLowerCase()===(q.factory||'').toLowerCase());
-    let matchClient  = clients.find(c=>(c.name||'').toLowerCase()===(q.client||'').toLowerCase());
-    // Fuzzy fallback: try contains match
-    if (!matchClient && q.client) {
-      const ql = (q.client||'').toLowerCase();
-      matchClient = clients.find(c=>(c.name||'').toLowerCase().includes(ql) || ql.includes((c.name||'').toLowerCase()));
-    }
-    // Still no match — upsert into vessl.companies so client always gets set
-    if (!matchClient && q.client) {
-      const { data: co } = await SB.from('companies').upsert({name:q.client,type:'client'},{onConflict:'name,type'}).select('id,name,pallet_info').single();
-      if (co) { matchClient = co; setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]); }
-    }
+    const matchClient = findClient(q.client);
+    setClientNote(matchClient ? '' : (q.client||'').trim());
     const matchProduct = products.find(p=>(q.sku && (p.sku||'').toLowerCase()===(q.sku||'').toLowerCase()) || (p.name||'').toLowerCase()===(q.product||'').toLowerCase());
     setForm(prev=>({...prev,
       factoryId: matchFactory?matchFactory.id:prev.factoryId,
@@ -3590,9 +3592,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     setItems(prev=>[...prev, newItem]);
     // If no client set yet on this PO, pull it from this quote's client
     if (!form.clientId && q.client) {
-      let mc = clients.find(c=>(c.name||'').toLowerCase()===(q.client||'').toLowerCase());
-      if (!mc) { const { data: co } = await SB.from('companies').upsert({name:q.client,type:'client'},{onConflict:'name,type'}).select('id,name,pallet_info').single(); if(co){ mc=co; setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]); } }
+      const mc = findClient(q.client);
       if (mc) setForm(prev=>({...prev,clientId:mc.id,pallet:mc.pallet_info||prev.pallet}));
+      setClientNote(mc ? '' : (q.client||'').trim());
     }
     setAddingItem(false); setExtraPick(null); setExtraSearch(''); setExtraTierIdx(0);
     setExtraMsg('✓ '+( q.product||'Item')+' added to line items');
@@ -3798,6 +3800,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
               <option value="">Unassigned</option>
               {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
+            {clientNote && !form.clientId && <div style={{fontSize:'12px',color:'#d97706',marginTop:'6px'}}>No client matches “{clientNote}” from the quote — pick one above.</div>}
             {!showNewClient
               ? <button className="btn btn-ghost btn-sm" style={{marginTop:'8px'}} onClick={()=>setShowNewClient(true)}>+ New client</button>
               : <div style={{display:'flex',gap:'8px',marginTop:'8px',alignItems:'center'}}>
