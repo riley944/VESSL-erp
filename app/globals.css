@@ -728,3 +728,40 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   /* full width when stacked; drop the min-width so it can never force overflow */
   .fs-btn{min-width:0;width:100%;}
 }
+
+/* ── SIZE GRID (optional per-line size breakdown) ───────── */
+/* Caption + small input follows the .item-sub-row pattern used inside PO and
+   SO line items; the field frame follows the quote tier editor in quotes.jsx.
+   Flexbox throughout — there is no input-matrix grid in this codebase. */
+.sg{display:flex;flex-direction:column;gap:8px;}
+.sg-head{display:flex;flex-wrap:wrap;gap:10px;}
+.sg-field{display:flex;flex-direction:column;gap:3px;flex:0 0 78px;}
+.sg-field-scale{flex:0 0 168px;}
+.sg-cap{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;}
+.sg-select,.sg-input{border:1px solid var(--line);background:#fff;border-radius:8px;
+  padding:7px 9px;font-size:13px;font-family:var(--sans);color:var(--ink);width:100%;}
+.sg-select:focus,.sg-input:focus{border-color:var(--accent);outline:none;}
+.sg-input{font-family:var(--mono);text-align:right;}
+.sg-grid{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px;
+  background:var(--soft);border:1px solid var(--line-2);border-radius:10px;}
+.sg-total{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:0 2px;}
+.sg-total-k{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;}
+.sg-total-v{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--ink);}
+.sg-hint{font-size:11.5px;color:var(--faint);line-height:1.5;}
+/* Shown instead of silently discarding typed quantities when the scale is cleared. */
+.sg-warn{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:9px 12px;
+  background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;font-size:12.5px;color:#9a3412;}
+.sg-warn-actions{display:flex;gap:8px;margin-left:auto;}
+.sg-warn-btn{background:#fff;border:1px solid #fed7aa;color:#9a3412;border-radius:7px;
+  padding:5px 11px;font-size:12px;font-weight:600;font-family:var(--sans);cursor:pointer;}
+.sg-warn-btn.danger{background:#9a3412;border-color:#9a3412;color:#fff;}
+@media (max-width: 640px){
+  .sg-field,.sg-field-scale{flex:1 1 72px;}
+  .sg-warn-actions{margin-left:0;}
+}
+/* Once a scale is picked the line's own Qty box is replaced by this read-only
+   display — quantity comes from the grid, so it must not read as a dead input. */
+.qty-from-sizes{display:flex;flex-direction:column;align-items:flex-end;gap:1px;padding:6px 9px;
+  background:var(--soft-2);border:1px dashed var(--line);border-radius:5px;}
+.qfs-v{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink);line-height:1.2;}
+.qfs-k{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);font-weight:600;}
