@@ -1475,7 +1475,7 @@ function CreateSOModal({onClose,onCreated}){
     const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:form.shipMethod||null,status:'received'}).select().single();
     if(e0||!so){alert('Error: '+(e0?.message||'unknown'));setLoading(false);return;}
     const toIns=items.filter(it=>it.desc.trim()).map(it=>({sales_order_id:so.id,description:it.desc.trim(),client_sku:it.sku||null,quantity:Number(it.qty)||null,client_price:Number(it.price)||null,currency:form.currency,_quoteId:it.quoteId,_tierIdx:it.tierIdx||0}));
-    if(toIns.length) await SB.from('sales_order_items').insert(toIns.map(({_quoteId,_tierIdx,...rest})=>rest));
+    if(toIns.length) await SB.from('sales_order_items').insert(toIns.map(({_quoteId,_tierIdx,...rest})=>({...rest,quote_id:_quoteId||null})));
     if(linkedPOIds.length) await SB.from('sales_order_pos').insert(linkedPOIds.map(pid=>({sales_order_id:so.id,purchase_order_id:pid})));
     for(const it of toIns){
       if(it._quoteId&&Number(it.client_price)>0){
