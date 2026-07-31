@@ -8,6 +8,7 @@ import {
 import { SBQ } from "@/lib/supabaseQuotes";
 import { SB } from "@/lib/supabase";
 import { FilterSelect } from "@/app/components/FilterSelect";
+import { SIZE_SCALES } from "@/app/components/SizeGrid";
 
 // ============================================================
 //  SUPABASE CONNECTION
@@ -160,7 +161,7 @@ function rowToForm(r) {
   return {
     id: r.id,
     quoteDate: r.quote_date || "", product: r.product || "",
-    sku: r.sku || "", notes: r.notes || "",
+    sku: r.sku || "", sizeScale: r.size_scale || "", notes: r.notes || "",
     client: r.client || "", clientContact: r.client_contact || "", clientEmail: r.client_email || "",
     clientPhone: r.client_phone || "", clientAddress: r.client_address || "",
     factory: r.factory || "", factoryContact: r.factory_contact || "", factoryEmail: r.factory_email || "",
@@ -186,7 +187,7 @@ function formToRow(f) {
   const first = f.tiers && f.tiers[0] ? f.tiers[0] : {};
   return {
     quote_date: f.quoteDate || null, product: f.product || null,
-    sku: f.sku || null, qty: num(first.qty), notes: f.notes || null,
+    sku: f.sku || null, size_scale: f.sizeScale || null, qty: num(first.qty), notes: f.notes || null,
     client: f.client || null, client_contact: f.clientContact || null, client_email: f.clientEmail || null,
     client_phone: f.clientPhone || null, client_address: f.clientAddress || null,
     factory: f.factory || null, factory_contact: f.factoryContact || null, factory_email: f.factoryEmail || null,
@@ -203,8 +204,13 @@ function formToRow(f) {
 
 const PRESET_QTYS = [500, 1000, 2500, 5000];
 
+// Sizes have historically been baked into the SKU string (LHS-170 - Large, BG-101-2XL).
+// If one is still there, recording a scale as well would double it downstream.
+const SKU_SIZE_SUFFIX = /[-_\/ ]\s*(?:[0-9]?X{0,3}(?:S|M|L|XS|SM|MED|LG|XL|XXL|SMALL|MEDIUM|LARGE|XLARGE|XXLARGE))\s*$/i;
+const skuLooksSized = (sku) => SKU_SIZE_SUFFIX.test((sku || "").trim());
+
 const BLANK = {
-  id: null, quoteDate: "", product: "", sku: "", notes: "",
+  id: null, quoteDate: "", product: "", sku: "", sizeScale: "", notes: "",
   updatedAt: "", updatedBy: "",
   client: "", clientContact: "", clientEmail: "", clientPhone: "", clientAddress: "",
   factory: "", factoryContact: "", factoryEmail: "", factoryPhone: "", country: "", leadTime: "", hts: "",
@@ -1437,6 +1443,21 @@ function Field({ label, k, type = "text", placeholder = "", suffix, f, set }) {
   );
 }
 
+// Field renders an <input>; this is its <select> sibling, sharing the same label
+// wrapper so the two sit together on a FormSection grid.
+function SelectField({ label, k, placeholder, options, hint, f, set }) {
+  return (
+    <label style={S.field}>
+      <span style={S.fieldLabel}>{label}</span>
+      <select style={S.select} value={f[k] ?? ""} onChange={set(k)}>
+        <option value="">{placeholder}</option>
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      {hint && <span style={S.fieldWarn}>{hint}</span>}
+    </label>
+  );
+}
+
 function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [], contacts = [], onSaveFactory, onSaveContact, userEmail }) {
   const [f, setF] = useState(() => ({ ...initial, tiers: (initial.tiers && initial.tiers.length ? initial.tiers.map((t) => ({ ...t })) : [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }]) }));
   const [showClientSug, setShowClientSug] = useState(false);
@@ -1447,6 +1468,8 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
     const v = e && e.target ? (e.target.type === "checkbox" ? e.target.checked : e.target.value) : e;
     setF((p) => ({ ...p, [k]: v }));
   };
+  // Warn only -- the user may be part-way through stripping the suffix off the SKU.
+  const sizeClash = !!f.sizeScale && skuLooksSized(f.sku);
 
   const clientMatches = (() => {
     const typed = (f.client || "").trim().toLowerCase();
@@ -1541,6 +1564,10 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
         <div style={S.modalBody}>
           <FormSection icon={<Box size={15} />} title="Product">
             <Field label="SKU" k="sku" placeholder="Internal SKU" f={f} set={set} />
+            <SelectField label="Size Scale" k="sizeScale" placeholder="— no sizes —"
+              options={SIZE_SCALES.map((s) => ({ value: s.key, label: s.label }))}
+              hint={sizeClash ? "SKU already ends in a size — with a scale set too, order lines would double it (…-Large-S)." : null}
+              f={f} set={set} />
             <Field label="Product" k="product" placeholder="e.g. Needlepoint Belt" f={f} set={set} />
             <Field label="HTS Code" k="hts" placeholder="Tariff code (per product)" f={f} set={set} />
             <Field label="Quote Date" k="quoteDate" type="date" f={f} set={set} />
@@ -1802,6 +1829,8 @@ const S = {
   fieldLabel: { fontSize: 12, color: "#6a7488", fontWeight: 500 },
   input: { border: "1px solid #e7eaf0", background: "#ffffff", borderRadius: 10, padding: "10px 12px", fontSize: 14, color: "#0f1729", width: "100%" },
   inputSuffix: { position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#9aa3b5", fontSize: 13, pointerEvents: "none" },
+  select: { border: "1px solid #e7eaf0", background: "#ffffff", borderRadius: 10, padding: "10px 12px", fontSize: 14, color: "#0f1729", width: "100%" },
+  fieldWarn: { fontSize: 11.5, color: "#c2683a", lineHeight: 1.45 },
   tierEditTable: { border: "1px solid #e7eaf0", borderRadius: 12, overflow: "hidden" },
   tierEditHead: { display: "flex", gap: 8, padding: "9px 12px", background: "#eef1f6", fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase", color: "#9aa3b5", fontWeight: 600 },
   tierEditRow: { display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid #eef1f6", background: "#ffffff" },
