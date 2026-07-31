@@ -205,6 +205,17 @@ const Ic = {
   settings:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
 };
 
+// ── Staff domain gate ────────────────────────────────────────────────────────
+// orders.vessl.io is staff-only, but kui.vessl.io (the client portal) shares
+// this Supabase project and therefore its auth.users pool — so a portal account
+// is a valid credential here unless we check the domain ourselves.
+// Mirrors portal.is_kui_staff() in Postgres, which is
+//   auth.jwt()->>'email' ilike '%@kinguniversal.com'
+// so the UI and RLS agree on who counts as staff. Non-string input (null,
+// undefined, a missing email claim) short-circuits to false rather than throwing.
+const isStaffEmail = email =>
+  typeof email === 'string' && email.trim().toLowerCase().endsWith('@kinguniversal.com');
+
 // ── Role-based page access ───────────────────────────────────────────────────
 // Only roles listed here are limited, to exactly the page ids they map to.
 // Any other role — including no staff_profiles row, or a lookup error — is
@@ -426,6 +437,28 @@ function Login() {
         )}
         <div className="login-note">{note}</div>
         <div className="login-error">{err}</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Not staff (a client-portal account signed in to the staff app) ───────────
+// Deliberately does NOT sign out on mount — the account is legitimate, just for
+// the other app, so the user needs to read where to go before the session ends.
+function NotStaff({ user }) {
+  return (
+    <div className="login-wrap">
+      <div className="login-card">
+        <div className="login-mark">
+          <img className="login-logo-img" src="/logo.png" alt="King Universal" />
+        </div>
+        <div className="login-sub">Operations Platform · Staff access only</div>
+        <div className="login-note">
+          This is the King Universal staff portal. Client access is at{' '}
+          <a href="https://kui.vessl.io" style={{color:'var(--accent)',fontWeight:500}}>kui.vessl.io</a>.
+        </div>
+        <div className="login-note">You are signed in as <strong>{user?.email||'—'}</strong>.</div>
+        <button className="btn-login" onClick={()=>SB.auth.signOut()}>Sign out</button>
       </div>
     </div>
   );
@@ -5384,6 +5417,7 @@ export default function App() {
   if (loading) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
   if (recovery) return <ResetPassword onDone={()=>setRecovery(false)} />;
   if (!user)   return <Login />;
+  if (!isStaffEmail(user.email)) return <NotStaff user={user} />;
   if (!roleReady) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
 
   // null = unrestricted. When limited, never render a page outside the allow
