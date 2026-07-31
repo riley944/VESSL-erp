@@ -24,8 +24,9 @@ export const sizesForScale = key => (SIZE_SCALES.find(s => s.key === key) || {})
 // '' and null both mean "not filled in". 0 is a real value the user typed.
 const isEntered = v => v !== '' && v !== null && v !== undefined;
 
-export function SizeGrid({ scale = null, onScaleChange, quantities, onQuantityChange }) {
+export function SizeGrid({ scale = null, onScaleChange, quantities, onQuantityChange, prices, onPriceChange, fallbackPrice = '' }) {
   const qty = quantities || {};
+  const price = prices || {};
   const active = SIZE_SCALES.find(s => s.key === scale) || null;
   const [pendingClear, setPendingClear] = useState(false);
 
@@ -35,7 +36,11 @@ export function SizeGrid({ scale = null, onScaleChange, quantities, onQuantityCh
   // Only sizes in the active scale count toward the total, so a quantity left
   // over from a scale the user has since moved away from can never inflate it.
   const sizes = active ? active.sizes : [];
-  const total = sizes.reduce((a, s) => a + (Number(qty[s]) || 0), 0);
+  // A size with no price of its own is charged at the line price -- the same rule the
+  // order save path applies, so this footer can never disagree with the line's Amount.
+  const priceOf = s => (isEntered(price[s]) ? Number(price[s]) || 0 : Number(fallbackPrice) || 0);
+  const totalUnits = sizes.reduce((a, s) => a + (Number(qty[s]) || 0), 0);
+  const totalAmount = sizes.reduce((a, s) => a + (Number(qty[s]) || 0) * priceOf(s), 0);
   const orphans = Object.keys(qty).filter(s => isEntered(qty[s]) && !sizes.includes(s));
 
   // Clear every entered quantity that has no home in the scale we are moving to,
@@ -44,6 +49,9 @@ export function SizeGrid({ scale = null, onScaleChange, quantities, onQuantityCh
     const nextSizes = nextKey ? sizesForScale(nextKey) : [];
     Object.keys(qty).forEach(size => {
       if (isEntered(qty[size]) && !nextSizes.includes(size)) onQuantityChange(size, '');
+    });
+    Object.keys(price).forEach(size => {
+      if (isEntered(price[size]) && !nextSizes.includes(size)) onPriceChange(size, '');
     });
     onScaleChange(nextKey || null);
   };
@@ -61,6 +69,16 @@ export function SizeGrid({ scale = null, onScaleChange, quantities, onQuantityCh
   const onQty = (size, raw) => {
     const digits = String(raw).replace(/[^0-9]/g, '');
     onQuantityChange(size, digits === '' ? '' : Number(digits));
+  };
+
+  // Prices are decimal, so keep the first '.' and drop any later ones. Held as a
+  // string rather than a Number: coercing on each keystroke makes "12.50" untypeable,
+  // because Number('12.5') renders back as '12.5' and swallows the trailing zero.
+  const onPrice = (size, raw) => {
+    let s = String(raw).replace(/[^0-9.]/g, '');
+    const dot = s.indexOf('.');
+    if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, '');
+    onPriceChange(size, s);
   };
 
   return (
@@ -90,24 +108,46 @@ export function SizeGrid({ scale = null, onScaleChange, quantities, onQuantityCh
       {active && (
         <>
           <div className="sg-grid">
-            {sizes.map(size => (
-              <label key={size} className="sg-field">
-                <span className="sg-cap">{size}</span>
-                <input
-                  className="sg-input"
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="0"
-                  aria-label={active.label + ' — size ' + size + ' quantity'}
-                  value={isEntered(qty[size]) ? String(qty[size]) : ''}
-                  onChange={e => onQty(size, e.target.value)}
-                />
-              </label>
-            ))}
+            {sizes.map(size => {
+              const amt = (Number(qty[size]) || 0) * priceOf(size);
+              return (
+                // a div, not a label: two inputs share this caption, so each carries its own aria-label
+                <div key={size} className="sg-field sg-size">
+                  <span className="sg-cap">{size}</span>
+                  <div className="sg-pair">
+                    <input
+                      className="sg-input"
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="Qty"
+                      aria-label={active.label + ' — size ' + size + ' quantity'}
+                      value={isEntered(qty[size]) ? String(qty[size]) : ''}
+                      onChange={e => onQty(size, e.target.value)}
+                    />
+                    <input
+                      className="sg-input"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      aria-label={active.label + ' — size ' + size + ' unit price'}
+                      value={isEntered(price[size]) ? String(price[size]) : ''}
+                      onChange={e => onPrice(size, e.target.value)}
+                    />
+                  </div>
+                  <span className="sg-amt">{amt > 0 ? amt.toFixed(2) : ''}</span>
+                </div>
+              );
+            })}
           </div>
-          <div className="sg-total">
-            <span className="sg-total-k">Total units</span>
-            <span className="sg-total-v">{total.toLocaleString()}</span>
+          <div className="sg-totals">
+            <div className="sg-total">
+              <span className="sg-total-k">Total units</span>
+              <span className="sg-total-v">{totalUnits.toLocaleString()}</span>
+            </div>
+            <div className="sg-total">
+              <span className="sg-total-k">Total amount</span>
+              <span className="sg-total-v">{totalAmount.toFixed(2)}</span>
+            </div>
           </div>
           {orphans.length > 0 && (
             <div className="sg-hint">

@@ -1411,12 +1411,24 @@ function CreateSOModal({onClose,onCreated}){
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const [items,setItems]=useState([]);
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
-  const addItem=()=>setItems(prev=>[...prev,{desc:'',sku:'',qty:'',price:'',quoteId:null,tierIdx:0,noPrice:false,sizeScale:null,sizeQty:{}}]);
+  const addItem=()=>setItems(prev=>[...prev,{desc:'',sku:'',qty:'',price:'',quoteId:null,tierIdx:0,noPrice:false,sizeScale:null,sizeQty:{},sizePrice:{}}]);
   const rmItem=i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
-  const setSizeScale=(i,key)=>si(i,'sizeScale',key);
+  // The first time a scale is picked, seed every size at the line's current client
+  // price: a flat-priced product then needs no typing and only an upcharge is edited.
+  const setSizeScale=(i,key)=>setItems(prev=>prev.map((it,idx)=>{
+    if(idx!==i) return it;
+    const seed=(!it.sizeScale&&key&&it.price!==''&&it.price!=null)?sizesForScale(key).reduce((a,s)=>({...a,[s]:String(it.price)}),{}):(it.sizePrice||{});
+    return {...it,sizeScale:key,sizePrice:seed};
+  }));
   const setSizeQty=(i,size,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,sizeQty:{...(it.sizeQty||{}),[size]:v}}:it));
+  const setSizePrice=(i,size,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,sizePrice:{...(it.sizePrice||{}),[size]:v}}:it));
   // A sized line takes its quantity from the grid; an unsized line keeps its own box.
   const lineQty=it=>it.sizeScale?sizesForScale(it.sizeScale).reduce((a,s)=>a+(Number((it.sizeQty||{})[s])||0),0):(Number(it.qty)||0);
+  // A size with no price of its own falls back to the line price -- the same rule the
+  // save path uses, so the Amount column can never disagree with what gets written.
+  const sizePriceOf=(it,s)=>{const v=(it.sizePrice||{})[s];return v===''||v==null?(Number(it.price)||0):(Number(v)||0);};
+  const lineAmt=it=>it.sizeScale?sizesForScale(it.sizeScale).reduce((a,s)=>a+(Number((it.sizeQty||{})[s])||0)*sizePriceOf(it,s),0):(Number(it.qty)||0)*(Number(it.price)||0);
+  const lineUnit=it=>{const q=lineQty(it);return q>0?lineAmt(it)/q:0;};
   // Quote picker state
   const [picked,setPicked]=useState(null);
   const [tierIdx,setTierIdx]=useState(0);
@@ -1456,18 +1468,18 @@ function CreateSOModal({onClose,onCreated}){
     setPicked(q); setTierIdx(tIdx);
     const ts=tOf(q); const tier=ts[tIdx]||ts[0]||{};
     const noPrice=!tier.client||Number(tier.client)===0;
-    setItems([{desc:q.product||'',sku:q.sku||'',qty:tier.qty?String(tier.qty):'',price:tier.client?String(tier.client):'',quoteId:q.id,tierIdx:tIdx,noPrice,sizeScale:null,sizeQty:{}}]);
+    setItems([{desc:q.product||'',sku:q.sku||'',qty:tier.qty?String(tier.qty):'',price:tier.client?String(tier.client):'',quoteId:q.id,tierIdx:tIdx,noPrice,sizeScale:null,sizeQty:{},sizePrice:{}}]);
     if(q.client&&!form.clientId){const m=clients.find(c=>(c.name||'').toLowerCase()===q.client.toLowerCase());if(m)setForm(prev=>({...prev,clientId:m.id}));}
   };
   const pickTier=i=>{
     setTierIdx(i);
-    if(picked){const ts=tOf(picked);const tier=ts[i]||{};const noPrice=!tier.client||Number(tier.client)===0;setItems([{desc:picked.product||'',sku:picked.sku||'',qty:tier.qty?String(tier.qty):'',price:tier.client?String(tier.client):'',quoteId:picked.id,tierIdx:i,noPrice,sizeScale:null,sizeQty:{}}]);}
+    if(picked){const ts=tOf(picked);const tier=ts[i]||{};const noPrice=!tier.client||Number(tier.client)===0;setItems([{desc:picked.product||'',sku:picked.sku||'',qty:tier.qty?String(tier.qty):'',price:tier.client?String(tier.client):'',quoteId:picked.id,tierIdx:i,noPrice,sizeScale:null,sizeQty:{},sizePrice:{}}]);}
   };
   const addExtraItem=()=>setShowPicker(true);
   const [showPicker,setShowPicker]=useState(false);
-  const onPickItem=(li)=>setItems(prev=>[...prev,{desc:li.desc,sku:li.sku,qty:li.qty,price:li.price,quoteId:li.quoteId,tierIdx:0,noPrice:!li.price,sizeScale:null,sizeQty:{}}]);
+  const onPickItem=(li)=>setItems(prev=>[...prev,{desc:li.desc,sku:li.sku,qty:li.qty,price:li.price,quoteId:li.quoteId,tierIdx:0,noPrice:!li.price,sizeScale:null,sizeQty:{},sizePrice:{}}]);
   const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
-  const prevRev=items.reduce((a,it)=>a+lineQty(it)*(Number(it.price)||0),0);
+  const prevRev=items.reduce((a,it)=>a+lineAmt(it),0);
   const filtQ=qSearch?quotes.filter(q=>(q.product||'').toLowerCase().includes(qSearch.toLowerCase())||(q.client||'').toLowerCase().includes(qSearch.toLowerCase())||(q.factory||'').toLowerCase().includes(qSearch.toLowerCase())||(q.sku||'').toLowerCase().includes(qSearch.toLowerCase())):quotes;
   const filtPOs=availPOs.filter(p=>!poSearch||(p.client_po_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.order_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.companies?.name||'').toLowerCase().includes(poSearch.toLowerCase()));
   const submit=async()=>{
@@ -1491,7 +1503,7 @@ function CreateSOModal({onClose,onCreated}){
       const sku=(it.sku||'').trim()||null;   // quote SKUs carry stray whitespace; never build "SKU -S"
       if(!it.sizeScale) return [{...base,client_sku:sku,quantity:Number(it.qty)||null,size:null}];
       return sizesForScale(it.sizeScale).map(s=>({s,q:Number((it.sizeQty||{})[s])||0})).filter(x=>x.q>0)
-        .map(x=>({...base,client_sku:sku?sku+'-'+x.s:null,quantity:x.q,size:x.s}));
+        .map(x=>({...base,client_sku:sku?sku+'-'+x.s:null,quantity:x.q,size:x.s,client_price:sizePriceOf(it,x.s)||null}));
     };
     const toIns=items.filter(it=>it.desc.trim()).flatMap(expand);
     if(toIns.length) await SB.from('sales_order_items').insert(toIns.map(({_quoteId,_tierIdx,...rest})=>({...rest,quote_id:_quoteId||null})));
@@ -1614,12 +1626,15 @@ function CreateSOModal({onClose,onCreated}){
                     <td>{it.sizeScale
                       ? <div className="qty-from-sizes" title="Quantity comes from the size breakdown below"><span className="qfs-v">{lineQty(it).toLocaleString()}</span><span className="qfs-k">from sizes</span></div>
                       : <input type="number" value={it.qty} onChange={e=>si(i,'qty',e.target.value)} placeholder="0" />}</td>
-                    <td>
-                      <input type="number" step="0.01" value={it.price} onChange={e=>si(i,'price',e.target.value)} placeholder="0.00" style={{borderColor:it.noPrice&&!it.price?'#f59e0b':''}} />
-                      {it.noPrice&&!it.price&&<div style={{fontSize:'10px',color:'#d97706',marginTop:'2px'}}>Enter client price</div>}
-                      {it.noPrice&&it.price&&<div style={{fontSize:'10px',color:'#059669',marginTop:'2px'}}>Will save to catalog</div>}
+                    <td>{it.sizeScale
+                      ? <div className="qty-from-sizes" title="Blended unit price from the size breakdown below"><span className="qfs-v">{lineUnit(it).toFixed(2)}</span><span className="qfs-k">from sizes</span></div>
+                      : <>
+                          <input type="number" step="0.01" value={it.price} onChange={e=>si(i,'price',e.target.value)} placeholder="0.00" style={{borderColor:it.noPrice&&!it.price?'#f59e0b':''}} />
+                          {it.noPrice&&!it.price&&<div style={{fontSize:'10px',color:'#d97706',marginTop:'2px'}}>Enter client price</div>}
+                          {it.noPrice&&it.price&&<div style={{fontSize:'10px',color:'#059669',marginTop:'2px'}}>Will save to catalog</div>}
+                        </>}
                     </td>
-                    <td className="mono" style={{textAlign:'right',whiteSpace:'nowrap',fontSize:'12.5px'}}>{money(lineQty(it)*(Number(it.price)||0),form.currency)}</td>
+                    <td className="mono" style={{textAlign:'right',whiteSpace:'nowrap',fontSize:'12.5px'}}>{money(lineAmt(it),form.currency)}</td>
                     <td><button className="rm" onClick={()=>rmItem(i)}>×</button></td>
                   </tr>
                   <tr className="item-sub-row">
@@ -1627,7 +1642,7 @@ function CreateSOModal({onClose,onCreated}){
                       <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 8px'}}>
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 130px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Client SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.sku||''} onChange={e=>si(i,'sku',e.target.value)} placeholder="Client SKU" /></div>
                         <div style={{flex:'1 1 280px',minWidth:0}}>
-                          <SizeGrid scale={it.sizeScale||null} onScaleChange={k=>setSizeScale(i,k)} quantities={it.sizeQty||{}} onQuantityChange={(s,v)=>setSizeQty(i,s,v)} />
+                          <SizeGrid scale={it.sizeScale||null} onScaleChange={k=>setSizeScale(i,k)} quantities={it.sizeQty||{}} onQuantityChange={(s,v)=>setSizeQty(i,s,v)} prices={it.sizePrice||{}} onPriceChange={(s,v)=>setSizePrice(i,s,v)} fallbackPrice={it.price} />
                         </div>
                       </div>
                     </td>

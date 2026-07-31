@@ -765,3 +765,15 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   background:var(--soft-2);border:1px dashed var(--line);border-radius:5px;}
 .qfs-v{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--ink);line-height:1.2;}
 .qfs-k{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);font-weight:600;}
+/* Per-size pricing: a qty box and a price box side by side beneath each size
+   caption, with that size's amount under them. Wider cells than the qty-only
+   layout, so they go full width once the modal is narrow. */
+.sg-size{flex:0 0 152px;}
+.sg-pair{display:flex;gap:6px;}
+.sg-pair .sg-input{flex:1 1 0;min-width:0;}
+.sg-amt{font-family:var(--mono);font-size:10.5px;color:var(--muted);text-align:right;min-height:14px;}
+.sg-totals{display:flex;flex-wrap:wrap;gap:4px 22px;padding:0 2px;}
+.sg-totals .sg-total{flex:1 1 150px;padding:0;}
+@media (max-width: 640px){
+  .sg-size{flex:1 1 100%;}
+}
