@@ -777,3 +777,8 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 @media (max-width: 640px){
   .sg-size{flex:1 1 100%;}
 }
+/* Size badge on the SO and PO detail line-item tables. Screen counterpart of the
+   chip buildPODoc / buildSODoc print, so a sized order does not read as several
+   identical rows. Rendered only when a row carries a size. */
+.size-tag{display:inline-block;background:var(--soft-2);border:1px solid var(--line);
+  border-radius:5px;padding:2px 7px;font-size:11px;font-weight:700;color:var(--ink);letter-spacing:.04em;}

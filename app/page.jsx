@@ -1141,6 +1141,7 @@ function SalesOrderDetail({id,navigate}){
       lines: items.map(it => ({
         description: it.description || it.products?.name || '—',
         sku: it.client_sku || it.products?.sku || '',
+        size: it.size || '',
         quantity: Number(it.quantity) || 0,
         client_price: Number(it.client_price) || 0,
         line_amount: (Number(it.quantity)||0) * (Number(it.client_price)||0),
@@ -1227,7 +1228,9 @@ function SalesOrderDetail({id,navigate}){
               <tbody>
                 {items.map((it,i)=>{ const amt=(Number(it.quantity)||0)*(Number(it.client_price)||0); return (
                   <tr key={it.id||i} style={{borderBottom:'1px solid var(--line-2)'}}>
-                    <td style={{padding:'12px 16px',fontWeight:500,color:'var(--ink)'}}>{it.description||it.products?.name||'—'}</td>
+                    <td style={{padding:'12px 16px',fontWeight:500,color:'var(--ink)'}}>{it.description||it.products?.name||'—'}
+                      {it.size&&<div style={{marginTop:'4px'}}><span className="size-tag">Size {it.size}</span></div>}
+                    </td>
                     <td style={{padding:'12px 16px',fontFamily:'var(--mono)',fontSize:'12px',color:'var(--muted)'}}>{it.client_sku||'—'}</td>
                     <td style={{padding:'12px 16px',textAlign:'right',fontFamily:'var(--mono)'}}>{new Intl.NumberFormat('en-US').format(it.quantity||0)}</td>
                     <td style={{padding:'12px 16px',textAlign:'right',fontFamily:'var(--mono)'}}>{money(it.client_price,so.currency)}</td>
@@ -2238,6 +2241,7 @@ function OrderDetail({ id, navigate }) {
       lines: items.map(it => ({
         description: it.description || it.products?.name || '—',
         sku: it.products?.sku || '',
+        size: it.size || '',
         quantity: Number(it.quantity) || 0,
         unit_price: Number(it.unit_price) || 0,
         line_amount: (Number(it.quantity)||0) * (Number(it.unit_price)||0),
@@ -2368,6 +2372,7 @@ function OrderDetail({ id, navigate }) {
                   <tr key={it.id}>
                     <td>
                       <div style={{fontWeight:500}}>{it.description||it.products?.name||'—'}</div>
+                      {it.size&&<div style={{marginTop:'3px'}}><span className="size-tag">Size {it.size}</span></div>}
                       {it.products?.sku&&<div className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>SKU: {it.products.sku}</div>}
                       {it.vpn&&<div className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>VPN# {it.vpn}</div>}
                       {it.carton_info&&<div style={{fontSize:'11px',color:'var(--muted)',marginTop:'2px'}}>{it.carton_info}</div>}
@@ -4225,10 +4230,12 @@ function buildPODoc(d, opts={}) {
     const packSku = l.pack_sku || l.packSku || '';
     const babySku = l.baby_sku || l.babySku || '';
     const retailPrice = l.retail_price != null ? l.retail_price : (l.retailPrice != null ? l.retailPrice : null);
+    const size = l.size || '';
     const bg = i % 2 === 0 ? '#fff' : '#f9fafb';
     return '<tr style="background:'+bg+'">'
       +'<td style="padding:16px 18px;vertical-align:top;border-bottom:1px solid #e5e7eb;">'
         +'<div style="font-size:15px;font-weight:600;color:#0f172a;margin-bottom:6px;">'+(l.description||'—')+'</div>'
+        +(size?'<div style="margin-bottom:6px;"><span style="display:inline-block;background:#eef1f6;border:1px solid #e5e7eb;border-radius:5px;padding:3px 9px;font-size:13px;font-weight:700;color:#0c1322;letter-spacing:.04em;">Size '+size+'</span></div>':'')
         +(carton?'<div style="font-size:12px;color:#6b7280;margin-bottom:3px;">📦 '+carton+'</div>':'')
         +(vpn?'<div style="font-size:12px;color:#6b7280;font-family:monospace;">VPN# '+vpn+'</div>':'')
         +(masterSku?'<div style="font-size:12px;color:#6b7280;font-family:monospace;">Master: '+masterSku+'</div>':'')
@@ -4835,10 +4842,12 @@ function buildSODoc(d) {
   const subtotal = (d.lines||[]).reduce((a,l)=>a+(Number(l.line_amount)||0),0);
 
   const lines = (d.lines||[]).map((l,i) => {
+    const size = l.size || '';
     const bg = i % 2 === 0 ? '#fff' : '#f9fafb';
     return '<tr style="background:'+bg+'">'
       +'<td style="padding:15px 18px;vertical-align:top;border-bottom:1px solid #e5e7eb;">'
         +'<div style="font-size:15px;font-weight:600;color:#0f172a;">'+(l.description||'—')+'</div>'
+        +(size?'<div style="margin-top:6px;"><span style="display:inline-block;background:#eef1f6;border:1px solid #e5e7eb;border-radius:5px;padding:3px 9px;font-size:13px;font-weight:700;color:#0c1322;letter-spacing:.04em;">Size '+size+'</span></div>':'')
         +(l.sku?'<div style="font-size:11.5px;color:#6b7280;font-family:monospace;margin-top:4px;"><span style="color:#9ca3af;">SKU</span> '+l.sku+'</div>':'')
       +'</td>'
       +'<td style="padding:15px 14px;text-align:center;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:16px;font-weight:700;color:#0f172a;font-family:monospace;">'+fn(l.quantity)+'</td>'
