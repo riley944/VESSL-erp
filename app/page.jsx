@@ -203,8 +203,19 @@ const Ic = {
   settings:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
 };
 
+// ── Role-based page access ───────────────────────────────────────────────────
+// Only roles listed here are limited, to exactly the page ids they map to.
+// Any other role — including no staff_profiles row, or a lookup error — is
+// unrestricted and sees every page, exactly as before.
+const ROLE_PAGES = { limited_qc: ['testing', 'shipments'] };
+// Returns the allowed page ids for a limited role, or null meaning unrestricted.
+// hasOwnProperty guard: role is free text, so a value like 'constructor' must
+// not pick up an inherited Object.prototype member and read as limited.
+const allowedPagesFor = role =>
+  (role && Object.prototype.hasOwnProperty.call(ROLE_PAGES, role)) ? ROLE_PAGES[role] : null;
+
 // ── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ page, navigate, user, open, badges={} }) {
+function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null }) {
   const links = [
     { id:'dashboard',          label:'Dashboard' },
     { id:'sales-orders',       label:'Sales Orders' },
@@ -219,6 +230,7 @@ function Sidebar({ page, navigate, user, open, badges={} }) {
     { id:'client-relations',   label:'Client Relations' },
   ];
   const activeFor = { 'sales-orders':['sales-orders','so-detail'], 'orders':['orders','order-detail'] };
+  const shownLinks = allowedPages ? links.filter(l => allowedPages.includes(l.id)) : links;
   return (
     <aside className={'sidebar ' + (open?'sidebar--open':'')}>
       <div className="sb-brand">
@@ -226,7 +238,7 @@ function Sidebar({ page, navigate, user, open, badges={} }) {
       </div>
       <div className="sb-scroll">
         <div className="sb-section">Workspace</div>
-        {links.map(l => (
+        {shownLinks.map(l => (
           <button key={l.id} className={'nav-link '+((activeFor[l.id]||[l.id]).includes(page)?'active':'')} onClick={()=>navigate(l.id)}>
             <span className="ic">{Ic[l.id]}</span>
             <span style={{flex:1}}>{l.label}</span>
@@ -235,9 +247,11 @@ function Sidebar({ page, navigate, user, open, badges={} }) {
         ))}
       </div>
       <div className="sb-bottom">
+        {!allowedPages && (
         <button className={'nav-link sb-settings ' + (page==='settings'?'active':'')} onClick={()=>navigate('settings')}>
           <span className="ic">{Ic.settings}</span> KUI Settings
         </button>
+        )}
       </div>
     </aside>
   );
@@ -5276,10 +5290,12 @@ function ClientRelations() {
 export default function App() {
   const [user,    setUser]    = useState(null);
   const [session, setSession] = useState(null);
-  const [page,    setPage]    = useState('dashboard');
+  const [rawPage, setRawPage] = useState('dashboard');
   const [params,  setParams]  = useState({});
   const [loading, setLoading] = useState(true);
   const [recovery, setRecovery] = useState(false);
+  const [role,      setRole]      = useState(null);
+  const [roleReady, setRoleReady] = useState(false);
 
   const pageActions = {
     orders:    <button className="btn btn-dark" onClick={()=>setModal('create-po')}>+ New PO</button>,
@@ -5293,7 +5309,27 @@ export default function App() {
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
   const [crUnread, setCrUnread] = useState(0);
 
-  const navigate = (p, pr={}) => { setPage(p); setParams(pr); setNavOpen(false); };
+  const navigate = (p, pr={}) => { setRawPage(p); setParams(pr); setNavOpen(false); };
+
+  // Look up the signed-in user's staff role. Anything that isn't a clean hit on
+  // a limited role — no row, an error, an unknown role — leaves role null, which
+  // allowedPagesFor() reads as unrestricted.
+  useEffect(() => {
+    let cancelled = false;
+    const email = user?.email;
+    if (!email) { setRole(null); setRoleReady(false); return; }
+    (async () => {
+      try {
+        // ilike can only widen the match (_ and % are wildcards), never narrow
+        // it, so re-check the exact address in JS before trusting the row.
+        const { data } = await SB.from('staff_profiles').select('email,role').ilike('email', email);
+        const row = (data||[]).find(r => (r.email||'').toLowerCase() === email.toLowerCase());
+        if (!cancelled) setRole(row ? row.role : null);
+      } catch(e) { if (!cancelled) setRole(null); }
+      if (!cancelled) setRoleReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, [user?.email]);
 
   // poll unread client messages every 30s
   useEffect(() => {
@@ -5324,6 +5360,12 @@ export default function App() {
   if (loading) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
   if (recovery) return <ResetPassword onDone={()=>setRecovery(false)} />;
   if (!user)   return <Login />;
+  if (!roleReady) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
+
+  // null = unrestricted. When limited, never render a page outside the allow
+  // list, whatever rawPage holds — fall back to the role's first allowed page.
+  const allowedPages = allowedPagesFor(role);
+  const page = (allowedPages && !allowedPages.includes(rawPage)) ? allowedPages[0] : rawPage;
 
   const titles = {dashboard:'Dashboard','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',shipments:'Shipments',quotes:'Quotes','client-relations':'Client Relations'};
   const badges = {'client-relations': crUnread};
@@ -5335,7 +5377,7 @@ export default function App() {
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <div className={'sidebar-backdrop ' + (navOpen?'show':'')} onClick={()=>setNavOpen(false)} />
-      <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} />
+      <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} allowedPages={allowedPages} />
       <TopBar user={user} title={titles[page]||''} taskOpen={taskPanelOpen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
       <TaskPanel open={taskPanelOpen} onClose={()=>setTaskPanelOpen(false)} />
       {page==='quotes' ? (
