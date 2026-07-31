@@ -3386,7 +3386,7 @@ function FreightQuotesView({ quotes, onDelete }) {
           <div style={{fontSize:'12.5px',color:'#4A4A4E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.forwarder?.name||'—'}</div>
           <div style={{textAlign:'right',fontSize:'13px',color:'#4A4A4E',fontVariantNumeric:'tabular-nums'}}>{pcs>0?pcs.toLocaleString():'—'}</div>
           <div style={{textAlign:'right',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{Number(q.total_cbm||0).toFixed(1)}</div>
-          <div style={{textAlign:'right',fontSize:'13px',color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{q.containers_needed} × 40&apos;HQ</div>
+          <div style={{textAlign:'right',fontSize:'13px',color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{q.containers_needed} × {q.container_type||"40'HQ"}</div>
           <div><span style={{display:'inline-flex',alignItems:'center',fontSize:'11px',fontWeight:600,borderRadius:'6px',padding:'3px 9px',color:q.status==='sent'?'#15803D':'#B45309',background:q.status==='sent'?'#DCFCE7':'#FEF3C7'}}>{q.status==='sent'?'Sent':'Draft'}</span></div>
           <button title="Delete quote sheet" onClick={e=>{e.stopPropagation(); if(window.confirm('Delete freight quote '+q.quote_number+'? This cannot be undone.')) onDelete&&onDelete(q.id);}} style={{background:'none',border:'none',cursor:'pointer',padding:'4px',borderRadius:'6px',display:'flex',alignItems:'center',justifyContent:'center',color:'#C0C0C4'}} onMouseEnter={e=>{e.currentTarget.style.color='#DC2626';e.currentTarget.style.background='#FEE2E2';}} onMouseLeave={e=>{e.currentTarget.style.color='#C0C0C4';e.currentTarget.style.background='none';}}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
@@ -4417,7 +4417,15 @@ function parseCartonInfo(txt) {
   if (wt) out.weight = Number(wt[1]);
   return out;
 }
-const CBM_MAX_40HQ = 68;
+// Usable CBM capacity per container type (practical loadable volume, not theoretical max)
+const CONTAINER_TYPES = [
+  { key:'20GP',  label:"20' Standard",     cbm:33 },
+  { key:'40GP',  label:"40' Standard",     cbm:58 },
+  { key:'40HQ',  label:"40' High-Cube",    cbm:68 },
+  { key:'45HQ',  label:"45' High-Cube",    cbm:82 },
+];
+const CONTAINER_MAP = Object.fromEntries(CONTAINER_TYPES.map(c=>[c.key,c]));
+const CBM_MAX_40HQ = 68; // legacy default fallback
 
 function ShipmentQuoteModal({ onClose, onSaved }) {
   const [mode, setMode] = useState('po'); // 'po' | 'product'
@@ -4429,7 +4437,7 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
   const [prodSearch, setProdSearch] = useState('');
   const [form, setForm] = useState({
     number: 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase(),
-    client:'', forwarder:'', poId:'', origin:'', destination:'', incoterm:'FOB', ready:'', notes:''
+    client:'', forwarder:'', poId:'', origin:'', destination:'', incoterm:'FOB', ready:'', notes:'', containerType:'40HQ'
   });
   const [lines, setLines] = useState([{ desc:'', upc:'', cartons:'', cbmPer:'', weight:'' }]);
   const [saving, setSaving] = useState(false);
@@ -4461,28 +4469,29 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
   const addLine = () => setLines(prev=>[...prev,{ desc:'', upc:'', cartons:'', cbmPer:'', weight:'' }]);
   const rmLine = i => setLines(prev=>prev.filter((_,j)=>j!==i));
 
-  // Fill one 40'HQ to capacity. Single line → max cartons that fit under the CBM cap.
+  // Fill the selected container to capacity. Single line → max cartons that fit under the CBM cap.
   // Multiple lines → scale up proportionally to the current mix until the container is full.
   const autoFillCartons = () => {
+    const cap = (CONTAINER_MAP[form.containerType]||CONTAINER_MAP['40HQ']).cbm;
     const withCbm = lines.filter(l=>(Number(l.cbmPer)||0)>0);
     if (!withCbm.length) { alert('Enter CBM per carton first — then Auto-fill can calculate how many fit.'); return; }
     if (withCbm.length===1 && lines.length===1) {
       const per = Number(lines[0].cbmPer)||0;
-      const fit = Math.floor(CBM_MAX_40HQ / per);
+      const fit = Math.floor(cap / per);
       setLines([{ ...lines[0], cartons:String(fit) }]);
       return;
     }
     // proportional scale on the existing carton mix
     const baseCbm = lines.reduce((a,l)=>a+((Number(l.cartons)||0)*(Number(l.cbmPer)||0)),0);
     if (baseCbm<=0) { alert('Enter carton counts on at least one line, then Auto-fill scales the mix to a full container.'); return; }
-    const factor = CBM_MAX_40HQ / baseCbm;
+    const factor = cap / baseCbm;
     let next = lines.map(l=>{
       const c=Number(l.cartons)||0;
       return { ...l, cartons: c>0 ? String(Math.floor(c*factor)) : l.cartons };
     });
     // trim if rounding pushed us over the cap
     let total = next.reduce((a,l)=>a+((Number(l.cartons)||0)*(Number(l.cbmPer)||0)),0);
-    while (total > CBM_MAX_40HQ) {
+    while (total > cap) {
       const idx = next.reduce((best,l,j)=>{ const cb=(Number(l.cbmPer)||0); return (Number(l.cartons)||0)>0 && (best<0 || cb>(Number(next[best].cbmPer)||0)) ? j : best; }, -1);
       if (idx<0) break;
       next[idx] = { ...next[idx], cartons:String(Math.max(0,(Number(next[idx].cartons)||0)-1)) };
@@ -4579,8 +4588,9 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
     const cartons = Number(l.cartons)||0, cbmPer = Number(l.cbmPer)||0, wt = Number(l.weight)||0, upc = Number(l.upc)||0;
     acc.cartons += cartons; acc.cbm += cartons*cbmPer; acc.weight += cartons*wt; acc.pieces += cartons*upc; return acc;
   }, { cartons:0, cbm:0, weight:0, pieces:0 });
-  const containers = calc.cbm>0 ? Math.ceil(calc.cbm / CBM_MAX_40HQ) : 0;
-  const utilization = containers>0 ? (calc.cbm/(containers*CBM_MAX_40HQ))*100 : 0;
+  const capCbm = (CONTAINER_MAP[form.containerType]||CONTAINER_MAP['40HQ']).cbm;
+  const containers = calc.cbm>0 ? Math.ceil(calc.cbm / capCbm) : 0;
+  const utilization = containers>0 ? (calc.cbm/(containers*capCbm))*100 : 0;
 
   const buildPayload = (status) => ({
     quote_number: form.number,
@@ -4589,7 +4599,7 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
     po_id: form.poId||null,
     origin: form.origin||null, destination: form.destination||null,
     incoterm: form.incoterm||null, ready_date: form.ready||null,
-    container_type:'40HQ', cbm_max:CBM_MAX_40HQ,
+    container_type:form.containerType, cbm_max:capCbm,
     total_cartons: calc.cartons, total_cbm: Number(calc.cbm.toFixed(3)),
     total_weight_kg: Number(calc.weight.toFixed(2)),
     containers_needed: containers, utilization_pct: Number(utilization.toFixed(1)),
@@ -4704,13 +4714,24 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
             <div><label style={lblS}>Destination</label><input style={inputS} value={form.destination} onChange={e=>f('destination')(e.target.value)} placeholder="e.g. Savannah, GA" /></div>
             <div><label style={lblS}>Incoterm</label><input style={inputS} value={form.incoterm} onChange={e=>f('incoterm')(e.target.value)} placeholder="FOB, DDP…" /></div>
           </div>
+          <div style={{marginTop:'14px'}}>
+            <label style={lblS}>Container to fill</label>
+            <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
+              {CONTAINER_TYPES.map(c=>{ const on=form.containerType===c.key; return (
+                <button key={c.key} type="button" onClick={()=>f('containerType')(c.key)} style={{flex:'1 1 120px',textAlign:'left',padding:'10px 13px',borderRadius:'10px',border:'1.5px solid '+(on?'#0071E3':'#E5E7EB'),background:on?'#EAF3FE':'#fff',cursor:'pointer',transition:'.12s'}}>
+                  <div style={{fontSize:'13px',fontWeight:600,color:on?'#0071E3':'#1A1A1C'}}>{c.label}</div>
+                  <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'2px'}}>{c.cbm} CBM usable</div>
+                </button>
+              ); })}
+            </div>
+          </div>
 
           {/* Line items */}
           <div style={{marginTop:'18px'}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px',gap:'8px',flexWrap:'wrap'}}>
               <span style={{fontSize:'12px',fontWeight:700,color:'#1A1A1C',textTransform:'uppercase',letterSpacing:'.05em'}}>Carton / CBM breakdown</span>
               <div style={{display:'flex',gap:'7px'}}>
-                <button type="button" onClick={autoFillCartons} title="Fill one 40'HQ to capacity" style={{background:'#EAF3FE',border:'1px solid #BFDBFE',borderRadius:'7px',padding:'4px 11px',fontSize:'12px',fontWeight:600,color:'#0071E3',cursor:'pointer'}}>⚡ Auto-fill container</button>
+                <button type="button" onClick={autoFillCartons} title={"Fill "+((CONTAINER_MAP[form.containerType]||CONTAINER_MAP['40HQ']).label)+" to capacity"} style={{background:'#EAF3FE',border:'1px solid #BFDBFE',borderRadius:'7px',padding:'4px 11px',fontSize:'12px',fontWeight:600,color:'#0071E3',cursor:'pointer'}}>⚡ Auto-fill container</button>
                 <button type="button" onClick={addLine} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'4px 10px',fontSize:'12px',fontWeight:500,color:'#4A4A4E',cursor:'pointer'}}>+ Add line</button>
               </div>
             </div>
@@ -4743,7 +4764,7 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
               <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Total pieces</div><div style={{fontSize:'20px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(calc.pieces)}</div></div>
               <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Total cartons</div><div style={{fontSize:'20px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(calc.cartons)}</div></div>
               <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Total CBM</div><div style={{fontSize:'20px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{calc.cbm.toFixed(2)}</div></div>
-              <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>40&apos;HQ needed</div><div style={{fontSize:'20px',fontWeight:700,color:'#0071E3',fontVariantNumeric:'tabular-nums'}}>{containers}</div></div>
+              <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>{(CONTAINER_MAP[form.containerType]||CONTAINER_MAP['40HQ']).label} needed</div><div style={{fontSize:'20px',fontWeight:700,color:'#0071E3',fontVariantNumeric:'tabular-nums'}}>{containers}</div></div>
               <div><div style={{fontSize:'10px',color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'5px'}}>Utilization</div><div style={{fontSize:'20px',fontWeight:700,color:utilization>92?'#D14343':'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{utilization.toFixed(0)}%</div></div>
             </div>
             {containers>0 && calc.pieces>0 && (
@@ -4753,7 +4774,7 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
                 {lines.length===1 && Number(lines[0].upc)>0 && <div style={{fontSize:'12px',color:'#4A4A4E'}}><b style={{color:'#1A1A1C'}}>{fmtNum(Number(lines[0].upc))}</b> pcs per carton</div>}
               </div>
             )}
-            <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'12px',lineHeight:1.5}}>Based on {CBM_MAX_40HQ} CBM max per 40&apos; High-Cube container. {containers>0 && utilization<70 ? 'Low fill — consider consolidating or LCL.' : containers>0 ? 'Good fill for FCL.' : 'Add cartons and CBM to calculate.'}</div>
+            <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'12px',lineHeight:1.5}}>Based on {capCbm} CBM usable per {(CONTAINER_MAP[form.containerType]||CONTAINER_MAP['40HQ']).label} container. {containers>0 && utilization<70 ? 'Low fill — consider a smaller container or LCL.' : containers>0 ? 'Good fill for FCL.' : 'Add cartons and CBM to calculate.'}</div>
           </div>
 
           <div style={{marginTop:'12px'}}><label style={lblS}>Notes for forwarder</label><textarea style={{...inputS,minHeight:'56px',resize:'vertical'}} value={form.notes} onChange={e=>f('notes')(e.target.value)} placeholder="Special handling, stackability, delivery requirements…" /></div>
@@ -4837,7 +4858,7 @@ function buildFreightDoc(q, clientName, forwarderName) {
       +'</div>'
       +'<div style="flex:1;min-width:200px;background:#0f172a;color:#fff;border-radius:12px;padding:18px 20px;">'
         +'<div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.6);margin-bottom:8px;">Container recommendation</div>'
-        +'<div style="font-size:32px;font-weight:800;letter-spacing:-.02em;">'+(q.containers_needed||0)+' × 40&apos;HQ</div>'
+        +'<div style="font-size:32px;font-weight:800;letter-spacing:-.02em;">'+(q.containers_needed||0)+' × '+esc(q.container_type||"40'HQ")+'</div>'
         +'<div style="font-size:12px;color:rgba(255,255,255,.7);margin-top:6px;">'+(q.utilization_pct||0)+'% utilization · '+(q.cbm_max||68)+' CBM max/container</div>'
         +((totalPieces>0&&q.containers_needed>0)?'<div style="font-size:12px;color:rgba(255,255,255,.85);margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.15);">'+Math.round(totalPieces/q.containers_needed).toLocaleString()+' pcs · '+Math.round((q.total_cartons||0)/q.containers_needed).toLocaleString()+' cartons per container</div>':'')
       +'</div>'
