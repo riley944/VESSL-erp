@@ -51,6 +51,66 @@ const BLOCKERS = {
   us:      { label:'Waiting on us',      dot:'#FF375F',   text:'#B91C1C' },
 };
 
+// ── stage email templates ──────────────────────────────────────────────────
+// {product} {sku} {client} {factory} {round} {due} {sent} — filled from the program.
+// "to" is a default recipient role: 'emily' | 'client' | 'factory' | 'creative' | '' (pick).
+const STAGE_EMAILS = {
+  inquiry: [
+    { label:'Intro / follow-up to client', to:'client', subject:'Following up — {product}', body:'Hi {clientContact},\n\nGreat connecting on {product}. I wanted to follow up and see what info you need from us to move forward.\n\nBest,' },
+  ],
+  quoting: [
+    { label:'Send quote to client', to:'client', subject:'Quote — {product} ({sku})', body:'Hi {clientContact},\n\nPlease find our quote for {product} attached. Happy to walk through any of it.\n\nBest,' },
+  ],
+  sampling: [
+    { label:'Chase factory for sample', to:'emily', subject:'Sample status — {product} ({sku})', body:'Hi {emilyName},\n\nChecking in on the sample for {product} ({sku}) for {client}. We sent on {sent} and were targeting {due} for it back. Where does it stand? Did the master sample go with it?\n\nThanks,' },
+    { label:'Send sample to client', to:'client', subject:'Sample on the way — {product}', body:'Hi {clientContact},\n\nThe sample for {product} is heading your way. Once you have it, let us know your thoughts and any changes.\n\nBest,' },
+    { label:'Request client feedback', to:'client', subject:'Sample feedback — {product}', body:'Hi {clientContact},\n\nFollowing up on the {product} sample (round {round}) — any feedback or approval? Happy to jump on a call if easier.\n\nBest,' },
+  ],
+  revision: [
+    { label:'Send revisions to factory', to:'emily', subject:'Revisions — {product} ({sku})', body:'Hi {emilyName},\n\nClient came back with changes on {product} (round {round}). Details below — can we get a revised sample turned around and a timeline?\n\n[changes]\n\nThanks,' },
+    { label:'Request client sign-off', to:'client', subject:'Revised sample — sign-off? — {product}', body:'Hi {clientContact},\n\nThe revised {product} sample (round {round}) is with you. Are we good to move to production, or any final tweaks?\n\nBest,' },
+  ],
+  testing: [
+    { label:'Submit to lab', to:'', subject:'Test request — {product} ({sku})', body:'Hello,\n\nWe would like to submit {product} ({sku}) for compliance testing. Please advise required samples and turnaround.\n\nThanks,' },
+    { label:'Chase lab results', to:'', subject:'Results status — {product}', body:'Hello,\n\nFollowing up on the test results for {product} ({sku}). Any update on timing?\n\nThanks,' },
+  ],
+  pre_production: [
+    { label:'Confirm PO with factory', to:'emily', subject:'PO / pre-production — {product} ({sku})', body:'Hi {emilyName},\n\nWe are ready to issue the PO on {product} for {client}. Can you confirm pricing, lead time, and that the pre-production sample is approved?\n\nThanks,' },
+  ],
+  production: [
+    { label:'Production status check', to:'emily', subject:'Production status — {product} ({sku})', body:'Hi {emilyName},\n\nCan you get a production update on {product} for {client}? Looking for % complete and expected finish so I can update the client.\n\nThanks,' },
+    { label:'Book QC inspection', to:'', subject:'Inspection booking — {product}', body:'Hello,\n\nWe would like to book a QC inspection for {product} ({sku}). Production is wrapping up — please advise availability.\n\nThanks,' },
+  ],
+  shipped: [
+    { label:'Send docs to client', to:'client', subject:'Shipping docs — {product}', body:'Hi {clientContact},\n\n{product} has shipped. Documents attached. We will keep you posted on arrival.\n\nBest,' },
+    { label:'Booking confirmation to factory', to:'emily', subject:'Booking confirmed — {product}', body:'Hi {emilyName},\n\nBooking is confirmed for {product}. Please coordinate cargo hand-off and send us the final packing list and commercial invoice.\n\nThanks,' },
+  ],
+  delivered: [
+    { label:'Delivery confirmation to client', to:'client', subject:'Delivered — {product}', body:'Hi {clientContact},\n\nConfirming {product} has been delivered. Anything you need on our end? Always a pleasure working with {client}.\n\nBest,' },
+  ],
+};
+
+function fillTemplate(text, p) {
+  const emilyName = 'Emily';
+  const map = {
+    product: p.product||'the product', sku: p.sku||'', client: p.client||'',
+    clientContact: p.client_contact || (p.client? p.client : 'there'),
+    factory: p.factory||'', round: String(p.sample_round||1),
+    sent: p.sample_sent_date? fmtDate(p.sample_sent_date) : 'recently',
+    due: p.sample_due_back? fmtDate(p.sample_due_back) : 'soon',
+    emilyName: emilyName,
+  };
+  var out = text;
+  Object.keys(map).forEach(function(k){ out = out.split('{'+k+'}').join(map[k]); });
+  return out;
+}
+function defaultRecipient(role, p) {
+  if (role==='emily') return 'emily@kinguniversal.com';
+  if (role==='client') return p.client_email||'';
+  if (role==='factory') return p.factory_email||'';
+  return '';
+}
+
 const money = (n) => '$'+Number(n||0).toLocaleString();
 const daysSince = s => { if(!s) return 0; const d=new Date(s); return Math.max(0,Math.round((Date.now()-d.getTime())/86400000)); };
 const fmtDate = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); };
@@ -235,6 +295,7 @@ function ProgramDetail({ program, tasks, me, onClose, onAdvance, onReload }) {
   const [taskText, setTaskText] = useState('');
   const [taskWho, setTaskWho] = useState(STAGE_OWNER[program.stage]||me);
   const [taskDue, setTaskDue] = useState('');
+  const [emailTpl, setEmailTpl] = useState(null);
   const st = STAGE_MAP[p.stage]||STAGES[0];
   const idx = STAGE_ORDER.indexOf(p.stage);
   const nextStage = idx>=0 && idx<STAGE_ORDER.length-1 ? STAGE_ORDER[idx+1] : null;
@@ -323,6 +384,21 @@ function ProgramDetail({ program, tasks, me, onClose, onAdvance, onReload }) {
             </div>
           )}
 
+          {/* quick emails for this stage */}
+          {(STAGE_EMAILS[p.stage]||[]).length>0 && (
+            <div style={{marginBottom:'18px'}}>
+              <div style={{fontSize:'12px',fontWeight:700,color:'#1A1A1C',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'10px'}}>Quick emails</div>
+              <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
+                {(STAGE_EMAILS[p.stage]||[]).map((tpl,i)=>(
+                  <button key={i} onClick={()=>setEmailTpl(tpl)} style={{display:'inline-flex',alignItems:'center',gap:'7px',background:'#fff',border:'1px solid #DCDCE0',borderRadius:'9px',padding:'8px 13px',fontSize:'12.5px',fontWeight:500,color:'#1A1A1C',cursor:'pointer'}}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0071E3" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+                    {tpl.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* current-stage tasks */}
           <div style={{fontSize:'12px',fontWeight:700,color:'#1A1A1C',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'10px'}}>{st.label} tasks</div>
           {stageTasks.length===0 && <div style={{fontSize:'13px',color:'#A0A0A4',marginBottom:'12px'}}>No tasks in this stage yet.</div>}
@@ -348,6 +424,57 @@ function ProgramDetail({ program, tasks, me, onClose, onAdvance, onReload }) {
         <div style={{padding:'14px 24px',borderTop:'1px solid #ECECEE',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <button onClick={archive} style={{background:'none',border:'none',color:'#B91C1C',fontSize:'13px',fontWeight:500,cursor:'pointer'}}>Archive program</button>
           <button onClick={onClose} style={{background:'#F2F2F4',border:'none',borderRadius:'9px',padding:'9px 18px',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>Done</button>
+        </div>
+      </div>
+      {emailTpl && <EmailComposer tpl={emailTpl} program={p} onClose={()=>setEmailTpl(null)} />}
+    </div>
+  );
+}
+
+function EmailComposer({ tpl, program, onClose }) {
+  const [to, setTo] = useState(defaultRecipient(tpl.to, program));
+  const [subject, setSubject] = useState(fillTemplate(tpl.subject, program));
+  const [body, setBody] = useState(fillTemplate(tpl.body, program));
+
+  const chips = [
+    ...TEAM.map(m=>({ label:m.name, email:m.email })),
+    program.client_email ? { label:(program.client_contact||program.client||'Client'), email:program.client_email } : null,
+    program.factory_email ? { label:(program.factory_contact||program.factory||'Factory'), email:program.factory_email } : null,
+  ].filter(Boolean);
+
+  const openMail = () => {
+    const link = 'mailto:'+(to||'')+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+    window.location.href = link;
+    onClose();
+  };
+  const copyBody = () => { try { navigator.clipboard.writeText(body); } catch(e){} };
+
+  return (
+    <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.4)',display:'flex',alignItems:'center',justifyContent:'center',padding:'16px',zIndex:1100}}>
+      <div style={{...card,width:'100%',maxWidth:'520px',padding:0}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:'18px 22px',borderBottom:'1px solid #ECECEE',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div style={{fontSize:'15px',fontWeight:700,color:'#1A1A1C'}}>{tpl.label}</div>
+          <button onClick={onClose} style={{background:'none',border:'none',fontSize:'22px',color:'#A0A0A4',cursor:'pointer'}}>×</button>
+        </div>
+        <div style={{padding:'18px 22px'}}>
+          <label style={lbl}>To</label>
+          <input style={inp} value={to} onChange={e=>setTo(e.target.value)} placeholder="recipient@email.com" />
+          <div style={{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'8px',marginBottom:'14px'}}>
+            {chips.map((c,i)=>(
+              <button key={i} onClick={()=>setTo(c.email)} style={{fontSize:'11.5px',fontWeight:500,border:'1px solid '+(to===c.email?'#0071E3':'#E5E7EB'),background:to===c.email?'#EAF3FE':'#fff',color:to===c.email?'#0071E3':'#4A4A4E',borderRadius:'20px',padding:'4px 11px',cursor:'pointer'}}>{c.label}</button>
+            ))}
+          </div>
+          <label style={lbl}>Subject</label>
+          <input style={{...inp,marginBottom:'14px'}} value={subject} onChange={e=>setSubject(e.target.value)} />
+          <label style={lbl}>Message</label>
+          <textarea style={{...inp,minHeight:'150px',resize:'vertical',lineHeight:1.5}} value={body} onChange={e=>setBody(e.target.value)} />
+        </div>
+        <div style={{padding:'14px 22px',borderTop:'1px solid #ECECEE',display:'flex',justifyContent:'space-between',alignItems:'center',gap:'8px'}}>
+          <button onClick={copyBody} style={{background:'none',border:'none',color:'#6A6A6E',fontSize:'12.5px',fontWeight:500,cursor:'pointer'}}>Copy text</button>
+          <button onClick={openMail} style={{display:'inline-flex',alignItems:'center',gap:'7px',background:'#0071E3',color:'#fff',border:'none',borderRadius:'9px',padding:'10px 18px',fontSize:'13.5px',fontWeight:600,cursor:'pointer'}}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+            Open in Mail
+          </button>
         </div>
       </div>
     </div>
