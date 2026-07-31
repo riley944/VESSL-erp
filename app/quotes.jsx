@@ -8,7 +8,7 @@ import {
 import { SBQ } from "@/lib/supabaseQuotes";
 import { SB } from "@/lib/supabase";
 import { FilterSelect } from "@/app/components/FilterSelect";
-import { SIZE_SCALES } from "@/app/components/SizeGrid";
+import { SIZE_SCALES, sizesForScale } from "@/app/components/SizeGrid";
 
 // ============================================================
 //  SUPABASE CONNECTION
@@ -103,6 +103,25 @@ function tierMargin(t, client, moldFee) {
   if (p <= 0) return 0;
   return ((p - total) / p) * 100;
 }
+// Per-size deltas move the client price, so one tier can span a band of margins.
+// Returns null whenever the tier should render exactly as it does without deltas:
+// no base client price (NULL on ~a third of tiers — a delta must never manufacture
+// a number there), no size scale, or every size sitting at the base price.
+function marginRangeFor(t, moldFee, deltaMap, scaleKey) {
+  const base = Number(t.client) || 0;
+  if (base <= 0) return null;
+  const sizes = scaleKey ? sizesForScale(scaleKey) : [];
+  if (!sizes.length) return null;
+  const priced = sizes.map((s) => {
+    const d = Number((deltaMap || {})[s]);
+    return base + (isFinite(d) ? d : 0);
+  });
+  if (!priced.some((p) => p !== base)) return null;
+  // A delta steep enough to drive the price to zero has no meaningful margin.
+  const margins = priced.filter((p) => p > 0).map((p) => tierMargin(t, p, moldFee));
+  if (!margins.length) return null;
+  return { low: Math.min(...margins), high: Math.max(...margins) };
+}
 
 const CLIENT_PALETTE = [
   { bg: "#ffffff", avatar: "#f87171", text: "#0b1120", accent: "#f87171" },
@@ -134,6 +153,30 @@ function KULogo({ height = 40, dark = false }) {
 const KU_LOGO_PRINT = "/logo.png";
 
 // ---------- DB <-> form mapping ----------
+// size_price_deltas rides on the quote, not the tier — one set applies across every
+// tier. Stored as an array of records, non-zero entries only ([{size,delta}]); held
+// in form state as a keyed map of STRINGS ({"2XL":"1.5"}) because coercing to Number
+// on each keystroke makes "1.50" untypeable, the same reason SizeGrid holds strings.
+function deltasToMap(v) {
+  let arr = [];
+  try { arr = Array.isArray(v) ? v : (v ? JSON.parse(v) : []); } catch { arr = []; }
+  const map = {};
+  (Array.isArray(arr) ? arr : []).forEach((d) => {
+    if (!d || d.size == null) return;
+    const n = Number(d.delta);
+    if (!isFinite(n) || n === 0) return;
+    map[String(d.size)] = String(n);
+  });
+  return map;
+}
+// Sizes outside the current scale are dropped here as well as on scale change, so a
+// stale delta can never reach the column. No scale (a flat product) stores [].
+function mapToDeltas(map, scaleKey) {
+  if (!scaleKey) return [];
+  return sizesForScale(scaleKey)
+    .map((s) => ({ size: s, delta: Number((map || {})[s]) }))
+    .filter((d) => isFinite(d.delta) && d.delta !== 0);
+}
 function rowToForm(r) {
   let tiers = [];
   try { tiers = Array.isArray(r.tiers) ? r.tiers : (r.tiers ? JSON.parse(r.tiers) : []); } catch { tiers = []; }
@@ -161,7 +204,7 @@ function rowToForm(r) {
   return {
     id: r.id,
     quoteDate: r.quote_date || "", product: r.product || "",
-    sku: r.sku || "", sizeScale: r.size_scale || "", notes: r.notes || "",
+    sku: r.sku || "", sizeScale: r.size_scale || "", sizeDeltas: deltasToMap(r.size_price_deltas), notes: r.notes || "",
     client: r.client || "", clientContact: r.client_contact || "", clientEmail: r.client_email || "",
     clientPhone: r.client_phone || "", clientAddress: r.client_address || "",
     factory: r.factory || "", factoryContact: r.factory_contact || "", factoryEmail: r.factory_email || "",
@@ -187,7 +230,7 @@ function formToRow(f) {
   const first = f.tiers && f.tiers[0] ? f.tiers[0] : {};
   return {
     quote_date: f.quoteDate || null, product: f.product || null,
-    sku: f.sku || null, size_scale: f.sizeScale || null, qty: num(first.qty), notes: f.notes || null,
+    sku: f.sku || null, size_scale: f.sizeScale || null, size_price_deltas: mapToDeltas(f.sizeDeltas, f.sizeScale), qty: num(first.qty), notes: f.notes || null,
     client: f.client || null, client_contact: f.clientContact || null, client_email: f.clientEmail || null,
     client_phone: f.clientPhone || null, client_address: f.clientAddress || null,
     factory: f.factory || null, factory_contact: f.factoryContact || null, factory_email: f.factoryEmail || null,
@@ -210,7 +253,7 @@ const SKU_SIZE_SUFFIX = /[-_\/ ]\s*(?:[0-9]?X{0,3}(?:S|M|L|XS|SM|MED|LG|XL|XXL|S
 const skuLooksSized = (sku) => SKU_SIZE_SUFFIX.test((sku || "").trim());
 
 const BLANK = {
-  id: null, quoteDate: "", product: "", sku: "", sizeScale: "", notes: "",
+  id: null, quoteDate: "", product: "", sku: "", sizeScale: "", sizeDeltas: {}, notes: "",
   updatedAt: "", updatedBy: "",
   client: "", clientContact: "", clientEmail: "", clientPhone: "", clientAddress: "",
   factory: "", factoryContact: "", factoryEmail: "", factoryPhone: "", country: "", leadTime: "", hts: "",
@@ -1656,6 +1699,31 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   // Warn only -- the user may be part-way through stripping the suffix off the SKU.
   const sizeClash = !!f.sizeScale && skuLooksSized(f.sku);
 
+  // Deltas are keyed by size, so a scale change must drop any with no home in the
+  // new scale — the same rule SizeGrid.changeScale applies to quantities. Clearing
+  // the scale clears them all. SelectField calls set(k) for its onChange, so this
+  // is handed in as a set-shaped function for that one field.
+  const setSizeScale = (e) => {
+    const key = (e && e.target ? e.target.value : e) || "";
+    setF((p) => {
+      const nextSizes = key ? sizesForScale(key) : [];
+      const kept = {};
+      Object.keys(p.sizeDeltas || {}).forEach((s) => { if (nextSizes.includes(s)) kept[s] = p.sizeDeltas[s]; });
+      return { ...p, sizeScale: key, sizeDeltas: kept };
+    });
+  };
+  // Deltas can be negative, so SizeGrid's digit-only strip is wrong here. Keep one
+  // leading '-' and one '.', reject everything else. Blank means zero.
+  const setSizeDelta = (size, raw) => {
+    let s = String(raw).replace(/[^0-9.-]/g, "");
+    const neg = s.startsWith("-");
+    s = s.replace(/-/g, "");
+    const dot = s.indexOf(".");
+    if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, "");
+    if (neg) s = "-" + s;
+    setF((p) => ({ ...p, sizeDeltas: { ...(p.sizeDeltas || {}), [size]: s } }));
+  };
+
   const clientMatches = (() => {
     const typed = (f.client || "").trim().toLowerCase();
     if (!typed) return [];
@@ -1752,7 +1820,33 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
             <SelectField label="Size Scale" k="sizeScale" placeholder="— no sizes —"
               options={SIZE_SCALES.map((s) => ({ value: s.key, label: s.label }))}
               hint={sizeClash ? "SKU already ends in a size — with a scale set too, order lines would double it (…-Large-S)." : null}
-              f={f} set={set} />
+              f={f} set={() => setSizeScale} />
+            {f.sizeScale && (
+              <label style={S.field}>
+                <span style={S.fieldLabel}>
+                  Per-size price adjustment{" "}
+                  <span style={{ color: "#6a7488", fontWeight: 500 }}>(+/- on the client price, applies to every tier)</span>
+                </span>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {sizesForScale(f.sizeScale).map((s) => (
+                    // a div, not a label: the caption sits above its own input already
+                    <div key={s} style={{ display: "flex", flexDirection: "column", gap: 3, width: 74 }}>
+                      <span style={{ fontSize: 11, color: "#6a7488", fontWeight: 600, textAlign: "center" }}>{s}</span>
+                      <input
+                        style={{ ...S.tierInput, textAlign: "right" }}
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        aria-label={"Price adjustment for size " + s}
+                        value={(f.sizeDeltas || {})[s] ?? ""}
+                        onChange={(e) => setSizeDelta(s, e.target.value)}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <span style={S.tierHint}>Blank is no adjustment. Negative lowers the price for that size.</span>
+              </label>
+            )}
             <Field label="Product" k="product" placeholder="e.g. Needlepoint Belt" f={f} set={set} />
             <Field label="HTS Code" k="hts" placeholder="Tariff code (per product)" f={f} set={set} />
             <Field label="Quote Date" k="quoteDate" type="date" f={f} set={set} />
@@ -1863,6 +1957,9 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
               </div>
               {f.tiers.map((t, i) => {
                 const m = tierMargin(t, t.client, f.moldFee);
+                // null unless per-size deltas actually widen this tier, in which case
+                // the cell falls through to exactly the single value it shows today.
+                const mr = marginRangeFor(t, f.moldFee, f.sizeDeltas, f.sizeScale);
                 const ship = t.ship || "ocean";
                 const total = tierTotalCost(t, f.moldFee);
                 const airOff = ship !== "air";
@@ -1891,7 +1988,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       <button style={S.autoBtn} title="Suggest from margin logic" onClick={() => autoFillClient(i)}>auto</button>
                     </div>
                     <div style={{ flex: 0.6, textAlign: "right", ...S.num, alignSelf: "center" }}>
-                      <span style={{ color: m && m < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{m ? m.toFixed(0) + "%" : "—"}</span>
+                      <span style={{ color: (mr ? mr.low : m) && (mr ? mr.low : m) < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{mr ? (mr.low.toFixed(0) === mr.high.toFixed(0) ? mr.low.toFixed(0) + "%" : mr.low.toFixed(0) + "-" + mr.high.toFixed(0) + "%") : (m ? m.toFixed(0) + "%" : "—")}</span>
                     </div>
                     <div style={{ width: 30, alignSelf: "center", textAlign: "center" }}>
                       {f.tiers.length > 1 && <button style={S.tierDel} onClick={() => removeTier(i)}><X size={14} /></button>}
