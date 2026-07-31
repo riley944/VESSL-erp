@@ -762,6 +762,137 @@ function Platform({ session }) {
 }
 
 // ---------- expanded detail ----------
+function FreightQuoteButton({ q, cbmPerCarton }) {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const per = Number(cbmPerCarton) || 0;
+  const upc = Number(q.unitsPerCarton) || 0;
+
+  // largest tier quantity → the volume we'd likely ship
+  const tiers = Array.isArray(q.tiers) ? q.tiers : [];
+  const maxQty = tiers.reduce((a, t) => Math.max(a, Number(t.qty) || 0), 0);
+
+  const generate = async () => {
+    if (per <= 0 || upc <= 0) { alert("Add carton dimensions and units-per-carton to this quote first — the freight generator needs them to calculate CBM."); return; }
+    setBusy(true);
+    try {
+      // match this quote's client (text name) to an ERP company
+      let clientId = null;
+      const nm = (q.client || "").trim();
+      if (nm) {
+        const { data: comps } = await SB.from("companies").select("id,name");
+        const lower = nm.toLowerCase();
+        const hit = (comps || []).find((c) => (c.name || "").trim().toLowerCase() === lower)
+          || (comps || []).find((c) => { const n = (c.name || "").trim().toLowerCase(); return n && (n.includes(lower) || lower.includes(n)); });
+        if (hit) clientId = hit.id;
+      }
+      const cartons = maxQty > 0 ? Math.ceil(maxQty / upc) : 0;
+      const totalCbm = Number((cartons * per).toFixed(3));
+      const CAP = 68; // 40'HQ default; adjustable in the ERP generator
+      const containers = totalCbm > 0 ? Math.ceil(totalCbm / CAP) : 0;
+      const util = containers > 0 ? (totalCbm / (containers * CAP)) * 100 : 0;
+      const pieces = cartons * upc;
+
+      const payload = {
+        quote_number: "FQ-" + Date.now().toString(36).slice(-5).toUpperCase(),
+        client_company_id: clientId,
+        forwarder_company_id: null, po_id: null,
+        origin: q.country || null, destination: null,
+        incoterm: "FOB", ready_date: null,
+        container_type: "40HQ", cbm_max: CAP,
+        total_cartons: cartons, total_cbm: totalCbm,
+        total_weight_kg: Number((cartons * (Number(q.cartonWeight) || 0)).toFixed(2)),
+        containers_needed: containers, utilization_pct: Number(util.toFixed(1)),
+        line_items: [{ desc: q.product || q.sku || "", upc: upc, cartons: cartons, pieces: pieces, cbm_per: per, cbm_total: totalCbm, weight: Number(q.cartonWeight) || 0 }],
+        notes: "Generated from quote " + (q.sku || q.product || "") + (nm ? " for " + nm : ""),
+        status: "draft",
+      };
+      const { error } = await SB.from("shipment_quotes").insert(payload);
+      if (error) { alert("Could not create freight quote: " + error.message); setBusy(false); return; }
+      setDone(true);
+      setTimeout(() => setDone(false), 4000);
+    } catch (e) {
+      alert("Something went wrong: " + (e && e.message ? e.message : e));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <button
+      style={{ ...S.printBtn, background: done ? "#e7f5ec" : S.printBtn.background, color: done ? "#2f7d52" : S.printBtn.color, borderColor: done ? "#b7e0c5" : (S.printBtn.borderColor || "#d9dee8") }}
+      onClick={generate} disabled={busy}
+      title="Create a draft freight quote in the Shipments tab, pre-filled from this quote"
+    >
+      <Truck size={15} /> {busy ? "Creating…" : done ? "Draft created — see Shipments ▸ Freight Quotes" : "Generate freight quote"}
+    </button>
+  );
+}
+
+const QUOTE_CONTAINERS = [
+  { key: "20GP", label: "20' Standard", cbm: 32 },
+  { key: "40GP", label: "40' Standard", cbm: 58 },
+  { key: "40HQ", label: "40' High-Cube", cbm: 68 },
+  { key: "45HQ", label: "45' High-Cube", cbm: 83 },
+];
+
+function ContainerPackout({ q, cbmPerCarton }) {
+  const [sel, setSel] = useState("40HQ");
+  const upc = Number(q.unitsPerCarton) || 0;
+  const per = Number(cbmPerCarton) || 0;
+  const container = QUOTE_CONTAINERS.find((c) => c.key === sel) || QUOTE_CONTAINERS[2];
+  const ready = per > 0;
+  const cartons = ready ? Math.floor(container.cbm / per) : 0;
+  const units = cartons * upc;
+  const usedCbm = cartons * per;
+  const util = ready ? (usedCbm / container.cbm) * 100 : 0;
+
+  return (
+    <div style={{ gridColumn: "1 / -1", marginTop: 4 }}>
+      <div style={S.detailHead}><Package size={14} /> Container Packout</div>
+      {!ready ? (
+        <div style={{ ...S.detailValue, color: "#6a7488", fontSize: 13 }}>
+          Add carton dimensions and units-per-carton to calculate how many fit a container.
+        </div>
+      ) : (
+        <div style={{ background: "#f7f8fb", border: "1px solid #e6e9f0", borderRadius: 12, padding: 16 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+            {QUOTE_CONTAINERS.map((c) => {
+              const on = sel === c.key;
+              return (
+                <button key={c.key} onClick={() => setSel(c.key)} style={{
+                  flex: "1 1 130px", textAlign: "left", padding: "10px 13px", borderRadius: 10, cursor: "pointer",
+                  border: `1.5px solid ${on ? "#2f6df6" : "#e0e4ec"}`, background: on ? "#eef4ff" : "#fff",
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: on ? "#2f6df6" : "#0f1729" }}>{c.label}</div>
+                  <div style={{ fontSize: 11, color: "#6a7488", marginTop: 2 }}>{c.cbm} CBM usable</div>
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+            {[
+              ["Cartons fit", cartons.toLocaleString()],
+              ["Total units", units.toLocaleString()],
+              ["Volume used", `${usedCbm.toFixed(1)} CBM`],
+              ["Utilization", `${util.toFixed(0)}%`],
+            ].map(([k, v]) => (
+              <div key={k}>
+                <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", color: "#8a93a6", marginBottom: 5 }}>{k}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "#0f1729", fontVariantNumeric: "tabular-nums" }}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11.5, color: "#6a7488", marginTop: 12, lineHeight: 1.5 }}>
+            {upc > 0
+              ? `A full ${container.label} holds about ${cartons.toLocaleString()} cartons (${units.toLocaleString()} units) at ${per.toFixed(4)} CBM/carton.`
+              : `Enter units-per-carton to see the total unit count.`}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, userEmail, isMobile = false, onEdit, onDuplicate, onDelete }) {
   const [taskText, setTaskText] = useState("");
   const [taskWho, setTaskWho] = useState(TEAM[0].email);
@@ -853,6 +984,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
         <F label="Carton Wt (kg)" value={q.cartonWeight} />
         <F label="CBM / Carton" value={isFinite(cbm) && cbm > 0 ? cbm.toFixed(4) : ""} />
       </Section>
+      <ContainerPackout q={q} cbmPerCarton={cbm} />
       {q.notes && (
         <div style={{ ...S.detailSection, gridColumn: "1 / -1" }}>
           <div style={S.detailHead}><AlertCircle size={14} /> Notes</div>
@@ -894,6 +1026,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
             <button style={S.iconBtn} title="Delete" onClick={onDelete}><Trash2 size={16} /></button>
           </div>
         )}
+        <FreightQuoteButton q={q} cbmPerCarton={cbm} />
         <button style={S.printBtn} onClick={() => printQuote(q)}><Printer size={15} /> Print this quote</button>
       </div>
     </div>
