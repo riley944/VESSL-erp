@@ -122,6 +122,23 @@ function marginRangeFor(t, moldFee, deltaMap, scaleKey) {
   if (!margins.length) return null;
   return { low: Math.min(...margins), high: Math.max(...margins) };
 }
+// The per-size breakdown behind marginRangeFor: one entry per size whose delta
+// actually moves the price, in scale order rather than object-key order. Guards are
+// deliberately the same as marginRangeFor's — no base price, no scale, zero delta,
+// or a delta steep enough to zero the price — so the range on a tier row can never
+// disagree with the size rows printed beneath it.
+function sizeRowsFor(t, moldFee, deltaMap, scaleKey) {
+  const base = Number(t.client) || 0;
+  if (base <= 0) return [];
+  const sizes = scaleKey ? sizesForScale(scaleKey) : [];
+  return sizes
+    .map((s) => {
+      const d = Number((deltaMap || {})[s]);
+      return { size: s, delta: isFinite(d) ? d : 0 };
+    })
+    .filter((r) => r.delta !== 0 && base + r.delta > 0)
+    .map((r) => ({ ...r, price: base + r.delta, margin: tierMargin(t, base + r.delta, moldFee) }));
+}
 
 const CLIENT_PALETTE = [
   { bg: "#ffffff", avatar: "#f87171", text: "#0b1120", accent: "#f87171" },
@@ -1821,12 +1838,11 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
               options={SIZE_SCALES.map((s) => ({ value: s.key, label: s.label }))}
               hint={sizeClash ? "SKU already ends in a size — with a scale set too, order lines would double it (…-Large-S)." : null}
               f={f} set={() => setSizeScale} />
+            {/* Spans the whole form row: S.formGrid is auto-fit minmax(150px,1fr),
+                which otherwise crushes six size inputs into one narrow column. */}
             {f.sizeScale && (
-              <label style={S.field}>
-                <span style={S.fieldLabel}>
-                  Per-size price adjustment{" "}
-                  <span style={{ color: "#6a7488", fontWeight: 500 }}>(+/- on the client price, applies to every tier)</span>
-                </span>
+              <label style={{ ...S.field, gridColumn: "1 / -1" }}>
+                <span style={S.fieldLabel}>Per-size price adjustment</span>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   {sizesForScale(f.sizeScale).map((s) => (
                     // a div, not a label: the caption sits above its own input already
@@ -1844,7 +1860,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                     </div>
                   ))}
                 </div>
-                <span style={S.tierHint}>Blank is no adjustment. Negative lowers the price for that size.</span>
+                <span style={S.tierHint}>+/- on the client price, applied across every tier. Blank is no adjustment. Negative lowers the price for that size.</span>
               </label>
             )}
             <Field label="Product" k="product" placeholder="e.g. Needlepoint Belt" f={f} set={set} />
@@ -1960,6 +1976,10 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                 // null unless per-size deltas actually widen this tier, in which case
                 // the cell falls through to exactly the single value it shows today.
                 const mr = marginRangeFor(t, f.moldFee, f.sizeDeltas, f.sizeScale);
+                // Read-only breakdown rows. Deltas are stored once per quote and apply
+                // to every tier, so these are display only — editing one here would
+                // silently move the others. Editing stays in the Product section.
+                const sizeRows = sizeRowsFor(t, f.moldFee, f.sizeDeltas, f.sizeScale);
                 const ship = t.ship || "ocean";
                 const total = tierTotalCost(t, f.moldFee);
                 const airOff = ship !== "air";
@@ -1970,7 +1990,8 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                   setF((p) => ({ ...p, tiers: p.tiers.map((x, idx) => idx === i ? { ...x, ship: "ocean", freightAir: "", freightOcean: duty, duty_only: true } : x) }));
                 };
                 return (
-                  <div key={i} style={S.tierEditRow}>
+                  <React.Fragment key={i}>
+                  <div style={S.tierEditRow}>
                     <div style={{ flex: 0.9 }}><input style={S.tierInput} type="number" value={t.qty ?? ""} onChange={(e) => setTier(i, "qty", e.target.value)} placeholder="Qty" /></div>
                     <div style={{ flex: 0.9 }}><input style={S.tierInput} type="number" value={t.landed ?? ""} onChange={(e) => setTier(i, "landed", e.target.value)} placeholder="$ EXW" /></div>
                     <div style={{ flex: 1.0, display: "flex", gap: 3, alignItems: "center" }}>
@@ -1994,6 +2015,27 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       {f.tiers.length > 1 && <button style={S.tierDel} onClick={() => removeTier(i)}><X size={14} /></button>}
                     </div>
                   </div>
+                  {/* Per-tier columns are identical to the parent, so they stay empty
+                      rather than repeating themselves. Flex widths mirror the row above. */}
+                  {sizeRows.map((r) => (
+                    <div key={r.size} style={S.tierSizeRow}>
+                      <div style={{ flex: 0.9, ...S.tierSizeCell, paddingLeft: 12, color: "#8a93a5", fontWeight: 600 }}>{r.size}</div>
+                      <div style={{ flex: 0.9 }} />
+                      <div style={{ flex: 1.0 }} />
+                      <div style={{ flex: 1.0 }} />
+                      <div style={{ flex: 1.0 }} />
+                      <div style={{ flex: 0.9, textAlign: "right", ...S.tierSizeCell }}>{total ? `$${fmt(total)}` : "—"}</div>
+                      <div style={{ flex: 1.1, ...S.tierSizeCell }}>
+                        ${fmt(r.price)}
+                        <span style={{ color: "#9aa3b5", marginLeft: 5 }}>({r.delta > 0 ? "+" : "−"}{fmt(Math.abs(r.delta))})</span>
+                      </div>
+                      <div style={{ flex: 0.6, textAlign: "right", ...S.tierSizeCell }}>
+                        <span style={{ color: r.margin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{r.margin.toFixed(0)}%</span>
+                      </div>
+                      <div style={{ width: 30 }} />
+                    </div>
+                  ))}
+                  </React.Fragment>
                 );
               })}
             </div>
@@ -2116,6 +2158,9 @@ const S = {
   tierEditTable: { border: "1px solid #e7eaf0", borderRadius: 12, overflow: "hidden" },
   tierEditHead: { display: "flex", gap: 8, padding: "9px 12px", background: "#eef1f6", fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase", color: "#9aa3b5", fontWeight: 600 },
   tierEditRow: { display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid #eef1f6", background: "#ffffff" },
+  // Derived display beneath a tier, not an input row — tinted, tighter, dashed rule.
+  tierSizeRow: { display: "flex", gap: 8, padding: "5px 12px", borderTop: "1px dashed #eef1f6", background: "#fafbfd" },
+  tierSizeCell: { fontSize: 12, fontVariantNumeric: "tabular-nums", color: "#6a7488", alignSelf: "center" },
   tierInput: { border: "1px solid #e7eaf0", background: "#ffffff", borderRadius: 8, padding: "8px 9px", fontSize: 13.5, color: "#0f1729", width: "100%" },
   autoBtn: { background: "#eef1f6", border: "1px solid #e7eaf0", color: "#3461e0", borderRadius: 8, padding: "0 9px", fontSize: 11, fontWeight: 600 },
   tierDel: { background: "transparent", border: "none", color: "#bba", padding: 2, display: "inline-flex" },
