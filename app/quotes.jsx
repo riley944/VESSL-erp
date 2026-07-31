@@ -762,6 +762,57 @@ function Platform({ session }) {
 }
 
 // ---------- expanded detail ----------
+function MarkWonButton({ q }) {
+  const [busy, setBusy] = useState(false);
+  const [state, setState] = useState('idle'); // idle | done | exists
+
+  const start = async () => {
+    setBusy(true);
+    try {
+      // don't double-create: look for an existing program on this quote
+      const { data: existing } = await SB.from('programs').select('id').eq('quote_id', q.id).limit(1);
+      if (existing && existing.length) { setState('exists'); setBusy(false); setTimeout(()=>setState('idle'),4000); return; }
+
+      const { data: prog, error } = await SB.from('programs').insert({
+        quote_id: q.id, quote_sku: q.sku || null,
+        product: q.product || null, sku: q.sku || null,
+        client: q.client || null, factory: q.factory || null,
+        client_email: q.clientEmail || null, client_contact: q.clientContact || null,
+        factory_email: q.factoryEmail || null, factory_contact: q.factoryContact || null,
+        stage: 'sampling',
+        owner: 'emily@kinguniversal.com',
+        master_sample_included: null, sample_round: 1,
+      }).select('id').single();
+      if (error) { alert('Could not start program: ' + error.message); setBusy(false); return; }
+
+      // seed the Sampling stage checklist
+      const SAMPLING = ['Request sample from factory','Sample received from factory','Sample sent to client','Client feedback received'];
+      await SB.from('program_tasks').insert(SAMPLING.map((task,i)=>({
+        program_id: prog.id, stage: 'sampling', task, owner: 'emily@kinguniversal.com', blocker: 'none', sort_order: i,
+      })));
+      setState('done'); setBusy(false); setTimeout(()=>setState('idle'),5000);
+    } catch (e) {
+      alert('Something went wrong: ' + (e && e.message ? e.message : e)); setBusy(false);
+    }
+  };
+
+  const label = state==='done' ? 'Program started — see Programs tab'
+    : state==='exists' ? 'Program already exists'
+    : busy ? 'Starting…' : 'Mark won · start program';
+  const bg = state==='done' ? '#e7f5ec' : state==='exists' ? '#fef3e2' : '#0f7d43';
+  const col = state==='done' ? '#2f7d52' : state==='exists' ? '#b45309' : '#fff';
+
+  return (
+    <button
+      style={{ display:'inline-flex', alignItems:'center', gap:7, background:bg, border:'1px solid '+(state==='idle'?'#0f7d43':'transparent'), color:col, borderRadius:10, padding:'9px 16px', fontSize:13.5, fontWeight:600, cursor:'pointer' }}
+      onClick={start} disabled={busy}
+      title="Mark this quote won and create its lifecycle program"
+    >
+      <CheckCircle2 size={15} /> {label}
+    </button>
+  );
+}
+
 function FreightQuoteButton({ q, cbmPerCarton }) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
@@ -1026,6 +1077,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
             <button style={S.iconBtn} title="Delete" onClick={onDelete}><Trash2 size={16} /></button>
           </div>
         )}
+        <MarkWonButton q={q} />
         <FreightQuoteButton q={q} cbmPerCarton={cbm} />
         <button style={S.printBtn} onClick={() => printQuote(q)}><Printer size={15} /> Print this quote</button>
       </div>
