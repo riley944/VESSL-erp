@@ -1404,7 +1404,12 @@ function QuotePickerModal({ onPick, onClose, priceField='client' }){
       desc:q.product||'', sku:q.sku||'',
       qty:t.qty?String(t.qty):'',
       price:priceOf(t)?String(priceOf(t)):'',
-      quoteId:q.id, client:q.client||'', factory:q.factory||''
+      quoteId:q.id, client:q.client||'', factory:q.factory||'',
+      // Size info for callers that support it; the PO-side handlers ignore these.
+      // clientPrice is carried separately from price because priceOf() falls back to
+      // landed, and per-size deltas are only meaningful against the client price.
+      sizeScale:q.size_scale||null, sizeDeltas:q.size_price_deltas||[],
+      clientPrice:t.client!=null?String(t.client):''
     });
     onClose();
   };
@@ -1517,20 +1522,56 @@ function CreateSOModal({onClose,onCreated}){
     })();
   },[]);
   const addNC=async()=>{ const n=ncName.trim(); if(!n) return; const {data:co}=await SB.from('companies').upsert({name:n,type:'client'},{onConflict:'name,type'}).select('id,name').single(); if(co){setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]);f('clientId')(co.id);} setShowNC(false);setNcName(''); };
+  // size_price_deltas is stored as [{size,delta}], non-zero entries only.
+  const deltaMap=v=>{
+    let a=[]; try{ a=Array.isArray(v)?v:(v?JSON.parse(v):[]); }catch{ a=[]; }
+    const m={}; (Array.isArray(a)?a:[]).forEach(d=>{ if(!d||d.size==null) return; const n=Number(d.delta); if(isFinite(n)&&n!==0) m[String(d.size)]=n; });
+    return m;
+  };
+  // Mirror of CreatePOModal's seedPrices, with two differences: the SO base is the
+  // tier's CLIENT price (the PO base is landed/EXW), and the quote's per-size deltas
+  // ride on top. What gets stored is an absolute price per size, never a delta -- the
+  // save path and SizeGrid both work in absolutes, so nothing downstream needs to
+  // know a delta was involved. No client price means nothing to seed from: leave the
+  // boxes blank and let SizeGrid's fallbackPrice carry the arithmetic.
+  const seedSizePrices=(scaleKey,basePrice,deltas)=>{
+    const base=Number(basePrice);
+    if(!scaleKey||basePrice===''||basePrice==null||!(base>0)) return {};
+    const dm=deltaMap(deltas);
+    return sizesForScale(scaleKey).reduce((a,s)=>{
+      const p=base+(dm[s]||0);
+      // A discount steeper than the price itself is not a price -- leave it blank
+      // and fall back, the same way quotes.jsx refuses to show such a size.
+      return p>0?{...a,[s]:String(p)}:a;
+    },{});
+  };
   const applyQuote=(q,tIdx)=>{
     setPicked(q); setTierIdx(tIdx);
     const ts=tOf(q); const tier=ts[tIdx]||ts[0]||{};
     const noPrice=!tier.client||Number(tier.client)===0;
-    setItems([{desc:q.product||'',sku:q.sku||'',qty:tier.qty?String(tier.qty):'',price:tier.client?String(tier.client):'',quoteId:q.id,tierIdx:tIdx,noPrice,sizeScale:null,sizeQty:{},sizePrice:{}}]);
+    const scale=q.size_scale||null;
+    const price=tier.client?String(tier.client):'';
+    setItems([{desc:q.product||'',sku:q.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:q.id,tierIdx:tIdx,noPrice,sizeScale:scale,sizeQty:{},sizePrice:seedSizePrices(scale,price,q.size_price_deltas)}]);
     if(q.client&&!form.clientId){const m=clients.find(c=>(c.name||'').toLowerCase()===q.client.toLowerCase());if(m)setForm(prev=>({...prev,clientId:m.id}));}
   };
   const pickTier=i=>{
     setTierIdx(i);
-    if(picked){const ts=tOf(picked);const tier=ts[i]||{};const noPrice=!tier.client||Number(tier.client)===0;setItems([{desc:picked.product||'',sku:picked.sku||'',qty:tier.qty?String(tier.qty):'',price:tier.client?String(tier.client):'',quoteId:picked.id,tierIdx:i,noPrice,sizeScale:null,sizeQty:{},sizePrice:{}}]);}
+    if(picked){
+      const ts=tOf(picked); const tier=ts[i]||{};
+      const noPrice=!tier.client||Number(tier.client)===0;
+      const scale=picked.size_scale||null;
+      const price=tier.client?String(tier.client):'';
+      // Switching tier re-seeds prices at the new tier, but quantities the user has
+      // already typed are theirs -- carry them across the wholesale item replacement.
+      setItems(prev=>{
+        const keptQty=(prev[0]&&prev[0].sizeScale===scale)?(prev[0].sizeQty||{}):{};
+        return [{desc:picked.product||'',sku:picked.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:picked.id,tierIdx:i,noPrice,sizeScale:scale,sizeQty:keptQty,sizePrice:seedSizePrices(scale,price,picked.size_price_deltas)}];
+      });
+    }
   };
   const addExtraItem=()=>setShowPicker(true);
   const [showPicker,setShowPicker]=useState(false);
-  const onPickItem=(li)=>setItems(prev=>[...prev,{desc:li.desc,sku:li.sku,qty:li.qty,price:li.price,quoteId:li.quoteId,tierIdx:0,noPrice:!li.price,sizeScale:null,sizeQty:{},sizePrice:{}}]);
+  const onPickItem=(li)=>setItems(prev=>[...prev,{desc:li.desc,sku:li.sku,qty:li.qty,price:li.price,quoteId:li.quoteId,tierIdx:0,noPrice:!li.price,sizeScale:li.sizeScale||null,sizeQty:{},sizePrice:seedSizePrices(li.sizeScale||null,li.clientPrice,li.sizeDeltas)}]);
   const togglePO=pid=>setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]);
   const prevRev=items.reduce((a,it)=>a+lineAmt(it),0);
   const filtQ=qSearch?quotes.filter(q=>(q.product||'').toLowerCase().includes(qSearch.toLowerCase())||(q.client||'').toLowerCase().includes(qSearch.toLowerCase())||(q.factory||'').toLowerCase().includes(qSearch.toLowerCase())||(q.sku||'').toLowerCase().includes(qSearch.toLowerCase())):quotes;
