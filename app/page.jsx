@@ -6,6 +6,7 @@ import { SBQ } from '@/lib/supabaseQuotes';
 import Quotes from '@/app/quotes';
 import Testing from '@/app/testing';
 import Pricing from '@/app/pricing';
+import Programs from '@/app/programs';
 import { FilterSelect } from '@/app/components/FilterSelect';
 import { SizeGrid, sizesForScale } from '@/app/components/SizeGrid';
 
@@ -196,6 +197,7 @@ const Ic = {
   products:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>,
   testing:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>,
   pricing:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
+  programs:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-5"/></svg>,
   shipments:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6h13v9H1zM14 9h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg>,
   inventory:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
   quotes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9.5 14.5h3.5a1.5 1.5 0 0 0 0-3h-2a1.5 1.5 0 0 1 0-3H14"/></svg>,
@@ -224,6 +226,7 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null }) {
     { id:'products',           label:'Products' },
     { id:'testing',            label:'Testing' },
     { id:'pricing',            label:'Pricing' },
+    { id:'programs',           label:'Programs' },
     { id:'shipments',          label:'Shipments' },
     { id:'inventory',          label:'Inventory' },
     { id:'quotes',             label:'Quotes' },
@@ -4419,10 +4422,10 @@ function parseCartonInfo(txt) {
 }
 // Usable CBM capacity per container type (practical loadable volume, not theoretical max)
 const CONTAINER_TYPES = [
-  { key:'20GP',  label:"20' Standard",     cbm:33 },
+  { key:'20GP',  label:"20' Standard",     cbm:32 },
   { key:'40GP',  label:"40' Standard",     cbm:58 },
   { key:'40HQ',  label:"40' High-Cube",    cbm:68 },
-  { key:'45HQ',  label:"45' High-Cube",    cbm:82 },
+  { key:'45HQ',  label:"45' High-Cube",    cbm:83 },
 ];
 const CONTAINER_MAP = Object.fromEntries(CONTAINER_TYPES.map(c=>[c.key,c]));
 const CBM_MAX_40HQ = 68; // legacy default fallback
@@ -5388,7 +5391,7 @@ export default function App() {
   const allowedPages = allowedPagesFor(role);
   const page = (allowedPages && !allowedPages.includes(rawPage)) ? allowedPages[0] : rawPage;
 
-  const titles = {dashboard:'Dashboard','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',shipments:'Shipments',quotes:'Quotes','client-relations':'Client Relations'};
+  const titles = {dashboard:'Dashboard','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes','client-relations':'Client Relations'};
   const badges = {'client-relations': crUnread};
 
   return (
@@ -5409,7 +5412,7 @@ export default function App() {
         </div>
       ) : (
       <div className="main-area">
-        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='inventory'||page==='shipments'||page==='pricing')?{display:'none'}:undefined}>
+        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='inventory'||page==='shipments'||page==='pricing'||page==='programs')?{display:'none'}:undefined}>
           <h1 className="page-title">{titles[page]||''}</h1>
           <div className="page-actions">{pageActions[page]}</div>
         </div>
@@ -5423,6 +5426,7 @@ export default function App() {
           {page==='products'         && <Products navigate={navigate} />}
           {page==='testing'          && <Testing />}
           {page==='pricing'          && <Pricing />}
+          {page==='programs'         && <Programs userEmail={user?.email||''} />}
           {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} />}
           {page==='inventory'        && <Inventory />}
           {page==='settings'         && <KuiSettings />}
