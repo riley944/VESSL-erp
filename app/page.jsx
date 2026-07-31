@@ -3482,7 +3482,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [srchHits, setSrchHits] = useState([]);
   const [srchRect, setSrchRect] = useState(null);
   const [showPicker, setShowPicker] = useState(false);
-  const onPickPOItem = (li) => setItems(prev=>[...prev,{prodId:'',desc:li.desc,qty:li.qty,price:li.price,ci:'',carton:'',vpn:'',masterSku:'',packSku:'',babySku:'',retailPrice:''}]);
+  const onPickPOItem = (li) => setItems(prev=>[...prev,{prodId:'',desc:li.desc,qty:li.qty,price:li.price,ci:'',carton:'',vpn:'',masterSku:'',packSku:'',babySku:'',retailPrice:'',sizeScale:null,sizeQty:{},sizePrice:{}}]);
   const [recentDescs, setRecentDescs] = useState([]);
   const [form, setForm]  = useState({ factoryId:'', clientId:'', num:'', date:nowDate(), ship:'', cancel:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'', needs_samples:false, sample_type:'', sample_qty:'', sample_date:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -3523,7 +3523,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     });
   },[]);
 
-  const addItem = () => setItems(prev=>[...prev,{prodId:'',desc:'',qty:'',price:'',ci:'',carton:''}]);
+  const addItem = () => setItems(prev=>[...prev,{prodId:'',desc:'',qty:'',price:'',ci:'',carton:'',sizeScale:null,sizeQty:{},sizePrice:{}}]);
   const [showNewClient, setShowNewClient] = useState(false);
   const [newClientName, setNewClientName] = useState('');
   const addNewClient = async () => {
@@ -3584,6 +3584,23 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   };
   const setItem = (i,k,v) => setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const rmItem  = i => setItems(prev=>prev.filter((_,idx)=>idx!==i));
+  // Seed every size at the line's unit price, so a flat-priced product needs no
+  // typing and only an upcharge gets edited. Blank price leaves the boxes blank.
+  const seedPrices = (scaleKey, price) => (scaleKey && price !== '' && price != null)
+    ? sizesForScale(scaleKey).reduce((a,s)=>({...a,[s]:String(price)}),{}) : {};
+  const setSizeScale = (i,key) => setItems(prev=>prev.map((it,idx)=>{
+    if(idx!==i) return it;
+    return {...it, sizeScale:key, sizePrice: !it.sizeScale&&key ? seedPrices(key,it.price) : (it.sizePrice||{})};
+  }));
+  const setSizeQty   = (i,size,v) => setItems(prev=>prev.map((it,idx)=>idx===i?{...it,sizeQty:{...(it.sizeQty||{}),[size]:v}}:it));
+  const setSizePrice = (i,size,v) => setItems(prev=>prev.map((it,idx)=>idx===i?{...it,sizePrice:{...(it.sizePrice||{}),[size]:v}}:it));
+  // A sized line takes its quantity from the grid; an unsized line keeps its own box.
+  const lineQty = it => it.sizeScale?sizesForScale(it.sizeScale).reduce((a,s)=>a+(Number((it.sizeQty||{})[s])||0),0):(Number(it.qty)||0);
+  // A size with no price of its own falls back to the line's unit price -- the same
+  // rule the save path uses, so the Amount column cannot disagree with what is written.
+  const sizePriceOf = (it,s) => { const v=(it.sizePrice||{})[s]; return v===''||v==null?(Number(it.price)||0):(Number(v)||0); };
+  const lineAmt = it => it.sizeScale?sizesForScale(it.sizeScale).reduce((a,s)=>a+(Number((it.sizeQty||{})[s])||0)*sizePriceOf(it,s),0):(Number(it.qty)||0)*(Number(it.price)||0);
+  const lineUnit = it => { const q=lineQty(it); return q>0?lineAmt(it)/q:0; };
 
   // tiers stored as jsonb on each quote row
   const tiersOf = q => { try { return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]); } catch { return []; } };
@@ -3620,14 +3637,18 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       sample: q.sample_fee!=null?String(q.sample_fee):prev.sample,
       notes: prev.notes || (q.notes||''),
     }));
-    setItems([{ prodId: matchProduct?matchProduct.id:'', desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: t.landed!=null?String(t.landed):'', ci:'', carton:'' }]);
+    const qScale = q.size_scale || null;
+    const qPrice = t.landed!=null?String(t.landed):'';
+    setItems([{ prodId: matchProduct?matchProduct.id:'', desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: qPrice, ci:'', carton:'', sizeScale: qScale, sizeQty:{}, sizePrice: seedPrices(qScale,qPrice) }]);
   };
   const pickTier = ti => { if(picked) applyQuote(picked, ti); };
   const addExtraFromQuote = async (q, ti) => {
     const tiers = tiersOf(q);
     const t = tiers[ti] ?? tiers[0];
     if (!t) { alert('Could not read tier data — try re-selecting the quote.'); return; }
-    const newItem = { prodId:'', desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:t.landed!=null?String(t.landed):'', ci:'', carton:'' };
+    const xScale = q.size_scale || null;
+    const xPrice = t.landed!=null?String(t.landed):'';
+    const newItem = { prodId:'', desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:xPrice, ci:'', carton:'', sizeScale:xScale, sizeQty:{}, sizePrice:seedPrices(xScale,xPrice) };
     setItems(prev=>[...prev, newItem]);
     // If no client set yet on this PO, pull it from this quote's client
     if (!form.clientId && q.client) {
@@ -3647,7 +3668,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
 
   const submit  = async () => {
     if (!form.factoryId||!form.num) { alert('Factory and PO number required'); return; }
-    const valid = items.filter(it => (it.prodId || (it.desc||'').trim()) && Number(it.qty)>0);
+    const valid = items.filter(it => (it.prodId || (it.desc||'').trim()) && lineQty(it)>0);
     if (valid.length===0) { alert('Add at least one line item with a quantity greater than 0 before creating the PO.'); return; }
     const baseFields = {
       factory_company_id:form.factoryId, client_company_id:form.clientId||null, pallet_info:form.pallet||null, order_date:form.date,
@@ -3684,16 +3705,27 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     }
     if (!po) { alert('Error creating PO: '+(lastErr?.message||'unknown')); return; }
     let added=0, failed=[];
+    // A sized line expands to one row per size carrying a quantity; an unsized line
+    // still writes exactly one row, with size NULL. vpn / master_sku / pack_sku /
+    // baby_sku are user-entered rather than derived, so the size column carries the
+    // size alone and no SKU field is rewritten.
+    const rowsFor = it => {
+      const base={ purchase_order_id:po.id, product_id:it.prodId||null, quantity:Number(it.qty), unit_price:Number(it.price)||0, currency:form.currency, ci_value:Number(it.ci)||null, carton_info:it.carton||null, vpn:it.vpn||null, master_sku:it.masterSku||null, pack_sku:it.packSku||null, baby_sku:it.babySku||null, retail_price:it.retailPrice?Number(it.retailPrice):null };
+      if (!it.sizeScale) return [{ ...base, size:null }];
+      return sizesForScale(it.sizeScale).map(s=>({s,q:Number((it.sizeQty||{})[s])||0})).filter(x=>x.q>0)
+        .map(x=>({ ...base, quantity:x.q, unit_price:sizePriceOf(it,x.s), size:x.s }));
+    };
     for (const it of valid) {
       const hasDesc=(it.desc||'').trim();
-      const base={ purchase_order_id:po.id, product_id:it.prodId||null, quantity:Number(it.qty), unit_price:Number(it.price)||0, currency:form.currency, ci_value:Number(it.ci)||null, carton_info:it.carton||null, vpn:it.vpn||null, master_sku:it.masterSku||null, pack_sku:it.packSku||null, baby_sku:it.babySku||null, retail_price:it.retailPrice?Number(it.retailPrice):null };
-      let { error:e1 } = await SB.from('purchase_order_items').insert({ ...base, description:hasDesc||null });
-      if (e1 && /description/i.test(e1.message)) {
-        // description column not added yet (migration 007) — insert without it
-        const r = await SB.from('purchase_order_items').insert(base);
-        e1 = r.error;
+      for (const row of rowsFor(it)) {
+        let { error:e1 } = await SB.from('purchase_order_items').insert({ ...row, description:hasDesc||null });
+        if (e1 && /description/i.test(e1.message)) {
+          // description column not added yet (migration 007) — insert without it
+          const r = await SB.from('purchase_order_items').insert(row);
+          e1 = r.error;
+        }
+        if (e1) failed.push(e1.message); else added++;
       }
-      if (e1) failed.push(e1.message); else added++;
     }
     if (failed.length) alert('PO created, but '+failed.length+' line item(s) failed:\n'+failed[0]);
     onCreated(po.id);
@@ -3879,9 +3911,13 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
                     <td>
                       <input value={it.desc} onChange={e=>handleProdInput(i,e.target.value,e.target)} onBlur={()=>setTimeout(()=>{setSrchIdx(-1);setSrchHits([]);setSrchRect(null);},200)} placeholder="Type to search products…" />
                     </td>
-                    <td><input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" /></td>
-                    <td><input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" /></td>
-                    <td className="mono" style={{textAlign:'right',whiteSpace:'nowrap',fontSize:'12.5px'}}>{money((Number(it.qty)||0)*(Number(it.price)||0),form.currency)}</td>
+                    <td>{it.sizeScale
+                      ? <div className="qty-from-sizes" title="Quantity comes from the size breakdown below"><span className="qfs-v">{lineQty(it).toLocaleString()}</span><span className="qfs-k">from sizes</span></div>
+                      : <input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" />}</td>
+                    <td>{it.sizeScale
+                      ? <div className="qty-from-sizes" title="Blended unit price from the size breakdown below"><span className="qfs-v">{lineUnit(it).toFixed(2)}</span><span className="qfs-k">from sizes</span></div>
+                      : <input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" />}</td>
+                    <td className="mono" style={{textAlign:'right',whiteSpace:'nowrap',fontSize:'12.5px'}}>{money(lineAmt(it),form.currency)}</td>
                     <td><button className="rm" onClick={()=>rmItem(i)}>×</button></td>
                   </tr>
                   <tr className="item-sub-row">
@@ -3897,6 +3933,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Baby SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.babySku||''} onChange={e=>setItem(i,'babySku',e.target.value)} placeholder="Baby" /></div>
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Retail Price</span><input type="number" step="0.01" className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.retailPrice||''} onChange={e=>setItem(i,'retailPrice',e.target.value)} placeholder="0.00" /></div>
                       </div>
+                      <div style={{padding:'0 0 8px'}}>
+                        <SizeGrid scale={it.sizeScale||null} onScaleChange={k=>setSizeScale(i,k)} quantities={it.sizeQty||{}} onQuantityChange={(s,v)=>setSizeQty(i,s,v)} prices={it.sizePrice||{}} onPriceChange={(s,v)=>setSizePrice(i,s,v)} fallbackPrice={it.price} />
+                      </div>
                     </td>
                   </tr>
                 </React.Fragment>
@@ -3904,8 +3943,8 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
             </tbody>
           </table>
           {picked && <div style={{fontSize:'12px',color:'var(--muted)',marginBottom:'10px'}}>Prefilled from the quote — edit any field before creating.</div>}
-          {items.some(it=>Number(it.qty)>0&&Number(it.price)>0) && (()=>{
-            const sub=items.reduce((a,it)=>a+(Number(it.qty)||0)*(Number(it.price)||0),0);
+          {items.some(it=>lineAmt(it)>0) && (()=>{
+            const sub=items.reduce((a,it)=>a+lineAmt(it),0);
             const mold=Number(form.mold)||0; const grand=sub+mold;
             return (
               <div className="po-draft-totals">
