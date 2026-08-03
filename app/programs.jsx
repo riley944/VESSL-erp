@@ -102,6 +102,18 @@ function defaultRecipient(role, p) {
 }
 
 const daysSince = s => { if(!s) return 0; const d=new Date(s); return Math.max(0,Math.round((Date.now()-d.getTime())/86400000)); };
+
+// Load ExcelJS from CDN at runtime — no npm dependency needed
+function loadExcelJS() {
+  return new Promise(function(resolve, reject){
+    if (typeof window!=='undefined' && window.ExcelJS) { resolve(window.ExcelJS); return; }
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
+    s.onload = function(){ resolve(window.ExcelJS); };
+    s.onerror = function(){ reject(new Error('Could not load the Excel engine — check the internet connection and try again.')); };
+    document.head.appendChild(s);
+  });
+}
 function fmtDate(s){ if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
 const inp = {width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 12px',fontSize:'13.5px',outline:'none',fontFamily:'inherit',boxSizing:'border-box',background:'#fff'};
 const lbl = {display:'block',fontSize:'10px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',color:'#86868B',marginBottom:'5px'};
