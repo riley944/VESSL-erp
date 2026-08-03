@@ -1505,7 +1505,7 @@ function CreateSOModal({onClose,onCreated}){
   useEffect(()=>{
     (async()=>{
       const [{data:cli},{data:qs},{data:sos}] = await Promise.all([
-        SB.from('companies').select('id,name,vendor_number').order('name'),
+        SB.from('companies').select('id,name,vendor_number,shipping_address').order('name'),
         SB.from('quotes').select('*').order('product'),
         SB.from('sales_orders').select('so_number').order('created_at',{ascending:false}).limit(100),
       ]);
@@ -1552,7 +1552,7 @@ function CreateSOModal({onClose,onCreated}){
     const scale=q.size_scale||null;
     const price=tier.client?String(tier.client):'';
     setItems([{desc:q.product||'',sku:q.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:q.id,tierIdx:tIdx,noPrice,sizeScale:scale,sizeQty:{},sizePrice:seedSizePrices(scale,price,q.size_price_deltas)}]);
-    if(q.client&&!form.clientId){const m=clients.find(c=>(c.name||'').toLowerCase()===q.client.toLowerCase());if(m)setForm(prev=>({...prev,clientId:m.id}));}
+    if(q.client&&!form.clientId){const m=clients.find(c=>(c.name||'').toLowerCase()===q.client.toLowerCase());if(m)setForm(prev=>({...prev,clientId:m.id,shipTo:(m.shipping_address&&!prev.shipTo)?m.shipping_address:prev.shipTo}));}
   };
   const pickTier=i=>{
     setTierIdx(i);
@@ -1669,7 +1669,7 @@ function CreateSOModal({onClose,onCreated}){
           {(mode==='manual'||picked) && (<>
 
           <div className="form-row"><label>Client *</label>
-            <select className="form-select" value={form.clientId} onChange={e=>f('clientId')(e.target.value)}>
+            <select className="form-select" value={form.clientId} onChange={e=>{const cid=e.target.value;const c=clients.find(x=>x.id===cid);setForm(prev=>({...prev,clientId:cid,shipTo:(c&&c.shipping_address&&!prev.shipTo)?c.shipping_address:prev.shipTo}));}}>
               <option value="">— select client —</option>
               {clients.sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=><option key={c.id} value={c.id}>{c.name}{c.vendor_number?' ('+c.vendor_number+')':''}</option>)}
             </select>
@@ -1805,7 +1805,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   const [loading,setLoading]=useState(false);
   useEffect(()=>{
     (async()=>{
-      const { data:cli } = await SB.from('companies').select('id,name').order('name');
+      const { data:cli } = await SB.from('companies').select('id,name,shipping_address').order('name');
       let pos = null;
       const poRes = await SB.from('purchase_orders').select('id,order_number,client_po_number,status,companies!factory_company_id(name)').order('created_at',{ascending:false}).limit(300);
       pos = poRes.data;
@@ -1864,7 +1864,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
             <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}>{['USD','CAD','EUR','GBP','AUD'].map(c=><option key={c} value={c}>{c}</option>)}</select></div>
           </div>
           <div style={{marginBottom:'16px'}}><label>Client</label>
-            <select className="form-select" value={form.clientId} onChange={e=>f('clientId')(e.target.value)}><option value="">— select client —</option>{[...clients].sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+            <select className="form-select" value={form.clientId} onChange={e=>{const cid=e.target.value;const c=clients.find(x=>x.id===cid);setForm(prev=>({...prev,clientId:cid,shipTo:(c&&c.shipping_address&&!prev.shipTo)?c.shipping_address:prev.shipTo}));}}><option value="">— select client —</option>{[...clients].sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
             {!showNC?<button className="btn btn-ghost btn-sm" style={{marginTop:'8px'}} onClick={()=>setShowNC(true)}>+ New client</button>:<div style={{display:'flex',gap:'8px',marginTop:'8px',alignItems:'center'}}><input className="form-input" style={{flex:1}} placeholder="Client name…" value={ncName} onChange={e=>setNcName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNC()} autoFocus /><button className="btn btn-dark btn-sm" onClick={addNC}>Add</button><button className="btn btn-ghost btn-sm" onClick={()=>{setShowNC(false);setNcName('');}}>✕</button></div>}
           </div>
           <div><label>Client PO #</label><input className="form-input" value={form.clientPO} onChange={e=>f('clientPO')(e.target.value)} /></div>
@@ -2612,8 +2612,8 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   const [newClientName, setNewClientName] = useState('');
   const addNewClient = async () => {
     const name = newClientName.trim(); if (!name) return;
-    const { data: co } = await SB.from('companies').upsert({name,type:'client'},{onConflict:'name,type'}).select('id,name,pallet_info').single();
-    if (co){ setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]); f('clientId')(co.id); if(co.pallet_info&&!form.pallet)f('pallet')(co.pallet_info); }
+    const { data: co } = await SB.from('companies').upsert({name,type:'client'},{onConflict:'name,type'}).select('id,name,pallet_info,shipping_address').single();
+    if (co){ setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]); f('clientId')(co.id); if(co.pallet_info&&!form.pallet)f('pallet')(co.pallet_info); if(co.shipping_address&&!form.delivery_address)f('delivery_address')(co.shipping_address); }
     setShowNewClient(false); setNewClientName('');
   };
   const [saveMsg, setSaveMsg] = useState('');
@@ -2650,7 +2650,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
       SB.from('products').select('id,sku,name').order('sku',{nullsFirst:false}),
       SB.from('purchase_order_items').select('description').not('description','is',null).limit(200),
       SBQ.from('quotes').select('product').not('product','is',null).limit(300),
-      SB.from('companies').select('id,name,pallet_info').eq('type','client').order('name')
+      SB.from('companies').select('id,name,pallet_info,shipping_address').eq('type','client').order('name')
     ]).then(([{data:pro},{data:itmD},{data:qProds},{data:cli}])=>{
       setProducts(pro||[]);
       setClients(cli||[]);
@@ -2816,7 +2816,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
             <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}><option>USD</option><option>CNY</option><option>VND</option><option>EUR</option></select></div>
           </div>
           <div className="form-row"><label>Client <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(for tracking &amp; inventory)</span></label>
-            <select className="form-select" value={form.clientId} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setForm(prev=>({...prev,clientId:e.target.value,pallet:(c?.pallet_info&&!prev.pallet)?c.pallet_info:prev.pallet}));}}>
+            <select className="form-select" value={form.clientId} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setForm(prev=>({...prev,clientId:e.target.value,pallet:(c?.pallet_info&&!prev.pallet)?c.pallet_info:prev.pallet,delivery_address:(c?.shipping_address&&!prev.delivery_address)?c.shipping_address:prev.delivery_address}));}}>
               <option value="">Unassigned</option>
               {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
@@ -3601,7 +3601,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     Promise.all([
       SB.from('companies').select('id,name').eq('type','factory').order('name'),
       SB.from('products').select('id,sku,name').order('sku',{nullsFirst:false}),
-      SB.from('companies').select('id,name,vendor_number,pallet_info').eq('type','client').order('name'),
+      SB.from('companies').select('id,name,vendor_number,pallet_info,shipping_address').eq('type','client').order('name'),
       SB.from('purchase_order_items').select('description').not('description','is',null).limit(200),
       SBQ.from('quotes').select('product').not('product','is',null).limit(300)
     ]).then(([{data:fac},{data:pro},{data:cli},{data:itmD},{data:qProds}])=>{
@@ -3626,8 +3626,8 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [newClientName, setNewClientName] = useState('');
   const addNewClient = async () => {
     const name = newClientName.trim(); if (!name) return;
-    const { data: co } = await SB.from('companies').upsert({name,type:'client'},{onConflict:'name,type'}).select('id,name,pallet_info').single();
-    if (co){ setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]); f('clientId')(co.id); if(co.pallet_info)f('pallet')(co.pallet_info); }
+    const { data: co } = await SB.from('companies').upsert({name,type:'client'},{onConflict:'name,type'}).select('id,name,pallet_info,shipping_address').single();
+    if (co){ setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]); f('clientId')(co.id); if(co.pallet_info)f('pallet')(co.pallet_info); if(co.shipping_address&&!form.delivery_address)f('delivery_address')(co.shipping_address); }
     setShowNewClient(false); setNewClientName('');
   };
   const [saveMsg, setSaveMsg] = useState('');
@@ -3730,6 +3730,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       factoryId: matchFactory?matchFactory.id:prev.factoryId,
       clientId: matchClient?matchClient.id:prev.clientId,
       pallet: (matchClient&&matchClient.pallet_info)?matchClient.pallet_info:prev.pallet,
+      delivery_address: (matchClient&&matchClient.shipping_address&&!prev.delivery_address)?matchClient.shipping_address:prev.delivery_address,
       inco: q.country?'FOB '+q.country:prev.inco,
       mold: q.mold_fee!=null?String(q.mold_fee):prev.mold,
       sample: q.sample_fee!=null?String(q.sample_fee):prev.sample,
@@ -3751,7 +3752,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     // If no client set yet on this PO, pull it from this quote's client
     if (!form.clientId && q.client) {
       const mc = findClient(q.client);
-      if (mc) setForm(prev=>({...prev,clientId:mc.id,pallet:mc.pallet_info||prev.pallet}));
+      if (mc) setForm(prev=>({...prev,clientId:mc.id,pallet:mc.pallet_info||prev.pallet,delivery_address:(mc.shipping_address&&!prev.delivery_address)?mc.shipping_address:prev.delivery_address}));
       setClientNote(mc ? '' : (q.client||'').trim());
     }
     setAddingItem(false); setExtraPick(null); setExtraSearch(''); setExtraTierIdx(0);
@@ -3965,7 +3966,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
             </select>
           </div>
           <div className="form-row"><label>Client <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(for tracking &amp; inventory — never shown on the factory PO)</span></label>
-            <select className="form-select" value={form.clientId} onChange={e=>{const cid=e.target.value;const c=clients.find(x=>x.id===cid);setForm(prev=>({...prev,clientId:cid,pallet:(c&&c.pallet_info&&!prev.pallet)?c.pallet_info:prev.pallet}));}}>
+            <select className="form-select" value={form.clientId} onChange={e=>{const cid=e.target.value;const c=clients.find(x=>x.id===cid);setForm(prev=>({...prev,clientId:cid,pallet:(c&&c.pallet_info&&!prev.pallet)?c.pallet_info:prev.pallet,delivery_address:(c&&c.shipping_address&&!prev.delivery_address)?c.shipping_address:prev.delivery_address}));}}>
               <option value="">Unassigned</option>
               {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
