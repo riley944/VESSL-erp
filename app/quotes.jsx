@@ -81,9 +81,20 @@ function moldPerUnit(moldFee, qty) {
   if (f <= 0 || q <= 0) return 0;
   return f / q;
 }
+// The quantity this tier is really for. A size mix takes over from the Quantity box
+// the moment any size carries a number — the box stops being editable at that point —
+// so anything per-unit has to divide by the mix, not by a qty nobody is maintaining.
+// Unscoped by design: sizes outside the scale are already pruned on scale change and
+// again on save, and the caller here has no scale to hand.
+function effectiveQty(t) {
+  const qty = t.sizeQty || {};
+  const entered = Object.keys(qty).filter((s) => qty[s] !== "" && qty[s] != null);
+  if (entered.length) return entered.reduce((a, s) => a + (Number(qty[s]) || 0), 0);
+  return Number(t.qty) || 0;
+}
 function tierTotalCost(t, moldFee) {
   const exw = Number(t.landed) || 0;
-  return exw + activeFreight(t) + moldPerUnit(moldFee, t.qty);
+  return exw + activeFreight(t) + moldPerUnit(moldFee, effectiveQty(t));
 }
 function suggestClientPriceForTier(t, moldFee) {
   const c = tierTotalCost(t, moldFee);
@@ -137,6 +148,28 @@ function sizeRowsFor(t, moldFee, deltaMap, scaleKey) {
     const price = base > 0 && base + delta > 0 ? base + delta : null;
     return { size: s, delta, price, margin: price == null ? null : tierMargin(t, price, moldFee) };
   });
+}
+// What the size mix on a tier is actually worth: the amount it bills to, and the
+// blended unit price behind it. Null when there is no mix to speak of, or when the
+// tier has no client price and so no size has a real one — the same guards
+// sizeRowsFor applies before it hands back a price, so this can never disagree with
+// the rows printed beneath the tier.
+function sizeMixFor(t, deltaMap, scaleKey) {
+  const base = Number(t.client) || 0;
+  if (base <= 0) return null;
+  const sizes = scaleKey ? sizesForScale(scaleKey) : [];
+  let units = 0, total = 0;
+  sizes.forEach((s) => {
+    const q = Number((t.sizeQty || {})[s]) || 0;
+    if (q <= 0) return;
+    const d = Number((deltaMap || {})[s]);
+    const price = base + (isFinite(d) ? d : 0);
+    if (price <= 0) return;
+    units += q;
+    total += q * price;
+  });
+  if (units <= 0) return null;
+  return { units, total, blended: total / units };
 }
 // Null when no size on this tier carries a quantity, which is what keeps the tier's
 // own Quantity box an ordinary input. An entered 0 still counts as entered, so the
@@ -1097,7 +1130,9 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
           {(q.tiers || []).map((t, i) => {
             const m = tierMargin(t, t.client, q.moldFee);
             const total = tierTotalCost(t, q.moldFee);
-            const mpu = moldPerUnit(q.moldFee, t.qty);
+            // Same divisor tierTotalCost just used, or this caption contradicts the
+            // number it is captioning on any tier carrying a size mix.
+            const mpu = moldPerUnit(q.moldFee, effectiveQty(t));
             return (
               <div key={i} style={S.tierBodyRow}>
                 <div style={{ flex: 1, fontWeight: 600, color: "#0f1729" }}>{t.qty ? Number(t.qty).toLocaleString() : "—"}</div>
@@ -2044,6 +2079,10 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                 // The quantity box is the exception: it belongs to this tier alone.
                 const sizeRows = sizeRowsFor(t, f.moldFee, f.sizeDeltas, f.sizeScale);
                 const sizeTotal = sizeQtyTotal(t, f.sizeScale);
+                // With a mix entered the tier has one real margin rather than a band,
+                // so the blended price supersedes the delta range in the Margin cell.
+                const mix = sizeMixFor(t, f.sizeDeltas, f.sizeScale);
+                const mixMargin = mix ? tierMargin(t, mix.blended, f.moldFee) : null;
                 const ship = t.ship || "ocean";
                 const total = tierTotalCost(t, f.moldFee);
                 const airOff = ship !== "air";
@@ -2070,12 +2109,20 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       <button type="button" onClick={autoDuty} disabled={exwVal <= 0} title="Duty only = 0.5 × EXW × 0.274 (no freight)" style={{ flexShrink: 0, padding: "0 8px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, letterSpacing: ".02em", cursor: exwVal > 0 ? "pointer" : "not-allowed", background: exwVal > 0 ? "#e7edfd" : "#eef1f6", color: exwVal > 0 ? "#3551c4" : "#aab2c0", whiteSpace: "nowrap" }}>duty</button>
                     </div>
                     <div style={{ flex: 0.9, textAlign: "right", alignSelf: "center", ...S.num, fontWeight: 600, color: "#0f1729" }}>{total ? `$${fmt(total)}` : "—"}</div>
-                    <div style={{ flex: 1.1, display: "flex", gap: 4 }}>
-                      <input style={S.tierInput} type="number" value={t.client ?? ""} onChange={(e) => setTier(i, "client", e.target.value)} placeholder="$" />
-                      <button style={S.autoBtn} title="Suggest from margin logic" onClick={() => autoFillClient(i)}>auto</button>
+                    {/* Column, not a row: the mix line sits under both the input and the
+                        auto button. The base price stays typed — the per-size prices are
+                        derived from it, so deriving it back would be circular. */}
+                    <div style={{ flex: 1.1, display: "flex", flexDirection: "column", gap: 3 }}>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <input style={S.tierInput} type="number" value={t.client ?? ""} onChange={(e) => setTier(i, "client", e.target.value)} placeholder="$" />
+                        <button style={S.autoBtn} title="Suggest from margin logic" onClick={() => autoFillClient(i)}>auto</button>
+                      </div>
+                      {mix && <span style={S.tierMixLine}>${fmt(mix.blended)} avg · ${fmt(mix.total)} total</span>}
                     </div>
                     <div style={{ flex: 0.6, textAlign: "right", ...S.num, alignSelf: "center" }}>
-                      <span style={{ color: (mr ? mr.low : m) && (mr ? mr.low : m) < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{mr ? (mr.low.toFixed(0) === mr.high.toFixed(0) ? mr.low.toFixed(0) + "%" : mr.low.toFixed(0) + "-" + mr.high.toFixed(0) + "%") : (m ? m.toFixed(0) + "%" : "—")}</span>
+                      {mixMargin != null
+                        ? <span style={{ color: mixMargin && mixMargin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{mixMargin.toFixed(0)}%</span>
+                        : <span style={{ color: (mr ? mr.low : m) && (mr ? mr.low : m) < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{mr ? (mr.low.toFixed(0) === mr.high.toFixed(0) ? mr.low.toFixed(0) + "%" : mr.low.toFixed(0) + "-" + mr.high.toFixed(0) + "%") : (m ? m.toFixed(0) + "%" : "—")}</span>}
                     </div>
                     <div style={{ width: 30, alignSelf: "center", textAlign: "center" }}>
                       {f.tiers.length > 1 && <button style={S.tierDel} onClick={() => removeTier(i)}><X size={14} /></button>}
@@ -2253,6 +2300,7 @@ const S = {
   qtyFromSizes: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1, padding: "6px 9px", background: "#fafbfd", border: "1px dashed #e7eaf0", borderRadius: 8 },
   qfsV: { fontSize: 13, fontWeight: 600, color: "#0f1729", lineHeight: 1.2, fontVariantNumeric: "tabular-nums" },
   qfsK: { fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em", color: "#9aa3b5", fontWeight: 600 },
+  tierMixLine: { fontSize: 11, color: "#9aa3b5", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
   autoBtn: { background: "#eef1f6", border: "1px solid #e7eaf0", color: "#3461e0", borderRadius: 8, padding: "0 9px", fontSize: 11, fontWeight: 600 },
   tierDel: { background: "transparent", border: "none", color: "#bba", padding: 2, display: "inline-flex" },
   addTierBtn: { display: "inline-flex", alignItems: "center", gap: 5, background: "#eef1f6", color: "#0f1729", border: "none", borderRadius: 9, padding: "8px 14px", fontSize: 13, fontWeight: 600 },
