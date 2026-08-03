@@ -2995,7 +2995,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
       const { data:c } = await SB.from('companies').select('*').eq('id',id).single();
       const { data:cc } = await SB.from('contacts').select('*').eq('company_id',id).order('is_primary',{ascending:false});
       setCo(c); setContacts(cc||[]);
-      setForm({ name:c?.name||'', type:c?.type||'client', email:c?.email||'', phone:c?.phone||'', website:c?.website||'', vendor_number:c?.vendor_number||'', pallet_info:c?.pallet_info||'', po_notes:c?.po_notes||'' });
+      setForm({ name:c?.name||'', type:c?.type||'client', email:c?.email||'', phone:c?.phone||'', website:c?.website||'', vendor_number:c?.vendor_number||'', pallet_info:c?.pallet_info||'', po_notes:c?.po_notes||'', billing_address:c?.billing_address||'', shipping_address:c?.shipping_address||'' });
     })();
   },[id]);
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -3003,7 +3003,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
   const addContact = () => setContacts(prev=>[...prev,{__new:true,company_id:id,full_name:'',email:'',phone:'',is_primary:prev.length===0}]);
   const save = async () => {
     if(!form.name){alert('Name required');return;}
-    await SB.from('companies').update({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,po_notes:form.po_notes||null}).eq('id',id);
+    await SB.from('companies').update({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,po_notes:form.po_notes||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null}).eq('id',id);
     for(const c of contacts){
       if(!(c.full_name||'').trim()) continue;
       if(c.__new) await SB.from('contacts').insert({company_id:id,full_name:c.full_name,email:c.email||null,phone:c.phone||null,is_primary:!!c.is_primary});
@@ -3037,7 +3037,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
             <>
               <div style={{display:'flex',gap:'8px',marginBottom:'18px'}}><Badge status={co.type} /></div>
               <div className="detail-grid" style={{gridTemplateColumns:'1fr',gap:'0'}}>
-                {[['Email',co.email],['Phone',co.phone],['Website',co.website],...(co.type==='client'?[['Vendor #',co.vendor_number],['Pallet info',co.pallet_info]]:[])].map(([l,v])=>(
+                {[['Email',co.email],['Phone',co.phone],['Website',co.website],['Billing Address',co.billing_address],['Shipping Address',co.shipping_address],...(co.type==='client'?[['Vendor #',co.vendor_number],['Pallet info',co.pallet_info]]:[])].map(([l,v])=>(
                   <div key={l} style={{display:'flex',justifyContent:'space-between',gap:'16px',padding:'11px 0',borderBottom:'1px solid var(--line-2)'}}>
                     <span style={{color:'var(--muted)',fontSize:'12px',whiteSpace:'nowrap'}}>{l}</span><span style={{fontSize:'13px',textAlign:'right',whiteSpace:'pre-wrap'}}>{v||'—'}</span>
                   </div>
@@ -3062,6 +3062,8 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
                 <div><label>Phone</label><input className="form-input" value={form.phone} onChange={e=>f('phone')(e.target.value)} /></div>
               </div>
               <div className="form-row"><label>Website</label><input className="form-input" value={form.website} onChange={e=>f('website')(e.target.value)} placeholder="https://" /></div>
+              <div className="form-row"><label>Billing Address</label><textarea className="form-input" rows={3} value={form.billing_address} onChange={e=>f('billing_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
+              <div className="form-row"><label>Shipping Address <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(prefills the ship-to on new orders)</span></label><textarea className="form-input" rows={3} value={form.shipping_address} onChange={e=>f('shipping_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
               {form.type==='client' && (
                 <div className="form-row-2">
                   <div><label>Vendor # <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(internal — our # with this client)</span></label><input className="form-input" value={form.vendor_number} onChange={e=>f('vendor_number')(e.target.value)} /></div>
@@ -4131,11 +4133,11 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
 
 // ── Create Company Modal ──────────────────────────────────────────────────────
 function CreateCompanyModal({ onClose, onCreated }) {
-  const [form, setForm] = useState({name:'',type:'client',email:'',phone:'',website:'',vendor_number:'',pallet_info:'',cname:'',cemail:'',cphone:''});
+  const [form, setForm] = useState({name:'',type:'client',email:'',phone:'',website:'',vendor_number:'',pallet_info:'',billing_address:'',shipping_address:'',cname:'',cemail:'',cphone:''});
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   const submit = async () => {
     if (!form.name) { alert('Company name required'); return; }
-    const { data: co, error } = await SB.from('companies').upsert({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
+    const { data: co, error } = await SB.from('companies').upsert({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
     if (error) { alert('Error: '+error.message); return; }
     if (form.cname) await SB.from('contacts').insert({company_id:co.id,full_name:form.cname,email:form.cemail||null,phone:form.cphone||null,is_primary:true});
     // Mirror into Quotes directory so it appears in quote autofill
@@ -4163,6 +4165,8 @@ function CreateCompanyModal({ onClose, onCreated }) {
             <div><label>Phone</label><input className="form-input" value={form.phone} onChange={e=>f('phone')(e.target.value)} /></div>
           </div>
           <div className="form-row"><label>Website</label><input className="form-input" value={form.website} onChange={e=>f('website')(e.target.value)} placeholder="https://" /></div>
+          <div className="form-row"><label>Billing Address</label><textarea className="form-input" rows={3} value={form.billing_address} onChange={e=>f('billing_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
+          <div className="form-row"><label>Shipping Address <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(prefills the ship-to on new orders)</span></label><textarea className="form-input" rows={3} value={form.shipping_address} onChange={e=>f('shipping_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
           {form.type==='client' && (
             <div className="form-row-2">
               <div><label>Vendor # <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(internal)</span></label><input className="form-input" value={form.vendor_number} onChange={e=>f('vendor_number')(e.target.value)} /></div>
