@@ -115,12 +115,13 @@ function tierMargin(t, client, moldFee) {
   return ((p - total) / p) * 100;
 }
 // Per-size deltas move the client price, so one tier can span a band of margins.
-// Returns null whenever the tier should render exactly as it does without deltas:
-// no base client price (NULL on ~a third of tiers — a delta must never manufacture
-// a number there), no size scale, or every size sitting at the base price.
+// An absent base counts as zero rather than as "no price": the deltas are then the
+// prices outright, and typing a base later shifts the whole band up by it. Returns
+// null whenever the tier should render exactly as it does without deltas: no size
+// scale, or every size sitting at the base price (which covers a tier with no deltas
+// at all, base or no base).
 function marginRangeFor(t, moldFee, deltaMap, scaleKey) {
   const base = Number(t.client) || 0;
-  if (base <= 0) return null;
   const sizes = scaleKey ? sizesForScale(scaleKey) : [];
   if (!sizes.length) return null;
   const priced = sizes.map((s) => {
@@ -136,27 +137,26 @@ function marginRangeFor(t, moldFee, deltaMap, scaleKey) {
 // One row per size in the scale, in scale order rather than object-key order. These
 // rows are where per-size quantities are typed, so unlike marginRangeFor they cannot
 // filter themselves away: a size with no upcharge is still orderable, and a tier
-// whose client price is not settled yet still needs a quantity. price and margin come
-// back null in the cases marginRangeFor treats as "no meaningful number" — no base
-// price, or a delta steep enough to zero it — rather than manufacturing one.
+// whose client price is not settled yet still needs a quantity. A missing base is
+// zero, so a +10 with no base is simply a price of 10; price is null only when the
+// arithmetic lands at or below zero, and margin follows the price.
 function sizeRowsFor(t, moldFee, deltaMap, scaleKey) {
   const base = Number(t.client) || 0;
   const sizes = scaleKey ? sizesForScale(scaleKey) : [];
   return sizes.map((s) => {
     const d = Number((deltaMap || {})[s]);
     const delta = isFinite(d) ? d : 0;
-    const price = base > 0 && base + delta > 0 ? base + delta : null;
+    const price = base + delta > 0 ? base + delta : null;
     return { size: s, delta, price, margin: price == null ? null : tierMargin(t, price, moldFee) };
   });
 }
 // What the size mix on a tier is actually worth: the amount it bills to, and the
-// blended unit price behind it. Null when there is no mix to speak of, or when the
-// tier has no client price and so no size has a real one — the same guards
-// sizeRowsFor applies before it hands back a price, so this can never disagree with
-// the rows printed beneath the tier.
+// blended unit price behind it. Built from the sizes carrying both a quantity and a
+// price above zero — with no base that means the deltas alone, the same reading
+// sizeRowsFor takes, so this can never disagree with the rows printed beneath the
+// tier. Null when no size qualifies.
 function sizeMixFor(t, deltaMap, scaleKey) {
   const base = Number(t.client) || 0;
-  if (base <= 0) return null;
   const sizes = scaleKey ? sizesForScale(scaleKey) : [];
   let units = 0, total = 0;
   sizes.forEach((s) => {
@@ -2083,6 +2083,9 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                 // so the blended price supersedes the delta range in the Margin cell.
                 const mix = sizeMixFor(t, f.sizeDeltas, f.sizeScale);
                 const mixMargin = mix ? tierMargin(t, mix.blended, f.moldFee) : null;
+                // Decides only whether a size row shows what it was adjusted BY, not
+                // whether it has a price — with no base the delta is the price itself.
+                const hasBase = Number(t.client) > 0;
                 const ship = t.ship || "ocean";
                 const total = tierTotalCost(t, f.moldFee);
                 const airOff = ship !== "air";
@@ -2149,17 +2152,16 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       <div style={{ flex: 1.0 }} />
                       <div style={{ flex: 1.0 }} />
                       <div style={{ flex: 0.9, textAlign: "right", ...S.tierSizeCell }}>{total ? `$${fmt(total)}` : "—"}</div>
-                      {/* With no client price yet the adjustment shows on its own, so a
-                          delta the user just typed still reads back to them. */}
+                      {/* The parenthetical is what the base was moved BY, so it only makes
+                          sense next to a base. With none the delta is the whole price and
+                          printing it twice would read as an error. */}
                       <div style={{ flex: 1.1, ...S.tierSizeCell }}>
-                        {r.price != null ? (
+                        {r.price == null ? "—" : (
                           <>
                             {`$${fmt(r.price)}`}
-                            {r.delta !== 0 && <span style={{ color: "#9aa3b5", marginLeft: 5 }}>({r.delta > 0 ? "+" : "−"}{fmt(Math.abs(r.delta))})</span>}
+                            {hasBase && r.delta !== 0 && <span style={{ color: "#9aa3b5", marginLeft: 5 }}>({r.delta > 0 ? "+" : "−"}{fmt(Math.abs(r.delta))})</span>}
                           </>
-                        ) : r.delta !== 0 ? (
-                          <span style={{ color: "#9aa3b5" }}>{r.delta > 0 ? "+" : "−"}{fmt(Math.abs(r.delta))}</span>
-                        ) : ""}
+                        )}
                       </div>
                       <div style={{ flex: 0.6, textAlign: "right", ...S.tierSizeCell }}>
                         {r.margin == null ? "—" : <span style={{ color: r.margin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{r.margin.toFixed(0)}%</span>}
