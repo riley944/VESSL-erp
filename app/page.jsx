@@ -230,14 +230,14 @@ const allowedPagesFor = role =>
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null }) {
   const links = [
-    { id:'dashboard',          label:'Dashboard' },
+    { id:'programs',           label:'Programs' },
+    { id:'dashboard',          label:'Insights' },
     { id:'sales-orders',       label:'Sales Orders' },
     { id:'orders',             label:'Purchase Orders' },
     { id:'companies',          label:'Companies' },
     { id:'products',           label:'Products' },
     { id:'testing',            label:'Testing' },
     { id:'pricing',            label:'Pricing' },
-    { id:'programs',           label:'Programs' },
     { id:'shipments',          label:'Shipments' },
     { id:'inventory',          label:'Inventory' },
     { id:'quotes',             label:'Quotes' },
@@ -5393,7 +5393,7 @@ function ClientRelations() {
 export default function App() {
   const [user,    setUser]    = useState(null);
   const [session, setSession] = useState(null);
-  const [rawPage, setRawPage] = useState('dashboard');
+  const [rawPage, setRawPage] = useState('programs');
   const [params,  setParams]  = useState({});
   const [loading, setLoading] = useState(true);
   const [recovery, setRecovery] = useState(false);
@@ -5471,7 +5471,7 @@ export default function App() {
   const allowedPages = allowedPagesFor(role);
   const page = (allowedPages && !allowedPages.includes(rawPage)) ? allowedPages[0] : rawPage;
 
-  const titles = {dashboard:'Dashboard','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes','client-relations':'Client Relations'};
+  const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes','client-relations':'Client Relations'};
   const badges = {'client-relations': crUnread};
 
   return (
