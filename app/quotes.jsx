@@ -1022,29 +1022,71 @@ function FreightBuilder({ tier, form, onClose, onApply }) {
   );
 }
 
+function fbLegColor(cat, i) {
+  const c = (cat || "").toLowerCase();
+  if (c.includes("ocean") || c.includes("freight")) return "#2f6df6";
+  if (c.includes("dray")) return "#0e9f8f";
+  if (c.includes("warehouse") || c.includes("handling")) return "#8b5cf6";
+  if (c.includes("storage")) return "#94a3b8";
+  if (c.includes("pallet")) return "#f59e0b";
+  if (c.includes("truck")) return "#d97706";
+  if (c.includes("parcel")) return "#06b6d4";
+  if (c.includes("duty") || c.includes("tariff")) return "#e11d48";
+  const fallback = ["#2f6df6", "#0e9f8f", "#8b5cf6", "#f59e0b", "#e11d48", "#06b6d4", "#d97706", "#64748b"];
+  return fallback[i % fallback.length];
+}
+
 function FreightBreakdownView({ tiers }) {
   const withFb = (tiers || []).filter((t) => Array.isArray(t.fb) && t.fb.length);
   if (!withFb.length) return null;
   const baseLabel = (b) => { const m = FB_BASES.find((x) => x.key === b); return m ? m.label : b; };
   return (
-    <div style={{ gridColumn: "1 / -1", marginTop: 4 }}>
-      <div style={S.detailHead}><Truck size={14} /> Freight &amp; Duty Build-up <span style={{ fontWeight: 500, color: "#8a93a6", textTransform: "none", letterSpacing: 0 }}>(internal)</span></div>
-      {withFb.map((t, i) => {
-        const total = t.fb.reduce((a, l) => a + (Number(l.perUnit) || 0), 0);
-        return (
-          <div key={i} style={{ background: "#f7f8fb", border: "1px solid #e6e9f0", borderRadius: 12, padding: "13px 15px", marginBottom: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#0f1729", marginBottom: 8 }}>
-              Tier {Number(t.qty) ? Number(t.qty).toLocaleString() : "—"} units · ${total.toFixed(3)}/unit
-            </div>
-            {t.fb.map((l, j) => (
-              <div key={j} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "4px 0", fontSize: 12, borderTop: j > 0 ? "1px solid #eceff5" : "none" }}>
-                <span style={{ color: "#4a5468" }}>{l.cat}{l.desc ? ` — ${l.desc}` : ""} <span style={{ color: "#aab2c0" }}>({baseLabel(l.basis)}{l.basis === "pct" ? ` ${l.amount}%${l.per && l.per !== 100 ? ` on ${l.per}% of EXW` : ""}` : l.per ? ` · $${Number(l.amount).toLocaleString()} ÷ ${Number(l.per).toLocaleString()}` : ""})</span></span>
-                <span style={{ fontWeight: 700, color: "#0f1729", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>${Number(l.perUnit || 0).toFixed(3)}</span>
+    <div style={{ marginTop: 14 }}>
+      <div style={{ ...S.detailHead, marginBottom: 10 }}><Truck size={14} /> Where the Freight &amp; Duty Goes</div>
+      <div style={{ display: "grid", gridTemplateColumns: withFb.length > 1 ? "repeat(auto-fit, minmax(300px, 1fr))" : "1fr", gap: 10 }}>
+        {withFb.map((t, i) => {
+          const total = t.fb.reduce((a, l) => a + (Number(l.perUnit) || 0), 0);
+          const qty = Number(t.qty) || 0;
+          return (
+            <div key={i} style={{ background: "#fff", border: "1px solid #e0e4ec", borderRadius: 14, padding: "16px 18px", boxShadow: "0 1px 3px rgba(15,23,41,.05)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#0f1729" }}>Tier {qty ? qty.toLocaleString() : "—"} units</div>
+                <div style={{ fontSize: 17, fontWeight: 800, color: "#0f1729", fontVariantNumeric: "tabular-nums", letterSpacing: "-.01em" }}>
+                  ${total.toFixed(3)}<span style={{ fontSize: 11.5, fontWeight: 600, color: "#8a93a6" }}>/unit</span>
+                  {qty > 0 && <span style={{ fontSize: 11.5, fontWeight: 600, color: "#8a93a6" }}>{" · ≈ $" + (total * qty).toLocaleString(undefined, { maximumFractionDigits: 0 }) + " total"}</span>}
+                </div>
               </div>
-            ))}
-          </div>
-        );
-      })}
+              {/* proportion bar */}
+              <div style={{ display: "flex", height: 14, borderRadius: 7, overflow: "hidden", marginBottom: 12, background: "#eef1f6" }}>
+                {t.fb.map((l, j) => {
+                  const pu = Number(l.perUnit) || 0;
+                  const pct = total > 0 ? (pu / total) * 100 : 0;
+                  if (pct <= 0) return null;
+                  return <div key={j} style={{ width: pct + "%", background: fbLegColor(l.cat, j) }} title={l.cat + " " + pct.toFixed(0) + "%"} />;
+                })}
+              </div>
+              {/* legend rows */}
+              {t.fb.map((l, j) => {
+                const pu = Number(l.perUnit) || 0;
+                const pct = total > 0 ? (pu / total) * 100 : 0;
+                return (
+                  <div key={j} style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 0", borderTop: j > 0 ? "1px solid #f0f2f7" : "none" }}>
+                    <span style={{ width: 9, height: 9, borderRadius: "50%", background: fbLegColor(l.cat, j), flexShrink: 0 }} />
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: "#2a3348", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {l.cat}{l.desc ? " — " + l.desc : ""}
+                      <span style={{ fontWeight: 500, color: "#9aa3b5", fontSize: 11 }}>
+                        {" "}{l.basis === "pct" ? l.amount + "% on " + (l.per && l.per !== 100 ? l.per : 100) + "% of EXW" : baseLabel(l.basis)}
+                      </span>
+                    </span>
+                    <span style={{ fontSize: 11, color: "#9aa3b5", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{pct.toFixed(0)}%</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#0f1729", fontVariantNumeric: "tabular-nums", flexShrink: 0, minWidth: 58, textAlign: "right" }}>${pu.toFixed(3)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1186,6 +1228,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
         {q.freightDutyUpdatedAt && (
           <div style={S.fdStamp}><Clock size={11} /> Freight + duty updated {fmtStamp(q.freightDutyUpdatedAt)}{q.freightDutyUpdatedBy ? ` · ${q.freightDutyUpdatedBy}` : ""}</div>
         )}
+        <FreightBreakdownView tiers={q.tiers} />
       </div>
 
       <Section icon={<Building2 size={14} />} title="Client / Vendor Info">
@@ -1206,7 +1249,6 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
         <F label="CBM / Carton" value={isFinite(cbm) && cbm > 0 ? cbm.toFixed(4) : ""} />
       </Section>
       <ContainerPackout q={q} cbmPerCarton={cbm} />
-      <FreightBreakdownView tiers={q.tiers} />
       {q.notes && (
         <div style={{ ...S.detailSection, gridColumn: "1 / -1" }}>
           <div style={S.detailHead}><AlertCircle size={14} /> Notes</div>
@@ -2056,7 +2098,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                     <div style={{ flex: 1.0, display: "flex", gap: 3 }}>
                       <input style={{ ...S.tierInput, ...(oceanOff ? S.tierInputOff : {}) }} type="number" value={t.freightOcean ?? ""} onChange={(e) => setTier(i, "freightOcean", e.target.value)} placeholder="$ ocean" disabled={oceanOff} />
                       <button type="button" onClick={autoDuty} disabled={exwVal <= 0} title="Duty only = 0.5 × EXW × 0.274 (no freight)" style={{ flexShrink: 0, padding: "0 8px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, letterSpacing: ".02em", cursor: exwVal > 0 ? "pointer" : "not-allowed", background: exwVal > 0 ? "#e7edfd" : "#eef1f6", color: exwVal > 0 ? "#3551c4" : "#aab2c0", whiteSpace: "nowrap" }}>duty</button>
-                      <button type="button" onClick={() => setFbTier(i)} title="Build the freight & duty number from its cost legs — containers, warehousing, trucking, duty" style={{ flexShrink: 0, padding: "0 8px", borderRadius: 6, border: "none", fontSize: 11, fontWeight: 800, cursor: "pointer", background: (t.fb && t.fb.length) ? "#2f6df6" : "#e7edfd", color: (t.fb && t.fb.length) ? "#fff" : "#3551c4", whiteSpace: "nowrap" }}>Σ</button>
+                      <button type="button" onClick={() => setFbTier(i)} title="Build the freight & duty number from its cost legs — containers, warehousing, trucking, duty" style={{ flexShrink: 0, padding: "0 8px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, letterSpacing: ".02em", cursor: "pointer", background: (t.fb && t.fb.length) ? "#2f6df6" : "#e7edfd", color: (t.fb && t.fb.length) ? "#fff" : "#3551c4", whiteSpace: "nowrap" }}>build</button>
                     </div>
                     <div style={{ flex: 0.9, textAlign: "right", alignSelf: "center", ...S.num, fontWeight: 600, color: "#0f1729" }}>{total ? `$${fmt(total)}` : "—"}</div>
                     <div style={{ flex: 1.1, display: "flex", gap: 4 }}>
