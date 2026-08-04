@@ -2280,7 +2280,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                 <div style={{ flex: 1.0 }}>Quantity</div>
                 <div style={{ flex: 1.0 }}>EXW Cost</div>
                 <div style={{ flex: 1.0 }}>Method</div>
-                <div style={{ flex: 1.2 }}>Frt+Duty</div>
+                <div style={{ flex: 1.5 }}>Frt+Duty</div>
                 <div style={{ flex: 1.1, textAlign: "right" }}>Total Cost</div>
                 <div style={{ flex: 1.3 }}>Client Price</div>
                 <div style={{ flex: 0.8, textAlign: "right" }}>Margin</div>
@@ -2322,7 +2322,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "air" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "air")}>Air</button>
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "ocean" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "ocean")}>Ocean</button>
                     </div>
-                    <div style={{ flex: 1.2, display: "flex", gap: 3 }}>
+                    <div style={{ flex: 1.5, display: "flex", gap: 3 }}>
                       <input style={S.tierInput} type="number" value={t[freightKey] ?? ""} onChange={(e) => setTier(i, freightKey, e.target.value)} placeholder={ship === "air" ? "$ air" : "$ ocean"} />
                       <button type="button" onClick={() => setFbTier(i)} title="Build the freight & duty number from its cost legs — containers, warehousing, trucking, duty" style={{ flexShrink: 0, padding: "0 8px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, letterSpacing: ".02em", cursor: "pointer", background: (t.fb && t.fb.length) ? "#2f6df6" : "#e7edfd", color: (t.fb && t.fb.length) ? "#fff" : "#3551c4", whiteSpace: "nowrap" }}>build</button>
                     </div>
@@ -2364,7 +2364,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       </div>
                       <div style={{ flex: 1.0 }} />
                       <div style={{ flex: 1.0 }} />
-                      <div style={{ flex: 1.2 }} />
+                      <div style={{ flex: 1.5 }} />
                       <div style={{ flex: 1.1, textAlign: "right", ...S.tierSizeCell }}>{total ? `$${fmt(total)}` : "—"}</div>
                       {/* The parenthetical is what the base was moved BY, so it only makes
                           sense next to a base. With none the delta is the whole price and
