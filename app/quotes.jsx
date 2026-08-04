@@ -8,7 +8,7 @@ import {
 import { SBQ } from "@/lib/supabaseQuotes";
 import { SB } from "@/lib/supabase";
 import { FilterSelect } from "@/app/components/FilterSelect";
-import { SIZE_SCALES, sizesForScale } from "@/app/components/SizeGrid";
+import { SIZE_SCALES } from "@/app/components/SizeGrid";
 
 // ============================================================
 //  SUPABASE CONNECTION
@@ -81,20 +81,9 @@ function moldPerUnit(moldFee, qty) {
   if (f <= 0 || q <= 0) return 0;
   return f / q;
 }
-// The quantity this tier is really for. A size mix takes over from the Quantity box
-// the moment any size carries a number — the box stops being editable at that point —
-// so anything per-unit has to divide by the mix, not by a qty nobody is maintaining.
-// Unscoped by design: sizes outside the scale are already pruned on scale change and
-// again on save, and the caller here has no scale to hand.
-function effectiveQty(t) {
-  const qty = t.sizeQty || {};
-  const entered = Object.keys(qty).filter((s) => qty[s] !== "" && qty[s] != null);
-  if (entered.length) return entered.reduce((a, s) => a + (Number(qty[s]) || 0), 0);
-  return Number(t.qty) || 0;
-}
 function tierTotalCost(t, moldFee) {
   const exw = Number(t.landed) || 0;
-  return exw + activeFreight(t) + moldPerUnit(moldFee, effectiveQty(t));
+  return exw + activeFreight(t) + moldPerUnit(moldFee, t.qty);
 }
 function suggestClientPriceForTier(t, moldFee) {
   const c = tierTotalCost(t, moldFee);
@@ -113,77 +102,6 @@ function tierMargin(t, client, moldFee) {
   const p = Number(client) || 0;
   if (p <= 0) return 0;
   return ((p - total) / p) * 100;
-}
-// Per-size deltas move the client price, so one tier can span a band of margins.
-// An absent base counts as zero rather than as "no price": the deltas are then the
-// prices outright, and typing a base later shifts the whole band up by it. Returns
-// null whenever the tier should render exactly as it does without deltas: no size
-// scale, or every size sitting at the base price (which covers a tier with no deltas
-// at all, base or no base).
-function marginRangeFor(t, moldFee, deltaMap, scaleKey) {
-  const base = Number(t.client) || 0;
-  const sizes = scaleKey ? sizesForScale(scaleKey) : [];
-  if (!sizes.length) return null;
-  const priced = sizes.map((s) => {
-    const d = Number((deltaMap || {})[s]);
-    return base + (isFinite(d) ? d : 0);
-  });
-  if (!priced.some((p) => p !== base)) return null;
-  // A delta steep enough to drive the price to zero has no meaningful margin.
-  const margins = priced.filter((p) => p > 0).map((p) => tierMargin(t, p, moldFee));
-  if (!margins.length) return null;
-  return { low: Math.min(...margins), high: Math.max(...margins) };
-}
-// One row per size in the scale, in scale order rather than object-key order. These
-// rows are where per-size quantities are typed, so unlike marginRangeFor they cannot
-// filter themselves away: a size with no upcharge is still orderable, and a tier
-// whose client price is not settled yet still needs a quantity. A missing base is
-// zero, so a +10 with no base is simply a price of 10; price is null only when the
-// arithmetic lands at or below zero, and margin follows the price.
-function sizeRowsFor(t, moldFee, deltaMap, scaleKey) {
-  const base = Number(t.client) || 0;
-  const sizes = scaleKey ? sizesForScale(scaleKey) : [];
-  return sizes.map((s) => {
-    const d = Number((deltaMap || {})[s]);
-    const delta = isFinite(d) ? d : 0;
-    const price = base + delta > 0 ? base + delta : null;
-    return { size: s, delta, price, margin: price == null ? null : tierMargin(t, price, moldFee) };
-  });
-}
-// What the size mix on a tier is actually worth: the amount it bills to, and the
-// blended unit price behind it. Built from the sizes carrying both a quantity and a
-// price above zero — with no base that means the deltas alone, the same reading
-// sizeRowsFor takes, so this can never disagree with the rows printed beneath the
-// tier. Null when no size qualifies.
-function sizeMixFor(t, deltaMap, scaleKey) {
-  const base = Number(t.client) || 0;
-  const sizes = scaleKey ? sizesForScale(scaleKey) : [];
-  let units = 0, total = 0;
-  sizes.forEach((s) => {
-    const q = Number((t.sizeQty || {})[s]) || 0;
-    if (q <= 0) return;
-    const d = Number((deltaMap || {})[s]);
-    const price = base + (isFinite(d) ? d : 0);
-    if (price <= 0) return;
-    units += q;
-    total += q * price;
-  });
-  if (units <= 0) return null;
-  return { units, total, blended: total / units };
-}
-// Null when no size on this tier carries a quantity, which is what keeps the tier's
-// own Quantity box an ordinary input. An entered 0 still counts as entered, so the
-// box cannot flip back to an input halfway through someone clearing a size.
-function sizeQtyTotal(t, scaleKey) {
-  const sizes = scaleKey ? sizesForScale(scaleKey) : [];
-  let any = false, total = 0;
-  sizes.forEach((s) => {
-    const v = (t.sizeQty || {})[s];
-    if (v === "" || v == null) return;
-    any = true;
-    total += Number(v) || 0;
-  });
-  return any ? total : null;
 }
 
 const CLIENT_PALETTE = [
@@ -216,61 +134,6 @@ function KULogo({ height = 40, dark = false }) {
 const KU_LOGO_PRINT = "/logo.png";
 
 // ---------- DB <-> form mapping ----------
-// size_price_deltas rides on the quote, not the tier — one set applies across every
-// tier. Stored as an array of records, non-zero entries only ([{size,delta}]); held
-// in form state as a keyed map of STRINGS ({"2XL":"1.5"}) because coercing to Number
-// on each keystroke makes "1.50" untypeable, the same reason SizeGrid holds strings.
-function deltasToMap(v) {
-  let arr = [];
-  try { arr = Array.isArray(v) ? v : (v ? JSON.parse(v) : []); } catch { arr = []; }
-  const map = {};
-  (Array.isArray(arr) ? arr : []).forEach((d) => {
-    if (!d || d.size == null) return;
-    const n = Number(d.delta);
-    if (!isFinite(n) || n === 0) return;
-    map[String(d.size)] = String(n);
-  });
-  return map;
-}
-// Sizes outside the current scale are dropped here as well as on scale change, so a
-// stale delta can never reach the column. No scale (a flat product) stores [].
-function mapToDeltas(map, scaleKey) {
-  if (!scaleKey) return [];
-  return sizesForScale(scaleKey)
-    .map((s) => ({ size: s, delta: Number((map || {})[s]) }))
-    .filter((d) => isFinite(d.delta) && d.delta !== 0);
-}
-// Per-size quantities ride on the TIER, not the quote — 500 units split S/M/L is a
-// different split at 5,000. Stored as an object keyed by size, held in form state as
-// STRINGS for the same reason the deltas are. Absent on every tier written before
-// this existed, which reads back as {}.
-function qtyMapFrom(v) {
-  let obj = v;
-  try { if (typeof v === "string") obj = v ? JSON.parse(v) : {}; } catch { obj = {}; }
-  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return {};
-  const map = {};
-  Object.keys(obj).forEach((s) => {
-    const n = Number(obj[s]);
-    if (!isFinite(n)) return;
-    map[String(s)] = String(n);
-  });
-  return map;
-}
-// Returns null rather than {} when nothing is entered, so formToRow can leave the key
-// off entirely and a tier nobody has touched keeps writing exactly the six keys it
-// always has. Sizes outside the current scale are dropped here as well as on scale
-// change, the same belt-and-braces mapToDeltas uses.
-function qtyMapToRow(map, scaleKey) {
-  if (!scaleKey) return null;
-  const out = {};
-  sizesForScale(scaleKey).forEach((s) => {
-    const v = (map || {})[s];
-    if (v === "" || v == null) return;
-    const n = Number(v);
-    if (isFinite(n)) out[s] = n;
-  });
-  return Object.keys(out).length ? out : null;
-}
 function rowToForm(r) {
   let tiers = [];
   try { tiers = Array.isArray(r.tiers) ? r.tiers : (r.tiers ? JSON.parse(r.tiers) : []); } catch { tiers = []; }
@@ -293,12 +156,12 @@ function rowToForm(r) {
     if (t.freightDuty != null && t.freightDuty !== "" && air === "" && ocean === "") {
       if (ship === "air") air = t.freightDuty; else ocean = t.freightDuty;
     }
-    return { qty: t.qty ?? "", landed: t.landed ?? "", ship, freightAir: air, freightOcean: ocean, client: t.client ?? "", sizeQty: qtyMapFrom(t.sizeQty) };
+    return { qty: t.qty ?? "", landed: t.landed ?? "", ship, freightAir: air, freightOcean: ocean, client: t.client ?? "", fb: Array.isArray(t.fb) ? t.fb : null, duty_only: t.duty_only || false };
   });
   return {
     id: r.id,
     quoteDate: r.quote_date || "", product: r.product || "",
-    sku: r.sku || "", sizeScale: r.size_scale || "", sizeDeltas: deltasToMap(r.size_price_deltas), notes: r.notes || "",
+    sku: r.sku || "", sizeScale: r.size_scale || "", notes: r.notes || "",
     client: r.client || "", clientContact: r.client_contact || "", clientEmail: r.client_email || "",
     clientPhone: r.client_phone || "", clientAddress: r.client_address || "",
     factory: r.factory || "", factoryContact: r.factory_contact || "", factoryEmail: r.factory_email || "",
@@ -313,26 +176,20 @@ function rowToForm(r) {
 }
 function formToRow(f) {
   const num = (v) => (v === "" || v == null ? null : Number(v));
-  // This whitelist is destructive: anything not named here is silently dropped, which
-  // is why duty_only lives in state and in zero rows. sizeQty is added conditionally
-  // so a tier with no size quantities still writes the same six keys it always did.
-  const tiers = (f.tiers || []).map((t) => {
-    const out = {
-      qty: t.qty === "" || t.qty == null ? null : Number(t.qty),
-      landed: t.landed === "" || t.landed == null ? null : Number(t.landed),
-      ship: t.ship || "ocean",
-      freightAir: t.freightAir === "" || t.freightAir == null ? null : Number(t.freightAir),
-      freightOcean: t.freightOcean === "" || t.freightOcean == null ? null : Number(t.freightOcean),
-      client: t.client === "" || t.client == null ? null : Number(t.client),
-    };
-    const sizeQty = qtyMapToRow(t.sizeQty, f.sizeScale);
-    if (sizeQty) out.sizeQty = sizeQty;
-    return out;
-  });
+  const tiers = (f.tiers || []).map((t) => ({
+    qty: t.qty === "" || t.qty == null ? null : Number(t.qty),
+    landed: t.landed === "" || t.landed == null ? null : Number(t.landed),
+    ship: t.ship || "ocean",
+    freightAir: t.freightAir === "" || t.freightAir == null ? null : Number(t.freightAir),
+    freightOcean: t.freightOcean === "" || t.freightOcean == null ? null : Number(t.freightOcean),
+    client: t.client === "" || t.client == null ? null : Number(t.client),
+    fb: Array.isArray(t.fb) && t.fb.length ? t.fb : null,
+    duty_only: t.duty_only || false,
+  }));
   const first = f.tiers && f.tiers[0] ? f.tiers[0] : {};
   return {
     quote_date: f.quoteDate || null, product: f.product || null,
-    sku: f.sku || null, size_scale: f.sizeScale || null, size_price_deltas: mapToDeltas(f.sizeDeltas, f.sizeScale), qty: num(first.qty), notes: f.notes || null,
+    sku: f.sku || null, size_scale: f.sizeScale || null, qty: num(first.qty), notes: f.notes || null,
     client: f.client || null, client_contact: f.clientContact || null, client_email: f.clientEmail || null,
     client_phone: f.clientPhone || null, client_address: f.clientAddress || null,
     factory: f.factory || null, factory_contact: f.factoryContact || null, factory_email: f.factoryEmail || null,
@@ -355,7 +212,7 @@ const SKU_SIZE_SUFFIX = /[-_\/ ]\s*(?:[0-9]?X{0,3}(?:S|M|L|XS|SM|MED|LG|XL|XXL|S
 const skuLooksSized = (sku) => SKU_SIZE_SUFFIX.test((sku || "").trim());
 
 const BLANK = {
-  id: null, quoteDate: "", product: "", sku: "", sizeScale: "", sizeDeltas: {}, notes: "",
+  id: null, quoteDate: "", product: "", sku: "", sizeScale: "", notes: "",
   updatedAt: "", updatedBy: "",
   client: "", clientContact: "", clientEmail: "", clientPhone: "", clientAddress: "",
   factory: "", factoryContact: "", factoryEmail: "", factoryPhone: "", country: "", leadTime: "", hts: "",
@@ -1024,6 +881,174 @@ function FreightQuoteButton({ q, cbmPerCarton }) {
   );
 }
 
+// ── Freight & Duty Builder ────────────────────────────────────────────────────
+// Build a tier's per-unit freight/duty from its real cost legs: containers in,
+// warehousing, palletized outbound, trucking, duty. Replaces side spreadsheets.
+const FB_BASES = [
+  { key: "container", label: "per container", perLabel: "units / container" },
+  { key: "shipment",  label: "per shipment",  perLabel: "units / shipment" },
+  { key: "pallet",    label: "per pallet",    perLabel: "units / pallet" },
+  { key: "unit",      label: "per unit",      perLabel: null },
+  { key: "pct",       label: "% of EXW",      perLabel: "dutiable share %" },
+  { key: "flat",      label: "flat total",    perLabel: null },
+];
+const FB_PRESETS = [
+  { cat: "Ocean freight",     basis: "container" },
+  { cat: "Drayage",           basis: "container" },
+  { cat: "Warehouse handling",basis: "unit" },
+  { cat: "Storage",           basis: "flat" },
+  { cat: "Palletizing",       basis: "pallet" },
+  { cat: "Outbound trucking", basis: "shipment" },
+  { cat: "Parcel / small pkg",basis: "unit" },
+  { cat: "Duty",              basis: "pct", amount: "27.4", per: "50" },
+  { cat: "Other",             basis: "unit" },
+];
+
+function fbLegPerUnit(leg, exw, tierQty) {
+  const amt = Number(leg.amount) || 0;
+  const per = Number(leg.per) || 0;
+  if (leg.basis === "unit") return amt;
+  if (leg.basis === "pct") return exw * (amt / 100) * ((per > 0 ? per : 100) / 100);
+  if (leg.basis === "flat") return tierQty > 0 ? amt / tierQty : 0;
+  return per > 0 ? amt / per : 0; // container / shipment / pallet
+}
+
+function FreightBuilder({ tier, form, onClose, onApply }) {
+  const exw = Number(tier.landed) || 0;
+  const tierQty = Number(tier.qty) || 0;
+  // units per 40'HQ from carton data, as a prefill hint
+  const upc = Number(form.unitsPerCarton) || 0;
+  const cbmCtn = (Number(form.cartonL) * Number(form.cartonW) * Number(form.cartonH)) / 1000000;
+  const unitsPerHQ = (upc > 0 && isFinite(cbmCtn) && cbmCtn > 0) ? Math.floor(68 / cbmCtn) * upc : 0;
+
+  const [legs, setLegs] = useState(() =>
+    Array.isArray(tier.fb) && tier.fb.length
+      ? tier.fb.map((l) => ({ ...l }))
+      : [{ cat: "Ocean freight", desc: "", basis: "container", amount: "", per: unitsPerHQ > 0 ? String(unitsPerHQ) : "" }]
+  );
+
+  const setLeg = (i, k) => (e) => setLegs((p) => p.map((l, j) => (j === i ? { ...l, [k]: e.target.value } : l)));
+  const setLegBasis = (i) => (e) => {
+    const basis = e.target.value;
+    setLegs((p) => p.map((l, j) => {
+      if (j !== i) return l;
+      let per = l.per;
+      if (basis === "container" && (!per || Number(per) <= 0) && unitsPerHQ > 0) per = String(unitsPerHQ);
+      if (basis === "pct" && (!per || Number(per) <= 0)) per = "100";
+      return { ...l, basis, per };
+    }));
+  };
+  const addLeg = (preset) => setLegs((p) => [...p, {
+    cat: preset ? preset.cat : "Other", desc: "",
+    basis: preset ? preset.basis : "unit",
+    amount: preset && preset.amount ? preset.amount : "",
+    per: preset ? (preset.per ? preset.per : (preset.basis === "container" && unitsPerHQ > 0 ? String(unitsPerHQ) : "")) : "",
+  }]);
+  const rmLeg = (i) => setLegs((p) => p.filter((_, j) => j !== i));
+
+  const total = legs.reduce((a, l) => a + fbLegPerUnit(l, exw, tierQty), 0);
+  const cleanLegs = legs.filter((l) => (Number(l.amount) || 0) > 0).map((l) => ({
+    cat: l.cat, desc: l.desc || "", basis: l.basis,
+    amount: Number(l.amount) || 0, per: Number(l.per) || 0,
+    perUnit: +fbLegPerUnit(l, exw, tierQty).toFixed(4),
+  }));
+
+  const cellIn = { width: "100%", border: "1px solid #e0e4ec", borderRadius: 8, padding: "8px 10px", fontSize: 12.5, outline: "none", fontFamily: "inherit", boxSizing: "border-box", background: "#fff" };
+
+  return (
+    <div onClick={(e) => e.target === e.currentTarget && onClose()} style={{ position: "fixed", inset: 0, background: "rgba(15,23,41,.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "36px 14px", zIndex: 1300, overflowY: "auto" }}>
+      <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 700, boxShadow: "0 16px 56px rgba(15,23,41,.25)" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: "20px 24px 0", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "#0f1729", letterSpacing: "-.01em" }}>Freight &amp; Duty build-up</div>
+            <div style={{ fontSize: 12.5, color: "#6a7488", marginTop: 4, lineHeight: 1.5 }}>
+              Tier {tierQty ? tierQty.toLocaleString() : "—"} units · EXW {exw ? `$${exw.toFixed(2)}` : "—"}{unitsPerHQ > 0 ? ` · ~${unitsPerHQ.toLocaleString()} units fit a 40'HQ (from carton data)` : ""}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "#f2f4f8", border: "none", borderRadius: "50%", width: 28, height: 28, fontSize: 15, color: "#6a7488", cursor: "pointer", flexShrink: 0 }}>×</button>
+        </div>
+
+        {/* preset quick-adds */}
+        <div style={{ padding: "14px 24px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {FB_PRESETS.map((pr) => (
+            <button key={pr.cat} type="button" onClick={() => addLeg(pr)} style={{ fontSize: 11.5, fontWeight: 600, border: "1px solid #e0e4ec", background: "#f7f8fb", color: "#3551c4", borderRadius: 20, padding: "5px 11px", cursor: "pointer" }}>+ {pr.cat}</button>
+          ))}
+        </div>
+
+        {/* legs */}
+        <div style={{ padding: "16px 24px 0" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 0.9fr 0.9fr 0.8fr 26px", gap: 6, marginBottom: 6 }}>
+            {["Cost leg", "Basis", "Amount $", "Divisor", "$ / unit", ""].map((h, i) => (
+              <div key={i} style={{ fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#8a93a6", textAlign: i >= 2 && i < 5 ? "right" : "left" }}>{h}</div>
+            ))}
+          </div>
+          {legs.map((l, i) => {
+            const base = FB_BASES.find((b) => b.key === l.basis) || FB_BASES[0];
+            const pu = fbLegPerUnit(l, exw, tierQty);
+            return (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 0.9fr 0.9fr 0.8fr 26px", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <input style={cellIn} value={l.cat} onChange={setLeg(i, "cat")} placeholder="Cost leg" />
+                <select style={cellIn} value={l.basis} onChange={setLegBasis(i)}>
+                  {FB_BASES.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
+                </select>
+                <input style={{ ...cellIn, textAlign: "right" }} type="number" value={l.amount} onChange={setLeg(i, "amount")} placeholder={l.basis === "pct" ? "%" : "$"} />
+                {base.perLabel
+                  ? <input style={{ ...cellIn, textAlign: "right" }} type="number" value={l.per} onChange={setLeg(i, "per")} placeholder={base.perLabel} title={base.perLabel} />
+                  : <div style={{ fontSize: 11, color: "#aab2c0", textAlign: "right", paddingRight: 4 }}>{l.basis === "flat" ? `÷ ${tierQty ? tierQty.toLocaleString() : "qty"}` : "—"}</div>}
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: "#0f1729", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{pu > 0 ? `$${pu.toFixed(3)}` : "—"}</div>
+                <button type="button" onClick={() => rmLeg(i)} style={{ background: "none", border: "none", color: "#c3c9d4", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* total + apply */}
+        <div style={{ margin: "16px 24px 0", background: "#f7f8fb", border: "1px solid #e6e9f0", borderRadius: 12, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", color: "#8a93a6", marginBottom: 4 }}>Freight + duty per unit</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: "#0f1729", fontVariantNumeric: "tabular-nums", letterSpacing: "-.02em" }}>${total.toFixed(3)}</div>
+          </div>
+          <div style={{ fontSize: 11.5, color: "#6a7488", lineHeight: 1.5, maxWidth: 300 }}>
+            {tierQty > 0 ? `≈ $${(total * tierQty).toLocaleString(undefined, { maximumFractionDigits: 0 })} total across ${tierQty.toLocaleString()} units. ` : ""}Applies to the ocean freight field and saves this breakdown on the tier.
+          </div>
+        </div>
+
+        <div style={{ padding: "16px 24px 20px", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button type="button" onClick={onClose} style={{ background: "#f2f4f8", border: "none", borderRadius: 10, padding: "9px 17px", fontSize: 13, fontWeight: 600, color: "#0f1729", cursor: "pointer" }}>Cancel</button>
+          <button type="button" disabled={total <= 0} onClick={() => onApply(total, cleanLegs)} style={{ background: total > 0 ? "#2f6df6" : "#c3c9d4", border: "none", borderRadius: 10, padding: "9px 18px", fontSize: 13, fontWeight: 700, color: "#fff", cursor: total > 0 ? "pointer" : "not-allowed" }}>Apply ${total.toFixed(3)} / unit</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FreightBreakdownView({ tiers }) {
+  const withFb = (tiers || []).filter((t) => Array.isArray(t.fb) && t.fb.length);
+  if (!withFb.length) return null;
+  const baseLabel = (b) => { const m = FB_BASES.find((x) => x.key === b); return m ? m.label : b; };
+  return (
+    <div style={{ gridColumn: "1 / -1", marginTop: 4 }}>
+      <div style={S.detailHead}><Truck size={14} /> Freight &amp; Duty Build-up <span style={{ fontWeight: 500, color: "#8a93a6", textTransform: "none", letterSpacing: 0 }}>(internal)</span></div>
+      {withFb.map((t, i) => {
+        const total = t.fb.reduce((a, l) => a + (Number(l.perUnit) || 0), 0);
+        return (
+          <div key={i} style={{ background: "#f7f8fb", border: "1px solid #e6e9f0", borderRadius: 12, padding: "13px 15px", marginBottom: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#0f1729", marginBottom: 8 }}>
+              Tier {Number(t.qty) ? Number(t.qty).toLocaleString() : "—"} units · ${total.toFixed(3)}/unit
+            </div>
+            {t.fb.map((l, j) => (
+              <div key={j} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "4px 0", fontSize: 12, borderTop: j > 0 ? "1px solid #eceff5" : "none" }}>
+                <span style={{ color: "#4a5468" }}>{l.cat}{l.desc ? ` — ${l.desc}` : ""} <span style={{ color: "#aab2c0" }}>({baseLabel(l.basis)}{l.basis === "pct" ? ` ${l.amount}%${l.per && l.per !== 100 ? ` on ${l.per}% of EXW` : ""}` : l.per ? ` · $${Number(l.amount).toLocaleString()} ÷ ${Number(l.per).toLocaleString()}` : ""})</span></span>
+                <span style={{ fontWeight: 700, color: "#0f1729", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>${Number(l.perUnit || 0).toFixed(3)}</span>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const QUOTE_CONTAINERS = [
   { key: "20GP", label: "20' Standard", cbm: 32 },
   { key: "40GP", label: "40' Standard", cbm: 58 },
@@ -1130,9 +1155,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
           {(q.tiers || []).map((t, i) => {
             const m = tierMargin(t, t.client, q.moldFee);
             const total = tierTotalCost(t, q.moldFee);
-            // Same divisor tierTotalCost just used, or this caption contradicts the
-            // number it is captioning on any tier carrying a size mix.
-            const mpu = moldPerUnit(q.moldFee, effectiveQty(t));
+            const mpu = moldPerUnit(q.moldFee, t.qty);
             return (
               <div key={i} style={S.tierBodyRow}>
                 <div style={{ flex: 1, fontWeight: 600, color: "#0f1729" }}>{t.qty ? Number(t.qty).toLocaleString() : "—"}</div>
@@ -1183,6 +1206,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
         <F label="CBM / Carton" value={isFinite(cbm) && cbm > 0 ? cbm.toFixed(4) : ""} />
       </Section>
       <ContainerPackout q={q} cbmPerCarton={cbm} />
+      <FreightBreakdownView tiers={q.tiers} />
       {q.notes && (
         <div style={{ ...S.detailSection, gridColumn: "1 / -1" }}>
           <div style={S.detailHead}><AlertCircle size={14} /> Notes</div>
@@ -1792,6 +1816,7 @@ function SelectField({ label, k, placeholder, options, hint, f, set }) {
 
 function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [], contacts = [], onSaveFactory, onSaveContact, userEmail }) {
   const [f, setF] = useState(() => ({ ...initial, tiers: (initial.tiers && initial.tiers.length ? initial.tiers.map((t) => ({ ...t })) : [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }]) }));
+  const [fbTier, setFbTier] = useState(null); // index of tier whose freight builder is open
   const [showClientSug, setShowClientSug] = useState(false);
   const [savingFactory, setSavingFactory] = useState(false);
   const [factoryPresetName, setFactoryPresetName] = useState("");
@@ -1802,41 +1827,6 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   };
   // Warn only -- the user may be part-way through stripping the suffix off the SKU.
   const sizeClash = !!f.sizeScale && skuLooksSized(f.sku);
-
-  // Deltas and per-tier quantities are both keyed by size, so a scale change must drop
-  // any with no home in the new scale — the same rule SizeGrid.changeScale applies to
-  // quantities. Clearing the scale clears them all. SelectField calls set(k) for its
-  // onChange, so this is handed in as a set-shaped function for that one field.
-  const setSizeScale = (e) => {
-    const key = (e && e.target ? e.target.value : e) || "";
-    setF((p) => {
-      const nextSizes = key ? sizesForScale(key) : [];
-      const keep = (m) => {
-        const kept = {};
-        Object.keys(m || {}).forEach((s) => { if (nextSizes.includes(s)) kept[s] = m[s]; });
-        return kept;
-      };
-      return { ...p, sizeScale: key, sizeDeltas: keep(p.sizeDeltas), tiers: p.tiers.map((t) => ({ ...t, sizeQty: keep(t.sizeQty) })) };
-    });
-  };
-  // Deltas can be negative, so SizeGrid's digit-only strip is wrong here. Keep one
-  // leading '-' and one '.', reject everything else. Blank means zero.
-  const setSizeDelta = (size, raw) => {
-    let s = String(raw).replace(/[^0-9.-]/g, "");
-    const neg = s.startsWith("-");
-    s = s.replace(/-/g, "");
-    const dot = s.indexOf(".");
-    if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, "");
-    if (neg) s = "-" + s;
-    setF((p) => ({ ...p, sizeDeltas: { ...(p.sizeDeltas || {}), [size]: s } }));
-  };
-  // Quantities are whole units, so here SizeGrid's digit-only strip is exactly right —
-  // type="number" would still admit 'e' and '-'. Blank means none. Unlike the deltas,
-  // which are one set per quote, these belong to a single tier.
-  const setSizeQty = (i, size, raw) => {
-    const digits = String(raw).replace(/[^0-9]/g, "");
-    setF((p) => ({ ...p, tiers: p.tiers.map((t, idx) => idx === i ? { ...t, sizeQty: { ...(t.sizeQty || {}), [size]: digits } } : t) }));
-  };
 
   const clientMatches = (() => {
     const typed = (f.client || "").trim().toLowerCase();
@@ -1934,32 +1924,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
             <SelectField label="Size Scale" k="sizeScale" placeholder="— no sizes —"
               options={SIZE_SCALES.map((s) => ({ value: s.key, label: s.label }))}
               hint={sizeClash ? "SKU already ends in a size — with a scale set too, order lines would double it (…-Large-S)." : null}
-              f={f} set={() => setSizeScale} />
-            {/* Spans the whole form row: S.formGrid is auto-fit minmax(150px,1fr),
-                which otherwise crushes six size inputs into one narrow column. */}
-            {f.sizeScale && (
-              <label style={{ ...S.field, gridColumn: "1 / -1" }}>
-                <span style={S.fieldLabel}>Per-size price adjustment</span>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {sizesForScale(f.sizeScale).map((s) => (
-                    // a div, not a label: the caption sits above its own input already
-                    <div key={s} style={{ display: "flex", flexDirection: "column", gap: 3, width: 74 }}>
-                      <span style={{ fontSize: 11, color: "#6a7488", fontWeight: 600, textAlign: "center" }}>{s}</span>
-                      <input
-                        style={{ ...S.tierInput, textAlign: "right" }}
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        aria-label={"Price adjustment for size " + s}
-                        value={(f.sizeDeltas || {})[s] ?? ""}
-                        onChange={(e) => setSizeDelta(s, e.target.value)}
-                      />
-                    </div>
-                  ))}
-                </div>
-                <span style={S.tierHint}>+/- on the client price, applied across every tier. Blank is no adjustment. Negative lowers the price for that size.</span>
-              </label>
-            )}
+              f={f} set={set} />
             <Field label="Product" k="product" placeholder="e.g. Needlepoint Belt" f={f} set={set} />
             <Field label="HTS Code" k="hts" placeholder="Tariff code (per product)" f={f} set={set} />
             <Field label="Quote Date" k="quoteDate" type="date" f={f} set={set} />
@@ -2070,22 +2035,6 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
               </div>
               {f.tiers.map((t, i) => {
                 const m = tierMargin(t, t.client, f.moldFee);
-                // null unless per-size deltas actually widen this tier, in which case
-                // the cell falls through to exactly the single value it shows today.
-                const mr = marginRangeFor(t, f.moldFee, f.sizeDeltas, f.sizeScale);
-                // One row per size. Price and margin are display only — deltas are
-                // stored once per quote and apply to every tier, so editing one here
-                // would silently move the others; that stays in the Product section.
-                // The quantity box is the exception: it belongs to this tier alone.
-                const sizeRows = sizeRowsFor(t, f.moldFee, f.sizeDeltas, f.sizeScale);
-                const sizeTotal = sizeQtyTotal(t, f.sizeScale);
-                // With a mix entered the tier has one real margin rather than a band,
-                // so the blended price supersedes the delta range in the Margin cell.
-                const mix = sizeMixFor(t, f.sizeDeltas, f.sizeScale);
-                const mixMargin = mix ? tierMargin(t, mix.blended, f.moldFee) : null;
-                // Decides only whether a size row shows what it was adjusted BY, not
-                // whether it has a price — with no base the delta is the price itself.
-                const hasBase = Number(t.client) > 0;
                 const ship = t.ship || "ocean";
                 const total = tierTotalCost(t, f.moldFee);
                 const airOff = ship !== "air";
@@ -2096,11 +2045,8 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                   setF((p) => ({ ...p, tiers: p.tiers.map((x, idx) => idx === i ? { ...x, ship: "ocean", freightAir: "", freightOcean: duty, duty_only: true } : x) }));
                 };
                 return (
-                  <React.Fragment key={i}>
-                  <div style={S.tierEditRow}>
-                    <div style={{ flex: 0.9 }}>{sizeTotal == null
-                      ? <input style={S.tierInput} type="number" value={t.qty ?? ""} onChange={(e) => setTier(i, "qty", e.target.value)} placeholder="Qty" />
-                      : <div style={S.qtyFromSizes} title="Quantity comes from the size rows below"><span style={S.qfsV}>{sizeTotal.toLocaleString()}</span><span style={S.qfsK}>from sizes</span></div>}</div>
+                  <div key={i} style={S.tierEditRow}>
+                    <div style={{ flex: 0.9 }}><input style={S.tierInput} type="number" value={t.qty ?? ""} onChange={(e) => setTier(i, "qty", e.target.value)} placeholder="Qty" /></div>
                     <div style={{ flex: 0.9 }}><input style={S.tierInput} type="number" value={t.landed ?? ""} onChange={(e) => setTier(i, "landed", e.target.value)} placeholder="$ EXW" /></div>
                     <div style={{ flex: 1.0, display: "flex", gap: 3, alignItems: "center" }}>
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "air" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "air")}>Air</button>
@@ -2110,66 +2056,20 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                     <div style={{ flex: 1.0, display: "flex", gap: 3 }}>
                       <input style={{ ...S.tierInput, ...(oceanOff ? S.tierInputOff : {}) }} type="number" value={t.freightOcean ?? ""} onChange={(e) => setTier(i, "freightOcean", e.target.value)} placeholder="$ ocean" disabled={oceanOff} />
                       <button type="button" onClick={autoDuty} disabled={exwVal <= 0} title="Duty only = 0.5 × EXW × 0.274 (no freight)" style={{ flexShrink: 0, padding: "0 8px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, letterSpacing: ".02em", cursor: exwVal > 0 ? "pointer" : "not-allowed", background: exwVal > 0 ? "#e7edfd" : "#eef1f6", color: exwVal > 0 ? "#3551c4" : "#aab2c0", whiteSpace: "nowrap" }}>duty</button>
+                      <button type="button" onClick={() => setFbTier(i)} title="Build the freight & duty number from its cost legs — containers, warehousing, trucking, duty" style={{ flexShrink: 0, padding: "0 8px", borderRadius: 6, border: "none", fontSize: 11, fontWeight: 800, cursor: "pointer", background: (t.fb && t.fb.length) ? "#2f6df6" : "#e7edfd", color: (t.fb && t.fb.length) ? "#fff" : "#3551c4", whiteSpace: "nowrap" }}>Σ</button>
                     </div>
                     <div style={{ flex: 0.9, textAlign: "right", alignSelf: "center", ...S.num, fontWeight: 600, color: "#0f1729" }}>{total ? `$${fmt(total)}` : "—"}</div>
-                    {/* Column, not a row: the mix line sits under both the input and the
-                        auto button. The base price stays typed — the per-size prices are
-                        derived from it, so deriving it back would be circular. */}
-                    <div style={{ flex: 1.1, display: "flex", flexDirection: "column", gap: 3 }}>
-                      <div style={{ display: "flex", gap: 4 }}>
-                        <input style={S.tierInput} type="number" value={t.client ?? ""} onChange={(e) => setTier(i, "client", e.target.value)} placeholder="$" />
-                        <button style={S.autoBtn} title="Suggest from margin logic" onClick={() => autoFillClient(i)}>auto</button>
-                      </div>
-                      {mix && <span style={S.tierMixLine}>${fmt(mix.blended)} avg · ${fmt(mix.total)} total</span>}
+                    <div style={{ flex: 1.1, display: "flex", gap: 4 }}>
+                      <input style={S.tierInput} type="number" value={t.client ?? ""} onChange={(e) => setTier(i, "client", e.target.value)} placeholder="$" />
+                      <button style={S.autoBtn} title="Suggest from margin logic" onClick={() => autoFillClient(i)}>auto</button>
                     </div>
                     <div style={{ flex: 0.6, textAlign: "right", ...S.num, alignSelf: "center" }}>
-                      {mixMargin != null
-                        ? <span style={{ color: mixMargin && mixMargin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{mixMargin.toFixed(0)}%</span>
-                        : <span style={{ color: (mr ? mr.low : m) && (mr ? mr.low : m) < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{mr ? (mr.low.toFixed(0) === mr.high.toFixed(0) ? mr.low.toFixed(0) + "%" : mr.low.toFixed(0) + "-" + mr.high.toFixed(0) + "%") : (m ? m.toFixed(0) + "%" : "—")}</span>}
+                      <span style={{ color: m && m < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{m ? m.toFixed(0) + "%" : "—"}</span>
                     </div>
                     <div style={{ width: 30, alignSelf: "center", textAlign: "center" }}>
                       {f.tiers.length > 1 && <button style={S.tierDel} onClick={() => removeTier(i)}><X size={14} /></button>}
                     </div>
                   </div>
-                  {/* Cost columns are identical to the parent, so they stay empty rather
-                      than repeating themselves. Flex widths mirror the row above. */}
-                  {sizeRows.map((r) => (
-                    <div key={r.size} style={S.tierSizeRow}>
-                      <div style={{ flex: 0.9, display: "flex", alignItems: "center", gap: 6, paddingLeft: 12 }}>
-                        <span style={{ ...S.tierSizeCell, color: "#8a93a5", fontWeight: 600, minWidth: 24 }}>{r.size}</span>
-                        <input
-                          style={{ ...S.tierInput, padding: "5px 7px", fontSize: 12.5, textAlign: "right" }}
-                          type="text"
-                          inputMode="numeric"
-                          placeholder="0"
-                          aria-label={"Quantity for size " + r.size}
-                          value={(t.sizeQty || {})[r.size] ?? ""}
-                          onChange={(e) => setSizeQty(i, r.size, e.target.value)}
-                        />
-                      </div>
-                      <div style={{ flex: 0.9 }} />
-                      <div style={{ flex: 1.0 }} />
-                      <div style={{ flex: 1.0 }} />
-                      <div style={{ flex: 1.0 }} />
-                      <div style={{ flex: 0.9, textAlign: "right", ...S.tierSizeCell }}>{total ? `$${fmt(total)}` : "—"}</div>
-                      {/* The parenthetical is what the base was moved BY, so it only makes
-                          sense next to a base. With none the delta is the whole price and
-                          printing it twice would read as an error. */}
-                      <div style={{ flex: 1.1, ...S.tierSizeCell }}>
-                        {r.price == null ? "—" : (
-                          <>
-                            {`$${fmt(r.price)}`}
-                            {hasBase && r.delta !== 0 && <span style={{ color: "#9aa3b5", marginLeft: 5 }}>({r.delta > 0 ? "+" : "−"}{fmt(Math.abs(r.delta))})</span>}
-                          </>
-                        )}
-                      </div>
-                      <div style={{ flex: 0.6, textAlign: "right", ...S.tierSizeCell }}>
-                        {r.margin == null ? "—" : <span style={{ color: r.margin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{r.margin.toFixed(0)}%</span>}
-                      </div>
-                      <div style={{ width: 30 }} />
-                    </div>
-                  ))}
-                  </React.Fragment>
                 );
               })}
             </div>
@@ -2178,7 +2078,18 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
               <button style={S.addTierBtn} onClick={() => addTier()}><Plus size={14} /> Add tier</button>
               <button style={S.presetBtn} onClick={addPresets}>+ Preset qtys (500 / 1k / 2.5k / 5k)</button>
             </div>
-            <div style={S.tierHint}>Total Cost = EXW + Freight/Duty (auto). Client price auto-suggests from KUI margin logic off total cost — tap "auto," then adjust. Margin turns amber below 25%. Swipe sideways to see all columns.</div>
+            <div style={S.tierHint}>Total Cost = EXW + Freight/Duty (auto). Client price auto-suggests from KUI margin logic off total cost — tap "auto," then adjust. Margin turns amber below 25%. Tap Σ to build the freight number from its real cost legs. Swipe sideways to see all columns.</div>
+            {fbTier != null && f.tiers[fbTier] && (
+              <FreightBuilder
+                tier={f.tiers[fbTier]}
+                form={f}
+                onClose={() => setFbTier(null)}
+                onApply={(totalPerUnit, legs) => {
+                  setF((p) => ({ ...p, tiers: p.tiers.map((x, idx) => idx === fbTier ? { ...x, ship: "ocean", freightAir: "", freightOcean: totalPerUnit.toFixed(3), fb: legs, duty_only: false } : x) }));
+                  setFbTier(null);
+                }}
+              />
+            )}
             <label style={{ ...S.field, marginTop: 14, maxWidth: 320 }}>
               <span style={S.fieldLabel}>Mold / Tooling Fee <span style={{ color: "#6a7488", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>(amortized per unit into total cost)</span></span>
               <div style={{ position: "relative" }}>
@@ -2292,17 +2203,7 @@ const S = {
   tierEditTable: { border: "1px solid #e7eaf0", borderRadius: 12, overflow: "hidden" },
   tierEditHead: { display: "flex", gap: 8, padding: "9px 12px", background: "#eef1f6", fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase", color: "#9aa3b5", fontWeight: 600 },
   tierEditRow: { display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid #eef1f6", background: "#ffffff" },
-  // Derived display beneath a tier, not an input row — tinted, tighter, dashed rule.
-  tierSizeRow: { display: "flex", gap: 8, padding: "5px 12px", borderTop: "1px dashed #eef1f6", background: "#fafbfd" },
-  tierSizeCell: { fontSize: 12, fontVariantNumeric: "tabular-nums", color: "#6a7488", alignSelf: "center" },
   tierInput: { border: "1px solid #e7eaf0", background: "#ffffff", borderRadius: 8, padding: "8px 9px", fontSize: 13.5, color: "#0f1729", width: "100%" },
-  // Stands in for the tier's Qty input once the size rows own the number. Dashed and
-  // tinted so it reads as derived rather than as a dead input — the same treatment
-  // .qty-from-sizes gives the sized line items on the order side.
-  qtyFromSizes: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1, padding: "6px 9px", background: "#fafbfd", border: "1px dashed #e7eaf0", borderRadius: 8 },
-  qfsV: { fontSize: 13, fontWeight: 600, color: "#0f1729", lineHeight: 1.2, fontVariantNumeric: "tabular-nums" },
-  qfsK: { fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em", color: "#9aa3b5", fontWeight: 600 },
-  tierMixLine: { fontSize: 11, color: "#9aa3b5", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
   autoBtn: { background: "#eef1f6", border: "1px solid #e7eaf0", color: "#3461e0", borderRadius: 8, padding: "0 9px", fontSize: 11, fontWeight: 600 },
   tierDel: { background: "transparent", border: "none", color: "#bba", padding: 2, display: "inline-flex" },
   addTierBtn: { display: "inline-flex", alignItems: "center", gap: 5, background: "#eef1f6", color: "#0f1729", border: "none", borderRadius: 9, padding: "8px 14px", fontSize: 13, fontWeight: 600 },
