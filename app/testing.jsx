@@ -28,6 +28,9 @@ const PROD_STATUS = {
 const effectiveStatus = (product, derivedStatus) => (product && product.compliance_status) || derivedStatus;
 // Written to products.compliance_status. '' means clear it back to NULL.
 const COMPLIANCE_OPTS = [['','— Not set —'],['passed','Pass'],['pending','Pending'],['failed','Failed']];
+// Unused on purpose. MaterialModal's Type field was opened up to free text so we can
+// see what people actually reach for; this is the list to put back as a <select> once
+// there is enough real data to say what the options should be.
 const MAT_TYPES = ['fabric','dye','ink','zipper','plastic','trim','hardware','packaging','other'];
 
 function StatusPill({ map, status }) {
@@ -291,13 +294,13 @@ const inp = {width:'100%',border:'1px solid #E5E7EB',borderRadius:'10px',padding
 const lbl = {display:'block',fontSize:'11px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'6px'};
 
 function MaterialModal({ data, labs, onClose, onSaved }) {
-  const [f,setF]=useState({ name:data?.name||'', material_type:data?.material_type||'fabric', supplier_name:data?.supplier_name||'', composition:data?.composition||'', color:data?.color||'', notes:data?.notes||'' });
+  const [f,setF]=useState({ name:data?.name||'', material_type:data?.material_type||'', supplier_name:data?.supplier_name||'', composition:data?.composition||'', color:data?.color||'', notes:data?.notes||'' });
   const [saving,setSaving]=useState(false);
   const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   const save=async()=>{
     if(!f.name.trim()) return;
     setSaving(true);
-    const payload={ name:f.name.trim(), material_type:f.material_type, supplier_name:f.supplier_name||null, composition:f.composition||null, color:f.color||null, notes:f.notes||null };
+    const payload={ name:f.name.trim(), material_type:f.material_type||null, supplier_name:f.supplier_name||null, composition:f.composition||null, color:f.color||null, notes:f.notes||null };
     if(data?.id) await SB.from('materials').update(payload).eq('id',data.id);
     else await SB.from('materials').insert(payload);
     setSaving(false); onSaved();
@@ -308,7 +311,7 @@ function MaterialModal({ data, labs, onClose, onSaved }) {
       <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
         <div><label style={lbl}>Material name</label><input style={inp} value={f.name} onChange={set('name')} placeholder="e.g. 100% Cotton Jersey 180gsm" /></div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
-          <div><label style={lbl}>Type</label><select style={inp} value={f.material_type} onChange={set('material_type')}>{MAT_TYPES.map(t=><option key={t} value={t}>{t}</option>)}</select></div>
+          <div><label style={lbl}>Type</label><input style={inp} value={f.material_type} onChange={set('material_type')} placeholder="e.g. fabric, zipper, trim" /></div>
           <div><label style={lbl}>Color</label><input style={inp} value={f.color} onChange={set('color')} placeholder="optional" /></div>
         </div>
         <div><label style={lbl}>Supplier</label><input style={inp} value={f.supplier_name} onChange={set('supplier_name')} placeholder="Factory / supplier name" /></div>
