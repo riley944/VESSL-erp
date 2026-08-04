@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { SB } from '@/lib/supabase';
 
 // ── CreateProductModal (new row in vessl.products) ───────────────────────────
@@ -11,11 +11,9 @@ import { SB } from '@/lib/supabase';
 // Every class name below resolves from globals.css, so this file needs no styles
 // of its own.
 export function CreateProductModal({ onClose, onCreated }) {
-  const [cats, setCats] = useState([]);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({sku:'',name:'',desc:'',catId:'',hs:'',uom:'pcs',wt:'',upc:'',cwt:'',cl:'',cw:'',ch:''});
+  const [form, setForm] = useState({sku:'',name:'',desc:'',hs:'',uom:'',wt:'',upc:'',cwt:'',cl:'',cw:'',ch:''});
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
-  useEffect(()=>{ SB.from('product_categories').select('id,name').order('name').then(({data})=>setCats(data||[])); },[]);
   const submit = async () => {
     // Name identifies a product here; a SKU is nice to have and often assigned later.
     const name = form.name.trim();
@@ -25,8 +23,12 @@ export function CreateProductModal({ onClose, onCreated }) {
     const { error } = await SB.from('products').insert({
       // products_sku_key is UNIQUE and Postgres does not treat NULLs as equal, so any
       // number of SKU-less products can coexist -- but a second '' would collide.
-      sku:sku||null, name:name, description:form.desc||null, category_id:form.catId||null,
-      hts_code:form.hs||null, unit_of_measure:form.uom||'pcs', weight_kg:Number(form.wt)||null,
+      // category_id is written explicitly rather than omitted so every row this modal
+      // creates carries the same key set. product_categories has no rows to pick from.
+      sku:sku||null, name:name, description:form.desc||null, category_id:null,
+      // unit_of_measure has a DB default of 'pcs', but a default only fires when the
+      // key is absent -- sending null keeps the column empty until someone types a unit.
+      hts_code:form.hs||null, unit_of_measure:form.uom||null, weight_kg:Number(form.wt)||null,
       units_per_carton:Number(form.upc)||null, carton_weight_kg:Number(form.cwt)||null,
       carton_l_cm:Number(form.cl)||null, carton_w_cm:Number(form.cw)||null, carton_h_cm:Number(form.ch)||null
     });
@@ -43,10 +45,7 @@ export function CreateProductModal({ onClose, onCreated }) {
       <div className="modal-box">
         <div className="modal-head"><h3>New Product</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
-          <div className="form-row-2">
-            <div><label>SKU</label><input className="form-input" value={form.sku} onChange={e=>f('sku')(e.target.value)} placeholder="KUI-XXXX-00 — optional" /></div>
-            <div><label>Category</label><select className="form-select" value={form.catId} onChange={e=>f('catId')(e.target.value)}><option value="">None</option>{cats.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-          </div>
+          <div className="form-row"><label>SKU</label><input className="form-input" value={form.sku} onChange={e=>f('sku')(e.target.value)} placeholder="KUI-XXXX-00 — optional" /></div>
           <div className="form-row"><label>Product Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
           <div className="form-row"><label>Description</label><textarea className="form-textarea" value={form.desc} onChange={e=>f('desc')(e.target.value)} /></div>
           <div className="form-row-3">
