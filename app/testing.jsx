@@ -11,13 +11,22 @@ const MAT_STATUS = {
   failed:     { label:'Failed',      color:'#B91C1C', bg:'#FEE2E2' },
   expired:    { label:'Expired',     color:'#B91C1C', bg:'#FEE2E2' },
 };
+// 'passed' is what a human sets by hand on the product; 'compliant' is what the
+// linked materials add up to on their own. Same green, different label, so the table
+// says which of the two you are looking at. 'pending' and 'failed' are shared.
 const PROD_STATUS = {
   compliant:   { label:'Compliant',   color:'#15803D', bg:'#DCFCE7', dot:'#22C55E' },
+  passed:      { label:'Pass',        color:'#15803D', bg:'#DCFCE7', dot:'#22C55E' },
   pending:     { label:'Pending',     color:'#B45309', bg:'#FEF3C7', dot:'#F59E0B' },
   failed:      { label:'Failed',      color:'#B91C1C', bg:'#FEE2E2', dot:'#EF4444' },
   expired:     { label:'Expired',     color:'#B91C1C', bg:'#FEE2E2', dot:'#EF4444' },
   no_materials:{ label:'No materials',color:'#8A8A8E', bg:'#F2F2F4', dot:'#CBD5E1' },
 };
+// A value stored on the product overrides what its materials derive to — someone has
+// looked at it and made a call. Falls back to the derived status until they do.
+const effectiveStatus = (product, derivedStatus) => (product && product.compliance_status) || derivedStatus;
+// Written to products.compliance_status. '' means clear it back to NULL.
+const COMPLIANCE_OPTS = [['','— Not set —'],['passed','Pass'],['pending','Pending'],['failed','Failed']];
 const MAT_TYPES = ['fabric','dye','ink','zipper','plastic','trim','hardware','packaging','other'];
 
 function StatusPill({ map, status }) {
@@ -42,7 +51,7 @@ export default function Testing() {
   const load = async () => {
     setLoading(true);
     const [p, m, r, rg, lb, pm] = await Promise.all([
-      SB.from('products').select('id,sku,name').order('sku',{nullsFirst:false}),
+      SB.from('products').select('id,sku,name,compliance_status').order('sku',{nullsFirst:false}),
       SB.from('materials').select('*,supplier:companies!supplier_id(name)').order('created_at',{ascending:false}),
       SB.from('test_reports').select('*,lab:labs(name),material:materials(name),product:products(name,sku),test_results(*)').order('test_date',{ascending:false}),
       SB.from('regulations').select('*').eq('active',true).order('sort_order'),
@@ -67,11 +76,24 @@ export default function Testing() {
     return 'pending';
   };
 
+  // Set by hand or derived, the tiles have to count the same thing the table shows or
+  // they contradict the rows directly beneath them. A hand-set 'passed' is compliant.
   const counts = {
-    compliant: products.filter(p=>productStatus(p.id)==='compliant').length,
-    pending:   products.filter(p=>['pending'].includes(productStatus(p.id))).length,
-    issues:    products.filter(p=>['failed','expired'].includes(productStatus(p.id))).length,
+    compliant: products.filter(p=>['compliant','passed'].includes(effectiveStatus(p,productStatus(p.id)))).length,
+    pending:   products.filter(p=>['pending'].includes(effectiveStatus(p,productStatus(p.id)))).length,
+    issues:    products.filter(p=>['failed','expired'].includes(effectiveStatus(p,productStatus(p.id)))).length,
     materials: materials.length,
+  };
+
+  // No optimistic update on purpose: the select is controlled from `products`, so a
+  // write that fails leaves the cell showing what the database still holds rather than
+  // what the user picked. Reloading on success keeps the tiles in step with the table.
+  const [statusErr, setStatusErr] = useState('');
+  const setCompliance = async (prodId, value) => {
+    setStatusErr('');
+    const { error } = await SB.from('products').update({ compliance_status: value || null }).eq('id', prodId);
+    if (error) { setStatusErr('Could not save compliance status — ' + error.message); return; }
+    await load();
   };
 
   return (
@@ -113,9 +135,16 @@ export default function Testing() {
         ))}
       </div>
 
+      {statusErr && (
+        <div style={{display:'flex',alignItems:'center',gap:'10px',background:'#FEE2E2',border:'1px solid #FCA5A5',color:'#B91C1C',borderRadius:'10px',padding:'11px 14px',fontSize:'13px',marginBottom:'14px'}}>
+          <span style={{flex:1}}>{statusErr}</span>
+          <button onClick={()=>setStatusErr('')} style={{background:'none',border:'none',color:'#B91C1C',fontSize:'15px',cursor:'pointer',lineHeight:1,padding:0}}>×</button>
+        </div>
+      )}
+
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#8A8A8E'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={products} prodMats={prodMats} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} />}
+          {tab==='products'  && <ProductsView products={products} prodMats={prodMats} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onSetStatus={setCompliance} />}
           {tab==='materials' && <MaterialsView materials={materials} onEdit={(m)=>setModal({type:'material',data:m})} onTest={(m)=>setModal({type:'report',data:{material_id:m.id}})} />}
           {tab==='reports'   && <ReportsView reports={reports} />}
           {tab==='regs'      && <RegsView regs={regs} />}
@@ -130,7 +159,7 @@ export default function Testing() {
 }
 
 // ── PRODUCTS VIEW ────────────────────────────────────────────────────────────
-function ProductsView({ products, prodMats, productStatus, onLink }) {
+function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus }) {
   if(!products.length) return <Empty title="No products yet" sub="Products created in the Products tab appear here for compliance tracking." />;
   return (
     <div style={{...card,overflow:'hidden'}}>
@@ -139,7 +168,7 @@ function ProductsView({ products, prodMats, productStatus, onLink }) {
       </div>
       {products.map((p,i)=>{
         const links=prodMats.filter(l=>l.product_id===p.id);
-        const st=productStatus(p.id);
+        const st=effectiveStatus(p,productStatus(p.id));
         return (
           <div key={p.id} style={{display:'grid',gridTemplateColumns:'1fr 140px 120px 90px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center'}}>
             <div style={{minWidth:0}}>
@@ -147,7 +176,17 @@ function ProductsView({ products, prodMats, productStatus, onLink }) {
               <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.name}</div>
             </div>
             <div style={{fontSize:'12.5px',color:'#4A4A4E'}}>{links.length? links.length+' linked':<span style={{color:'#C0C0C4'}}>none</span>}</div>
-            <div><StatusPill map={PROD_STATUS} status={st} /></div>
+            <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:'5px',minWidth:0}}>
+              <StatusPill map={PROD_STATUS} status={st} />
+              <select
+                value={p.compliance_status||''}
+                onChange={e=>onSetStatus(p.id,e.target.value)}
+                aria-label={'Compliance status for '+(p.sku||p.name||'product')}
+                style={{width:'100%',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'3px 5px',fontSize:'11px',color:'#4A4A4E',background:'#fff',cursor:'pointer',fontFamily:'inherit',outline:'none'}}
+              >
+                {COMPLIANCE_OPTS.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+              </select>
+            </div>
             <div style={{textAlign:'right'}}><button onClick={()=>onLink(p)} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'8px',padding:'5px 11px',fontSize:'12px',fontWeight:500,color:'#4A4A4E',cursor:'pointer'}}>Materials</button></div>
           </div>
         );
