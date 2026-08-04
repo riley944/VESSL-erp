@@ -365,7 +365,7 @@ const BLANK = {
   unitsPerCarton: "", cartonL: "", cartonW: "", cartonH: "", cartonWeight: "",
   freightDutyUpdatedAt: "", freightDutyUpdatedBy: "",
   moldFee: "", sampleFee: "",
-  tiers: [{ qty: 1500, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }],
+  tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }],
 };
 
 // ============================================================
@@ -745,7 +745,7 @@ function Platform({ session }) {
           </button>
           <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setShowSend(true)}><Send size={15} /> {isMobile ? "Send" : "Send to Client"}</button>
           <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={exportCSV}><Download size={15} /> {isMobile ? "" : "Export"}</button>
-          <button style={{ ...S.primaryBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), client: "", tiers: [{ qty: 1500, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] })}>
+          <button style={{ ...S.primaryBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), client: "", tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] })}>
             <Plus size={16} /> {isMobile ? "New" : "New Quote"}
           </button>
         </div>
@@ -2273,14 +2273,17 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
             <div style={S.tierScroll}>
             <div style={{ ...S.tierEditTable, minWidth: 860 }}>
               <div style={S.tierEditHead}>
-                <div style={{ flex: 0.9 }}>Quantity</div>
-                <div style={{ flex: 0.9 }}>EXW Cost</div>
+                {/* One freight column for both methods — it cannot name a method,
+                    because it sits above every tier and each tier has its own ship.
+                    The freed width goes to the three cells that gained content:
+                    Quantity, Client Price and Margin. Child rows mirror these. */}
+                <div style={{ flex: 1.0 }}>Quantity</div>
+                <div style={{ flex: 1.0 }}>EXW Cost</div>
                 <div style={{ flex: 1.0 }}>Method</div>
-                <div style={{ flex: 1.0 }}>Air Frt+Duty</div>
-                <div style={{ flex: 1.0 }}>Ocean Frt+Duty</div>
-                <div style={{ flex: 0.9, textAlign: "right" }}>Total Cost</div>
-                <div style={{ flex: 1.1 }}>Client Price</div>
-                <div style={{ flex: 0.6, textAlign: "right" }}>Margin</div>
+                <div style={{ flex: 1.2 }}>Frt+Duty</div>
+                <div style={{ flex: 1.1, textAlign: "right" }}>Total Cost</div>
+                <div style={{ flex: 1.3 }}>Client Price</div>
+                <div style={{ flex: 0.8, textAlign: "right" }}>Margin</div>
                 <div style={{ width: 30 }} />
               </div>
               {f.tiers.map((t, i) => {
@@ -2303,42 +2306,38 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                 const hasBase = Number(t.client) > 0;
                 const ship = t.ship || "ocean";
                 const total = tierTotalCost(t, f.moldFee);
-                const airOff = ship !== "air";
-                const oceanOff = ship !== "ocean";
-                const exwVal = Number(t.landed) || 0;
-                const autoDuty = () => {
-                  const duty = +(0.5 * exwVal * 0.274).toFixed(4);
-                  setF((p) => ({ ...p, tiers: p.tiers.map((x, idx) => idx === i ? { ...x, ship: "ocean", freightAir: "", freightOcean: duty, duty_only: true } : x) }));
-                };
+                // One input, two homes. Switching Method swaps which key it reads and
+                // writes; the other mode's figure is left in place, so flipping Air to
+                // Ocean hides the air number rather than destroying it, and flipping
+                // back brings it straight into view again.
+                const freightKey = ship === "air" ? "freightAir" : "freightOcean";
                 return (
                   <React.Fragment key={i}>
                   <div style={S.tierEditRow}>
-                    <div style={{ flex: 0.9 }}>{sizeTotal == null
+                    <div style={{ flex: 1.0 }}>{sizeTotal == null
                       ? <input style={S.tierInput} type="number" value={t.qty ?? ""} onChange={(e) => setTier(i, "qty", e.target.value)} placeholder="Qty" />
                       : <div style={S.qtyFromSizes} title="Quantity comes from the size rows below"><span style={S.qfsV}>{sizeTotal.toLocaleString()}</span><span style={S.qfsK}>from sizes</span></div>}</div>
-                    <div style={{ flex: 0.9 }}><input style={S.tierInput} type="number" value={t.landed ?? ""} onChange={(e) => setTier(i, "landed", e.target.value)} placeholder="$ EXW" /></div>
+                    <div style={{ flex: 1.0 }}><input style={S.tierInput} type="number" value={t.landed ?? ""} onChange={(e) => setTier(i, "landed", e.target.value)} placeholder="$ EXW" /></div>
                     <div style={{ flex: 1.0, display: "flex", gap: 3, alignItems: "center" }}>
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "air" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "air")}>Air</button>
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "ocean" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "ocean")}>Ocean</button>
                     </div>
-                    <div style={{ flex: 1.0 }}><input style={{ ...S.tierInput, ...(airOff ? S.tierInputOff : {}) }} type="number" value={t.freightAir ?? ""} onChange={(e) => setTier(i, "freightAir", e.target.value)} placeholder="$ air" disabled={airOff} /></div>
-                    <div style={{ flex: 1.0, display: "flex", gap: 3 }}>
-                      <input style={{ ...S.tierInput, ...(oceanOff ? S.tierInputOff : {}) }} type="number" value={t.freightOcean ?? ""} onChange={(e) => setTier(i, "freightOcean", e.target.value)} placeholder="$ ocean" disabled={oceanOff} />
-                      <button type="button" onClick={autoDuty} disabled={exwVal <= 0} title="Duty only = 0.5 × EXW × 0.274 (no freight)" style={{ flexShrink: 0, padding: "0 8px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, letterSpacing: ".02em", cursor: exwVal > 0 ? "pointer" : "not-allowed", background: exwVal > 0 ? "#e7edfd" : "#eef1f6", color: exwVal > 0 ? "#3551c4" : "#aab2c0", whiteSpace: "nowrap" }}>duty</button>
+                    <div style={{ flex: 1.2, display: "flex", gap: 3 }}>
+                      <input style={S.tierInput} type="number" value={t[freightKey] ?? ""} onChange={(e) => setTier(i, freightKey, e.target.value)} placeholder={ship === "air" ? "$ air" : "$ ocean"} />
                       <button type="button" onClick={() => setFbTier(i)} title="Build the freight & duty number from its cost legs — containers, warehousing, trucking, duty" style={{ flexShrink: 0, padding: "0 8px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, letterSpacing: ".02em", cursor: "pointer", background: (t.fb && t.fb.length) ? "#2f6df6" : "#e7edfd", color: (t.fb && t.fb.length) ? "#fff" : "#3551c4", whiteSpace: "nowrap" }}>build</button>
                     </div>
-                    <div style={{ flex: 0.9, textAlign: "right", alignSelf: "center", ...S.num, fontWeight: 600, color: "#0f1729" }}>{total ? `$${fmt(total)}` : "—"}</div>
+                    <div style={{ flex: 1.1, textAlign: "right", alignSelf: "center", ...S.num, fontWeight: 600, color: "#0f1729" }}>{total ? `$${fmt(total)}` : "—"}</div>
                     {/* Column, not a row: the mix line sits under both the input and the
                         auto button. The base price stays typed — the per-size prices are
                         derived from it, so deriving it back would be circular. */}
-                    <div style={{ flex: 1.1, display: "flex", flexDirection: "column", gap: 3 }}>
+                    <div style={{ flex: 1.3, display: "flex", flexDirection: "column", gap: 3 }}>
                       <div style={{ display: "flex", gap: 4 }}>
                         <input style={S.tierInput} type="number" value={t.client ?? ""} onChange={(e) => setTier(i, "client", e.target.value)} placeholder="$" />
                         <button style={S.autoBtn} title="Suggest from margin logic" onClick={() => autoFillClient(i)}>auto</button>
                       </div>
                       {mix && <span style={S.tierMixLine}>${fmt(mix.blended)} avg · ${fmt(mix.total)} total</span>}
                     </div>
-                    <div style={{ flex: 0.6, textAlign: "right", ...S.num, alignSelf: "center" }}>
+                    <div style={{ flex: 0.8, textAlign: "right", ...S.num, alignSelf: "center" }}>
                       {mixMargin != null
                         ? <span style={{ color: mixMargin && mixMargin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{mixMargin.toFixed(0)}%</span>
                         : <span style={{ color: (mr ? mr.low : m) && (mr ? mr.low : m) < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{mr ? (mr.low.toFixed(0) === mr.high.toFixed(0) ? mr.low.toFixed(0) + "%" : mr.low.toFixed(0) + "-" + mr.high.toFixed(0) + "%") : (m ? m.toFixed(0) + "%" : "—")}</span>}
@@ -2351,7 +2350,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       than repeating themselves. Flex widths mirror the row above. */}
                   {sizeRows.map((r) => (
                     <div key={r.size} style={S.tierSizeRow}>
-                      <div style={{ flex: 0.9, display: "flex", alignItems: "center", gap: 6, paddingLeft: 12 }}>
+                      <div style={{ flex: 1.0, display: "flex", alignItems: "center", gap: 6, paddingLeft: 12 }}>
                         <span style={{ ...S.tierSizeCell, color: "#8a93a5", fontWeight: 600, minWidth: 24 }}>{r.size}</span>
                         <input
                           style={{ ...S.tierInput, padding: "5px 7px", fontSize: 12.5, textAlign: "right" }}
@@ -2363,15 +2362,14 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                           onChange={(e) => setSizeQty(i, r.size, e.target.value)}
                         />
                       </div>
-                      <div style={{ flex: 0.9 }} />
                       <div style={{ flex: 1.0 }} />
                       <div style={{ flex: 1.0 }} />
-                      <div style={{ flex: 1.0 }} />
-                      <div style={{ flex: 0.9, textAlign: "right", ...S.tierSizeCell }}>{total ? `$${fmt(total)}` : "—"}</div>
+                      <div style={{ flex: 1.2 }} />
+                      <div style={{ flex: 1.1, textAlign: "right", ...S.tierSizeCell }}>{total ? `$${fmt(total)}` : "—"}</div>
                       {/* The parenthetical is what the base was moved BY, so it only makes
                           sense next to a base. With none the delta is the whole price and
                           printing it twice would read as an error. */}
-                      <div style={{ flex: 1.1, ...S.tierSizeCell }}>
+                      <div style={{ flex: 1.3, ...S.tierSizeCell }}>
                         {r.price == null ? "—" : (
                           <>
                             {`$${fmt(r.price)}`}
@@ -2379,7 +2377,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                           </>
                         )}
                       </div>
-                      <div style={{ flex: 0.6, textAlign: "right", ...S.tierSizeCell }}>
+                      <div style={{ flex: 0.8, textAlign: "right", ...S.tierSizeCell }}>
                         {r.margin == null ? "—" : <span style={{ color: r.margin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{r.margin.toFixed(0)}%</span>}
                       </div>
                       <div style={{ width: 30 }} />
