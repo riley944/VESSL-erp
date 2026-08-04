@@ -26,7 +26,7 @@ export function CreateProductModal({ onClose, onCreated }) {
       // products_sku_key is UNIQUE and Postgres does not treat NULLs as equal, so any
       // number of SKU-less products can coexist -- but a second '' would collide.
       sku:sku||null, name:name, description:form.desc||null, category_id:form.catId||null,
-      hs_code:form.hs||null, unit_of_measure:form.uom||'pcs', weight_kg:Number(form.wt)||null,
+      hts_code:form.hs||null, unit_of_measure:form.uom||'pcs', weight_kg:Number(form.wt)||null,
       units_per_carton:Number(form.upc)||null, carton_weight_kg:Number(form.cwt)||null,
       carton_l_cm:Number(form.cl)||null, carton_w_cm:Number(form.cw)||null, carton_h_cm:Number(form.ch)||null
     });
