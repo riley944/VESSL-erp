@@ -4246,57 +4246,6 @@ function CreateShipmentModal({ onClose, onCreated }) {
   );
 }
 
-// ── Create Product Modal ──────────────────────────────────────────────────────
-function CreateProductModal({ onClose, onCreated }) {
-  const [cats, setCats] = useState([]);
-  const [form, setForm] = useState({sku:'',name:'',desc:'',catId:'',hs:'',uom:'pcs',wt:'',upc:'',cwt:'',cl:'',cw:'',ch:''});
-  const f = k => v => setForm(prev=>({...prev,[k]:v}));
-  useEffect(()=>{ SB.from('product_categories').select('id,name').order('name').then(({data})=>setCats(data||[])); },[]);
-  const submit = async () => {
-    if (!form.sku||!form.name) { alert('SKU and name required'); return; }
-    const { error } = await SB.from('products').insert({
-      sku:form.sku, name:form.name, description:form.desc||null, category_id:form.catId||null,
-      hs_code:form.hs||null, unit_of_measure:form.uom||'pcs', weight_kg:Number(form.wt)||null,
-      units_per_carton:Number(form.upc)||null, carton_weight_kg:Number(form.cwt)||null,
-      carton_l_cm:Number(form.cl)||null, carton_w_cm:Number(form.cw)||null, carton_h_cm:Number(form.ch)||null
-    });
-    if (error) { alert('Error: '+error.message); return; }
-    onCreated();
-  };
-  return (
-    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div className="modal-box">
-        <div className="modal-head"><h3>New Product</h3><button className="modal-close" onClick={onClose}>×</button></div>
-        <div className="modal-body">
-          <div className="form-row-2">
-            <div><label>SKU *</label><input className="form-input" value={form.sku} onChange={e=>f('sku')(e.target.value)} placeholder="KUI-XXXX-00" /></div>
-            <div><label>Category</label><select className="form-select" value={form.catId} onChange={e=>f('catId')(e.target.value)}><option value="">None</option>{cats.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-          </div>
-          <div className="form-row"><label>Product Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
-          <div className="form-row"><label>Description</label><textarea className="form-textarea" value={form.desc} onChange={e=>f('desc')(e.target.value)} /></div>
-          <div className="form-row-3">
-            <div><label>HS Code</label><input className="form-input" value={form.hs} onChange={e=>f('hs')(e.target.value)} /></div>
-            <div><label>Unit</label><input className="form-input" value={form.uom} onChange={e=>f('uom')(e.target.value)} /></div>
-            <div><label>Weight (kg)</label><input type="number" step="0.001" className="form-input" value={form.wt} onChange={e=>f('wt')(e.target.value)} /></div>
-          </div>
-          <span className="form-section-label">Carton / Case Pack</span>
-          <div className="form-row-3">
-            <div><label>Units/Carton</label><input type="number" className="form-input" value={form.upc} onChange={e=>f('upc')(e.target.value)} /></div>
-            <div><label>Carton Wt (kg)</label><input type="number" step="0.01" className="form-input" value={form.cwt} onChange={e=>f('cwt')(e.target.value)} /></div>
-            <div></div>
-          </div>
-          <div className="form-row-3">
-            <div><label>L (cm)</label><input type="number" step="0.1" className="form-input" value={form.cl} onChange={e=>f('cl')(e.target.value)} /></div>
-            <div><label>W (cm)</label><input type="number" step="0.1" className="form-input" value={form.cw} onChange={e=>f('cw')(e.target.value)} /></div>
-            <div><label>H (cm)</label><input type="number" step="0.1" className="form-input" value={form.ch} onChange={e=>f('ch')(e.target.value)} /></div>
-          </div>
-        </div>
-        <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={submit}>Save Product</button></div>
-      </div>
-    </div>
-  );
-}
-
 // ── PO Document Builder ───────────────────────────────────────────────────────
 function buildPODoc(d, opts={}) {
   const pallet = opts.pallet || d.pallet_info || '';
@@ -5516,7 +5465,6 @@ export default function App() {
       )}
       {modal==='create-po'      && <CreatePOModal onClose={()=>setModal(null)} onCreated={id=>{setModal(null);navigate('order-detail',{id});}} />}
       {modal==='create-company' && <CreateCompanyModal onClose={()=>setModal(null)} onCreated={()=>setModal(null)} />}
-      {modal==='create-product' && <CreateProductModal onClose={()=>setModal(null)} onCreated={()=>setModal(null)} />}
       {modal==='create-shipment'&& <CreateShipmentModal onClose={()=>setModal(null)} onCreated={()=>{setModal(null);setShipmentsRefresh(n=>n+1);navigate('shipments');}} />}
     </div>
     </ToastProvider>

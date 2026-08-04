@@ -1,6 +1,7 @@
 'use client';
 import React, { useState, useEffect } from "react";
 import { SB } from "@/lib/supabase";
+import { CreateProductModal } from "@/app/components/CreateProductModal";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const fmtDate = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
@@ -105,6 +106,7 @@ export default function Testing() {
           <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Material testing, CPSC readiness &amp; product certification</div>
         </div>
         <div style={{display:'flex',gap:'8px'}}>
+          <button onClick={()=>setModal({type:'product'})} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Product</button>
           <button onClick={()=>setModal({type:'material'})} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Material</button>
           <button onClick={()=>setModal({type:'report'})} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Log Test Report</button>
         </div>
@@ -151,6 +153,7 @@ export default function Testing() {
         </>
       )}
 
+      {modal?.type==='product'  && <CreateProductModal onClose={()=>setModal(null)} onCreated={()=>{setModal(null);load();}} />}
       {modal?.type==='material' && <MaterialModal data={modal.data} labs={labs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='report'   && <ReportModal preset={modal.data} materials={materials} products={products} labs={labs} regs={regs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='link'     && <LinkModal product={modal.data} materials={materials} existing={prodMats.filter(l=>l.product_id===modal.data.id)} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
@@ -160,7 +163,7 @@ export default function Testing() {
 
 // ── PRODUCTS VIEW ────────────────────────────────────────────────────────────
 function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus }) {
-  if(!products.length) return <Empty title="No products yet" sub="Products created in the Products tab appear here for compliance tracking." />;
+  if(!products.length) return <Empty title="No products yet" sub="Add a product with + Product above, then link the materials it is built from to track its compliance." />;
   return (
     <div style={{...card,overflow:'hidden'}}>
       <div style={{display:'grid',gridTemplateColumns:'1fr 140px 120px 90px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
@@ -172,8 +175,8 @@ function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus }
         return (
           <div key={p.id} style={{display:'grid',gridTemplateColumns:'1fr 140px 120px 90px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center'}}>
             <div style={{minWidth:0}}>
-              <div style={{fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.sku||'—'}</div>
-              <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.name}</div>
+              <div style={{fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.name||'—'}</div>
+              {p.sku && <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.sku}</div>}
             </div>
             <div style={{fontSize:'12.5px',color:'#4A4A4E'}}>{links.length? links.length+' linked':<span style={{color:'#C0C0C4'}}>none</span>}</div>
             <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:'5px',minWidth:0}}>
