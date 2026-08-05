@@ -117,6 +117,50 @@ export default function Testing() {
     await load();
   };
 
+  // Every FK into materials is ON DELETE CASCADE — compliance_tasks,
+  // product_materials and test_reports (whose own test_results cascade in turn).
+  // Nothing blocks, so the 23503 branch below is a guard against a constraint
+  // being tightened later, not a path reachable today.
+  const deleteMaterial = async (m) => {
+    const label = m.name || 'this material';
+    if (!window.confirm('Delete ' + label + '?\n\nIts test reports and their results, its links to products, and its compliance tasks are deleted with it. This cannot be undone.')) return;
+    setStatusErr('');
+    const { error } = await SB.from('materials').delete().eq('id', m.id);
+    if (error) {
+      const inUse = error.code === '23503' || /foreign key/i.test(error.message || '');
+      setStatusErr(inUse ? "This material is in use and can't be deleted" : 'Could not delete material — ' + error.message);
+      return;
+    }
+    await load();
+  };
+
+  // test_results.regulation_id carries NO on-delete rule, so Postgres blocks a
+  // regulation that any recorded result cites. That is the real 23503 here.
+  const deleteReg = async (r) => {
+    const label = r.code || r.name || 'this regulation';
+    if (!window.confirm('Delete ' + label + '?\n\nThis removes the rule from the library. Reports that already cite it keep their recorded citation text.')) return;
+    setStatusErr('');
+    const { error } = await SB.from('regulations').delete().eq('id', r.id);
+    if (error) {
+      const inUse = error.code === '23503' || /foreign key/i.test(error.message || '');
+      setStatusErr(inUse ? "This regulation has test results recorded against it and can't be deleted — set it inactive instead" : 'Could not delete regulation — ' + error.message);
+      return;
+    }
+    await load();
+  };
+
+  // test_results cascade off the report, so this never blocks. Deleting the row
+  // fires report_recalc, which re-derives the linked material's status from
+  // whatever report is now the most recent — exactly what we want.
+  const deleteReport = async (r) => {
+    const label = r.report_number ? 'report ' + r.report_number : 'this report';
+    if (!window.confirm('Delete ' + label + '?\n\nIts per-regulation results go with it, and the material’s status is recalculated from its remaining reports. This cannot be undone.')) return;
+    setStatusErr('');
+    const { error } = await SB.from('test_reports').delete().eq('id', r.id);
+    if (error) { setStatusErr('Could not delete report — ' + error.message); return; }
+    await load();
+  };
+
   return (
     <div className="db-wrap" style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
       {/* Title */}
@@ -169,9 +213,9 @@ export default function Testing() {
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#8A8A8E'}}>Loading…</div> : (
         <>
           {tab==='products'  && <ProductsView products={products} prodMats={prodMats} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} />}
-          {tab==='materials' && <MaterialsView materials={materials} onEdit={(m)=>setModal({type:'material',data:m})} onTest={(m)=>setModal({type:'report',data:{material_id:m.id}})} />}
-          {tab==='reports'   && <ReportsView reports={reports} />}
-          {tab==='regs'      && <RegsView regs={regs} />}
+          {tab==='materials' && <MaterialsView materials={materials} onEdit={(m)=>setModal({type:'material',data:m})} onTest={(m)=>setModal({type:'report',data:{material_id:m.id}})} onDelete={deleteMaterial} />}
+          {tab==='reports'   && <ReportsView reports={reports} onEdit={(r)=>setModal({type:'report',row:r})} onDelete={deleteReport} />}
+          {tab==='regs'      && <RegsView regs={regs} onEdit={(r)=>setModal({type:'reg',data:r})} onDelete={deleteReg} />}
         </>
       )}
 
@@ -179,7 +223,7 @@ export default function Testing() {
       {modal?.type==='lab'      && <LabModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='reg'      && <RegModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='material' && <MaterialModal data={modal.data} labs={labs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
-      {modal?.type==='report'   && <ReportModal preset={modal.data} materials={materials} products={products} labs={labs} regs={regs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
+      {modal?.type==='report'   && <ReportModal preset={modal.data} data={modal.row} materials={materials} products={products} labs={labs} regs={regs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='link'     && <LinkModal product={modal.data} materials={materials} existing={prodMats.filter(l=>l.product_id===modal.data.id)} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
     </div>
   );
@@ -229,7 +273,7 @@ function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus, 
 }
 
 // ── MATERIALS VIEW ───────────────────────────────────────────────────────────
-function MaterialsView({ materials, onEdit, onTest }) {
+function MaterialsView({ materials, onEdit, onTest, onDelete }) {
   if(!materials.length) return <Empty title="No materials yet" sub="Add a material (fabric, dye, zipper…) — it's the unit that gets tested and that SKUs inherit compliance from." />;
   return (
     <div style={{...card,overflow:'hidden'}}>
@@ -248,6 +292,7 @@ function MaterialsView({ materials, onEdit, onTest }) {
           <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
             <span style={{fontSize:'12.5px',color:'#8A8A8E'}}>{m.last_tested?fmtDate(m.last_tested):'—'}</span>
             <button onClick={e=>{e.stopPropagation();onTest(m);}} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'4px 9px',fontSize:'11px',fontWeight:500,color:'#4A4A4E',cursor:'pointer',marginLeft:'auto'}}>+ Test</button>
+            <button onClick={e=>{e.stopPropagation();onDelete(m);}} title={'Delete '+(m.name||'material')} aria-label={'Delete '+(m.name||'material')} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'3px 8px',fontSize:'14px',lineHeight:1,fontWeight:500,color:'#B91C1C',cursor:'pointer'}}>×</button>
           </div>
         </div>
       ))}
@@ -256,18 +301,21 @@ function MaterialsView({ materials, onEdit, onTest }) {
 }
 
 // ── REPORTS VIEW ─────────────────────────────────────────────────────────────
-function ReportsView({ reports }) {
+function ReportsView({ reports, onEdit, onDelete }) {
   if(!reports.length) return <Empty title="No test reports yet" sub="Log a lab report to record pass/fail results against CPSC regulations." />;
   return (
     <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
       {reports.map(r=>(
-        <div key={r.id} style={{...card,padding:'18px 20px'}}>
+        <div key={r.id} onClick={()=>onEdit(r)} style={{...card,padding:'18px 20px',cursor:'pointer'}}>
           <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'14px',marginBottom:'12px'}}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:'14px',fontWeight:600,color:'#1A1A1C'}}>{r.material?.name||r.product?.sku||r.product?.name||'Report'}</div>
               <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'3px'}}>{r.lab?.name||'—'} · Report {r.report_number||'—'} · Tested {fmtDate(r.test_date)}</div>
             </div>
-            <StatusPill map={{pass:{label:'Pass',color:'#15803D',bg:'#DCFCE7'},fail:{label:'Fail',color:'#B91C1C',bg:'#FEE2E2'},pending:{label:'Pending',color:'#B45309',bg:'#FEF3C7'}}} status={r.overall_result} />
+            <div style={{display:'flex',alignItems:'center',gap:'8px',flexShrink:0}}>
+              <StatusPill map={{pass:{label:'Pass',color:'#15803D',bg:'#DCFCE7'},fail:{label:'Fail',color:'#B91C1C',bg:'#FEE2E2'},pending:{label:'Pending',color:'#B45309',bg:'#FEF3C7'}}} status={r.overall_result} />
+              <button onClick={e=>{e.stopPropagation();onDelete(r);}} title="Delete report" aria-label={'Delete report '+(r.report_number||'')} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'3px 8px',fontSize:'14px',lineHeight:1,fontWeight:500,color:'#B91C1C',cursor:'pointer'}}>×</button>
+            </div>
           </div>
           {r.test_results?.length>0 && (
             <div style={{display:'grid',gridTemplateColumns:'1fr auto auto auto',gap:'6px 14px',fontSize:'12px',paddingTop:'12px',borderTop:'1px solid #F2F2F4'}}>
@@ -285,7 +333,7 @@ function ReportsView({ reports }) {
               ))}
             </div>
           )}
-          {r.pdf_url && <a href={r.pdf_url} target="_blank" rel="noreferrer" style={{display:'inline-block',marginTop:'12px',fontSize:'12.5px',color:'#0071E3',fontWeight:500}}>View report PDF →</a>}
+          {r.pdf_url && <a href={r.pdf_url} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{display:'inline-block',marginTop:'12px',fontSize:'12.5px',color:'#0071E3',fontWeight:500}}>View report PDF →</a>}
         </div>
       ))}
     </div>
@@ -293,18 +341,21 @@ function ReportsView({ reports }) {
 }
 
 // ── REGULATIONS VIEW ─────────────────────────────────────────────────────────
-function RegsView({ regs }) {
+function RegsView({ regs, onEdit, onDelete }) {
   if(!regs.length) return <Empty title="No regulations loaded" sub="Run the compliance schema seed to load the CPSC rule library." />;
   return (
     <div style={{...card,overflow:'hidden'}}>
-      <div style={{display:'grid',gridTemplateColumns:'150px 1fr 130px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
-        {['Citation','Rule','Category'].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4'}}>{h}</div>)}
+      <div style={{display:'grid',gridTemplateColumns:'150px 1fr 130px 40px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
+        {['Citation','Rule','Category',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4'}}>{h}</div>)}
       </div>
       {regs.map((r,i)=>(
-        <div key={r.id} style={{display:'grid',gridTemplateColumns:'150px 1fr 130px',gap:'16px',padding:'13px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center'}}>
+        <div key={r.id} onClick={()=>onEdit(r)} style={{display:'grid',gridTemplateColumns:'150px 1fr 130px 40px',gap:'16px',padding:'13px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
           <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:600,color:'#1A1A1C'}}>{r.code}</div>
           <div style={{fontSize:'13px',color:'#3A3A3E'}}>{r.name}</div>
           <div style={{fontSize:'12px',color:'#8A8A8E',textTransform:'capitalize'}}>{r.category||'—'}</div>
+          <div style={{textAlign:'right'}}>
+            <button onClick={e=>{e.stopPropagation();onDelete(r);}} title={'Delete '+(r.code||'regulation')} aria-label={'Delete '+(r.code||'regulation')} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'3px 8px',fontSize:'14px',lineHeight:1,fontWeight:500,color:'#B91C1C',cursor:'pointer'}}>×</button>
+          </div>
         </div>
       ))}
     </div>
@@ -356,7 +407,7 @@ function MaterialModal({ data, labs, onClose, onSaved }) {
 // Fields mirror vessl.labs exactly: name (NOT NULL), address, phone, email,
 // cpsc_accepted (default true), notes. id and created_at are database-side.
 function LabModal({ onClose, onSaved }) {
-  const [f,setF]=useState({ name:'', address:'', phone:'', email:'', cpsc_accepted:true, notes:'' });
+  const [f,setF]=useState({ name:'', address:'', phone:'', email:'', cpsc_accepted:false, notes:'' });
   const [saving,setSaving]=useState(false);
   const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   const setB=k=>e=>setF(p=>({...p,[k]:e.target.checked}));
@@ -399,10 +450,18 @@ function LabModal({ onClose, onSaved }) {
 }
 
 // Fields mirror vessl.regulations exactly: code and name (both NOT NULL), category,
-// applies_to, age_group, requires_3p (default true), active (default true),
-// sort_order (default 100). RegsView filters on active, so a new rule defaults on.
-function RegModal({ onClose, onSaved }) {
-  const [f,setF]=useState({ code:'', name:'', category:'', applies_to:'', age_group:'', requires_3p:true, active:true, sort_order:'' });
+// applies_to, age_group, requires_3p, active (default true), sort_order (default
+// 100). RegsView filters on active, so a rule created inactive would vanish from
+// that tab and the report picker the moment it was saved — it defaults on.
+function RegModal({ data, onClose, onSaved }) {
+  const editing = !!(data && data.id);
+  const [f,setF]=useState({
+    code:data?.code||'', name:data?.name||'', category:data?.category||'',
+    applies_to:data?.applies_to||'', age_group:data?.age_group||'',
+    requires_3p:editing?!!data.requires_3p:false,
+    active:editing?!!data.active:true,
+    sort_order:data?.sort_order==null?'':String(data.sort_order),
+  });
   const [saving,setSaving]=useState(false);
   const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   const setB=k=>e=>setF(p=>({...p,[k]:e.target.checked}));
@@ -410,21 +469,25 @@ function RegModal({ onClose, onSaved }) {
     const code=f.code.trim(), name=f.name.trim();
     if(!code||!name){ alert('Citation and rule name are both required'); return; }
     setSaving(true);
-    const { error } = await SB.from('regulations').insert({
+    const payload = {
       code, name, category:f.category||null, applies_to:f.applies_to||null, age_group:f.age_group||null,
       requires_3p:!!f.requires_3p, active:!!f.active,
-      // sort_order defaults to 100 in the database, and a default only fires when the
-      // key is absent -- so send it only when a number was actually typed.
-      ...(f.sort_order===''?{}:{ sort_order:Number(f.sort_order) }),
-    });
+    };
+    // sort_order defaults to 100 in the database, and a default only fires when the
+    // key is absent -- so on create send it only when a number was typed. On edit the
+    // column already has a value, so a cleared box means "put it back to the default".
+    const sort = f.sort_order===''?null:Number(f.sort_order);
+    const { error } = editing
+      ? await SB.from('regulations').update({ ...payload, sort_order:sort==null?100:sort }).eq('id', data.id)
+      : await SB.from('regulations').insert(sort==null?payload:{ ...payload, sort_order:sort });
     setSaving(false);
     if(error){ alert('Error: '+error.message); return; }
     onSaved();
   };
   return (
     <Overlay onClose={onClose}>
-      <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'6px'}}>New regulation</div>
-      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>A rule that test results can be recorded against.</div>
+      <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'6px'}}>{editing?'Edit regulation':'New regulation'}</div>
+      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>{editing?'Reports already filed keep the citation text they recorded.':'A rule that test results can be recorded against.'}</div>
       <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:'12px'}}>
           <div><label style={lbl}>Citation *</label><input style={inp} value={f.code} onChange={set('code')} placeholder="e.g. 16 CFR 1303" /></div>
@@ -447,15 +510,29 @@ function RegModal({ onClose, onSaved }) {
       </div>
       <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
         <button onClick={onClose} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',color:'#4A4A4E'}}>Cancel</button>
-        <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':'Save regulation'}</button>
+        <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':(editing?'Save changes':'Save regulation')}</button>
       </div>
     </Overlay>
   );
 }
 
-function ReportModal({ preset, materials, products, labs, regs, onClose, onSaved }) {
-  const [f,setF]=useState({ material_id:preset?.material_id||'', product_id:'', lab_id:'', report_number:'', test_date:'', expiry_date:'', manufacture_place:'', sample_description:'', pdf_url:'', overall_result:'pass' });
-  const [lines,setLines]=useState([{ regulation_id:'', measured_value:'', limit_value:'', result:'pass' }]);
+// `preset` pre-seeds a NEW report (the + Test button passes {material_id}); `data` is
+// an existing row to edit. The parent's reports query already pulls test_results(*),
+// so the child lines come in with the row and need no second fetch.
+function ReportModal({ preset, data, materials, products, labs, regs, onClose, onSaved }) {
+  const editing = !!(data && data.id);
+  const [f,setF]=useState({
+    material_id:(editing?data.material_id:preset?.material_id)||'', product_id:(editing?data.product_id:'')||'',
+    lab_id:(editing?data.lab_id:'')||'', report_number:(editing?data.report_number:'')||'',
+    test_date:(editing?data.test_date:'')||'', expiry_date:(editing?data.expiry_date:'')||'',
+    manufacture_place:(editing?data.manufacture_place:'')||'', sample_description:(editing?data.sample_description:'')||'',
+    pdf_url:(editing?data.pdf_url:'')||'',
+  });
+  const [lines,setLines]=useState(()=>{
+    const existing = editing && Array.isArray(data.test_results) ? data.test_results : [];
+    if(!existing.length) return [{ regulation_id:'', measured_value:'', limit_value:'', result:'pass' }];
+    return existing.map(tr=>({ regulation_id:tr.regulation_id||'', measured_value:tr.measured_value||'', limit_value:tr.limit_value||'', result:tr.result||'pass' }));
+  });
   const [saving,setSaving]=useState(false);
   const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   const setLine=(i,k)=>e=>setLines(p=>p.map((l,j)=>j===i?{...l,[k]:e.target.value}:l));
@@ -467,25 +544,42 @@ function ReportModal({ preset, materials, products, labs, regs, onClose, onSaved
     setSaving(true);
     const anyFail=lines.some(l=>l.result==='fail');
     const overall=anyFail?'fail':'pass';
-    const { data:rep, error } = await SB.from('test_reports').insert({
+    const payload={
       material_id:f.material_id||null, product_id:f.product_id||null, lab_id:f.lab_id||null,
       report_number:f.report_number||null, test_date:f.test_date||null, expiry_date:f.expiry_date||null,
       manufacture_place:f.manufacture_place||null, sample_description:f.sample_description||null,
       pdf_url:f.pdf_url||null, overall_result:overall,
-    }).select().single();
+    };
+    // Writing overall_result on either path fires report_recalc, which re-derives the
+    // linked material's status from its latest report. That is the point of saving.
+    const { data:rep, error } = editing
+      ? await SB.from('test_reports').update(payload).eq('id', data.id).select().single()
+      : await SB.from('test_reports').insert(payload).select().single();
     if(error){ setSaving(false); alert('Error: '+error.message); return; }
+    // The child lines are replaced, not merged: on edit every existing result row is
+    // deleted first, so re-saving cannot duplicate them and a line removed in the form
+    // actually disappears. test_results.id is referenced by nothing, so churning the
+    // ids costs nothing. Deleting from test_results does not fire report_recalc --
+    // that trigger is on test_reports -- but the update above already did.
+    if(editing){
+      const { error:delErr } = await SB.from('test_results').delete().eq('report_id', data.id);
+      if(delErr){ setSaving(false); alert('Error replacing results: '+delErr.message); return; }
+    }
     const rows=lines.filter(l=>l.regulation_id).map(l=>{
       const reg=regs.find(r=>r.id===l.regulation_id);
       return { report_id:rep.id, regulation_id:l.regulation_id, regulation_code:reg?.code||null, measured_value:l.measured_value||null, limit_value:l.limit_value||null, result:l.result };
     });
-    if(rows.length) await SB.from('test_results').insert(rows);
+    if(rows.length){
+      const { error:insErr } = await SB.from('test_results').insert(rows);
+      if(insErr){ setSaving(false); alert('Error saving results: '+insErr.message); return; }
+    }
     setSaving(false); onSaved();
   };
 
   return (
     <Overlay onClose={onClose}>
-      <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'6px'}}>Log test report</div>
-      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>Enter the lab result. A material passing here cascades to every SKU built from it.</div>
+      <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'6px'}}>{editing?'Edit test report':'Log test report'}</div>
+      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>{editing?'Saving replaces this report’s per-regulation results and recalculates the material’s status.':'Enter the lab result. A material passing here cascades to every SKU built from it.'}</div>
       <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
           <div><label style={lbl}>Material</label><select style={inp} value={f.material_id} onChange={set('material_id')}><option value="">— select —</option>{materials.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></div>
@@ -523,7 +617,7 @@ function ReportModal({ preset, materials, products, labs, regs, onClose, onSaved
       </div>
       <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
         <button onClick={onClose} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',color:'#4A4A4E'}}>Cancel</button>
-        <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':'Save report'}</button>
+        <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':(editing?'Save changes':'Save report')}</button>
       </div>
     </Overlay>
   );
