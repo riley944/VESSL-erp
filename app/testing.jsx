@@ -55,7 +55,7 @@ export default function Testing() {
   const load = async () => {
     setLoading(true);
     const [p, m, r, rg, lb, pm] = await Promise.all([
-      SB.from('products').select('id,sku,name,compliance_status').order('sku',{nullsFirst:false}),
+      SB.from('products').select('id,sku,name,compliance_status,cpsc_type').order('sku',{nullsFirst:false}),
       SB.from('materials').select('*,supplier:companies!supplier_id(name)').order('created_at',{ascending:false}),
       SB.from('test_reports').select('*,lab:labs(name),material:materials(name),product:products(name,sku),test_results(*)').order('test_date',{ascending:false}),
       SB.from('regulations').select('*').eq('active',true).order('sort_order'),
@@ -244,7 +244,12 @@ function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus, 
           <div key={p.id} onClick={()=>onEdit(p)} style={{display:'grid',gridTemplateColumns:'1fr 140px 120px 130px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.name||'—'}</div>
-              {p.sku && <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.sku}</div>}
+              {/* Type only — a certificate number is too long to scan, so cpsc_code
+                  stays in the modal. 'No CPSC' rather than nothing: every product is
+                  unset today and the gap is the thing worth seeing. Deliberately the
+                  same muted colour as the SKU — GCC vs CPC says which rule applies,
+                  not pass or fail, so colouring it would imply a judgement. */}
+              <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[p.sku, p.cpsc_type || 'No CPSC'].filter(Boolean).join(' · ')}</div>
             </div>
             <div style={{fontSize:'12.5px',color:'#4A4A4E'}}>{links.length? links.length+' linked':<span style={{color:'#C0C0C4'}}>none</span>}</div>
             <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:'5px',minWidth:0}}>
