@@ -20,6 +20,7 @@ export function CreateProductModal({ data, onClose, onCreated }) {
     sku:s(data?.sku), name:s(data?.name), desc:s(data?.description), hs:s(data?.hts_code),
     uom:s(data?.unit_of_measure), wt:s(data?.weight_kg), upc:s(data?.units_per_carton),
     cwt:s(data?.carton_weight_kg), cl:s(data?.carton_l_cm), cw:s(data?.carton_w_cm), ch:s(data?.carton_h_cm),
+    cpscType:s(data?.cpsc_type), cpscCode:s(data?.cpsc_code),
   });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   const submit = async () => {
@@ -35,6 +36,9 @@ export function CreateProductModal({ data, onClose, onCreated }) {
       // unit_of_measure has a DB default of 'pcs', but a default only fires when the
       // key is absent -- sending null keeps the column empty until someone types a unit.
       hts_code:form.hs||null, unit_of_measure:form.uom||null, weight_kg:Number(form.wt)||null,
+      // '' is not a certificate and 'N/A' is not a type -- both clear to NULL so the
+      // column reads the same whether it was never set or emptied out.
+      cpsc_type:form.cpscType||null, cpsc_code:form.cpscCode.trim()||null,
       units_per_carton:Number(form.upc)||null, carton_weight_kg:Number(form.cwt)||null,
       carton_l_cm:Number(form.cl)||null, carton_w_cm:Number(form.cw)||null, carton_h_cm:Number(form.ch)||null
     };
@@ -64,6 +68,14 @@ export function CreateProductModal({ data, onClose, onCreated }) {
             <div><label>HTS Code</label><input className="form-input" value={form.hs} onChange={e=>f('hs')(e.target.value)} /></div>
             <div><label>Unit</label><input className="form-input" value={form.uom} onChange={e=>f('uom')(e.target.value)} /></div>
             <div><label>Weight (kg)</label><input type="number" step="0.001" className="form-input" value={form.wt} onChange={e=>f('wt')(e.target.value)} /></div>
+          </div>
+          <div className="form-row-2">
+            <div><label>CPSC</label><select className="form-select" value={form.cpscType} onChange={e=>f('cpscType')(e.target.value)}>
+              <option value="">— N/A —</option>
+              <option value="GCC">GCC</option>
+              <option value="CPC">CPC</option>
+            </select></div>
+            <div><label>CPSC Code</label><input className="form-input" value={form.cpscCode} onChange={e=>f('cpscCode')(e.target.value)} placeholder="Certificate number, if applicable" /></div>
           </div>
           <span className="form-section-label">Carton / Case Pack</span>
           <div className="form-row-3">
