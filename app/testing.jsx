@@ -100,6 +100,23 @@ export default function Testing() {
     await load();
   };
 
+  // products cascades to test_reports, product_materials, compliance_tasks,
+  // inventory_lots, inventory_balances and stock_movements — all six go with it.
+  // purchase_order_items and sales_order_items are ON DELETE RESTRICT instead, so
+  // Postgres refuses (23503) rather than tearing a line off an order.
+  const deleteProduct = async (p) => {
+    const label = p.name || p.sku || 'this product';
+    if (!window.confirm('Delete ' + label + '?\n\nIts test reports, material links, compliance tasks and inventory records are deleted with it. This cannot be undone.')) return;
+    setStatusErr('');
+    const { error } = await SB.from('products').delete().eq('id', p.id);
+    if (error) {
+      const inUse = error.code === '23503' || /foreign key|purchase_order_items|sales_order_items/i.test(error.message || '');
+      setStatusErr(inUse ? "This product is used on a purchase or sales order and can't be deleted" : 'Could not delete product — ' + error.message);
+      return;
+    }
+    await load();
+  };
+
   return (
     <div className="db-wrap" style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
       {/* Title */}
@@ -111,6 +128,8 @@ export default function Testing() {
         <div style={{display:'flex',gap:'8px'}}>
           <button onClick={()=>setModal({type:'product'})} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Product</button>
           <button onClick={()=>setModal({type:'material'})} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Material</button>
+          <button onClick={()=>setModal({type:'lab'})} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Lab</button>
+          <button onClick={()=>setModal({type:'reg'})} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Regulation</button>
           <button onClick={()=>setModal({type:'report'})} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Log Test Report</button>
         </div>
       </div>
@@ -149,14 +168,16 @@ export default function Testing() {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#8A8A8E'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={products} prodMats={prodMats} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onSetStatus={setCompliance} />}
+          {tab==='products'  && <ProductsView products={products} prodMats={prodMats} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} />}
           {tab==='materials' && <MaterialsView materials={materials} onEdit={(m)=>setModal({type:'material',data:m})} onTest={(m)=>setModal({type:'report',data:{material_id:m.id}})} />}
           {tab==='reports'   && <ReportsView reports={reports} />}
           {tab==='regs'      && <RegsView regs={regs} />}
         </>
       )}
 
-      {modal?.type==='product'  && <CreateProductModal onClose={()=>setModal(null)} onCreated={()=>{setModal(null);load();}} />}
+      {modal?.type==='product'  && <CreateProductModal data={modal.data} onClose={()=>setModal(null)} onCreated={()=>{setModal(null);load();}} />}
+      {modal?.type==='lab'      && <LabModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
+      {modal?.type==='reg'      && <RegModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='material' && <MaterialModal data={modal.data} labs={labs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='report'   && <ReportModal preset={modal.data} materials={materials} products={products} labs={labs} regs={regs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='link'     && <LinkModal product={modal.data} materials={materials} existing={prodMats.filter(l=>l.product_id===modal.data.id)} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
@@ -165,18 +186,18 @@ export default function Testing() {
 }
 
 // ── PRODUCTS VIEW ────────────────────────────────────────────────────────────
-function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus }) {
+function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus, onEdit, onDelete }) {
   if(!products.length) return <Empty title="No products yet" sub="Add a product with + Product above, then link the materials it is built from to track its compliance." />;
   return (
     <div style={{...card,overflow:'hidden'}}>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 140px 120px 90px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 140px 120px 130px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
         {['Product','Materials','Status',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i>=1&&i<3?'left':i===3?'right':'left'}}>{h}</div>)}
       </div>
       {products.map((p,i)=>{
         const links=prodMats.filter(l=>l.product_id===p.id);
         const st=effectiveStatus(p,productStatus(p.id));
         return (
-          <div key={p.id} style={{display:'grid',gridTemplateColumns:'1fr 140px 120px 90px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center'}}>
+          <div key={p.id} onClick={()=>onEdit(p)} style={{display:'grid',gridTemplateColumns:'1fr 140px 120px 130px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.name||'—'}</div>
               {p.sku && <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.sku}</div>}
@@ -187,13 +208,19 @@ function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus }
               <select
                 value={p.compliance_status||''}
                 onChange={e=>onSetStatus(p.id,e.target.value)}
+                onClick={e=>e.stopPropagation()}
                 aria-label={'Compliance status for '+(p.sku||p.name||'product')}
                 style={{width:'100%',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'3px 5px',fontSize:'11px',color:'#4A4A4E',background:'#fff',cursor:'pointer',fontFamily:'inherit',outline:'none'}}
               >
                 {COMPLIANCE_OPTS.map(([v,l])=><option key={v} value={v}>{l}</option>)}
               </select>
             </div>
-            <div style={{textAlign:'right'}}><button onClick={()=>onLink(p)} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'8px',padding:'5px 11px',fontSize:'12px',fontWeight:500,color:'#4A4A4E',cursor:'pointer'}}>Materials</button></div>
+            {/* The row itself opens the editor, so anything clickable inside it has to
+                stop the event or it would do both. */}
+            <div style={{display:'flex',gap:'6px',justifyContent:'flex-end',alignItems:'center'}}>
+              <button onClick={e=>{e.stopPropagation();onLink(p);}} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'8px',padding:'5px 11px',fontSize:'12px',fontWeight:500,color:'#4A4A4E',cursor:'pointer'}}>Materials</button>
+              <button onClick={e=>{e.stopPropagation();onDelete(p);}} title={'Delete '+(p.name||p.sku||'product')} aria-label={'Delete '+(p.name||p.sku||'product')} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'8px',padding:'4px 9px',fontSize:'15px',lineHeight:1,fontWeight:500,color:'#B91C1C',cursor:'pointer'}}>×</button>
+            </div>
           </div>
         );
       })}
@@ -321,6 +348,106 @@ function MaterialModal({ data, labs, onClose, onSaved }) {
       <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
         <button onClick={onClose} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',color:'#4A4A4E'}}>Cancel</button>
         <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':'Save material'}</button>
+      </div>
+    </Overlay>
+  );
+}
+
+// Fields mirror vessl.labs exactly: name (NOT NULL), address, phone, email,
+// cpsc_accepted (default true), notes. id and created_at are database-side.
+function LabModal({ onClose, onSaved }) {
+  const [f,setF]=useState({ name:'', address:'', phone:'', email:'', cpsc_accepted:true, notes:'' });
+  const [saving,setSaving]=useState(false);
+  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const setB=k=>e=>setF(p=>({...p,[k]:e.target.checked}));
+  const save=async()=>{
+    const name=f.name.trim();
+    if(!name){ alert('Lab name required'); return; }
+    setSaving(true);
+    const { error } = await SB.from('labs').insert({
+      name, address:f.address||null, phone:f.phone||null, email:f.email||null,
+      cpsc_accepted:!!f.cpsc_accepted, notes:f.notes||null,
+    });
+    setSaving(false);
+    // Checked, not discarded: a silent failure here is how a permissions problem
+    // turns into "the lab I added isn't in the dropdown".
+    if(error){ alert('Error: '+error.message); return; }
+    onSaved();
+  };
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'6px'}}>New lab</div>
+      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>Testing labs available when logging a report.</div>
+      <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
+        <div><label style={lbl}>Lab name *</label><input style={inp} value={f.name} onChange={set('name')} placeholder="e.g. SGS, Intertek, Bureau Veritas" /></div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
+          <div><label style={lbl}>Email</label><input style={inp} value={f.email} onChange={set('email')} placeholder="optional" /></div>
+          <div><label style={lbl}>Phone</label><input style={inp} value={f.phone} onChange={set('phone')} placeholder="optional" /></div>
+        </div>
+        <div><label style={lbl}>Address</label><input style={inp} value={f.address} onChange={set('address')} placeholder="optional" /></div>
+        <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',color:'#3A3A3E',cursor:'pointer'}}>
+          <input type="checkbox" checked={f.cpsc_accepted} onChange={setB('cpsc_accepted')} /> CPSC-accepted lab
+        </label>
+        <div><label style={lbl}>Notes</label><textarea style={{...inp,minHeight:'60px',resize:'vertical'}} value={f.notes} onChange={set('notes')} /></div>
+      </div>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
+        <button onClick={onClose} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',color:'#4A4A4E'}}>Cancel</button>
+        <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':'Save lab'}</button>
+      </div>
+    </Overlay>
+  );
+}
+
+// Fields mirror vessl.regulations exactly: code and name (both NOT NULL), category,
+// applies_to, age_group, requires_3p (default true), active (default true),
+// sort_order (default 100). RegsView filters on active, so a new rule defaults on.
+function RegModal({ onClose, onSaved }) {
+  const [f,setF]=useState({ code:'', name:'', category:'', applies_to:'', age_group:'', requires_3p:true, active:true, sort_order:'' });
+  const [saving,setSaving]=useState(false);
+  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  const setB=k=>e=>setF(p=>({...p,[k]:e.target.checked}));
+  const save=async()=>{
+    const code=f.code.trim(), name=f.name.trim();
+    if(!code||!name){ alert('Citation and rule name are both required'); return; }
+    setSaving(true);
+    const { error } = await SB.from('regulations').insert({
+      code, name, category:f.category||null, applies_to:f.applies_to||null, age_group:f.age_group||null,
+      requires_3p:!!f.requires_3p, active:!!f.active,
+      // sort_order defaults to 100 in the database, and a default only fires when the
+      // key is absent -- so send it only when a number was actually typed.
+      ...(f.sort_order===''?{}:{ sort_order:Number(f.sort_order) }),
+    });
+    setSaving(false);
+    if(error){ alert('Error: '+error.message); return; }
+    onSaved();
+  };
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'6px'}}>New regulation</div>
+      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>A rule that test results can be recorded against.</div>
+      <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:'12px'}}>
+          <div><label style={lbl}>Citation *</label><input style={inp} value={f.code} onChange={set('code')} placeholder="e.g. 16 CFR 1303" /></div>
+          <div><label style={lbl}>Rule name *</label><input style={inp} value={f.name} onChange={set('name')} placeholder="e.g. Lead in paint" /></div>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
+          <div><label style={lbl}>Category</label><input style={inp} value={f.category} onChange={set('category')} placeholder="e.g. chemical, mechanical" /></div>
+          <div><label style={lbl}>Applies to</label><input style={inp} value={f.applies_to} onChange={set('applies_to')} placeholder="e.g. painted surfaces" /></div>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
+          <div><label style={lbl}>Age group</label><input style={inp} value={f.age_group} onChange={set('age_group')} placeholder="e.g. under 12" /></div>
+          <div><label style={lbl}>Sort order <span style={{textTransform:'none',letterSpacing:0,fontWeight:400,color:'#A0A0A4'}}>(blank = 100)</span></label><input type="number" style={inp} value={f.sort_order} onChange={set('sort_order')} placeholder="100" /></div>
+        </div>
+        <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',color:'#3A3A3E',cursor:'pointer'}}>
+          <input type="checkbox" checked={f.requires_3p} onChange={setB('requires_3p')} /> Requires third-party testing
+        </label>
+        <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',color:'#3A3A3E',cursor:'pointer'}}>
+          <input type="checkbox" checked={f.active} onChange={setB('active')} /> Active <span style={{color:'#A0A0A4'}}>— inactive rules are hidden everywhere</span>
+        </label>
+      </div>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
+        <button onClick={onClose} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',color:'#4A4A4E'}}>Cancel</button>
+        <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':'Save regulation'}</button>
       </div>
     </Overlay>
   );
