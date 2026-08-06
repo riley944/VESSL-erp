@@ -3292,6 +3292,14 @@ function Shipments({ onNewShipment }) {
   const [viewMode, setViewMode] = useState('shipments'); // 'shipments' | 'quotes'
   const [quotes, setQuotes] = useState([]);
   const [showQuoteModal, setShowQuoteModal] = useState(false);
+  const [bids, setBids] = useState([]);
+  const [rfqQuote, setRfqQuote] = useState(null);      // freight quote being RFQ'd to forwarders
+  const [showBidImport, setShowBidImport] = useState(false);
+  const [bidsQuote, setBidsQuote] = useState(null);    // freight quote whose bids are being compared
+  const reloadBids = async () => {
+    const { data } = await SB.from('forwarder_bids').select('*').order('created_at',{ascending:false});
+    setBids(data||[]);
+  };
   const reload = async () => {
     const { data } = await SB.from('shipments')
       .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,client:companies!client_company_id(name)))')
@@ -3309,7 +3317,7 @@ function Shipments({ onNewShipment }) {
     if (error) { alert('Could not delete: '+error.message); return; }
     setQuotes(prev=>prev.filter(q=>q.id!==id));
   };
-  useEffect(()=>{ reload(); reloadQuotes(); },[]);
+  useEffect(()=>{ reload(); reloadQuotes(); reloadBids(); },[]);
 
   const TERMINAL = ['delivered','cancelled'];
   const active = rows.filter(s => !TERMINAL.includes((s.status||'').toLowerCase()) && !s.actual_arrival);
@@ -3347,7 +3355,12 @@ function Shipments({ onNewShipment }) {
       </div>
 
       {viewMode==='quotes' ? (
-        <FreightQuotesView quotes={quotes} onDelete={deleteQuote} />
+        <>
+        <FreightQuotesView quotes={quotes} onDelete={deleteQuote} bids={bids} onRfq={q=>setRfqQuote(q)} onBids={q=>setBidsQuote(q)} onImportBids={()=>setShowBidImport(true)} />
+        {rfqQuote && <ForwarderRFQModal quote={rfqQuote} onClose={()=>setRfqQuote(null)} onSent={()=>{setRfqQuote(null); reloadQuotes();}} />}
+        {showBidImport && <ImportBidsModal quotes={quotes} onClose={()=>setShowBidImport(false)} onApplied={()=>{setShowBidImport(false); reloadBids();}} />}
+        {bidsQuote && <BidsCompareModal quote={bidsQuote} bids={bids.filter(b=>b.shipment_quote_id===bidsQuote.id)} onClose={()=>setBidsQuote(null)} onDeleted={reloadBids} />}
+        </>
       ) : (
       <>
       {/* Tabs */}
@@ -3436,7 +3449,9 @@ function Shipments({ onNewShipment }) {
 }
 
 // ── Freight Quotes list ───────────────────────────────────────────────────────
-function FreightQuotesView({ quotes, onDelete }) {
+function FreightQuotesView({ quotes, onDelete, bids, onRfq, onBids, onImportBids }) {
+  const bidCount = id => (bids||[]).filter(b=>b.shipment_quote_id===id).length;
+  const winnerOf = id => (bids||[]).find(b=>b.shipment_quote_id===id && b.selected);
   const fd = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
   const reopen = (q) => openFreightSheet(q, q.client?.name||'', q.forwarder?.name||'');
   if (!quotes.length) return (
@@ -3450,22 +3465,36 @@ function FreightQuotesView({ quotes, onDelete }) {
   );
   return (
     <div style={{background:'#fff',borderRadius:'16px',border:'1px solid #ECECEE',overflow:'hidden'}}>
-      <div style={{display:'grid',gridTemplateColumns:'120px 1fr 130px 90px 90px 96px 84px 34px',gap:'12px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
-        {['Quote #','Client / Route','Forwarder','Pieces','CBM','Containers','Status',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i>=3&&i<6?'right':'left'}}>{h}</div>)}
+      <div style={{display:'flex',justifyContent:'flex-end',padding:'10px 22px',borderBottom:'1px solid #ECECEE',background:'#fff'}}>
+        <button onClick={onImportBids} style={{display:'inline-flex',alignItems:'center',gap:'7px',background:'#F2F2F6',border:'none',borderRadius:'8px',padding:'7px 13px',fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+          Import forwarder reply
+        </button>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'110px 1fr 90px 80px 96px 150px 84px 34px',gap:'10px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
+        {['Quote #','Client / Route','Pieces','CBM','Containers','Forwarder Quotes','Status',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i>=2&&i<5?'right':'left'}}>{h}</div>)}
       </div>
       {quotes.map((q,i)=>{
         const pcs = (q.line_items||[]).reduce((a,l)=>a+(Number(l.pieces)||0),0);
         return (
-        <div key={q.id} onClick={()=>reopen(q)} style={{display:'grid',gridTemplateColumns:'120px 1fr 130px 90px 90px 96px 84px 34px',gap:'12px',padding:'15px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+        <div key={q.id} onClick={()=>reopen(q)} style={{display:'grid',gridTemplateColumns:'110px 1fr 90px 80px 96px 150px 84px 34px',gap:'10px',padding:'15px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
           <div style={{fontFamily:'var(--mono)',fontSize:'13px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.quote_number}</div>
           <div style={{minWidth:0}}>
-            <div style={{fontSize:'13.5px',fontWeight:500,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.client?.name||'—'}</div>
+            <div style={{fontSize:'13.5px',fontWeight:500,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{(q.client||{}).name||'—'}</div>
             <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{(q.origin||'—')+' → '+(q.destination||'—')+' · '+fd(q.created_at)}</div>
           </div>
-          <div style={{fontSize:'12.5px',color:'#4A4A4E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.forwarder?.name||'—'}</div>
           <div style={{textAlign:'right',fontSize:'13px',color:'#4A4A4E',fontVariantNumeric:'tabular-nums'}}>{pcs>0?pcs.toLocaleString():'—'}</div>
           <div style={{textAlign:'right',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{Number(q.total_cbm||0).toFixed(1)}</div>
           <div style={{textAlign:'right',fontSize:'13px',color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{q.containers_needed} × {q.container_type||"40'HQ"}</div>
+          <div style={{display:'flex',gap:'6px',alignItems:'center'}} onClick={e=>e.stopPropagation()}>
+            <button onClick={()=>onRfq&&onRfq(q)} title="Send this quote sheet to forwarders and request rates" style={{display:'inline-flex',alignItems:'center',gap:'5px',background:'#EAF3FE',border:'1px solid #BFDBFE',borderRadius:'7px',padding:'5px 10px',fontSize:'11.5px',fontWeight:600,color:'#0071E3',cursor:'pointer',whiteSpace:'nowrap'}}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+              RFQ
+            </button>
+            <button onClick={()=>onBids&&onBids(q)} title="Compare forwarder quotes received" style={{display:'inline-flex',alignItems:'center',gap:'5px',background:winnerOf(q.id)?'#EAF3FE':bidCount(q.id)>0?'#DCFCE7':'#F2F2F6',border:'1px solid '+(winnerOf(q.id)?'#93C5FD':bidCount(q.id)>0?'#86EFAC':'#E5E7EB'),borderRadius:'7px',padding:'5px 10px',fontSize:'11.5px',fontWeight:600,color:winnerOf(q.id)?'#0071E3':bidCount(q.id)>0?'#15803D':'#8A8A8E',cursor:'pointer',whiteSpace:'nowrap',maxWidth:'96px',overflow:'hidden',textOverflow:'ellipsis'}}>
+              {winnerOf(q.id) ? '✓ '+(winnerOf(q.id).forwarder_name||'Selected') : bidCount(q.id)+' bid'+(bidCount(q.id)===1?'':'s')}
+            </button>
+          </div>
           <div><span style={{display:'inline-flex',alignItems:'center',fontSize:'11px',fontWeight:600,borderRadius:'6px',padding:'3px 9px',color:q.status==='sent'?'#15803D':'#B45309',background:q.status==='sent'?'#DCFCE7':'#FEF3C7'}}>{q.status==='sent'?'Sent':'Draft'}</span></div>
           <button title="Delete quote sheet" onClick={e=>{e.stopPropagation(); if(window.confirm('Delete freight quote '+q.quote_number+'? This cannot be undone.')) onDelete&&onDelete(q.id);}} style={{background:'none',border:'none',cursor:'pointer',padding:'4px',borderRadius:'6px',display:'flex',alignItems:'center',justifyContent:'center',color:'#C0C0C4'}} onMouseEnter={e=>{e.currentTarget.style.color='#DC2626';e.currentTarget.style.background='#FEE2E2';}} onMouseLeave={e=>{e.currentTarget.style.color='#C0C0C4';e.currentTarget.style.background='none';}}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
@@ -3473,6 +3502,367 @@ function FreightQuotesView({ quotes, onDelete }) {
         </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Forwarder RFQ loop ────────────────────────────────────────────────────────
+function loadExcelJS() {
+  return new Promise(function(resolve, reject){
+    if (typeof window!=='undefined' && window.ExcelJS) { resolve(window.ExcelJS); return; }
+    var el = document.createElement('script');
+    el.src = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
+    el.onload = function(){ resolve(window.ExcelJS); };
+    el.onerror = function(){ reject(new Error('Could not load the Excel engine — check the connection and try again.')); };
+    document.head.appendChild(el);
+  });
+}
+
+// Sheet geometry — one source of truth for generate + import
+const RFQ_SIZES = [
+  { key:'20GP', label:"20' Standard",  row:17 },
+  { key:'40GP', label:"40' Standard",  row:18 },
+  { key:'40HQ', label:"40' High-Cube", row:19 },
+  { key:'45HQ', label:"45' High-Cube", row:20 },
+];
+const RFQ_DEST_ROWS = { first:24, last:31 };   // destination charges (included in total)
+const RFQ_DEST_PREFILL = ['ISF Filing','Customs Clearance','Chassis Fee','Drayage / Delivery','Port / Terminal Fees','Documentation',' ',' '];
+const RFQ_ACC_ROWS = { first:35, last:40 };    // accessorials (excluded from total)
+const RFQ_ACC_PREFILL = ['Yard Storage','Chassis Split','Pre-Pull','Empty Return Stop-off','Terminal Wait Time','Live Unload Wait Time'];
+const RFQ_NAME_ROW = 12, RFQ_EMAIL_ROW = 13, RFQ_VALID_ROW = 42, RFQ_NOTES_ROW = 43;
+
+function bidEffective(b, containerType) {
+  if (Number(b.effective_per_container) > 0) return Number(b.effective_per_container);
+  const rates = b.rates || {};
+  const r = rates[containerType] || {};
+  const ocean = Number(r.ocean)||0, origin = Number(r.origin)||0;
+  const dest = Number(b.dest_total)||0;
+  const total = ocean + origin + dest;
+  return total > 0 ? total : (Number(b.all_in_per_container)||0);
+}
+
+function ForwarderRFQModal({ quote, onClose, onSent }) {
+  const [companies, setCompanies] = useState([]);
+  const [sel, setSel] = useState([]);
+  const [extra, setExtra] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(()=>{ SB.from('companies').select('id,name,type,email').order('name').then(({data})=>setCompanies(data||[])); },[]);
+
+  const withEmail = companies.filter(c=>c.email);
+  const fwd = withEmail.filter(c=>{ const t=(c.type||'').toLowerCase(); return t.includes('forward')||t.includes('carrier')||t.includes('freight'); });
+  const rest = withEmail.filter(c=>!fwd.includes(c));
+  const toggle = em => setSel(p=>p.includes(em)?p.filter(x=>x!==em):[...p,em]);
+  const addExtra = () => { const e=extra.trim(); if(e && e.includes('@') && !sel.includes(e)) setSel(p=>[...p,e]); setExtra(''); };
+
+  const generate = async () => {
+    const emails = sel.slice();
+    if (!emails.length) { alert('Select at least one forwarder or add an email.'); return; }
+    setBusy(true);
+    try {
+      const ExcelJS = await loadExcelJS();
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Freight RFQ');
+      ws.getColumn(1).width = 34; ws.getColumn(2).width = 16; ws.getColumn(3).width = 36; ws.getColumn(4).width = 16; ws.getColumn(5).width = 13;
+      const yellow = { type:'pattern', pattern:'solid', fgColor:{argb:'FFFFF3C4'} };
+      const dark = { type:'pattern', pattern:'solid', fgColor:{argb:'FF1D1D1F'} };
+      const labFont = { bold:true, size:10, color:{argb:'FF6A6A6E'} };
+      const setCell = (r,c,v,opts) => { const cell=ws.getRow(r).getCell(c); cell.value=v; if(opts&&opts.fill)cell.fill=opts.fill; if(opts&&opts.font)cell.font=opts.font; return cell; };
+      const darkHeader = (r, text, span) => { setCell(r,1,text,{fill:dark,font:{bold:true,color:{argb:'FFFFFFFF'}}}); ws.mergeCells(r,1,r,span||5); };
+
+      // info block (rows 1–11)
+      const info = [
+        ['RFQ ID (do not edit)', quote.id],
+        ['Quote #', quote.quote_number||''],
+        ['Client', (quote.client||{}).name||'King Universal Inc'],
+        ['Origin', quote.origin||''],
+        ['Destination / delivery', quote.destination||''],
+        ['Incoterm', quote.incoterm||''],
+        ['Cargo ready', quote.ready_date? String(quote.ready_date).slice(0,10):''],
+        ['Requested equipment', String(quote.containers_needed||'')+' \u00d7 '+(quote.container_type||"40'HQ")],
+        ['Total cartons', String(quote.total_cartons||'')],
+        ['Total CBM / weight', String(quote.total_cbm||'')+' CBM \u00b7 '+String(quote.total_weight_kg||'')+' kg'],
+        ['', ''],
+      ];
+      info.forEach(function(pair,i){ setCell(i+1,1,pair[0],{font:labFont}); setCell(i+1,2,pair[1]); });
+      setCell(RFQ_NAME_ROW,1,'Your company name',{font:{bold:true,size:10}}); setCell(RFQ_NAME_ROW,2,'',{fill:yellow});
+      setCell(RFQ_EMAIL_ROW,1,'Contact email',{font:{bold:true,size:10}}); setCell(RFQ_EMAIL_ROW,2,'',{fill:yellow});
+
+      // Section 1 — ocean freight per equipment
+      darkHeader(15,'SECTION 1 — OCEAN FREIGHT \u00b7 fill the sizes you are quoting (yellow cells)');
+      ['Container','Ocean rate / ctr (USD)','Origin costs / ctr (USD)','Carrier','Transit (days)'].forEach(function(h,i){ setCell(16,i+1,h,{font:{bold:true,size:10}}); });
+      RFQ_SIZES.forEach(function(sz){
+        const req = sz.key===(quote.container_type||'40HQ');
+        setCell(sz.row,1,sz.label+(req?'  \u2190 requested':''),{font:{bold:req,size:10}});
+        for (var c=2;c<=5;c++) setCell(sz.row,c,'',{fill:yellow});
+      });
+
+      // Section 2 — destination charges (included)
+      darkHeader(22,'SECTION 2 — DESTINATION CHARGES per container \u00b7 INCLUDED in total', 3);
+      ['Fee description','Amount (USD)','Basis / notes (per B/L, per day, free time\u2026)'].forEach(function(h,i){ setCell(23,i+1,h,{font:{bold:true,size:10}}); });
+      for (var r=RFQ_DEST_ROWS.first; r<=RFQ_DEST_ROWS.last; r++) {
+        const pre = RFQ_DEST_PREFILL[r-RFQ_DEST_ROWS.first]||' ';
+        setCell(r,1,pre==='\u0020'?'':pre,{fill:pre.trim()?undefined:yellow});
+        setCell(r,2,'',{fill:yellow}); setCell(r,3,'',{fill:yellow});
+      }
+
+      // Section 3 — accessorials (excluded)
+      darkHeader(33,'SECTION 3 — IF-NEEDED / ACCESSORIAL FEES \u00b7 EXCLUDED from total', 3);
+      ['Fee description','Amount (USD)','Basis / notes'].forEach(function(h,i){ setCell(34,i+1,h,{font:{bold:true,size:10}}); });
+      for (var r2=RFQ_ACC_ROWS.first; r2<=RFQ_ACC_ROWS.last; r2++) {
+        setCell(r2,1,RFQ_ACC_PREFILL[r2-RFQ_ACC_ROWS.first]||'');
+        setCell(r2,2,'',{fill:yellow}); setCell(r2,3,'',{fill:yellow});
+      }
+
+      setCell(RFQ_VALID_ROW,1,'Rate valid until (YYYY-MM-DD)',{font:{bold:true,size:10}}); setCell(RFQ_VALID_ROW,2,'',{fill:yellow});
+      setCell(RFQ_NOTES_ROW,1,'Additional notes',{font:{bold:true,size:10}}); setCell(RFQ_NOTES_ROW,2,'',{fill:yellow}); ws.mergeCells(RFQ_NOTES_ROW,2,RFQ_NOTES_ROW,5);
+
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = 'KUI-RFQ-'+(quote.quote_number||'quote')+'.xlsx'; a.click();
+      URL.revokeObjectURL(a.href);
+
+      const subject = 'Freight quote request — '+(quote.quote_number||'')+' ('+(quote.origin||'?')+' \u2192 '+(quote.destination||'?')+')';
+      const body = 'Hello,\n\nPlease quote the following ocean shipment using the attached RFQ sheet (fill the yellow cells and reply with the file):\n\n'
+        + 'Route: '+(quote.origin||'?')+' \u2192 '+(quote.destination||'?')+'\n'
+        + 'Equipment: '+String(quote.containers_needed||'?')+' \u00d7 '+(quote.container_type||"40'HQ")+' (alternate sizes welcome — the sheet has a row per size)\n'
+        + 'Cargo: '+String(quote.total_cartons||'?')+' cartons \u00b7 '+String(quote.total_cbm||'?')+' CBM \u00b7 '+String(quote.total_weight_kg||'?')+' kg\n'
+        + 'Incoterm: '+(quote.incoterm||'FOB')+'\n'
+        + 'Cargo ready: '+(quote.ready_date? String(quote.ready_date).slice(0,10) : 'TBA')+'\n\n'
+        + 'Please itemize destination charges, list any if-needed accessorial fees separately, and include carrier, transit time, and rate validity.\n\nThank you,\nKing Universal Inc.';
+      await SB.from('shipment_quotes').update({ status:'sent' }).eq('id', quote.id);
+      setTimeout(function(){ window.location.href = 'mailto:'+emails.join(',')+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body); }, 400);
+      onSent && onSent();
+    } catch (e) {
+      alert('Could not generate the RFQ: '+(e&&e.message?e.message:e));
+    }
+    setBusy(false);
+  };
+
+  const chip = (label, em) => (
+    <button key={em} onClick={()=>toggle(em)} style={{fontSize:'12px',fontWeight:600,border:'1px solid '+(sel.includes(em)?'#0071E3':'#E5E7EB'),background:sel.includes(em)?'#EAF3FE':'#fff',color:sel.includes(em)?'#0071E3':'#4A4A4E',borderRadius:'20px',padding:'6px 13px',cursor:'pointer'}}>{label}</button>
+  );
+
+  return (
+    <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.42)',display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'36px 16px',zIndex:1100,overflowY:'auto'}}>
+      <div style={{background:'#fff',borderRadius:'18px',width:'100%',maxWidth:'560px',boxShadow:'0 12px 48px rgba(0,0,0,.2)'}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:'20px 24px 0'}}>
+          <div style={{fontSize:'17px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.015em'}}>Request forwarder quotes</div>
+          <div style={{fontSize:'13px',color:'#8A8A8E',marginTop:'4px',lineHeight:1.5}}>
+            {(quote.quote_number||'')+' \u00b7 '+(quote.origin||'?')+' \u2192 '+(quote.destination||'?')+' \u00b7 '+String(quote.containers_needed||'?')+' \u00d7 '+(quote.container_type||"40'HQ")}. Generates the fillable RFQ sheet — rates per container size, itemized destination charges, and if-needed fees — then opens the email. Attach the downloaded file and send.
+          </div>
+        </div>
+        <div style={{padding:'18px 24px'}}>
+          {fwd.length>0 && <>
+            <div style={{fontSize:'10px',fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'8px'}}>Forwarders</div>
+            <div style={{display:'flex',gap:'7px',flexWrap:'wrap',marginBottom:'14px'}}>{fwd.map(c=>chip(c.name, c.email))}</div>
+          </>}
+          {rest.length>0 && <>
+            <div style={{fontSize:'10px',fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'8px'}}>Other companies</div>
+            <div style={{display:'flex',gap:'7px',flexWrap:'wrap',marginBottom:'14px'}}>{rest.slice(0,14).map(c=>chip(c.name, c.email))}</div>
+          </>}
+          <div style={{display:'flex',gap:'6px'}}>
+            <input value={extra} onChange={e=>setExtra(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addExtra()} placeholder="Add email manually\u2026" style={{flex:1,border:'1px solid #E5E7EB',borderRadius:'9px',padding:'9px 12px',fontSize:'13px',outline:'none',boxSizing:'border-box'}} />
+            <button onClick={addExtra} style={{background:'#F2F2F6',border:'none',borderRadius:'9px',padding:'9px 15px',fontSize:'13px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>Add</button>
+          </div>
+          {sel.length>0 && <div style={{fontSize:'12px',color:'#4A4A4E',marginTop:'12px',lineHeight:1.6}}><b>{sel.length}</b> recipient{sel.length===1?'':'s'}: {sel.join(', ')}</div>}
+        </div>
+        <div style={{padding:'0 24px 20px',display:'flex',justifyContent:'flex-end',gap:'8px'}}>
+          <button onClick={onClose} style={{background:'#F2F2F6',border:'none',borderRadius:'10px',padding:'9px 17px',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>Cancel</button>
+          <button onClick={generate} disabled={busy||!sel.length} style={{background:sel.length?'#0071E3':'#C7C7CC',color:'#fff',border:'none',borderRadius:'10px',padding:'9px 18px',fontSize:'13.5px',fontWeight:600,cursor:sel.length?'pointer':'not-allowed'}}>{busy?'Generating\u2026':'Generate sheet & email'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ImportBidsModal({ quotes, onClose, onApplied }) {
+  const fileRef = useRef(null);
+  const [parsed, setParsed] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [applied, setApplied] = useState(0);
+
+  const parse = async (file) => {
+    setBusy(true);
+    try {
+      const ExcelJS = await loadExcelJS();
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(await file.arrayBuffer());
+      const ws = wb.worksheets[0];
+      const val = (r,c) => { const v=ws.getRow(r).getCell(c).value; if(v==null) return ''; if(typeof v==='object'&&v.text!=null) return String(v.text); if(typeof v==='object'&&v.result!=null) return String(v.result); if(v instanceof Date) return v.toISOString().slice(0,10); return String(v); };
+      const num = (r,c) => { const raw=val(r,c).replace(/[^0-9.\-]/g,''); return raw===''?null:(Number(raw)||null); };
+      const rfqId = val(1,2).trim();
+      const quote = (quotes||[]).find(q=>q.id===rfqId);
+      if (!quote) { alert('This file does not match any freight quote — the RFQ ID cell (B1) is missing or was edited.'); setBusy(false); return; }
+
+      const rates = {};
+      RFQ_SIZES.forEach(function(sz){
+        const ocean=num(sz.row,2), origin=num(sz.row,3), carrier=val(sz.row,4).trim(), transit=num(sz.row,5);
+        if (ocean||origin||carrier||transit) rates[sz.key]={ ocean:ocean||0, origin:origin||0, carrier:carrier||'', transit:transit||null };
+      });
+      const dest = []; let destTotal = 0;
+      for (var r=RFQ_DEST_ROWS.first; r<=RFQ_DEST_ROWS.last; r++) {
+        const fee=val(r,1).trim(), amt=num(r,2), basis=val(r,3).trim();
+        if (fee||amt) { dest.push({fee:fee||'Fee', amount:amt||0, basis:basis||''}); destTotal+=amt||0; }
+      }
+      const acc = [];
+      for (var r2=RFQ_ACC_ROWS.first; r2<=RFQ_ACC_ROWS.last; r2++) {
+        const fee=val(r2,1).trim(), amt=num(r2,2), basis=val(r2,3).trim();
+        if (amt) acc.push({fee:fee||'Fee', amount:amt, basis:basis||''});
+      }
+      const primary = rates[quote.container_type||'40HQ'] || {};
+      const effective = (Number(primary.ocean)||0)+(Number(primary.origin)||0)+destTotal;
+      const bid = {
+        shipment_quote_id: quote.id, quote_number: quote.quote_number||null,
+        forwarder_name: val(RFQ_NAME_ROW,2).trim()||'Unknown forwarder',
+        contact_email: val(RFQ_EMAIL_ROW,2).trim()||null,
+        carrier: primary.carrier||null,
+        transit_days: primary.transit||null,
+        origin_costs: primary.origin||null,
+        ocean_per_container: primary.ocean||null,
+        dest_total: destTotal||null,
+        effective_per_container: effective>0?effective:null,
+        rates: Object.keys(rates).length?rates:null,
+        dest_charges: dest.length?dest:null,
+        accessorials: acc.length?acc:null,
+        valid_until: val(RFQ_VALID_ROW,2).trim()||null,
+        notes: val(RFQ_NOTES_ROW,2).trim()||null,
+      };
+      setParsed({ quote, bid });
+    } catch (e) {
+      alert('Could not read that file: '+(e&&e.message?e.message:e));
+    }
+    setBusy(false);
+  };
+
+  const apply = async () => {
+    setBusy(true);
+    const { error } = await SB.from('forwarder_bids').insert(parsed.bid);
+    setBusy(false);
+    if (error) { alert('Could not save the bid: '+error.message); return; }
+    setApplied(a=>a+1); setParsed(null);
+    if (fileRef.current) fileRef.current.value='';
+  };
+
+  const money = v => v==null||v===''?'\u2014':'$'+Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
+
+  return (
+    <div onClick={e=>e.target===e.currentTarget&&(applied>0?onApplied():onClose())} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.42)',display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'36px 16px',zIndex:1100,overflowY:'auto'}}>
+      <div style={{background:'#fff',borderRadius:'18px',width:'100%',maxWidth:'540px',boxShadow:'0 12px 48px rgba(0,0,0,.2)'}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:'20px 24px 0'}}>
+          <div style={{fontSize:'17px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.015em'}}>Import forwarder reply</div>
+          <div style={{fontSize:'13px',color:'#8A8A8E',marginTop:'4px',lineHeight:1.5}}>Upload the RFQ sheet a forwarder sent back. It matches the freight quote automatically, totals the destination charges, and lands as a comparable bid.{applied>0?' '+String(applied)+' imported this session.':''}</div>
+        </div>
+        <div style={{padding:'18px 24px'}}>
+          {!parsed ? (
+            <button onClick={()=>fileRef.current&&fileRef.current.click()} disabled={busy} style={{width:'100%',border:'1.5px dashed rgba(0,0,0,.15)',background:'#FAFAFA',borderRadius:'14px',padding:'34px 16px',fontSize:'13.5px',color:'#5A5A5E',cursor:'pointer'}}>
+              {busy?'Reading\u2026':'Tap to choose the returned .xlsx file'}
+            </button>
+          ) : (
+            <div>
+              <div style={{fontSize:'14px',fontWeight:700,color:'#1A1A1C'}}>{parsed.bid.forwarder_name}{parsed.bid.carrier?' \u00b7 '+parsed.bid.carrier:''}</div>
+              <div style={{fontSize:'12px',color:'#8A8A8E',marginBottom:'12px'}}>{'for '+(parsed.quote.quote_number||'')+' \u00b7 '+(parsed.quote.origin||'?')+' \u2192 '+(parsed.quote.destination||'?')}</div>
+              {parsed.bid.rates && Object.keys(parsed.bid.rates).map(function(k){
+                const r = parsed.bid.rates[k]; const req = k===(parsed.quote.container_type||'40HQ');
+                return (
+                  <div key={k} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',fontSize:'12.5px',borderTop:'1px solid #F2F2F4'}}>
+                    <span style={{color:req?'#1A1A1C':'#8A8A8E',fontWeight:req?700:500}}>{k}{req?' (requested)':''}</span>
+                    <span style={{fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{'ocean '+money(r.ocean)+' \u00b7 origin '+money(r.origin)+(r.transit?' \u00b7 '+r.transit+'d':'')}</span>
+                  </div>
+                );
+              })}
+              {(parsed.bid.dest_charges||[]).map(function(d,i){
+                return (
+                  <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:'12px',borderTop:i===0?'2px solid #ECECEE':'1px solid #F6F6F8'}}>
+                    <span style={{color:'#4A4A4E'}}>{d.fee}{d.basis?' \u00b7 '+d.basis:''}</span>
+                    <span style={{fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{money(d.amount)}</span>
+                  </div>
+                );
+              })}
+              <div style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderTop:'2px solid #ECECEE',marginTop:'4px',fontSize:'13px'}}>
+                <span style={{fontWeight:700,color:'#1A1A1C'}}>{'Effective per '+(parsed.quote.container_type||'40HQ')}</span>
+                <span style={{fontWeight:800,color:'#0071E3',fontVariantNumeric:'tabular-nums'}}>{money(bidEffective(parsed.bid, parsed.quote.container_type||'40HQ'))}</span>
+              </div>
+              {(parsed.bid.accessorials||[]).length>0 && (
+                <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'6px'}}>{String((parsed.bid.accessorials||[]).length)+' if-needed fee(s) recorded \u2014 excluded from the total'}</div>
+              )}
+              <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'4px'}}>{'Valid until: '+(parsed.bid.valid_until||'\u2014')}</div>
+            </div>
+          )}
+          <input ref={fileRef} type="file" accept=".xlsx" style={{display:'none'}} onChange={e=>{ const f=e.target.files&&e.target.files[0]; if(f) parse(f); }} />
+        </div>
+        <div style={{padding:'0 24px 20px',display:'flex',justifyContent:'space-between',gap:'8px'}}>
+          <button onClick={()=>{setParsed(null); if(fileRef.current) fileRef.current.value='';}} style={{background:'none',border:'none',color:'#8A8A8E',fontSize:'13px',cursor:'pointer',visibility:parsed?'visible':'hidden'}}>Different file</button>
+          <div style={{display:'flex',gap:'8px'}}>
+            <button onClick={()=>applied>0?onApplied():onClose()} style={{background:'#F2F2F6',border:'none',borderRadius:'10px',padding:'9px 17px',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>{applied>0?'Done':'Cancel'}</button>
+            {parsed && <button onClick={apply} disabled={busy} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'9px 18px',fontSize:'13.5px',fontWeight:600,cursor:'pointer'}}>{busy?'Saving\u2026':'Save bid'}</button>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BidsCompareModal({ quote, bids, onClose, onDeleted }) {
+  const ctType = quote.container_type||'40HQ';
+  const ct = Math.max(1, Number(quote.containers_needed)||1);
+  const sorted = bids.slice().sort((a,b)=>bidEffective(a,ctType)-bidEffective(b,ctType));
+  const best = sorted.length ? bidEffective(sorted[0],ctType) : 0;
+  const money = v => '$'+Number(v).toLocaleString(undefined,{maximumFractionDigits:0});
+  const del = async (id) => { if(!window.confirm('Remove this bid?')) return; await SB.from('forwarder_bids').delete().eq('id',id); onDeleted&&onDeleted(); };
+  const selectWinner = async (b) => {
+    await SB.from('forwarder_bids').update({ selected:false }).eq('shipment_quote_id', quote.id);
+    await SB.from('forwarder_bids').update({ selected:true }).eq('id', b.id);
+    onDeleted&&onDeleted();
+  };
+  return (
+    <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.42)',display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'36px 16px',zIndex:1100,overflowY:'auto'}}>
+      <div style={{background:'#fff',borderRadius:'18px',width:'100%',maxWidth:'680px',boxShadow:'0 12px 48px rgba(0,0,0,.2)'}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:'20px 24px 14px',borderBottom:'1px solid #ECECEE',display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'10px'}}>
+          <div>
+            <div style={{fontSize:'17px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.015em'}}>Forwarder quotes</div>
+            <div style={{fontSize:'13px',color:'#8A8A8E',marginTop:'3px'}}>{(quote.quote_number||'')+' \u00b7 '+(quote.origin||'?')+' \u2192 '+(quote.destination||'?')+' \u00b7 '+String(ct)+' \u00d7 '+ctType}</div>
+          </div>
+          <button onClick={onClose} style={{background:'#F2F2F6',border:'none',borderRadius:'50%',width:'28px',height:'28px',fontSize:'15px',color:'#5A5A5E',cursor:'pointer'}}>\u00d7</button>
+        </div>
+        <div style={{padding:'14px 24px 20px'}}>
+          {sorted.length===0 && <div style={{fontSize:'13.5px',color:'#8A8A8E',textAlign:'center',padding:'26px 0'}}>No bids yet. Send the RFQ, then import the replies as they come back.</div>}
+          {sorted.map((b,i)=>{
+            const per = bidEffective(b,ctType);
+            const isBest = i===0 && sorted.length>1;
+            const delta = best>0 ? ((per-best)/best)*100 : 0;
+            const isSel = !!b.selected;
+            return (
+              <div key={b.id} style={{border:'1.5px solid '+(isSel?'#0071E3':isBest?'#86EFAC':'#ECECEE'),background:isSel?'#EAF3FE':isBest?'#F0FDF4':'#fff',borderRadius:'14px',padding:'14px 16px',marginBottom:'10px'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:'10px',flexWrap:'wrap'}}>
+                  <div style={{fontSize:'14px',fontWeight:700,color:'#1A1A1C'}}>
+                    {b.forwarder_name}{b.carrier?' \u00b7 '+b.carrier:''}
+                    {isSel && <span style={{fontSize:'10.5px',fontWeight:700,color:'#0071E3',background:'#DBEAFE',borderRadius:'6px',padding:'2px 8px',marginLeft:'8px',verticalAlign:'middle'}}>SELECTED</span>}
+                    {!isSel && isBest && <span style={{fontSize:'10.5px',fontWeight:700,color:'#15803D',background:'#DCFCE7',borderRadius:'6px',padding:'2px 8px',marginLeft:'8px',verticalAlign:'middle'}}>BEST</span>}
+                  </div>
+                  <div style={{fontSize:'16px',fontWeight:800,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{money(per)}<span style={{fontSize:'11px',fontWeight:600,color:'#8A8A8E'}}>/{ctType}</span>{i>0 && <span style={{fontSize:'11px',fontWeight:600,color:'#B45309',marginLeft:'6px'}}>{'+'+delta.toFixed(0)+'%'}</span>}</div>
+                </div>
+                <div style={{fontSize:'12px',color:'#4A4A4E',marginTop:'6px',lineHeight:1.6}}>
+                  {'Shipment total \u2248 '+money(per*ct)+' \u00b7 Transit '+(b.transit_days||'\u2014')+'d \u00b7 Valid until '+(b.valid_until||'\u2014')}
+                </div>
+                <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'4px'}}>
+                  {['Ocean '+(b.ocean_per_container?money(b.ocean_per_container):'\u2014'), b.origin_costs?('Origin '+money(b.origin_costs)):null, b.dest_total?('Destination charges '+money(b.dest_total)):null, (b.accessorials||[]).length?String((b.accessorials||[]).length)+' if-needed fee(s)':null].filter(Boolean).join(' \u00b7 ')}
+                </div>
+                {b.rates && Object.keys(b.rates).filter(k=>k!==ctType).length>0 && (
+                  <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'4px'}}>
+                    {'Also quoted: '+Object.keys(b.rates).filter(k=>k!==ctType).map(function(k){ return k+' ocean '+money(b.rates[k].ocean||0); }).join(' \u00b7 ')}
+                  </div>
+                )}
+                {b.notes && <div style={{fontSize:'12px',color:'#4A4A4E',marginTop:'6px',fontStyle:'italic'}}>{b.notes}</div>}
+                <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'8px'}}>
+                  <button onClick={()=>del(b.id)} style={{background:'none',border:'none',color:'#C0C0C4',fontSize:'12px',cursor:'pointer'}}>Remove</button>
+                  {!isSel && <button onClick={()=>selectWinner(b)} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'8px',padding:'6px 14px',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>Select winner</button>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
