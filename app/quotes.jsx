@@ -390,14 +390,19 @@ export default function Quotes({ session: erpSession }) {
 // ---------- tier calc helpers ----------
 function quoteSummary(q) {
   const tiers = q.tiers || [];
-  if (!tiers.length) return { count: 0, minClient: null, maxClient: null, avgMargin: 0 };
+  if (!tiers.length) return { count: 0, minClient: null, maxClient: null, avgMargin: 0, method: null };
   const prices = tiers.map((t) => Number(t.client) || 0).filter((p) => p > 0);
   const margins = tiers.map((t) => tierMargin(t, t.client, q.moldFee)).filter((m) => m !== 0);
+  // ship lives on the tier, so a quote only has one method when every tier agrees.
+  // A tier with no ship key counts as ocean -- the same default activeFreight uses,
+  // so the column can never disagree with the freight the tier is actually costed on.
+  const ships = new Set(tiers.map((t) => t.ship || "ocean"));
   return {
     count: tiers.length,
     minClient: prices.length ? Math.min(...prices) : null,
     maxClient: prices.length ? Math.max(...prices) : null,
     avgMargin: margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : 0,
+    method: ships.size > 1 ? "Mixed" : (ships.has("air") ? "Air" : "Ocean"),
   };
 }
 
@@ -833,6 +838,7 @@ function Platform({ session }) {
             <div style={{ flex: isMobile ? 1.8 : 2.4 }}>Product{view === "search" ? " / Client" : ""}</div>
             {!isMobile && <div style={{ flex: 1.5 }}>Factory</div>}
             {!isMobile && <div style={{ flex: 0.8, textAlign: "center" }}>Tiers</div>}
+            {!isMobile && <div style={{ flex: 0.8 }}>Method</div>}
             <div style={{ flex: isMobile ? 1.3 : 1.5, textAlign: "right", whiteSpace: "nowrap" }}>{isMobile ? "Price" : "Client Price Range"}</div>
             <div style={{ ...(isMobile ? { width: 52 } : { flex: 0.9 }), textAlign: "right", whiteSpace: "nowrap" }}>{isMobile ? "Marg" : "Avg Margin"}</div>
             {!isMobile && <div style={{ flex: 1.1 }}>Updated</div>}
@@ -876,6 +882,9 @@ function Platform({ session }) {
                       <span style={S.tierBadge}><Layers size={11} /> {sum.count}</span>
                     </div>
                   )}
+                  {/* Air and Ocean are not good and bad, so no colour coding —
+                      plain muted text, same tone as the other secondary cells. */}
+                  {!isMobile && <div style={{ flex: 0.8, fontSize: 13, color: "#6a7488" }}>{sum.method || "—"}</div>}
                   <div style={{ flex: isMobile ? 1.3 : 1.5, textAlign: "right", whiteSpace: "nowrap", ...S.num, fontWeight: 600, color: "#0f1729", fontSize: isMobile ? 13 : undefined }}>{priceRange}</div>
                   <div style={{ ...(isMobile ? { width: 52 } : { flex: 0.9 }), textAlign: "right", whiteSpace: "nowrap", ...S.num }}>
                     <span style={{ color: sum.avgMargin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>
