@@ -3106,9 +3106,32 @@ function Products({ navigate }) {
   const [search, setSearch] = useState('');
   const [poQuote, setPoQuote] = useState(null);
   const [viewQuote, setViewQuote] = useState(null);
-  useEffect(()=>{
-    SBQ.from('quotes').select('*').order('created_at',{ascending:false}).then(({data})=>{ setQuotes(data||[]); setLoading(false); });
-  },[]);
+  const [prods, setProds] = useState([]);
+  const [activeF, setActiveF] = useState('All');
+  const load = async () => {
+    setLoading(true);
+    const [qRes, pRes] = await Promise.all([
+      SBQ.from('quotes').select('*').order('created_at',{ascending:false}),
+      SB.from('products').select('id,sku,name,active'),
+    ]);
+    setQuotes(qRes.data||[]); setProds(pRes.data||[]); setLoading(false);
+  };
+  useEffect(()=>{ load(); },[]);
+  // The backfill built products from these exact pairs, so sku+name is 1:1 with a
+  // quote row. SKU alone is not enough -- products_sku_name_key is UNIQUE on the pair,
+  // and one SKU can carry several products (LL1-1629 has three sizes). A quote missing
+  // either half has no key at all and simply goes unmatched.
+  const prodKey = (sku, name) => {
+    const s = (sku||'').trim(), n = (name||'').trim();
+    return (s && n) ? s+'|'+n : null;
+  };
+  const prodBy = new Map(prods.map(p=>[prodKey(p.sku,p.name), p]).filter(([k])=>k));
+  const matchOf = q => { const k = prodKey(q.sku, q.product); return k ? (prodBy.get(k)||null) : null; };
+  const toggleActive = async (prod) => {
+    const { error } = await SB.from('products').update({ active: !prod.active }).eq('id', prod.id);
+    if (error) { window._toast?.('Could not change active status — '+error.message,'err'); return; }
+    await load();
+  };
   const tiersOf = q => { try { return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]); } catch { return []; } };
   const activeFreight = t => { const ship=t.ship||'ocean'; return ship==='air'?(Number(t.freightAir??t.freightDuty)||0):(Number(t.freightOcean??t.freightDuty)||0); };
   const moldPer = (m,qty)=>{ const f=Number(m)||0,qn=Number(qty)||0; return (f<=0||qn<=0)?0:f/qn; };
@@ -3123,8 +3146,17 @@ function Products({ navigate }) {
     { value:'All', label:'All Clients', count:quotes.length },
     ...clientList.map(c=>({ value:c, label:c, color:companyColor(c), count:counts[c] })),
   ];
+  // Counted over quote rows, not products, so the numbers match what the table shows.
+  // An unmatched row is neither active nor inactive and is excluded by either filter.
+  const activeCounts = quotes.reduce((a,q)=>{ const p=matchOf(q); if(p) a[p.active?'active':'inactive']++; return a; }, {active:0,inactive:0});
+  const activeOptions = [
+    { value:'All', label:'All', count:quotes.length },
+    { value:'active', label:'Active', color:'var(--ok)', count:activeCounts.active },
+    { value:'inactive', label:'Inactive', color:'var(--hot)', count:activeCounts.inactive },
+  ];
   const filtered = quotes.filter(q=>{
     if(client!=='All' && ((q.client||'').trim()||'—')!==client) return false;
+    if(activeF!=='All'){ const p=matchOf(q); if(!p) return false; if((activeF==='active')!==!!p.active) return false; }
     const s=search.toLowerCase(); if(!s) return true;
     return `${q.product} ${q.client} ${q.factory} ${q.sku} ${q.country}`.toLowerCase().includes(s);
   });
@@ -3137,6 +3169,7 @@ function Products({ navigate }) {
       </div>
       <div className="fs-row" style={{marginBottom:'20px'}}>
         <FilterSelect label="All Clients" value={client} onChange={setClient} options={clientOptions} />
+        <FilterSelect label="All" value={activeF} onChange={setActiveF} options={activeOptions} />
       </div>
       {client!=='All' && (
         <div style={{display:'flex',alignItems:'center',gap:'8px',margin:'4px 0 16px',fontSize:'15px'}}>
@@ -3149,10 +3182,10 @@ function Products({ navigate }) {
       <div className="section-card">
         {loading ? <div className="loading">Loading products…</div> : filtered.length ? (
           <table className="data-table">
-            <thead><tr><th>SKU / Product</th><th>Factory</th><th>Tiers</th><th>Client Price</th><th>Avg Margin</th><th></th></tr></thead>
+            <thead><tr><th>SKU / Product</th><th>Factory</th><th>Tiers</th><th>Client Price</th><th>Avg Margin</th><th>Active</th><th></th></tr></thead>
             <tbody>
               {filtered.map(q=>{
-                const col=companyColor(q.client); const tiers=tiersOf(q); const m=avgMargin(q);
+                const col=companyColor(q.client); const tiers=tiersOf(q); const m=avgMargin(q); const prod=matchOf(q);
                 return (
                   <tr key={q.id} onClick={()=>setViewQuote(q)} style={{cursor:'pointer'}}>
                     <td>
@@ -3168,6 +3201,21 @@ function Products({ navigate }) {
                     <td className="mono">{tiers.length}</td>
                     <td className="mono">{priceRange(q)||'—'}</td>
                     <td className="mono" style={{color:m==null?'var(--faint)':m<15?'var(--hot)':m<25?'var(--warn)':'var(--ok)'}}>{m==null?'—':m+'%'}</td>
+                    {/* Only clickable when a product actually matched — a quote row with
+                        no SKU or no name has nothing to toggle. stopPropagation keeps the
+                        click off the row, which opens the detail modal. */}
+                    <td
+                      onClick={prod?(e=>{e.stopPropagation();toggleActive(prod);}):undefined}
+                      title={prod?(prod.active?'Click to deactivate':'Click to activate'):'No matching product record'}
+                      style={{whiteSpace:'nowrap',cursor:prod?'pointer':'default'}}
+                    >
+                      {prod ? (
+                        <span style={{display:'inline-flex',alignItems:'center',gap:'6px'}}>
+                          <span style={{width:'7px',height:'7px',borderRadius:'50%',flexShrink:0,background:prod.active?'var(--ok)':'var(--hot)'}} />
+                          {prod.active?'Active':'Inactive'}
+                        </span>
+                      ) : <span style={{color:'var(--faint)'}}>—</span>}
+                    </td>
                     <td style={{textAlign:'right'}} onClick={e=>{e.stopPropagation();setPoQuote(q);}}><span className="pull-link">Create PO →</span></td>
                   </tr>
                 );
