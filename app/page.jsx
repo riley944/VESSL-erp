@@ -3148,7 +3148,9 @@ function Products({ navigate }) {
   ];
   // Counted over quote rows, not products, so the numbers match what the table shows.
   // An unmatched row is neither active nor inactive and is excluded by either filter.
-  const activeCounts = quotes.reduce((a,q)=>{ const p=matchOf(q); if(p) a[p.active?'active':'inactive']++; return a; }, {active:0,inactive:0});
+  // active is nullable and null means undecided, so only an explicit true or false is
+  // counted -- an unruled product belongs to neither bucket.
+  const activeCounts = quotes.reduce((a,q)=>{ const p=matchOf(q); if(p&&p.active!=null) a[p.active?'active':'inactive']++; return a; }, {active:0,inactive:0});
   const activeOptions = [
     { value:'All', label:'All', count:quotes.length },
     { value:'active', label:'Active', color:'var(--ok)', count:activeCounts.active },
@@ -3156,7 +3158,7 @@ function Products({ navigate }) {
   ];
   const filtered = quotes.filter(q=>{
     if(client!=='All' && ((q.client||'').trim()||'—')!==client) return false;
-    if(activeF!=='All'){ const p=matchOf(q); if(!p) return false; if((activeF==='active')!==!!p.active) return false; }
+    if(activeF!=='All'){ const p=matchOf(q); if(!p||p.active==null) return false; if((activeF==='active')!==p.active) return false; }
     const s=search.toLowerCase(); if(!s) return true;
     return `${q.product} ${q.client} ${q.factory} ${q.sku} ${q.country}`.toLowerCase().includes(s);
   });
@@ -3201,20 +3203,24 @@ function Products({ navigate }) {
                     <td className="mono">{tiers.length}</td>
                     <td className="mono">{priceRange(q)||'—'}</td>
                     <td className="mono" style={{color:m==null?'var(--faint)':m<15?'var(--hot)':m<25?'var(--warn)':'var(--ok)'}}>{m==null?'—':m+'%'}</td>
-                    {/* Only clickable when a product actually matched — a quote row with
-                        no SKU or no name has nothing to toggle. stopPropagation keeps the
-                        click off the row, which opens the detail modal. */}
+                    {/* Three states for a matched product: true, false, and null meaning
+                        nobody has ruled on it yet. Null is a starting state only — the
+                        toggle never returns to it. The em dash is a different thing again:
+                        no product record matched this quote row at all, so there is
+                        nothing to toggle and the cell is not clickable. */}
                     <td
                       onClick={prod?(e=>{e.stopPropagation();toggleActive(prod);}):undefined}
-                      title={prod?(prod.active?'Click to deactivate':'Click to activate'):'No matching product record'}
+                      title={prod?(prod.active==null?'Not set — click to activate':prod.active?'Click to deactivate':'Click to activate'):'No matching product record'}
                       style={{whiteSpace:'nowrap',cursor:prod?'pointer':'default'}}
                     >
-                      {prod ? (
-                        <span style={{display:'inline-flex',alignItems:'center',gap:'6px'}}>
-                          <span style={{width:'7px',height:'7px',borderRadius:'50%',flexShrink:0,background:prod.active?'var(--ok)':'var(--hot)'}} />
-                          {prod.active?'Active':'Inactive'}
-                        </span>
-                      ) : <span style={{color:'var(--faint)'}}>—</span>}
+                      {!prod ? <span style={{color:'var(--faint)'}}>—</span>
+                        : prod.active==null ? <span style={{color:'var(--muted)'}}>Not set</span>
+                        : (
+                          <span style={{display:'inline-flex',alignItems:'center',gap:'6px'}}>
+                            <span style={{width:'7px',height:'7px',borderRadius:'50%',flexShrink:0,background:prod.active?'var(--ok)':'var(--hot)'}} />
+                            {prod.active?'Active':'Inactive'}
+                          </span>
+                        )}
                     </td>
                     <td style={{textAlign:'right'}} onClick={e=>{e.stopPropagation();setPoQuote(q);}}><span className="pull-link">Create PO →</span></td>
                   </tr>
