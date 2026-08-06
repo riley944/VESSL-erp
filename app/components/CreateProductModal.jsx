@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { SB } from '@/lib/supabase';
 
 // ── CreateProductModal (create or edit a row in vessl.products) ──────────────
@@ -23,6 +23,28 @@ export function CreateProductModal({ data, onClose, onCreated }) {
     cpscType:s(data?.cpsc_type), cpscCode:s(data?.cpsc_code),
   });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
+  // Fetched here rather than by the Testing page's load(), which has no reason to pull
+  // quotes for any other tab. PostgREST has no DISTINCT, and a SKU repeats across quote
+  // rows, so the de-dupe happens here -- ~275 rows collapse to ~240 SKUs.
+  const [skus, setSkus] = useState([]);
+  useEffect(()=>{
+    let alive = true;
+    SB.from('quotes').select('sku,product').not('sku','is',null).order('sku').limit(1000)
+      .then(({data,error})=>{
+        // On error the list simply stays empty and the field renders as plain text.
+        // quotes is a different table with its own policies; a refusal there must not
+        // take the modal down when the user only wanted to type a SKU.
+        if(!alive || error || !data) return;
+        const seen = new Map();
+        data.forEach(r=>{
+          const sku = (r.sku||'').trim();
+          if(!sku || seen.has(sku)) return;
+          seen.set(sku, (r.product||'').trim());
+        });
+        setSkus([...seen].map(([sku,product])=>({sku,product})));
+      });
+    return ()=>{ alive = false; };
+  },[]);
   const submit = async () => {
     // Name identifies a product here; a SKU is nice to have and often assigned later.
     const name = form.name.trim();
@@ -61,7 +83,21 @@ export function CreateProductModal({ data, onClose, onCreated }) {
       <div className="modal-box">
         <div className="modal-head"><h3>{editing?'Edit Product':'New Product'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
-          <div className="form-row"><label>SKU</label><input className="form-input" value={form.sku} onChange={e=>f('sku')(e.target.value)} placeholder="KUI-XXXX-00 — optional" /></div>
+          {/* A datalist gives no visual cue that suggestions exist, so the chevron and
+              the hint are what make it findable. The input still accepts anything —
+              the list narrows as you type, it does not constrain. */}
+          <div className="form-row">
+            <label>SKU <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>{skus.length?'(pick one or type a new one)':'(optional)'}</span></label>
+            <div style={{position:'relative'}}>
+              <input className="form-input" list={skus.length?'cpm-sku-list':undefined} value={form.sku} onChange={e=>f('sku')(e.target.value)} placeholder="KUI-XXXX-00 — optional" style={skus.length?{paddingRight:'30px'}:undefined} />
+              {skus.length>0 && (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{position:'absolute',right:'11px',top:'50%',transform:'translateY(-50%)',pointerEvents:'none',color:'var(--muted)'}}><polyline points="6 9 12 15 18 9"/></svg>
+              )}
+            </div>
+            {/* value is the SKU alone; the text content is only the descriptive label
+                the browser shows beside it, and is never what gets written. */}
+            {skus.length>0 && <datalist id="cpm-sku-list">{skus.map(s=><option key={s.sku} value={s.sku}>{s.product}</option>)}</datalist>}
+          </div>
           <div className="form-row"><label>Product Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
           <div className="form-row"><label>Description</label><textarea className="form-textarea" value={form.desc} onChange={e=>f('desc')(e.target.value)} /></div>
           <div className="form-row-3">
