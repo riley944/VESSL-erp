@@ -12,10 +12,13 @@ const MAT_STATUS = {
   failed:     { label:'Failed',      color:'#B91C1C', bg:'#FEE2E2' },
   expired:    { label:'Expired',     color:'#B91C1C', bg:'#FEE2E2' },
 };
-// 'passed' is what a human sets by hand on the product; 'compliant' is what the
-// linked materials add up to on their own. Same green, different label, so the table
-// says which of the two you are looking at. 'pending' and 'failed' are shared.
+// 'passed', 'pending' and 'failed' are the three a human can set. The rest are only
+// reachable on a row whose status was written before the derivation was dropped, or
+// straight from the database — kept so such a row still renders with a real label.
+// 'not_set' is the null case: grey and unlabelled by colour, because no judgement has
+// been made about that product yet.
 const PROD_STATUS = {
+  not_set:     { label:'Not set',     color:'#8A8A8E', bg:'#F2F2F4' },
   compliant:   { label:'Compliant',   color:'#15803D', bg:'#DCFCE7', dot:'#22C55E' },
   passed:      { label:'Pass',        color:'#15803D', bg:'#DCFCE7', dot:'#22C55E' },
   pending:     { label:'Pending',     color:'#B45309', bg:'#FEF3C7', dot:'#F59E0B' },
@@ -23,9 +26,10 @@ const PROD_STATUS = {
   expired:     { label:'Expired',     color:'#B91C1C', bg:'#FEE2E2', dot:'#EF4444' },
   no_materials:{ label:'No materials',color:'#8A8A8E', bg:'#F2F2F4', dot:'#CBD5E1' },
 };
-// A value stored on the product overrides what its materials derive to — someone has
-// looked at it and made a call. Falls back to the derived status until they do.
-const effectiveStatus = (product, derivedStatus) => (product && product.compliance_status) || derivedStatus;
+// The stored value and nothing else. Linking a material no longer moves a product to
+// 'pending' behind Jenn's back — compliance is her call, and an unset product simply
+// reads as unset rather than inheriting a verdict from its materials.
+const effectiveStatus = (product) => (product && product.compliance_status) || null;
 // Written to products.compliance_status. '' means clear it back to NULL.
 const COMPLIANCE_OPTS = [['','— Not set —'],['passed','Pass'],['pending','Pending'],['failed','Failed']];
 // Unused on purpose. MaterialModal's Type field was opened up to free text so we can
@@ -68,7 +72,10 @@ export default function Testing() {
   };
   useEffect(()=>{ load(); },[]);
 
-  // derived product status from linked materials
+  // Derived product status from linked materials. Deliberately unreferenced: product
+  // compliance is now the stored value alone (see effectiveStatus), so nothing calls
+  // this. Kept because it may come back as a secondary signal shown alongside the
+  // manual status rather than as a substitute for it.
   const productStatus = (prodId) => {
     const links = prodMats.filter(l=>l.product_id===prodId && l.is_required);
     if(!links.length) return 'no_materials';
@@ -80,12 +87,13 @@ export default function Testing() {
     return 'pending';
   };
 
-  // Set by hand or derived, the tiles have to count the same thing the table shows or
-  // they contradict the rows directly beneath them. A hand-set 'passed' is compliant.
+  // Stored statuses only, matching the table beneath. A product nobody has ruled on
+  // counts toward none of the three — the totals are what has been decided, not a
+  // partition of every product.
   const counts = {
-    compliant: products.filter(p=>['compliant','passed'].includes(effectiveStatus(p,productStatus(p.id)))).length,
-    pending:   products.filter(p=>['pending'].includes(effectiveStatus(p,productStatus(p.id)))).length,
-    issues:    products.filter(p=>['failed','expired'].includes(effectiveStatus(p,productStatus(p.id)))).length,
+    compliant: products.filter(p=>['compliant','passed'].includes(effectiveStatus(p))).length,
+    pending:   products.filter(p=>['pending'].includes(effectiveStatus(p))).length,
+    issues:    products.filter(p=>['failed','expired'].includes(effectiveStatus(p))).length,
     materials: materials.length,
   };
 
@@ -170,7 +178,6 @@ export default function Testing() {
           <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Material testing, CPSC readiness &amp; product certification</div>
         </div>
         <div style={{display:'flex',gap:'8px'}}>
-          <button onClick={()=>setModal({type:'product'})} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Product</button>
           <button onClick={()=>setModal({type:'material'})} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Material</button>
           <button onClick={()=>setModal({type:'lab'})} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Lab</button>
           <button onClick={()=>setModal({type:'reg'})} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Regulation</button>
@@ -212,7 +219,7 @@ export default function Testing() {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#8A8A8E'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={products} prodMats={prodMats} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} />}
+          {tab==='products'  && <ProductsView products={products} prodMats={prodMats} onLink={(p)=>setModal({type:'link',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} />}
           {tab==='materials' && <MaterialsView materials={materials} onEdit={(m)=>setModal({type:'material',data:m})} onTest={(m)=>setModal({type:'report',data:{material_id:m.id}})} onDelete={deleteMaterial} />}
           {tab==='reports'   && <ReportsView reports={reports} onEdit={(r)=>setModal({type:'report',row:r})} onDelete={deleteReport} />}
           {tab==='regs'      && <RegsView regs={regs} onEdit={(r)=>setModal({type:'reg',data:r})} onDelete={deleteReg} />}
@@ -230,8 +237,8 @@ export default function Testing() {
 }
 
 // ── PRODUCTS VIEW ────────────────────────────────────────────────────────────
-function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus, onEdit, onDelete }) {
-  if(!products.length) return <Empty title="No products yet" sub="Add a product with + Product above, then link the materials it is built from to track its compliance." />;
+function ProductsView({ products, prodMats, onLink, onSetStatus, onEdit, onDelete }) {
+  if(!products.length) return <Empty title="No products yet" sub="Products appear here once they exist. Open one to link the materials it is built from and set its compliance status." />;
   return (
     <div style={{...card,overflow:'hidden'}}>
       <div style={{display:'grid',gridTemplateColumns:'1fr 140px 120px 130px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
@@ -239,7 +246,7 @@ function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus, 
       </div>
       {products.map((p,i)=>{
         const links=prodMats.filter(l=>l.product_id===p.id);
-        const st=effectiveStatus(p,productStatus(p.id));
+        const st=effectiveStatus(p);
         return (
           <div key={p.id} onClick={()=>onEdit(p)} style={{display:'grid',gridTemplateColumns:'1fr 140px 120px 130px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
             <div style={{minWidth:0}}>
@@ -253,7 +260,7 @@ function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus, 
             </div>
             <div style={{fontSize:'12.5px',color:'#4A4A4E'}}>{links.length? links.length+' linked':<span style={{color:'#C0C0C4'}}>none</span>}</div>
             <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:'5px',minWidth:0}}>
-              <StatusPill map={PROD_STATUS} status={st} />
+              <StatusPill map={PROD_STATUS} status={st || 'not_set'} />
               <select
                 value={p.compliance_status||''}
                 onChange={e=>onSetStatus(p.id,e.target.value)}
