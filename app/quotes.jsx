@@ -1986,6 +1986,41 @@ function FactoryList({ factories, onUpdate, onDelete, onAdd }) {
   );
 }
 
+// The HTS field, with a typeahead over vessl.htscodes. Its own component rather
+// than a change to Field, which fifteen other inputs share.
+//
+// A datalist rather than a select: free entry has to stay possible, since a code
+// that is not in the library yet must still be enterable. It suggests, it does not
+// constrain. Same reason the SKU box on the product form uses one, and the same
+// discoverability problem -- a bare datalist gives no visual cue at all -- so the
+// chevron and the label hint come across with it.
+function HtsField({ f, setHts, codes }) {
+  return (
+    <label style={S.field}>
+      <span style={S.fieldLabel}>
+        HTS Code {codes.length > 0 && <span style={{ color: "#9aa3b5", fontWeight: 400 }}>— pick one or type a new one</span>}
+      </span>
+      <div style={{ position: "relative" }}>
+        <input
+          style={{ ...S.input, ...(codes.length ? { paddingRight: 30 } : {}) }}
+          value={f.hts ?? ""}
+          onChange={setHts}
+          list={codes.length ? "qf-hts-list" : undefined}
+          inputMode="numeric"
+          placeholder="Tariff code (per product)"
+        />
+        {codes.length > 0 && (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9aa3b5" }}><polyline points="6 9 12 15 18 9" /></svg>
+        )}
+      </div>
+      {/* value is the bare code and is what gets written; the text content is only
+          the label the browser shows beside it, so typing "apron" finds 6211439000. */}
+      {codes.length > 0 && <datalist id="qf-hts-list">{codes.map((c) => <option key={c.code} value={c.code}>{c.description}</option>)}</datalist>}
+    </label>
+  );
+}
+
 function Field({ label, k, type = "text", placeholder = "", suffix, f, set }) {
   return (
     <label style={S.field}>
@@ -2122,6 +2157,20 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
       return { ...p, tiers };
     });
   };
+  // Read-only, and only the active codes: a retired one should not be offered for a
+  // new quote, though a quote already carrying one still displays it, since the
+  // datalist never constrains what the field holds.
+  const [htsCodes, setHtsCodes] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    SBQ.from("htscodes").select("code,description").eq("active", true).order("code")
+      .then(({ data, error }) => { if (alive && !error && data) setHtsCodes(data); });
+    return () => { alive = false; };
+  }, []);
+  // Digits only, stripped as typed, so a pasted 6307.90.9000 becomes 6307909000 in
+  // the box. No length rule -- 39269090 is a real 8-digit subheading. f.hts and the
+  // formToRow path are otherwise untouched.
+  const setHts = (e) => setF((p) => ({ ...p, hts: e.target.value.replace(/\D/g, "") }));
   const autoFillClient = (i) => {
     setF((p) => {
       const tiers = p.tiers.map((t, idx) => {
@@ -2185,7 +2234,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
               </label>
             )}
             <Field label="Product" k="product" placeholder="e.g. Needlepoint Belt" f={f} set={set} />
-            <Field label="HTS Code" k="hts" placeholder="Tariff code (per product)" f={f} set={set} />
+            <HtsField f={f} setHts={setHts} codes={htsCodes} />
             <Field label="Quote Date" k="quoteDate" type="date" f={f} set={set} />
           </FormSection>
 
