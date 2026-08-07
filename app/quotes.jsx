@@ -406,6 +406,9 @@ function quoteSummary(q) {
   };
 }
 
+// Top-level sections of the Quotes page. Codes is a placeholder until step 4.
+const SECTIONS = [["quotes", "Quotes"], ["codes", "Codes"]];
+
 // Dropdown-only sentinel for "show every client". activeClient itself stays null in that
 // case — it is a view selector, and a string here would flip the router to "clientQuotes".
 const ALL = "__all_clients__";
@@ -419,6 +422,16 @@ function Platform({ session }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [search, setSearch] = useState("");
+  // Which top-level section of the page is showing. Deliberately separate from
+  // `view` below, which stays derived from search + activeClient: this selects a
+  // section, that selects a layout within the Quotes section.
+  //
+  // The search term is NOT cleared on a section change, unlike the Testing page's
+  // tabs. That is intentional and not an oversight: Testing's four tabs share one
+  // search box, so a stale term would filter a list the user never searched, while
+  // these two sections have their own boxes and coming back to a search you left
+  // running is the useful behaviour. Please don't "fix" this into consistency.
+  const [section, setSection] = useState("quotes");
   const [activeClient, setActiveClient] = useState(null);
   const [expanded, setExpanded] = useState(null);
   const [toast, setToast] = useState("");
@@ -756,6 +769,13 @@ function Platform({ session }) {
         </div>
       </header>
 
+      <div style={S.sectionTabs}>
+        {SECTIONS.map(([v, l]) => (
+          <button key={v} onClick={() => setSection(v)}
+            style={{ ...S.sectionTab, ...(isMobile ? S.btnMobile : {}), ...(section === v ? S.sectionTabOn : {}) }}>{l}</button>
+        ))}
+      </div>
+
       {showTasks && (
         <TasksPanel
           tasks={tasks} userEmail={userEmail}
@@ -769,6 +789,12 @@ function Platform({ session }) {
         <SendToClientModal clients={clients} onClose={() => setShowSend(false)} />
       )}
 
+      {/* Everything from here to the close below is the Quotes section: the search
+          box, the All Clients filter, the load error, the breadcrumb, the client
+          grid and the quotes table. Wrapped without re-indenting on purpose — a
+          re-indent would turn a two-line change into 140 modified lines and make
+          both review and `git blame` worse for no benefit. */}
+      {section === "quotes" && (<>
       <div style={S.controls}>
         <div style={S.searchWrap}>
           <Search size={16} color="#6a7488" />
@@ -909,6 +935,20 @@ function Platform({ session }) {
               </div>
             );
           })}
+        </div>
+      )}
+
+      </>)}
+
+      {/* Placeholder, not a blank panel: if this ever reaches production ahead of
+          the content it should read as unfinished rather than broken. */}
+      {section === "codes" && (
+        <div style={S.codesPlaceholder}>
+          <div style={{ fontSize: 15.5, fontWeight: 600, color: "#0f1729", marginBottom: 7 }}>Codes — not built yet</div>
+          <div style={{ fontSize: 13.5, color: "#6a7488", lineHeight: 1.6, maxWidth: 460 }}>
+            This tab will hold the HTS code list with its own search. Nothing is wired up
+            yet — the table exists but has no rows and no interface. Use the Quotes tab.
+          </div>
         </div>
       )}
 
@@ -2465,6 +2505,14 @@ const S = {
   primaryBtn: { display: "inline-flex", alignItems: "center", gap: 8, background: "linear-gradient(145deg,#16264e,#0b1530)", color: "#ffffff", border: "none", padding: "11px 18px", borderRadius: 11, fontSize: 14, fontWeight: 600, boxShadow: "0 3px 12px rgba(11,21,48,0.18)" },
   ghostBtn: { display: "inline-flex", alignItems: "center", gap: 7, background: "#ffffff", color: "#6a7488", border: "1px solid #e7eaf0", padding: "10px 15px", borderRadius: 11, fontSize: 14, fontWeight: 600 },
   userTag: { fontSize: 12, color: "#9aa3b5", fontWeight: 500 },
+  // flexWrap so the row breaks rather than compressing the buttons on a narrow
+  // viewport; two short labels fit side by side well below phone width, and the
+  // wrap is insurance for when a third section arrives.
+  sectionTabs: { display: "flex", gap: 6, maxWidth: 1280, margin: "0 auto 16px", flexWrap: "wrap" },
+  sectionTab: { padding: "9px 17px", borderRadius: 11, border: "1px solid #e7eaf0", background: "#ffffff", color: "#6a7488", fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" },
+  sectionTabOn: { background: "linear-gradient(145deg,#16264e,#0b1530)", color: "#ffffff", border: "1px solid transparent", boxShadow: "0 3px 12px rgba(11,21,48,0.18)" },
+  // Dashed border reads as unfinished rather than as an empty result set.
+  codesPlaceholder: { maxWidth: 1280, margin: "0 auto", background: "#ffffff", border: "1px dashed #cfd6e4", borderRadius: 14, padding: "52px 28px", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center" },
   controls: { display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: 1280, margin: "0 auto 14px", gap: 16, flexWrap: "wrap" },
   searchWrap: { display: "flex", alignItems: "center", gap: 9, background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 12, padding: "11px 15px", flex: "1 1 100%", boxShadow: "0 1px 3px rgba(26,34,56,0.05)" },
   searchInput: { border: "none", background: "transparent", fontSize: 14.5, width: "100%", color: "#0f1729" },
