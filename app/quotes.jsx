@@ -2013,8 +2013,11 @@ function HtsField({ f, codes, onPick, onAdd }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const q = normalizeTerm(typed);
+  // No cap. A cap would apply to the unfiltered list too, so opening the panel
+  // would show only the first N alphabetically and the rest would look absent.
+  // ~100 rows in a scrolling div costs nothing.
   const hits = useMemo(
-    () => (!q ? codes : codes.filter((c) => matches(q, c.code, c.description))).slice(0, 60),
+    () => (!q ? codes : codes.filter((c) => matches(q, c.code, c.description))),
     [codes, q]
   );
   // Display only. Never feeds the value -- see the rule above.
