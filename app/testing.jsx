@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { SB } from "@/lib/supabase";
 import { CreateProductModal } from "@/app/components/CreateProductModal";
+import { matches, normalizeTerm } from "@/lib/textFilter";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const fmtDate = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
@@ -43,11 +44,6 @@ const TABS = [
   ['reports','Test Reports','test reports'],
   ['regs','Regulations','regulations'],
 ];
-// Null-safe substring match. Reports read through joined objects (r.lab?.name), which
-// give undefined before the field is even reached, so every candidate funnels through
-// String(v ?? '') rather than being trusted to be a string.
-const matches = (needle, ...fields) =>
-  fields.some(v => String(v ?? '').toLowerCase().includes(needle));
 
 function StatusPill({ map, status }) {
   const s = map[status] || { label:status||'—', color:'#8A8A8E', bg:'#F2F2F4' };
@@ -89,7 +85,7 @@ export default function Testing() {
   // no query runs on a keystroke. These feed the four VIEWS ONLY: ReportModal's product
   // and material pickers and LinkModal's material list keep the unfiltered arrays, or a
   // search would silently narrow what is selectable inside a modal.
-  const q = search.trim().toLowerCase();
+  const q = normalizeTerm(search);
   const searching = q.length > 0;
   const shownProducts = useMemo(() => !q ? products : products.filter(p =>
     // cpsc_type is matched through its displayed fallback, so "no cpsc" finds exactly
