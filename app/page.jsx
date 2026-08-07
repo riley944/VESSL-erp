@@ -2857,10 +2857,16 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
               {saveMsg.startsWith('error:')?'⚠ '+saveMsg.slice(6):'✓ '+saveMsg}
             </div>
           )}
-          <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)',marginRight:'auto'}} onClick={saveAsProductsAndQuotes}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight:'4px'}}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-            Save as products &amp; quotes
-          </button>
+          {/* Disabled, not removed. The title lives on the wrapper because a disabled
+              button does not reliably fire hover events, so a title on the button
+              itself would never surface. marginRight:auto moves with it -- the span
+              is the flex child now. */}
+          <span title="Disabled — this action has known defects and has never completed successfully. Ask Matt." style={{marginRight:'auto',display:'inline-flex'}}>
+            <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)',opacity:.45}} disabled onClick={saveAsProductsAndQuotes}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight:'4px'}}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Save as products &amp; quotes
+            </button>
+          </span>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-dark" onClick={save}>Save Changes</button>
         </div>
@@ -4563,7 +4569,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
           <div style={{display:"flex",gap:"10px",marginBottom:"16px",alignItems:"center",flexWrap:"wrap"}}>
             <button className="btn btn-ghost btn-sm" onClick={()=>setShowPicker(true)}>+ Add Item</button>
             {mode==='manual' && items.some(it=>it.desc.trim()) && (
-              <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)'}} onClick={saveAsProductsAndQuotes}>Save as products &amp; quotes</button>
+              <span title="Disabled — this action has known defects and has never completed successfully. Ask Matt." style={{display:'inline-flex'}}>
+                <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)',opacity:.45}} disabled onClick={saveAsProductsAndQuotes}>Save as products &amp; quotes</button>
+              </span>
             )}
             {saveMsg && <div style={{fontSize:'12.5px',fontWeight:500,padding:'6px 10px',borderRadius:'7px',background:saveMsg.startsWith('error:')?'#fef2f2':'#d1fae5',color:saveMsg.startsWith('error:')?'#991b1b':'#065f46'}}>{saveMsg.startsWith('error:')?'⚠ '+saveMsg.slice(6):'✓ '+saveMsg}</div>}
           </div>
