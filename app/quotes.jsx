@@ -9,7 +9,6 @@ import { SBQ } from "@/lib/supabaseQuotes";
 import { SB } from "@/lib/supabase";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { SIZE_SCALES, sizesForScale } from "@/app/components/SizeGrid";
-import { matches, normalizeTerm } from "@/lib/textFilter";
 
 // ============================================================
 //  SUPABASE CONNECTION
@@ -407,9 +406,6 @@ function quoteSummary(q) {
   };
 }
 
-// Top-level sections of the Quotes page. Codes is a placeholder until step 4.
-const SECTIONS = [["quotes", "Quotes"], ["codes", "Codes"]];
-
 // Dropdown-only sentinel for "show every client". activeClient itself stays null in that
 // case — it is a view selector, and a string here would flip the router to "clientQuotes".
 const ALL = "__all_clients__";
@@ -423,25 +419,6 @@ function Platform({ session }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [search, setSearch] = useState("");
-  // Which top-level section of the page is showing. Deliberately separate from
-  // `view` below, which stays derived from search + activeClient: this selects a
-  // section, that selects a layout within the Quotes section.
-  //
-  // The search term is NOT cleared on a section change, unlike the Testing page's
-  // tabs. That is intentional and not an oversight: Testing's four tabs share one
-  // search box, so a stale term would filter a list the user never searched, while
-  // these two sections have their own boxes and coming back to a search you left
-  // running is the useful behaviour. Please don't "fix" this into consistency.
-  const [section, setSection] = useState("quotes");
-  // htscodes is fetched the first time Codes is opened, not in load(): it is a small
-  // table most visits never look at, and the Quotes page should not pay for it.
-  // null means "never fetched" and is what drives the lazy load — [] would be
-  // indistinguishable from a table that really is empty.
-  const [codes, setCodes] = useState(null);
-  const [codesLoading, setCodesLoading] = useState(false);
-  const [codesErr, setCodesErr] = useState("");
-  const [codeSearch, setCodeSearch] = useState("");
-  const [editingCode, setEditingCode] = useState(null);
   const [activeClient, setActiveClient] = useState(null);
   const [expanded, setExpanded] = useState(null);
   const [toast, setToast] = useState("");
@@ -749,23 +726,6 @@ function Platform({ session }) {
     URL.revokeObjectURL(url);
   };
 
-  // Also re-run after a save. 97 rows is small enough that refetching beats splicing
-  // state, and it cannot drift from what is actually stored.
-  const loadCodes = useCallback(async () => {
-    setCodesLoading(true); setCodesErr("");
-    const { data, error } = await SBQ.from("htscodes").select("id,code,description,active").order("code");
-    if (error) { setCodesErr(error.message); setCodes([]); }
-    else setCodes(data || []);
-    setCodesLoading(false);
-  }, []);
-  useEffect(() => { if (section === "codes" && codes === null && !codesLoading) loadCodes(); }, [section, codes, codesLoading, loadCodes]);
-
-  const codeQ = normalizeTerm(codeSearch);
-  const shownCodes = useMemo(() => {
-    const all = codes || [];
-    return !codeQ ? all : all.filter((c) => matches(codeQ, c.code, c.description));
-  }, [codes, codeQ]);
-
   let view = "clients";
   if (searching) view = "search";
   else if (activeClient) view = "clientQuotes";
@@ -788,26 +748,13 @@ function Platform({ session }) {
             <Bell size={15} /> {isMobile ? "" : "Tasks"}
             {myOpenTaskCount > 0 && <span style={S.taskBadge}>{myOpenTaskCount}</span>}
           </button>
-          {/* Quote-specific actions. Hidden outside the Quotes section: all three act
-              on quotes, and Export in particular would silently download quotes while
-              the user is looking at a different section. Tasks is cross-cutting and
-              stays, as does the signed-in address. */}
-          {section === "quotes" && (<>
           <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setShowSend(true)}><Send size={15} /> {isMobile ? "Send" : "Send to Client"}</button>
           <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={exportCSV}><Download size={15} /> {isMobile ? "" : "Export"}</button>
           <button style={{ ...S.primaryBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), client: "", tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] })}>
             <Plus size={16} /> {isMobile ? "New" : "New Quote"}
           </button>
-          </>)}
         </div>
       </header>
-
-      <div style={S.sectionTabs}>
-        {SECTIONS.map(([v, l]) => (
-          <button key={v} onClick={() => setSection(v)}
-            style={{ ...S.sectionTab, ...(isMobile ? S.btnMobile : {}), ...(section === v ? S.sectionTabOn : {}) }}>{l}</button>
-        ))}
-      </div>
 
       {showTasks && (
         <TasksPanel
@@ -822,12 +769,6 @@ function Platform({ session }) {
         <SendToClientModal clients={clients} onClose={() => setShowSend(false)} />
       )}
 
-      {/* Everything from here to the close below is the Quotes section: the search
-          box, the All Clients filter, the load error, the breadcrumb, the client
-          grid and the quotes table. Wrapped without re-indenting on purpose — a
-          re-indent would turn a two-line change into 140 modified lines and make
-          both review and `git blame` worse for no benefit. */}
-      {section === "quotes" && (<>
       <div style={S.controls}>
         <div style={S.searchWrap}>
           <Search size={16} color="#6a7488" />
@@ -970,60 +911,6 @@ function Platform({ session }) {
           })}
         </div>
       )}
-
-      </>)}
-
-      {section === "codes" && (<>
-      <div style={S.controls}>
-        <div style={S.searchWrap}>
-          <Search size={16} color="#6a7488" />
-          <input style={S.searchInput} placeholder="Search HTS codes — code or description…" value={codeSearch} onChange={(e) => setCodeSearch(e.target.value)} />
-          {codeQ && <button style={S.clearBtn} onClick={() => setCodeSearch("")}><X size={14} /></button>}
-        </div>
-        {/* New Quote is hidden on this section, so Codes needs its own create action. */}
-        <button style={{ ...S.primaryBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setEditingCode({})}>
-          <Plus size={16} /> {isMobile ? "New" : "New code"}
-        </button>
-      </div>
-
-      <div style={S.tableWrap}>
-        <div style={S.theadRow}>
-          <div style={{ flex: "0 0 130px" }}>Code</div>
-          <div style={{ flex: 1 }}>Description</div>
-          <div style={{ flex: "0 0 90px", textAlign: "right" }}>Status</div>
-        </div>
-        {codesLoading && <div style={S.empty}><div style={{ color: "#6a7488" }}>Loading codes…</div></div>}
-        {/* codes is left as [] rather than null on failure, because null would re-enter
-            the effect immediately and spin. Recovery is this button, not a reload. */}
-        {!codesLoading && codesErr && (
-          <div style={S.empty}>
-            <div style={{ color: "#a14a4a" }}>Couldn't load codes: {codesErr}</div>
-            <button style={{ ...S.ghostBtnSm, marginTop: 12 }} onClick={loadCodes}>Try again</button>
-          </div>
-        )}
-        {!codesLoading && !codesErr && shownCodes.length === 0 && (
-          <div style={S.empty}>
-            <Box size={40} color="#e7eaf0" strokeWidth={1.2} />
-            <div style={{ marginTop: 12, color: "#6a7488" }}>
-              {codeQ ? <>No codes match “{codeSearch.trim()}”. Try a different term, or clear the search.</> : "No codes yet. Add one with + New code."}
-            </div>
-          </div>
-        )}
-        {!codesLoading && !codesErr && shownCodes.map((c) => (
-          // Retired codes stay listed so historical quotes remain resolvable; dimmed
-          // rather than hidden, and still editable so they can be brought back.
-          <div key={c.id} style={{ ...S.rowGroup, ...(c.active ? {} : { opacity: 0.55 }) }}>
-            <div style={{ ...S.row, cursor: "pointer" }} onClick={() => setEditingCode(c)}>
-              <div style={{ flex: "0 0 130px", ...S.num, fontWeight: 600 }}>{c.code}</div>
-              <div style={{ flex: 1, minWidth: 0, ...S.cellPrimary, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.description || <span style={{ color: "#9aa3b5" }}>—</span>}</div>
-              <div style={{ flex: "0 0 90px", textAlign: "right", fontSize: 12, fontWeight: 600, color: c.active ? "#3f7d5a" : "#9aa3b5" }}>{c.active ? "Active" : "Inactive"}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-      </>)}
-
-      {editingCode && <CodeModal data={editingCode} flash={flash} onClose={() => setEditingCode(null)} onSaved={() => { setEditingCode(null); loadCodes(); }} />}
 
       {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} factories={factories} clientNames={clients.map((c) => c.name).filter((n) => n !== "Unassigned")} contacts={contacts} onSaveFactory={saveFactoryPreset} onSaveContact={saveContact} userEmail={userEmail} />}
       {toast && <div style={S.toast}><Check size={15} /> {toast}</div>}
@@ -1569,74 +1456,6 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
 }
 
 // ---------- tasks panel ----------
-// Create or edit one vessl.htscodes row. Branches on data?.id the way RegModal does.
-// There is no delete: retiring a code is unchecking Active, so historical quotes that
-// already cite it stay resolvable.
-function CodeModal({ data, flash, onClose, onSaved }) {
-  const editing = !!(data && data.id);
-  const [f, setF] = useState({
-    code: data?.code || "",
-    description: data?.description || "",
-    active: editing ? !!data.active : true,
-  });
-  const [saving, setSaving] = useState(false);
-  // Stripped on every keystroke, not just on save, so a pasted 6307.90.9000 visibly
-  // becomes 6307909000 in the box -- what you see is what gets stored. No length rule:
-  // 39269090 is a real 8-digit subheading and a 10-digit check would reject it.
-  const setCode = (e) => setF((p) => ({ ...p, code: e.target.value.replace(/\D/g, "") }));
-  const save = async () => {
-    const code = f.code.trim();
-    // flash() rather than alert(): it is what the rest of this page uses for both
-    // outcomes -- "Couldn't add task", "Couldn't save contact" and so on. The few
-    // alert() calls left in the file are in components that have no flash in scope.
-    if (!code) { flash("A code is required"); return; }
-    setSaving(true);
-    const payload = { code, description: f.description.trim() || null, active: !!f.active };
-    const { error } = editing
-      ? await SBQ.from("htscodes").update(payload).eq("id", data.id)
-      : await SBQ.from("htscodes").insert(payload);
-    setSaving(false);
-    if (error) {
-      const dupe = error.code === "23505" || /duplicate key|htscodes_code_key/i.test(error.message || "");
-      flash(dupe ? "That code already exists" : "Couldn't save code: " + error.message);
-      return;   // stay open so the entry is not lost
-    }
-    flash(editing ? "Code updated" : "Code added");
-    onSaved();
-  };
-  return (
-    <div style={S.overlay} onClick={onClose}>
-      <div style={{ ...S.modal, maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
-        <div style={S.modalHead}>
-          <h2 style={S.modalTitle}>{editing ? "Edit code" : "New code"}</h2>
-          <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
-        </div>
-        <div style={S.modalBody}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <label style={S.field}>
-              <span style={S.fieldLabel}>HTS code *</span>
-              <input style={S.input} value={f.code} onChange={setCode} inputMode="numeric" placeholder="e.g. 6307909000" />
-              <span style={{ fontSize: 11.5, color: "#9aa3b5" }}>Digits only — separators are stripped as you type.</span>
-            </label>
-            <label style={S.field}>
-              <span style={S.fieldLabel}>Description</span>
-              <input style={S.input} value={f.description} onChange={(e) => setF((p) => ({ ...p, description: e.target.value }))} placeholder="What this code covers" />
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: "#0f1729", cursor: "pointer" }}>
-              <input type="checkbox" checked={f.active} onChange={(e) => setF((p) => ({ ...p, active: e.target.checked }))} />
-              Active <span style={{ color: "#6a7488" }}>— uncheck to retire it; it stays listed so old quotes still resolve</span>
-            </label>
-          </div>
-        </div>
-        <div style={S.modalFoot}>
-          <button style={S.ghostBtnSm} onClick={onClose}>Cancel</button>
-          <button style={S.primaryBtnSm} onClick={save} disabled={saving}>{saving ? "Saving…" : editing ? "Save changes" : "Save code"}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function TasksPanel({ tasks, userEmail, onToggle, onDelete, onClose, onJump }) {
   const [tab, setTab] = useState("mine");
   const mine = tasks.filter((t) => (t.assigned_to || "").toLowerCase() === userEmail.toLowerCase());
@@ -2646,12 +2465,6 @@ const S = {
   primaryBtn: { display: "inline-flex", alignItems: "center", gap: 8, background: "linear-gradient(145deg,#16264e,#0b1530)", color: "#ffffff", border: "none", padding: "11px 18px", borderRadius: 11, fontSize: 14, fontWeight: 600, boxShadow: "0 3px 12px rgba(11,21,48,0.18)" },
   ghostBtn: { display: "inline-flex", alignItems: "center", gap: 7, background: "#ffffff", color: "#6a7488", border: "1px solid #e7eaf0", padding: "10px 15px", borderRadius: 11, fontSize: 14, fontWeight: 600 },
   userTag: { fontSize: 12, color: "#9aa3b5", fontWeight: 500 },
-  // flexWrap so the row breaks rather than compressing the buttons on a narrow
-  // viewport; two short labels fit side by side well below phone width, and the
-  // wrap is insurance for when a third section arrives.
-  sectionTabs: { display: "flex", gap: 6, maxWidth: 1280, margin: "0 auto 16px", flexWrap: "wrap" },
-  sectionTab: { padding: "9px 17px", borderRadius: 11, border: "1px solid #e7eaf0", background: "#ffffff", color: "#6a7488", fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" },
-  sectionTabOn: { background: "linear-gradient(145deg,#16264e,#0b1530)", color: "#ffffff", border: "1px solid transparent", boxShadow: "0 3px 12px rgba(11,21,48,0.18)" },
   controls: { display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: 1280, margin: "0 auto 14px", gap: 16, flexWrap: "wrap" },
   searchWrap: { display: "flex", alignItems: "center", gap: 9, background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 12, padding: "11px 15px", flex: "1 1 100%", boxShadow: "0 1px 3px rgba(26,34,56,0.05)" },
   searchInput: { border: "none", background: "transparent", fontSize: 14.5, width: "100%", color: "#0f1729" },
