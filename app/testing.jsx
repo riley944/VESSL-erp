@@ -284,7 +284,7 @@ export default function Testing() {
 
       {modal?.type==='product'  && <CreateProductModal data={modal.data} onClose={()=>setModal(null)} onCreated={()=>{setModal(null);load();}} />}
       {modal?.type==='lab'      && <LabModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
-      {modal?.type==='reg'      && <RegModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
+      {modal?.type==='reg'      && <RegModal data={modal.data} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='material' && <MaterialModal data={modal.data} labs={labs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='report'   && <ReportModal preset={modal.data} data={modal.row} materials={materials} products={products} labs={labs} regs={regs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='link'     && <LinkModal product={modal.data} materials={materials} existing={prodMats.filter(l=>l.product_id===modal.data.id)} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
