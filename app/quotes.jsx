@@ -761,11 +761,17 @@ function Platform({ session }) {
             <Bell size={15} /> {isMobile ? "" : "Tasks"}
             {myOpenTaskCount > 0 && <span style={S.taskBadge}>{myOpenTaskCount}</span>}
           </button>
+          {/* Quote-specific actions. Hidden outside the Quotes section: all three act
+              on quotes, and Export in particular would silently download quotes while
+              the user is looking at a different section. Tasks is cross-cutting and
+              stays, as does the signed-in address. */}
+          {section === "quotes" && (<>
           <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setShowSend(true)}><Send size={15} /> {isMobile ? "Send" : "Send to Client"}</button>
           <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={exportCSV}><Download size={15} /> {isMobile ? "" : "Export"}</button>
           <button style={{ ...S.primaryBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), client: "", tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] })}>
             <Plus size={16} /> {isMobile ? "New" : "New Quote"}
           </button>
+          </>)}
         </div>
       </header>
 
