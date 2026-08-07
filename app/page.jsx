@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { SB } from '@/lib/supabase';
 import { SBQ } from '@/lib/supabaseQuotes';
 import Quotes from '@/app/quotes';
+import Codes from '@/app/codes';
 import Testing from '@/app/testing';
 import Pricing from '@/app/pricing';
 import Programs from '@/app/programs';
@@ -201,6 +202,7 @@ const Ic = {
   shipments:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6h13v9H1zM14 9h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg>,
   inventory:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
   quotes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9.5 14.5h3.5a1.5 1.5 0 0 0 0-3h-2a1.5 1.5 0 0 1 0-3H14"/></svg>,
+  codes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>,
   'client-relations':<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M17 8h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2v4l-4-4H9a1.9 1.9 0 0 1-1.4-.6"/><path d="M3 4h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2z"/></svg>,
   settings:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
 };
@@ -241,6 +243,7 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null }) {
     { id:'shipments',          label:'Shipments' },
     { id:'inventory',          label:'Inventory' },
     { id:'quotes',             label:'Quotes' },
+    { id:'codes',              label:'Codes' },
     { id:'client-relations',   label:'Client Relations' },
   ];
   const activeFor = { 'sales-orders':['sales-orders','so-detail'], 'orders':['orders','order-detail'] };
@@ -5935,7 +5938,7 @@ export default function App() {
   const allowedPages = allowedPagesFor(role);
   const page = (allowedPages && !allowedPages.includes(rawPage)) ? allowedPages[0] : rawPage;
 
-  const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes','client-relations':'Client Relations'};
+  const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations'};
   const badges = {'client-relations': crUnread};
 
   return (
@@ -5956,7 +5959,9 @@ export default function App() {
         </div>
       ) : (
       <div className="main-area">
-        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='inventory'||page==='shipments'||page==='pricing'||page==='programs')?{display:'none'}:undefined}>
+        {/* codes draws its own heading, like testing — without it here the page
+            would show two stacked titles. */}
+        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='codes'||page==='inventory'||page==='shipments'||page==='pricing'||page==='programs')?{display:'none'}:undefined}>
           <h1 className="page-title">{titles[page]||''}</h1>
           <div className="page-actions">{pageActions[page]}</div>
         </div>
@@ -5969,6 +5974,7 @@ export default function App() {
           {page==='companies'        && <Companies />}
           {page==='products'         && <Products navigate={navigate} canCreateProducts={role !== 'limited_qc'} />}
           {page==='testing'          && <Testing />}
+          {page==='codes'            && <Codes />}
           {page==='pricing'          && <Pricing />}
           {page==='programs'         && <Programs userEmail={user?.email||''} />}
           {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} />}
