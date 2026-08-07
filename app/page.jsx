@@ -222,7 +222,7 @@ const isStaffEmail = email =>
 // Only roles listed here are limited, to exactly the page ids they map to.
 // Any other role — including no staff_profiles row, or a lookup error — is
 // unrestricted and sees every page, exactly as before.
-const ROLE_PAGES = { limited_qc: ['testing', 'products', 'shipments'] };
+const ROLE_PAGES = { limited_qc: ['testing', 'products', 'shipments', 'codes'] };
 // Returns the allowed page ids for a limited role, or null meaning unrestricted.
 // hasOwnProperty guard: role is free text, so a value like 'constructor' must
 // not pick up an inherited Object.prototype member and read as limited.
