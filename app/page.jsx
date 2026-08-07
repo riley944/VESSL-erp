@@ -3099,7 +3099,12 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
 }
 
 // ── Products ─────────────────────────────────────────────────────────────────
-function Products({ navigate }) {
+// canCreateProducts is a derived boolean rather than the role string, so the policy
+// stays beside ROLE_PAGES instead of scattering role names through view components.
+// It is intent, not enforcement: vessl.products carries a permissive `true` policy
+// (products_auth_all), so any authenticated @kinguniversal.com user can insert through
+// the API regardless. Locking that down is an RLS change, deliberately not made here.
+function Products({ navigate, canCreateProducts = true }) {
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [client, setClient] = useState('All');
@@ -3117,20 +3122,66 @@ function Products({ navigate }) {
     setQuotes(qRes.data||[]); setProds(pRes.data||[]); setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
-  // The backfill built products from these exact pairs, so sku+name is 1:1 with a
-  // quote row. SKU alone is not enough -- products_sku_name_key is UNIQUE on the pair,
-  // and one SKU can carry several products (LL1-1629 has three sizes). A quote missing
-  // either half has no key at all and simply goes unmatched.
+  // SKU alone is not enough -- products_sku_name_key is UNIQUE on (sku, name) and one
+  // SKU can carry several products (LL1-1629 has three sizes). The name alone IS enough
+  // to key on, so a SKU-less quote row still gets a key ('' + '|' + name) and can match
+  // a SKU-less product. That is what lets a product created from such a row match back
+  // on the very next render instead of being inserted again on the next click.
+  // Only a row with no name at all is unkeyable.
   const prodKey = (sku, name) => {
-    const s = (sku||'').trim(), n = (name||'').trim();
-    return (s && n) ? s+'|'+n : null;
+    const n = (name||'').trim();
+    return n ? (sku||'').trim()+'|'+n : null;
   };
   const prodBy = new Map(prods.map(p=>[prodKey(p.sku,p.name), p]).filter(([k])=>k));
   const matchOf = q => { const k = prodKey(q.sku, q.product); return k ? (prodBy.get(k)||null) : null; };
-  const toggleActive = async (prod) => {
-    const { error } = await SB.from('products').update({ active: !prod.active }).eq('id', prod.id);
-    if (error) { window._toast?.('Could not change active status — '+error.message,'err'); return; }
-    await load();
+
+  // '' is the Not set option; the two real states arrive as strings from the <select>.
+  const parseActive = v => (v === '' ? null : v === 'true');
+  const activeValue = a => (a == null ? '' : (a ? 'true' : 'false'));
+  // Re-reads the row a 23505 says already exists. sku null needs .is(), not .eq() --
+  // PostgREST renders .eq('sku', null) as sku=eq.null, which matches nothing, and the
+  // insert would then repeat forever.
+  const fetchExisting = async (sku, name) => {
+    let qy = SB.from('products').select('id,sku,name,active').eq('name', name);
+    qy = sku ? qy.eq('sku', sku) : qy.is('sku', null);
+    const { data } = await qy.limit(1);
+    return (data && data[0]) || null;
+  };
+  // One write per interaction, never a delete or an overwrite of another product.
+  // No optimistic update: prods is only touched after the database agrees, so a
+  // rejected write leaves the cell showing what is actually stored.
+  const [busyId, setBusyId] = useState(null);
+  const setActive = async (q, prod, value) => {
+    setBusyId(q.id);
+    try {
+      if (prod) {
+        const { error } = await SB.from('products').update({ active: value }).eq('id', prod.id);
+        if (error) { window._toast?.('Could not change active state — '+error.message,'err'); return; }
+        setProds(prev => prev.map(p => p.id===prod.id ? {...p, active:value} : p));
+        return;
+      }
+      const sku = (q.sku||'').trim() || null, name = (q.product||'').trim();
+      if (!name) return;
+      const { data, error } = await SB.from('products').insert({ sku, name, active:value }).select('id,sku,name,active').single();
+      if (!error && data) {
+        // Adopting the returned row is what turns the hollow ring filled without a
+        // reload -- and proves the widened key matched it back.
+        setProds(prev => [...prev, data]);
+        return;
+      }
+      // products_name_nullsku_key (or products_sku_name_key) fired: somebody got here
+      // first. Their decision stands -- adopt the stored row rather than re-applying
+      // ours, so a race cannot quietly overwrite a call someone else made.
+      if (error && error.code === '23505') {
+        const existing = await fetchExisting(sku, name);
+        if (existing) {
+          setProds(prev => prev.some(p=>p.id===existing.id) ? prev : [...prev, existing]);
+          window._toast?.('“'+name+'” already exists — showing the saved state instead','info');
+          return;
+        }
+      }
+      window._toast?.('Could not create product — '+(error?.message||'unknown error'),'err');
+    } finally { setBusyId(null); }
   };
   const tiersOf = q => { try { return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]); } catch { return []; } };
   const activeFreight = t => { const ship=t.ship||'ocean'; return ship==='air'?(Number(t.freightAir??t.freightDuty)||0):(Number(t.freightOcean??t.freightDuty)||0); };
@@ -3203,24 +3254,36 @@ function Products({ navigate }) {
                     <td className="mono">{tiers.length}</td>
                     <td className="mono">{priceRange(q)||'—'}</td>
                     <td className="mono" style={{color:m==null?'var(--faint)':m<15?'var(--hot)':m<25?'var(--warn)':'var(--ok)'}}>{m==null?'—':m+'%'}</td>
-                    {/* Three states for a matched product: true, false, and null meaning
-                        nobody has ruled on it yet. Null is a starting state only — the
-                        toggle never returns to it. The em dash is a different thing again:
-                        no product record matched this quote row at all, so there is
-                        nothing to toggle and the cell is not clickable. */}
-                    <td
-                      onClick={prod?(e=>{e.stopPropagation();toggleActive(prod);}):undefined}
-                      title={prod?(prod.active==null?'Not set — click to activate':prod.active?'Click to deactivate':'Click to activate'):'No matching product record'}
-                      style={{whiteSpace:'nowrap',cursor:prod?'pointer':'default'}}
-                    >
-                      {!prod ? <span style={{color:'var(--faint)'}}>—</span>
-                        : prod.active==null ? <span style={{color:'var(--muted)'}}>Not set</span>
-                        : (
-                          <span style={{display:'inline-flex',alignItems:'center',gap:'6px'}}>
-                            <span style={{width:'7px',height:'7px',borderRadius:'50%',flexShrink:0,background:prod.active?'var(--ok)':'var(--hot)'}} />
-                            {prod.active?'Active':'Inactive'}
-                          </span>
-                        )}
+                    {/* A FILLED dot means a product record exists — green/red/grey for
+                        true/false/undecided. A HOLLOW ring means no product record does,
+                        so this quote has drifted out of sync; setting it creates one.
+                        The em dash is narrower still: no SKU and no name, nothing to key
+                        on or create, so the control is disabled rather than misleading. */}
+                    <td onClick={e=>e.stopPropagation()} style={{whiteSpace:'nowrap'}}>
+                      {!prodKey(q.sku,q.product) ? (
+                        <span style={{color:'var(--faint)'}} title="No SKU and no product name — this row cannot be matched to a product or given one.">—</span>
+                      ) : (
+                        <span style={{display:'inline-flex',alignItems:'center',gap:'7px'}}>
+                          <span style={{width:'8px',height:'8px',borderRadius:'50%',flexShrink:0,boxSizing:'border-box',
+                            ...(prod
+                              ? {background: prod.active==null ? 'var(--muted)' : prod.active ? 'var(--ok)' : 'var(--hot)'}
+                              : {background:'transparent', border:'1.5px solid var(--muted)'})}} />
+                          <select
+                            value={activeValue(prod ? prod.active : null)}
+                            disabled={busyId===q.id || (!prod && !canCreateProducts)}
+                            onChange={e=>setActive(q, prod, parseActive(e.target.value))}
+                            aria-label={'Active state for '+(q.sku||q.product||'product')}
+                            title={prod ? 'Active state for this product'
+                              : canCreateProducts ? 'No product record yet — setting this creates one'
+                              : 'No product record yet — creating one is not available for your role'}
+                            style={{border:'1px solid var(--line)',borderRadius:'7px',padding:'3px 6px',fontSize:'11.5px',color:'var(--ink-2)',background:'#fff',fontFamily:'inherit',outline:'none',cursor:(busyId===q.id||(!prod&&!canCreateProducts))?'default':'pointer',opacity:(busyId===q.id||(!prod&&!canCreateProducts))?.55:1}}
+                          >
+                            <option value="">— Not set —</option>
+                            <option value="true">Active</option>
+                            <option value="false">Inactive</option>
+                          </select>
+                        </span>
+                      )}
                     </td>
                     <td style={{textAlign:'right'}} onClick={e=>{e.stopPropagation();setPoQuote(q);}}><span className="pull-link">Create PO →</span></td>
                   </tr>
@@ -5896,7 +5959,7 @@ export default function App() {
           {page==='orders'           && <Orders navigate={navigate} />}
           {page==='order-detail'     && <OrderDetail id={params.id} navigate={navigate} />}
           {page==='companies'        && <Companies />}
-          {page==='products'         && <Products navigate={navigate} />}
+          {page==='products'         && <Products navigate={navigate} canCreateProducts={role !== 'limited_qc'} />}
           {page==='testing'          && <Testing />}
           {page==='pricing'          && <Pricing />}
           {page==='programs'         && <Programs userEmail={user?.email||''} />}
