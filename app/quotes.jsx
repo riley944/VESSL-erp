@@ -993,7 +993,14 @@ function Platform({ session }) {
           <div style={{ flex: "0 0 90px", textAlign: "right" }}>Status</div>
         </div>
         {codesLoading && <div style={S.empty}><div style={{ color: "#6a7488" }}>Loading codes…</div></div>}
-        {!codesLoading && codesErr && <div style={S.empty}><div style={{ color: "#a14a4a" }}>Couldn't load codes: {codesErr}</div></div>}
+        {/* codes is left as [] rather than null on failure, because null would re-enter
+            the effect immediately and spin. Recovery is this button, not a reload. */}
+        {!codesLoading && codesErr && (
+          <div style={S.empty}>
+            <div style={{ color: "#a14a4a" }}>Couldn't load codes: {codesErr}</div>
+            <button style={{ ...S.ghostBtnSm, marginTop: 12 }} onClick={loadCodes}>Try again</button>
+          </div>
+        )}
         {!codesLoading && !codesErr && shownCodes.length === 0 && (
           <div style={S.empty}>
             <Box size={40} color="#e7eaf0" strokeWidth={1.2} />
@@ -1016,7 +1023,7 @@ function Platform({ session }) {
       </div>
       </>)}
 
-      {editingCode && <CodeModal data={editingCode} onClose={() => setEditingCode(null)} onSaved={() => { setEditingCode(null); loadCodes(); }} />}
+      {editingCode && <CodeModal data={editingCode} flash={flash} onClose={() => setEditingCode(null)} onSaved={() => { setEditingCode(null); loadCodes(); }} />}
 
       {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} factories={factories} clientNames={clients.map((c) => c.name).filter((n) => n !== "Unassigned")} contacts={contacts} onSaveFactory={saveFactoryPreset} onSaveContact={saveContact} userEmail={userEmail} />}
       {toast && <div style={S.toast}><Check size={15} /> {toast}</div>}
@@ -1565,7 +1572,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
 // Create or edit one vessl.htscodes row. Branches on data?.id the way RegModal does.
 // There is no delete: retiring a code is unchecking Active, so historical quotes that
 // already cite it stay resolvable.
-function CodeModal({ data, onClose, onSaved }) {
+function CodeModal({ data, flash, onClose, onSaved }) {
   const editing = !!(data && data.id);
   const [f, setF] = useState({
     code: data?.code || "",
@@ -1579,7 +1586,10 @@ function CodeModal({ data, onClose, onSaved }) {
   const setCode = (e) => setF((p) => ({ ...p, code: e.target.value.replace(/\D/g, "") }));
   const save = async () => {
     const code = f.code.trim();
-    if (!code) { alert("A code is required"); return; }
+    // flash() rather than alert(): it is what the rest of this page uses for both
+    // outcomes -- "Couldn't add task", "Couldn't save contact" and so on. The few
+    // alert() calls left in the file are in components that have no flash in scope.
+    if (!code) { flash("A code is required"); return; }
     setSaving(true);
     const payload = { code, description: f.description.trim() || null, active: !!f.active };
     const { error } = editing
@@ -1588,9 +1598,10 @@ function CodeModal({ data, onClose, onSaved }) {
     setSaving(false);
     if (error) {
       const dupe = error.code === "23505" || /duplicate key|htscodes_code_key/i.test(error.message || "");
-      alert(dupe ? "That code already exists" : "Error: " + error.message);
+      flash(dupe ? "That code already exists" : "Couldn't save code: " + error.message);
       return;   // stay open so the entry is not lost
     }
+    flash(editing ? "Code updated" : "Code added");
     onSaved();
   };
   return (
