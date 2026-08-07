@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { SB } from "@/lib/supabase";
 import { CreateProductModal } from "@/app/components/CreateProductModal";
 
@@ -36,6 +36,18 @@ const COMPLIANCE_OPTS = [['','— Not set —'],['passed','Pass'],['pending','Pe
 // see what people actually reach for; this is the list to put back as a <select> once
 // there is enough real data to say what the options should be.
 const MAT_TYPES = ['fabric','dye','ink','zipper','plastic','trim','hardware','packaging','other'];
+// value, tab label, and the noun used in the placeholder and the no-matches message.
+const TABS = [
+  ['products','Products','products'],
+  ['materials','Materials','materials'],
+  ['reports','Test Reports','test reports'],
+  ['regs','Regulations','regulations'],
+];
+// Null-safe substring match. Reports read through joined objects (r.lab?.name), which
+// give undefined before the field is even reached, so every candidate funnels through
+// String(v ?? '') rather than being trusted to be a string.
+const matches = (needle, ...fields) =>
+  fields.some(v => String(v ?? '').toLowerCase().includes(needle));
 
 function StatusPill({ map, status }) {
   const s = map[status] || { label:status||'—', color:'#8A8A8E', bg:'#F2F2F4' };
@@ -55,6 +67,7 @@ export default function Testing() {
   const [prodMats, setProdMats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // {type:'material'|'report'|'link', data}
+  const [search, setSearch] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -71,6 +84,35 @@ export default function Testing() {
     setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
+
+  // Everything is already in memory from load(), so filtering is a pass over arrays --
+  // no query runs on a keystroke. These feed the four VIEWS ONLY: ReportModal's product
+  // and material pickers and LinkModal's material list keep the unfiltered arrays, or a
+  // search would silently narrow what is selectable inside a modal.
+  const q = search.trim().toLowerCase();
+  const searching = q.length > 0;
+  const shownProducts = useMemo(() => !q ? products : products.filter(p =>
+    // cpsc_type is matched through its displayed fallback, so "no cpsc" finds exactly
+    // the products missing one -- the gap the fallback exists to show.
+    matches(q, p.name, p.sku, p.cpsc_type || 'No CPSC')
+  ), [products, q]);
+  const shownMaterials = useMemo(() => !q ? materials : materials.filter(m =>
+    // master_sku is not rendered on the row, unlike the rest. It is included because a
+    // pasted SKU should find its material; it is NULL on every row today because
+    // MaterialModal's save does not send it.
+    matches(q, m.name, m.composition, m.material_type, m.supplier?.name, m.supplier_name, m.master_sku)
+  ), [materials, q]);
+  const shownReports = useMemo(() => !q ? reports : reports.filter(r =>
+    // All three headline fallbacks, since which one renders varies by row, plus the
+    // regulation codes from the nested results grid.
+    matches(q, r.report_number, r.lab?.name, r.material?.name, r.product?.sku, r.product?.name,
+      ...(r.test_results || []).map(t => t.regulation_code))
+  ), [reports, q]);
+  const shownRegs = useMemo(() => !q ? regs : regs.filter(r =>
+    matches(q, r.code, r.name, r.category)
+  ), [regs, q]);
+  const shownCount = { products:shownProducts, materials:shownMaterials, reports:shownReports, regs:shownRegs }[tab].length;
+  const totalCount = { products, materials, reports, regs }[tab].length;
 
   // Derived product status from linked materials. Deliberately unreferenced: product
   // compliance is now the stored value alone (see effectiveStatus), so nothing calls
@@ -204,10 +246,24 @@ export default function Testing() {
       </div>
 
       {/* Tabs */}
-      <div style={{display:'flex',gap:'6px',marginBottom:'18px',flexWrap:'wrap'}}>
-        {[['products','Products'],['materials','Materials'],['reports','Test Reports'],['regs','Regulations']].map(([v,l])=>(
-          <button key={v} onClick={()=>setTab(v)} style={{padding:'8px 15px',borderRadius:'9px',border:'1px solid '+(tab===v?'transparent':'#E5E7EB'),cursor:'pointer',fontSize:'13px',fontWeight:500,background:tab===v?'#1A1A1C':'#fff',color:tab===v?'#fff':'#4A4A4E'}}>{l}</button>
+      {/* The row already wrapped, so the search group drops to its own line on narrow
+          screens instead of squashing the tabs. Changing tab clears the term: otherwise
+          you land on Materials, see an empty list, and have no idea why. */}
+      <div style={{display:'flex',gap:'6px',marginBottom:'18px',flexWrap:'wrap',alignItems:'center'}}>
+        {TABS.map(([v,l])=>(
+          <button key={v} onClick={()=>{setTab(v);setSearch('');}} style={{padding:'8px 15px',borderRadius:'9px',border:'1px solid '+(tab===v?'transparent':'#E5E7EB'),cursor:'pointer',fontSize:'13px',fontWeight:500,background:tab===v?'#1A1A1C':'#fff',color:tab===v?'#fff':'#4A4A4E'}}>{l}</button>
         ))}
+        <div style={{display:'flex',alignItems:'center',gap:'10px',marginLeft:'auto',flex:'1 1 240px',maxWidth:'400px',justifyContent:'flex-end'}}>
+          {/* .prod-search comes from globals.css, imported once in layout.jsx — no
+              import here and no reference back to page.jsx. */}
+          <div className="prod-search" style={{flex:'1 1 auto',minWidth:0}}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <input placeholder={'Search '+(TABS.find(t=>t[0]===tab)||[])[2]+'…'} value={search} onChange={e=>setSearch(e.target.value)} />
+          </div>
+          {/* The tiles above stay at totals while the list is filtered. This count makes
+              that read as deliberate rather than as the tiles being wrong. */}
+          {searching && <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{shownCount} of {totalCount}</span>}
+        </div>
       </div>
 
       {statusErr && (
@@ -219,10 +275,10 @@ export default function Testing() {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#8A8A8E'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={products} prodMats={prodMats} onLink={(p)=>setModal({type:'link',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} />}
-          {tab==='materials' && <MaterialsView materials={materials} onEdit={(m)=>setModal({type:'material',data:m})} onTest={(m)=>setModal({type:'report',data:{material_id:m.id}})} onDelete={deleteMaterial} />}
-          {tab==='reports'   && <ReportsView reports={reports} onEdit={(r)=>setModal({type:'report',row:r})} onDelete={deleteReport} />}
-          {tab==='regs'      && <RegsView regs={regs} onEdit={(r)=>setModal({type:'reg',data:r})} onDelete={deleteReg} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} onLink={(p)=>setModal({type:'link',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} />}
+          {tab==='materials' && <MaterialsView materials={shownMaterials} onEdit={(m)=>setModal({type:'material',data:m})} onTest={(m)=>setModal({type:'report',data:{material_id:m.id}})} onDelete={deleteMaterial} searching={searching} term={search.trim()} />}
+          {tab==='reports'   && <ReportsView reports={shownReports} onEdit={(r)=>setModal({type:'report',row:r})} onDelete={deleteReport} searching={searching} term={search.trim()} />}
+          {tab==='regs'      && <RegsView regs={shownRegs} onEdit={(r)=>setModal({type:'reg',data:r})} onDelete={deleteReg} searching={searching} term={search.trim()} />}
         </>
       )}
 
@@ -237,8 +293,12 @@ export default function Testing() {
 }
 
 // ── PRODUCTS VIEW ────────────────────────────────────────────────────────────
-function ProductsView({ products, prodMats, onLink, onSetStatus, onEdit, onDelete }) {
-  if(!products.length) return <Empty title="No products yet" sub="Products appear here once they exist. Open one to link the materials it is built from and set its compliance status." />;
+function ProductsView({ products, prodMats, onLink, onSetStatus, onEdit, onDelete, searching, term }) {
+  // Mid-search the "how records get created" copy would be misleading — the record may
+  // well exist, it just does not match.
+  if(!products.length) return searching
+    ? <Empty title={'No products match “'+term+'”'} sub="Try a different term, or clear the search." />
+    : <Empty title="No products yet" sub="Products appear here once they exist. Open one to link the materials it is built from and set its compliance status." />;
   return (
     <div style={{...card,overflow:'hidden'}}>
       <div style={{display:'grid',gridTemplateColumns:'1fr 140px 120px 130px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
@@ -285,8 +345,10 @@ function ProductsView({ products, prodMats, onLink, onSetStatus, onEdit, onDelet
 }
 
 // ── MATERIALS VIEW ───────────────────────────────────────────────────────────
-function MaterialsView({ materials, onEdit, onTest, onDelete }) {
-  if(!materials.length) return <Empty title="No materials yet" sub="Add a material (fabric, dye, zipper…) — it's the unit that gets tested and that SKUs inherit compliance from." />;
+function MaterialsView({ materials, onEdit, onTest, onDelete, searching, term }) {
+  if(!materials.length) return searching
+    ? <Empty title={'No materials match “'+term+'”'} sub="Try a different term, or clear the search." />
+    : <Empty title="No materials yet" sub="Add a material (fabric, dye, zipper…) — it's the unit that gets tested and that SKUs inherit compliance from." />;
   return (
     <div style={{...card,overflow:'hidden'}}>
       <div style={{display:'grid',gridTemplateColumns:'1fr 130px 120px 120px 150px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
@@ -313,8 +375,10 @@ function MaterialsView({ materials, onEdit, onTest, onDelete }) {
 }
 
 // ── REPORTS VIEW ─────────────────────────────────────────────────────────────
-function ReportsView({ reports, onEdit, onDelete }) {
-  if(!reports.length) return <Empty title="No test reports yet" sub="Log a lab report to record pass/fail results against CPSC regulations." />;
+function ReportsView({ reports, onEdit, onDelete, searching, term }) {
+  if(!reports.length) return searching
+    ? <Empty title={'No test reports match “'+term+'”'} sub="Try a different term, or clear the search." />
+    : <Empty title="No test reports yet" sub="Log a lab report to record pass/fail results against CPSC regulations." />;
   return (
     <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
       {reports.map(r=>(
@@ -353,8 +417,10 @@ function ReportsView({ reports, onEdit, onDelete }) {
 }
 
 // ── REGULATIONS VIEW ─────────────────────────────────────────────────────────
-function RegsView({ regs, onEdit, onDelete }) {
-  if(!regs.length) return <Empty title="No regulations loaded" sub="Run the compliance schema seed to load the CPSC rule library." />;
+function RegsView({ regs, onEdit, onDelete, searching, term }) {
+  if(!regs.length) return searching
+    ? <Empty title={'No regulations match “'+term+'”'} sub="Try a different term, or clear the search." />
+    : <Empty title="No regulations loaded" sub="Run the compliance schema seed to load the CPSC rule library." />;
   return (
     <div style={{...card,overflow:'hidden'}}>
       <div style={{display:'grid',gridTemplateColumns:'150px 1fr 130px 40px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
