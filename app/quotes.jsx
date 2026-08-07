@@ -9,6 +9,8 @@ import { SBQ } from "@/lib/supabaseQuotes";
 import { SB } from "@/lib/supabase";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { SIZE_SCALES, sizesForScale } from "@/app/components/SizeGrid";
+import { CodeModal } from "@/app/components/CodeModal";
+import { matches, normalizeTerm } from "@/lib/textFilter";
 
 // ============================================================
 //  SUPABASE CONNECTION
@@ -1986,37 +1988,79 @@ function FactoryList({ factories, onUpdate, onDelete, onAdd }) {
   );
 }
 
-// The HTS field, with a typeahead over vessl.htscodes. Its own component rather
-// than a change to Field, which fifteen other inputs share.
+// The HTS field. A closed combobox over vessl.htscodes: typing filters, but only
+// choosing a row commits, so a code that is not in the library cannot be entered
+// by typing. "+ Add code" opens CodeModal inline and selects the result, so a
+// missing code never sends anyone out of the quote form to add it.
 //
-// A datalist rather than a select: free entry has to stay possible, since a code
-// that is not in the library yet must still be enterable. It suggests, it does not
-// constrain. Same reason the SKU box on the product form uses one, and the same
-// discoverability problem -- a bare datalist gives no visual cue at all -- so the
-// chevron and the label hint come across with it.
-function HtsField({ f, setHts, codes }) {
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │ STRUCTURAL RULE — do not break this.                                        │
+// │                                                                             │
+// │ The control renders f.hts DIRECTLY. Nothing derives its displayed value     │
+// │ from `codes`.                                                               │
+// │                                                                             │
+// │ 20 of the 30 quotes carrying an HTS hold a code that is not in the library. │
+// │ A <select value={f.hts}> with no matching <option> renders BLANK, and       │
+// │ saving from there writes the blank over a real customs classification. So   │
+// │ would codes.find(c => c.code === f.hts)?.code. Either reintroduces silent   │
+// │ data loss on those 20 quotes. The list is for choosing, never for display.  │
+// └─────────────────────────────────────────────────────────────────────────────┘
+//
+// Its own component rather than a change to Field, which fifteen other inputs
+// share. Explicit commit rather than revert-on-blur: silently discarding what
+// someone typed is its own surprise.
+function HtsField({ f, codes, onPick, onAdd }) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const q = normalizeTerm(typed);
+  const hits = useMemo(
+    () => (!q ? codes : codes.filter((c) => matches(q, c.code, c.description))).slice(0, 60),
+    [codes, q]
+  );
+  // Display only. Never feeds the value -- see the rule above.
+  const known = codes.find((c) => c.code === (f.hts || ""));
+  const unlisted = !!f.hts && !known;
+  const commit = (code) => { onPick(code); setTyped(""); setOpen(false); };
+
   return (
-    <label style={S.field}>
-      <span style={S.fieldLabel}>
-        HTS Code {codes.length > 0 && <span style={{ color: "#9aa3b5", fontWeight: 400 }}>— pick one or type a new one</span>}
-      </span>
-      <div style={{ position: "relative" }}>
-        <input
-          style={{ ...S.input, ...(codes.length ? { paddingRight: 30 } : {}) }}
-          value={f.hts ?? ""}
-          onChange={setHts}
-          list={codes.length ? "qf-hts-list" : undefined}
-          inputMode="numeric"
-          placeholder="Tariff code (per product)"
-        />
-        {codes.length > 0 && (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-            style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "#9aa3b5" }}><polyline points="6 9 12 15 18 9" /></svg>
-        )}
+    <label style={{ ...S.field, position: "relative" }}>
+      <span style={S.fieldLabel}>HTS Code</span>
+
+      {/* The committed value, rendered straight from f.hts whether or not the
+          library knows it. Clicking opens the picker; it never rewrites itself. */}
+      <div onClick={() => setOpen((v) => !v)}
+        style={{ ...S.input, display: "flex", alignItems: "center", gap: 8, cursor: "pointer", minHeight: 40 }}>
+        <span style={{ flex: 1, minWidth: 0, color: f.hts ? "#0f1729" : "#9aa3b5", fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {f.hts ? f.hts : "Select a tariff code"}
+          {known?.description && <span style={{ color: "#6a7488" }}> · {known.description}</span>}
+        </span>
+        {f.hts && <button type="button" title="Clear" onClick={(e) => { e.stopPropagation(); commit(""); }} style={S.clearBtn}><X size={13} /></button>}
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9aa3b5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="6 9 12 15 18 9" /></svg>
       </div>
-      {/* value is the bare code and is what gets written; the text content is only
-          the label the browser shows beside it, so typing "apron" finds 6211439000. */}
-      {codes.length > 0 && <datalist id="qf-hts-list">{codes.map((c) => <option key={c.code} value={c.code}>{c.description}</option>)}</datalist>}
+
+      {/* Not an error: the code is real and stays exactly as stored. It is a
+          prompt to add it to the library, which "+ Add code" does in place. */}
+      {unlisted && <span style={{ fontSize: 11.5, color: "#c2683a", marginTop: 4 }}>Not in the code library — still saved as is.</span>}
+
+      {open && (
+        <div style={S.htsPanel}>
+          <input autoFocus value={typed} onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") { setOpen(false); setTyped(""); } if (e.key === "Enter") { e.preventDefault(); if (hits.length === 1) commit(hits[0].code); } }}
+            placeholder="Filter by code or description…" style={{ ...S.input, marginBottom: 6 }} />
+          <div style={{ maxHeight: 220, overflowY: "auto" }}>
+            {hits.length === 0 && <div style={{ padding: "10px 8px", fontSize: 13, color: "#6a7488" }}>No codes match “{typed.trim()}”.</div>}
+            {hits.map((c) => (
+              <button key={c.id || c.code} type="button" onClick={() => commit(c.code)} style={S.htsOption}>
+                <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{c.code}</span>
+                <span style={{ color: "#6a7488", marginLeft: 8 }}>{c.description}</span>
+              </button>
+            ))}
+          </div>
+          <button type="button" onClick={() => { setOpen(false); onAdd(typed.replace(/\D/g, "")); }} style={S.htsAddBtn}>
+            <Plus size={13} /> Add code{q ? " “" + typed.trim() + "”" : ""}
+          </button>
+        </div>
+      )}
     </label>
   );
 }
@@ -2167,10 +2211,19 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
       .then(({ data, error }) => { if (alive && !error && data) setHtsCodes(data); });
     return () => { alive = false; };
   }, []);
-  // Digits only, stripped as typed, so a pasted 6307.90.9000 becomes 6307909000 in
-  // the box. No length rule -- 39269090 is a real 8-digit subheading. f.hts and the
-  // formToRow path are otherwise untouched.
-  const setHts = (e) => setF((p) => ({ ...p, hts: e.target.value.replace(/\D/g, "") }));
+  // The only writer of f.hts. Values arrive already normalised -- either from a
+  // library row, or from CodeModal, which strips as you type. formToRow is
+  // untouched and still writes hts: f.hts || null.
+  const pickHts = (code) => setF((p) => ({ ...p, hts: code || "" }));
+  // "+ Add code" from inside the picker. The seeded value is whatever was typed
+  // into the filter, so a code someone was hunting for is pre-filled.
+  const [addingCode, setAddingCode] = useState(null);
+  const onCodeAdded = (row) => {
+    setAddingCode(null);
+    if (!row) return;
+    setHtsCodes((prev) => [...prev, row].sort((a, b) => a.code.localeCompare(b.code)));
+    pickHts(row.code);   // select it straight away -- never leaves the quote form
+  };
   const autoFillClient = (i) => {
     setF((p) => {
       const tiers = p.tiers.map((t, idx) => {
@@ -2196,6 +2249,13 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
 
   return (
     <div style={S.overlay} onClick={onClose}>
+      {/* Rendered inside the quote form, above it, and stopping its own clicks:
+          adding a code must never unmount the draft underneath. */}
+      {addingCode && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <CodeModal data={addingCode} onClose={() => setAddingCode(null)} onSaved={onCodeAdded} />
+        </div>
+      )}
       <div style={S.modal} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
           <h2 style={S.modalTitle}>{initial.id ? "Edit Quote" : "New Quote"}</h2>
@@ -2234,7 +2294,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
               </label>
             )}
             <Field label="Product" k="product" placeholder="e.g. Needlepoint Belt" f={f} set={set} />
-            <HtsField f={f} setHts={setHts} codes={htsCodes} />
+            <HtsField f={f} codes={htsCodes} onPick={pickHts} onAdd={(seed) => setAddingCode({ code: seed || "" })} />
             <Field label="Quote Date" k="quoteDate" type="date" f={f} set={set} />
           </FormSection>
 
@@ -2518,6 +2578,11 @@ const S = {
   searchWrap: { display: "flex", alignItems: "center", gap: 9, background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 12, padding: "11px 15px", flex: "1 1 100%", boxShadow: "0 1px 3px rgba(26,34,56,0.05)" },
   searchInput: { border: "none", background: "transparent", fontSize: 14.5, width: "100%", color: "#0f1729" },
   clearBtn: { background: "transparent", border: "none", color: "#6a7488", display: "inline-flex", padding: 2 },
+  // The picker panel. Absolute rather than portalled: it sits inside S.modalBody,
+  // which scrolls, so the panel should scroll with its field.
+  htsPanel: { position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30, marginTop: 4, background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 12, boxShadow: "0 10px 30px rgba(15,23,41,0.16)", padding: 8 },
+  htsOption: { display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "8px 9px", borderRadius: 8, fontSize: 13.5, color: "#0f1729", cursor: "pointer" },
+  htsAddBtn: { display: "inline-flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "center", marginTop: 6, background: "#eef1f6", color: "#3461e0", border: "none", borderRadius: 9, padding: "9px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
   chipRow: { display: "flex", gap: 8, flexWrap: "wrap", maxWidth: 1280, margin: "0 auto 20px", alignItems: "center" },
   chip: { display: "inline-flex", alignItems: "center", gap: 6, background: "#ffffff", border: "1px solid #e7eaf0", color: "#6a7488", padding: "7px 13px", borderRadius: 20, fontSize: 13, fontWeight: 500 },
   chipActive: { background: "#101d3d", color: "#ffffff", borderColor: "#101d3d" },
