@@ -4,7 +4,6 @@ import { createPortal } from 'react-dom';
 import { SB } from '@/lib/supabase';
 import { SBQ } from '@/lib/supabaseQuotes';
 import Quotes from '@/app/quotes';
-import Codes from '@/app/codes';
 import Testing from '@/app/testing';
 import Pricing from '@/app/pricing';
 import Programs from '@/app/programs';
@@ -202,7 +201,6 @@ const Ic = {
   shipments:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6h13v9H1zM14 9h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg>,
   inventory:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
   quotes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9.5 14.5h3.5a1.5 1.5 0 0 0 0-3h-2a1.5 1.5 0 0 1 0-3H14"/></svg>,
-  codes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>,
   'client-relations':<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M17 8h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2v4l-4-4H9a1.9 1.9 0 0 1-1.4-.6"/><path d="M3 4h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2z"/></svg>,
   settings:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
 };
@@ -222,7 +220,7 @@ const isStaffEmail = email =>
 // Only roles listed here are limited, to exactly the page ids they map to.
 // Any other role — including no staff_profiles row, or a lookup error — is
 // unrestricted and sees every page, exactly as before.
-const ROLE_PAGES = { limited_qc: ['testing', 'products', 'shipments', 'codes'] };
+const ROLE_PAGES = { limited_qc: ['testing', 'shipments'] };
 // Returns the allowed page ids for a limited role, or null meaning unrestricted.
 // hasOwnProperty guard: role is free text, so a value like 'constructor' must
 // not pick up an inherited Object.prototype member and read as limited.
@@ -243,7 +241,6 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null }) {
     { id:'shipments',          label:'Shipments' },
     { id:'inventory',          label:'Inventory' },
     { id:'quotes',             label:'Quotes' },
-    { id:'codes',              label:'Codes' },
     { id:'client-relations',   label:'Client Relations' },
   ];
   const activeFor = { 'sales-orders':['sales-orders','so-detail'], 'orders':['orders','order-detail'] };
@@ -2860,16 +2857,10 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
               {saveMsg.startsWith('error:')?'⚠ '+saveMsg.slice(6):'✓ '+saveMsg}
             </div>
           )}
-          {/* Disabled, not removed. The title lives on the wrapper because a disabled
-              button does not reliably fire hover events, so a title on the button
-              itself would never surface. marginRight:auto moves with it -- the span
-              is the flex child now. */}
-          <span title="Disabled — this action has known defects and has never completed successfully. Ask Matt." style={{marginRight:'auto',display:'inline-flex'}}>
-            <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)',opacity:.45}} disabled onClick={saveAsProductsAndQuotes}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight:'4px'}}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-              Save as products &amp; quotes
-            </button>
-          </span>
+          <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)',marginRight:'auto'}} onClick={saveAsProductsAndQuotes}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight:'4px'}}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Save as products &amp; quotes
+          </button>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-dark" onClick={save}>Save Changes</button>
         </div>
@@ -3108,90 +3099,16 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
 }
 
 // ── Products ─────────────────────────────────────────────────────────────────
-// canCreateProducts is a derived boolean rather than the role string, so the policy
-// stays beside ROLE_PAGES instead of scattering role names through view components.
-// It is intent, not enforcement: vessl.products carries a permissive `true` policy
-// (products_auth_all), so any authenticated @kinguniversal.com user can insert through
-// the API regardless. Locking that down is an RLS change, deliberately not made here.
-function Products({ navigate, canCreateProducts = true }) {
+function Products({ navigate }) {
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [client, setClient] = useState('All');
   const [search, setSearch] = useState('');
   const [poQuote, setPoQuote] = useState(null);
   const [viewQuote, setViewQuote] = useState(null);
-  const [prods, setProds] = useState([]);
-  const [activeF, setActiveF] = useState('All');
-  const load = async () => {
-    setLoading(true);
-    const [qRes, pRes] = await Promise.all([
-      SBQ.from('quotes').select('*').order('created_at',{ascending:false}),
-      SB.from('products').select('id,sku,name,active'),
-    ]);
-    setQuotes(qRes.data||[]); setProds(pRes.data||[]); setLoading(false);
-  };
-  useEffect(()=>{ load(); },[]);
-  // SKU alone is not enough -- products_sku_name_key is UNIQUE on (sku, name) and one
-  // SKU can carry several products (LL1-1629 has three sizes). The name alone IS enough
-  // to key on, so a SKU-less quote row still gets a key ('' + '|' + name) and can match
-  // a SKU-less product. That is what lets a product created from such a row match back
-  // on the very next render instead of being inserted again on the next click.
-  // Only a row with no name at all is unkeyable.
-  const prodKey = (sku, name) => {
-    const n = (name||'').trim();
-    return n ? (sku||'').trim()+'|'+n : null;
-  };
-  const prodBy = new Map(prods.map(p=>[prodKey(p.sku,p.name), p]).filter(([k])=>k));
-  const matchOf = q => { const k = prodKey(q.sku, q.product); return k ? (prodBy.get(k)||null) : null; };
-
-  // '' is the Not set option; the two real states arrive as strings from the <select>.
-  const parseActive = v => (v === '' ? null : v === 'true');
-  const activeValue = a => (a == null ? '' : (a ? 'true' : 'false'));
-  // Re-reads the row a 23505 says already exists. sku null needs .is(), not .eq() --
-  // PostgREST renders .eq('sku', null) as sku=eq.null, which matches nothing, and the
-  // insert would then repeat forever.
-  const fetchExisting = async (sku, name) => {
-    let qy = SB.from('products').select('id,sku,name,active').eq('name', name);
-    qy = sku ? qy.eq('sku', sku) : qy.is('sku', null);
-    const { data } = await qy.limit(1);
-    return (data && data[0]) || null;
-  };
-  // One write per interaction, never a delete or an overwrite of another product.
-  // No optimistic update: prods is only touched after the database agrees, so a
-  // rejected write leaves the cell showing what is actually stored.
-  const [busyId, setBusyId] = useState(null);
-  const setActive = async (q, prod, value) => {
-    setBusyId(q.id);
-    try {
-      if (prod) {
-        const { error } = await SB.from('products').update({ active: value }).eq('id', prod.id);
-        if (error) { window._toast?.('Could not change active state — '+error.message,'err'); return; }
-        setProds(prev => prev.map(p => p.id===prod.id ? {...p, active:value} : p));
-        return;
-      }
-      const sku = (q.sku||'').trim() || null, name = (q.product||'').trim();
-      if (!name) return;
-      const { data, error } = await SB.from('products').insert({ sku, name, active:value }).select('id,sku,name,active').single();
-      if (!error && data) {
-        // Adopting the returned row is what turns the hollow ring filled without a
-        // reload -- and proves the widened key matched it back.
-        setProds(prev => [...prev, data]);
-        return;
-      }
-      // products_name_nullsku_key (or products_sku_name_key) fired: somebody got here
-      // first. Their decision stands -- adopt the stored row rather than re-applying
-      // ours, so a race cannot quietly overwrite a call someone else made.
-      if (error && error.code === '23505') {
-        const existing = await fetchExisting(sku, name);
-        if (existing) {
-          setProds(prev => prev.some(p=>p.id===existing.id) ? prev : [...prev, existing]);
-          window._toast?.('“'+name+'” already exists — showing the saved state instead','info');
-          return;
-        }
-      }
-      window._toast?.('Could not create product — '+(error?.message||'unknown error'),'err');
-    } finally { setBusyId(null); }
-  };
+  useEffect(()=>{
+    SBQ.from('quotes').select('*').order('created_at',{ascending:false}).then(({data})=>{ setQuotes(data||[]); setLoading(false); });
+  },[]);
   const tiersOf = q => { try { return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]); } catch { return []; } };
   const activeFreight = t => { const ship=t.ship||'ocean'; return ship==='air'?(Number(t.freightAir??t.freightDuty)||0):(Number(t.freightOcean??t.freightDuty)||0); };
   const moldPer = (m,qty)=>{ const f=Number(m)||0,qn=Number(qty)||0; return (f<=0||qn<=0)?0:f/qn; };
@@ -3206,19 +3123,8 @@ function Products({ navigate, canCreateProducts = true }) {
     { value:'All', label:'All Clients', count:quotes.length },
     ...clientList.map(c=>({ value:c, label:c, color:companyColor(c), count:counts[c] })),
   ];
-  // Counted over quote rows, not products, so the numbers match what the table shows.
-  // An unmatched row is neither active nor inactive and is excluded by either filter.
-  // active is nullable and null means undecided, so only an explicit true or false is
-  // counted -- an unruled product belongs to neither bucket.
-  const activeCounts = quotes.reduce((a,q)=>{ const p=matchOf(q); if(p&&p.active!=null) a[p.active?'active':'inactive']++; return a; }, {active:0,inactive:0});
-  const activeOptions = [
-    { value:'All', label:'All', count:quotes.length },
-    { value:'active', label:'Active', color:'var(--ok)', count:activeCounts.active },
-    { value:'inactive', label:'Inactive', color:'var(--hot)', count:activeCounts.inactive },
-  ];
   const filtered = quotes.filter(q=>{
     if(client!=='All' && ((q.client||'').trim()||'—')!==client) return false;
-    if(activeF!=='All'){ const p=matchOf(q); if(!p||p.active==null) return false; if((activeF==='active')!==p.active) return false; }
     const s=search.toLowerCase(); if(!s) return true;
     return `${q.product} ${q.client} ${q.factory} ${q.sku} ${q.country}`.toLowerCase().includes(s);
   });
@@ -3231,7 +3137,6 @@ function Products({ navigate, canCreateProducts = true }) {
       </div>
       <div className="fs-row" style={{marginBottom:'20px'}}>
         <FilterSelect label="All Clients" value={client} onChange={setClient} options={clientOptions} />
-        <FilterSelect label="All" value={activeF} onChange={setActiveF} options={activeOptions} />
       </div>
       {client!=='All' && (
         <div style={{display:'flex',alignItems:'center',gap:'8px',margin:'4px 0 16px',fontSize:'15px'}}>
@@ -3244,10 +3149,10 @@ function Products({ navigate, canCreateProducts = true }) {
       <div className="section-card">
         {loading ? <div className="loading">Loading products…</div> : filtered.length ? (
           <table className="data-table">
-            <thead><tr><th>SKU / Product</th><th>Factory</th><th>Tiers</th><th>Client Price</th><th>Avg Margin</th><th>Active</th><th></th></tr></thead>
+            <thead><tr><th>SKU / Product</th><th>Factory</th><th>Tiers</th><th>Client Price</th><th>Avg Margin</th><th></th></tr></thead>
             <tbody>
               {filtered.map(q=>{
-                const col=companyColor(q.client); const tiers=tiersOf(q); const m=avgMargin(q); const prod=matchOf(q);
+                const col=companyColor(q.client); const tiers=tiersOf(q); const m=avgMargin(q);
                 return (
                   <tr key={q.id} onClick={()=>setViewQuote(q)} style={{cursor:'pointer'}}>
                     <td>
@@ -3263,37 +3168,6 @@ function Products({ navigate, canCreateProducts = true }) {
                     <td className="mono">{tiers.length}</td>
                     <td className="mono">{priceRange(q)||'—'}</td>
                     <td className="mono" style={{color:m==null?'var(--faint)':m<15?'var(--hot)':m<25?'var(--warn)':'var(--ok)'}}>{m==null?'—':m+'%'}</td>
-                    {/* A FILLED dot means a product record exists — green/red/grey for
-                        true/false/undecided. A HOLLOW ring means no product record does,
-                        so this quote has drifted out of sync; setting it creates one.
-                        The em dash is narrower still: no SKU and no name, nothing to key
-                        on or create, so the control is disabled rather than misleading. */}
-                    <td onClick={e=>e.stopPropagation()} style={{whiteSpace:'nowrap'}}>
-                      {!prodKey(q.sku,q.product) ? (
-                        <span style={{color:'var(--faint)'}} title="No SKU and no product name — this row cannot be matched to a product or given one.">—</span>
-                      ) : (
-                        <span style={{display:'inline-flex',alignItems:'center',gap:'7px'}}>
-                          <span style={{width:'8px',height:'8px',borderRadius:'50%',flexShrink:0,boxSizing:'border-box',
-                            ...(prod
-                              ? {background: prod.active==null ? 'var(--muted)' : prod.active ? 'var(--ok)' : 'var(--hot)'}
-                              : {background:'transparent', border:'1.5px solid var(--muted)'})}} />
-                          <select
-                            value={activeValue(prod ? prod.active : null)}
-                            disabled={busyId===q.id || (!prod && !canCreateProducts)}
-                            onChange={e=>setActive(q, prod, parseActive(e.target.value))}
-                            aria-label={'Active state for '+(q.sku||q.product||'product')}
-                            title={prod ? 'Active state for this product'
-                              : canCreateProducts ? 'No product record yet — setting this creates one'
-                              : 'No product record yet — creating one is not available for your role'}
-                            style={{border:'1px solid var(--line)',borderRadius:'7px',padding:'3px 6px',fontSize:'11.5px',color:'var(--ink-2)',background:'#fff',fontFamily:'inherit',outline:'none',cursor:(busyId===q.id||(!prod&&!canCreateProducts))?'default':'pointer',opacity:(busyId===q.id||(!prod&&!canCreateProducts))?.55:1}}
-                          >
-                            <option value="">— Not set —</option>
-                            <option value="true">Active</option>
-                            <option value="false">Inactive</option>
-                          </select>
-                        </span>
-                      )}
-                    </td>
                     <td style={{textAlign:'right'}} onClick={e=>{e.stopPropagation();setPoQuote(q);}}><span className="pull-link">Create PO →</span></td>
                   </tr>
                 );
@@ -3414,14 +3288,18 @@ function Shipments({ onNewShipment }) {
   const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState(null);
-  const [tab, setTab] = useState('active');
-  const [viewMode, setViewMode] = useState('shipments'); // 'shipments' | 'quotes'
+  const [view, setView] = useState('quotes');            // 'quotes' | 'shipments'
+  const [tab, setTab] = useState('active');              // shipments sub-tab
+  const [quoteFilter, setQuoteFilter] = useState('');    // '' | draft | awaiting | bidsin | awarded
+  const [shipFilter, setShipFilter] = useState('');      // '' | arriving | overdue
+  const [search, setSearch] = useState('');
   const [quotes, setQuotes] = useState([]);
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [bids, setBids] = useState([]);
-  const [rfqQuote, setRfqQuote] = useState(null);      // freight quote being RFQ'd to forwarders
+  const [rfqQuote, setRfqQuote] = useState(null);
   const [showBidImport, setShowBidImport] = useState(false);
-  const [bidsQuote, setBidsQuote] = useState(null);    // freight quote whose bids are being compared
+  const [bidsQuote, setBidsQuote] = useState(null);
+
   const reloadBids = async () => {
     const { data } = await SB.from('forwarder_bids').select('*').order('created_at',{ascending:false});
     setBids(data||[]);
@@ -3445,189 +3323,257 @@ function Shipments({ onNewShipment }) {
   };
   useEffect(()=>{ reload(); reloadQuotes(); reloadBids(); },[]);
 
+  // ── derived ──
+  const bidCount = id => bids.filter(b=>b.shipment_quote_id===id).length;
+  const winnerOf = id => bids.find(b=>b.shipment_quote_id===id && b.selected);
   const TERMINAL = ['delivered','cancelled'];
-  const active = rows.filter(s => !TERMINAL.includes((s.status||'').toLowerCase()) && !s.actual_arrival);
-  const done = rows.filter(s => TERMINAL.includes((s.status||'').toLowerCase()) || s.actual_arrival);
-  const shown = tab==='active' ? active : tab==='delivered' ? done : rows;
+  const activeShips = rows.filter(s => !TERMINAL.includes((s.status||'').toLowerCase()) && !s.actual_arrival);
+  const doneShips = rows.filter(s => TERMINAL.includes((s.status||'').toLowerCase()) || s.actual_arrival);
+  const arriving = activeShips.filter(s => { const d=etaDays(s.estimated_arrival); return d!==null && d>=0 && d<=14; });
+  const overdueShips = activeShips.filter(s => { const d=etaDays(s.estimated_arrival); return d!==null && d<0; });
+  const awaiting = quotes.filter(q => q.status==='sent' && bidCount(q.id)===0);
+  const bidsIn = quotes.filter(q => bidCount(q.id)>0 && !winnerOf(q.id));
+  const awarded = quotes.filter(q => !!winnerOf(q.id));
+  const drafts = quotes.filter(q => q.status!=='sent');
 
-  // shipment status → progress fraction along the voyage
   const progressOf = (st) => {
     const map = { created:0.06, at_origin_port:0.18, in_transit:0.5, at_transshipment:0.6, at_destination_port:0.82, customs:0.9, out_for_delivery:0.96, delivered:1 };
     return map[st] ?? 0.1;
   };
   const legLabel = (st) => (st||'').replace(/_/g,' ');
+  const fd = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); };
+  const money0 = v => '$'+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:0});
+  const reopen = (q) => openFreightSheet(q, (q.client||{}).name||'', (q.forwarder||{}).name||'');
+
+  // ── filtering ──
+  const norm = t => (t||'').toLowerCase();
+  const matchQ = (q) => {
+    if (search) {
+      const hay = norm(q.quote_number)+' '+norm((q.client||{}).name)+' '+norm(q.origin)+' '+norm(q.destination)+' '+norm((winnerOf(q.id)||{}).forwarder_name);
+      if (!hay.includes(norm(search))) return false;
+    }
+    if (quoteFilter==='draft') return q.status!=='sent';
+    if (quoteFilter==='awaiting') return q.status==='sent' && bidCount(q.id)===0;
+    if (quoteFilter==='bidsin') return bidCount(q.id)>0 && !winnerOf(q.id);
+    if (quoteFilter==='awarded') return !!winnerOf(q.id);
+    return true;
+  };
+  const shownQuotes = quotes.filter(matchQ);
+  const matchS = (sp) => {
+    if (search) {
+      const po = ((sp.shipment_pos||[])[0]||{}).purchase_orders||{};
+      const hay = norm(sp.shipment_number)+' '+norm(po.client_po_number)+' '+norm(po.order_number)+' '+norm((po.client||{}).name)+' '+norm((sp.companies||{}).name)+' '+norm(sp.vessel_name)+' '+norm(sp.container_no);
+      if (!hay.includes(norm(search))) return false;
+    }
+    if (shipFilter==='arriving') { const d=etaDays(sp.estimated_arrival); if(!(d!==null&&d>=0&&d<=14&&!sp.actual_arrival)) return false; }
+    if (shipFilter==='overdue') { const d=etaDays(sp.estimated_arrival); if(!(d!==null&&d<0&&!sp.actual_arrival)) return false; }
+    return true;
+  };
+  const baseShips = tab==='active' ? activeShips : tab==='delivered' ? doneShips : rows;
+  const shownShips = baseShips.filter(matchS);
+
+  // pulse tile helper
+  const pulse = [
+    { k:'In transit',    v:activeShips.length,  c:'#1D1D1F', go:()=>{ setView('shipments'); setTab('active'); setShipFilter(''); } , on: view==='shipments'&&shipFilter===''&&tab==='active' },
+    { k:'Arriving \u226414d', v:arriving.length, c:'#0A84FF', go:()=>{ setView('shipments'); setTab('active'); setShipFilter(shipFilter==='arriving'?'':'arriving'); }, on: view==='shipments'&&shipFilter==='arriving' },
+    { k:'Overdue',       v:overdueShips.length, c:'#FF375F', go:()=>{ setView('shipments'); setTab('active'); setShipFilter(shipFilter==='overdue'?'':'overdue'); }, on: view==='shipments'&&shipFilter==='overdue' },
+    { k:'Awaiting bids', v:awaiting.length,     c:'#FF9F0A', go:()=>{ setView('quotes'); setQuoteFilter(quoteFilter==='awaiting'?'':'awaiting'); }, on: view==='quotes'&&quoteFilter==='awaiting' },
+    { k:'Bids in',       v:bidsIn.length,       c:'#30D158', go:()=>{ setView('quotes'); setQuoteFilter(quoteFilter==='bidsin'?'':'bidsin'); }, on: view==='quotes'&&quoteFilter==='bidsin' },
+    { k:'Awarded',       v:awarded.length,      c:'#0A84FF', go:()=>{ setView('quotes'); setQuoteFilter(quoteFilter==='awarded'?'':'awarded'); }, on: view==='quotes'&&quoteFilter==='awarded' },
+  ];
 
   return (
-    <div style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
-      {/* Title + actions (both buttons always available) */}
-      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'14px',marginBottom:'20px',flexWrap:'wrap'}}>
+    <div className="db-apple" style={{padding:'30px 28px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
+
+      {/* ── Header ── */}
+      <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'16px',marginBottom:'22px',flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:'24px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em'}}>Shipments</div>
-          <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Freight in motion — vessels, containers &amp; forwarder quotes</div>
+          <div style={{fontSize:'28px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.021em',lineHeight:1.05}}>Shipments</div>
+          <div style={{fontSize:'14.5px',color:'#86868B',marginTop:'5px',letterSpacing:'-.01em'}}>{String(quotes.length)+' quotes \u00b7 '+String(activeShips.length)+' in motion'}</div>
         </div>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
-          <button onClick={()=>setShowQuoteModal(true)} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #DCDCE0',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Freight Quote</button>
-          {onNewShipment && <button onClick={onNewShipment} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
+          <button onClick={()=>setShowQuoteModal(true)} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>
+          {onNewShipment && <button onClick={onNewShipment} style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
         </div>
       </div>
 
-      {/* View mode toggle — prominent segmented control */}
-      <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',marginBottom:'20px',boxShadow:'inset 0 1px 2px rgba(0,0,0,.05)'}}>
-        {[['shipments','Shipments',rows.length],['quotes','Freight Quotes',quotes.length]].map(([v,l,ct])=>(
-          <button key={v} onClick={()=>setViewMode(v)} style={{display:'inline-flex',alignItems:'center',gap:'8px',padding:'9px 20px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'14px',fontWeight:600,letterSpacing:'-.01em',background:viewMode===v?'#1A1A1C':'transparent',color:viewMode===v?'#fff':'#5A5A5E',boxShadow:viewMode===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
-            {l}<span style={{fontSize:'11.5px',fontWeight:700,borderRadius:'20px',padding:'1px 8px',background:viewMode===v?'rgba(255,255,255,.22)':'#DCDCE0',color:viewMode===v?'#fff':'#6A6A6E'}}>{ct}</span>
+      {/* ── Pulse strip ── */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:'12px',marginBottom:'22px'}}>
+        {pulse.map(m=>(
+          <button key={m.k} onClick={m.go} style={{background:m.on?'#1D1D1F':'#fff',borderRadius:'16px',padding:'14px 16px',border:'none',boxShadow:'0 1px 3px rgba(0,0,0,.04)',cursor:'pointer',textAlign:'left',transition:'.15s'}}>
+            <div style={{fontSize:'24px',fontWeight:600,letterSpacing:'-.02em',lineHeight:1,color:m.on?'#fff':(m.v>0?m.c:'#1D1D1F'),fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
+            <div style={{fontSize:'11.5px',color:m.on?'rgba(255,255,255,.65)':'#86868B',marginTop:'5px',letterSpacing:'-.006em'}}>{m.k}</div>
           </button>
         ))}
       </div>
 
-      {viewMode==='quotes' ? (
-        <>
-        <FreightQuotesView quotes={quotes} onDelete={deleteQuote} bids={bids} onRfq={q=>setRfqQuote(q)} onBids={q=>setBidsQuote(q)} onImportBids={()=>setShowBidImport(true)} />
-        {rfqQuote && <ForwarderRFQModal quote={rfqQuote} onClose={()=>setRfqQuote(null)} onSent={()=>{setRfqQuote(null); reloadQuotes();}} />}
-        {showBidImport && <ImportBidsModal quotes={quotes} onClose={()=>setShowBidImport(false)} onApplied={()=>{setShowBidImport(false); reloadBids();}} />}
-        {bidsQuote && <BidsCompareModal quote={bidsQuote} bids={bids.filter(b=>b.shipment_quote_id===bidsQuote.id)} onClose={()=>setBidsQuote(null)} onDeleted={reloadBids} />}
-        </>
-      ) : (
-      <>
-      {/* Tabs */}
-      <div style={{display:'flex',gap:'6px',marginBottom:'18px'}}>
-        {[['active','In transit',active.length],['delivered','Delivered',done.length],['all','All',rows.length]].map(([val,label,ct])=>(
-          <button key={val} onClick={()=>setTab(val)} style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'7px 14px',borderRadius:'9px',border:'1px solid '+(tab===val?'transparent':'#EAEAEE'),cursor:'pointer',fontSize:'12.5px',fontWeight:500,background:tab===val?'#1A1A1C':'#fff',color:tab===val?'#fff':'#4A4A4E'}}>
-            {label}<span style={{fontFamily:'var(--mono)',fontSize:'11px',color:tab===val?'rgba(255,255,255,.6)':'#A0A0A4'}}>{ct}</span>
-          </button>
-        ))}
+      {/* ── Controls row: segmented + search ── */}
+      <div style={{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap',marginBottom:'18px'}}>
+        <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',boxShadow:'inset 0 1px 2px rgba(0,0,0,.05)'}}>
+          {[['quotes','Freight Quotes',quotes.length],['shipments','Shipments',rows.length]].map(([v,l,ct])=>(
+            <button key={v} onClick={()=>{setView(v); setSearch('');}} style={{display:'inline-flex',alignItems:'center',gap:'8px',padding:'9px 18px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:view===v?'#1D1D1F':'transparent',color:view===v?'#fff':'#5A5A5E',boxShadow:view===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
+              {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 8px',background:view===v?'rgba(255,255,255,.22)':'#DCDCE0',color:view===v?'#fff':'#6A6A6E'}}>{ct}</span>
+            </button>
+          ))}
+        </div>
+        <div style={{position:'relative',flex:'1 1 220px',maxWidth:'340px'}}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#A0A0A4" strokeWidth="2" strokeLinecap="round" style={{position:'absolute',left:'13px',top:'50%',transform:'translateY(-50%)'}}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={view==='quotes'?'Search quotes, clients, routes\u2026':'Search shipments, vessels, refs\u2026'} style={{width:'100%',border:'none',borderRadius:'980px',padding:'10px 15px 10px 38px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
+        </div>
+        {view==='quotes' && (
+          <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+            {[['','All',quotes.length],['draft','Draft',drafts.length],['awaiting','Awaiting',awaiting.length],['bidsin','Bids in',bidsIn.length],['awarded','Awarded',awarded.length]].map(([v,l,ct])=>(
+              <button key={v||'all'} onClick={()=>setQuoteFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:quoteFilter===v?'#1D1D1F':'#fff',color:quoteFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l+' '+String(ct)}</button>
+            ))}
+            <button onClick={()=>setShowBidImport(true)} style={{display:'inline-flex',alignItems:'center',gap:'6px',fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'1px dashed rgba(0,0,0,.18)',cursor:'pointer',background:'transparent',color:'#4A4A4E'}}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+              Import reply
+            </button>
+          </div>
+        )}
+        {view==='shipments' && (
+          <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+            {[['active','In transit',activeShips.length],['delivered','Delivered',doneShips.length],['all','All',rows.length]].map(([val,label,ct])=>(
+              <button key={val} onClick={()=>{setTab(val); setShipFilter('');}} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:tab===val&&!shipFilter?'#1D1D1F':'#fff',color:tab===val&&!shipFilter?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{label+' '+String(ct)}</button>
+            ))}
+            {shipFilter && <button onClick={()=>setShipFilter('')} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:'#1D1D1F',color:'#fff'}}>{(shipFilter==='arriving'?'Arriving \u226414d':'Overdue')+' \u00d7'}</button>}
+          </div>
+        )}
       </div>
 
-      {loading ? <div style={{padding:'60px',textAlign:'center',color:'#8A8A8E',fontSize:'14px'}}>Loading…</div>
-        : shown.length ? (
-        <div style={{background:'#fff',borderRadius:'16px',border:'1px solid #ECECEE',overflow:'hidden'}}>
-          {/* column header */}
-          <div className="ship-manifest-head" style={{display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
+      {/* ══ FREIGHT QUOTES — card grid ══ */}
+      {view==='quotes' && (
+        shownQuotes.length===0 ? (
+          <div style={{background:'#fff',borderRadius:'20px',padding:'64px 32px',textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.04)'}}>
+            <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',marginBottom:'8px',letterSpacing:'-.018em'}}>{quotes.length===0?'No freight quotes yet':'Nothing matches'}</div>
+            <div style={{color:'#86868B',fontSize:'14px',maxWidth:'420px',margin:'0 auto',lineHeight:1.6}}>{quotes.length===0?'Create a freight quote to spec the cargo, then RFQ it to your forwarders.':'Try clearing the search or filter.'}</div>
+          </div>
+        ) : (
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(330px,1fr))',gap:'14px'}}>
+          {shownQuotes.map(q=>{
+            const pcs = (q.line_items||[]).reduce((a,l)=>a+(Number(l.pieces)||0),0);
+            const w = winnerOf(q.id); const bc = bidCount(q.id);
+            const eff = w ? bidEffective(w, q.container_type||'40HQ') : 0;
+            const ct = Math.max(1, Number(q.containers_needed)||1);
+            return (
+              <div key={q.id} style={{background:'#fff',borderRadius:'18px',padding:'18px 19px 14px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',display:'flex',flexDirection:'column',gap:'12px'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'10px'}}>
+                  <span style={{fontFamily:'var(--mono)',fontSize:'13px',fontWeight:700,color:'#1D1D1F'}}>{q.quote_number}</span>
+                  <span style={{fontSize:'10.5px',fontWeight:700,borderRadius:'980px',padding:'3px 10px',color:q.status==='sent'?'#0A84FF':'#B45309',background:q.status==='sent'?'#EAF3FE':'#FEF3C7',textTransform:'uppercase',letterSpacing:'.04em'}}>{q.status==='sent'?'Sent':'Draft'}</span>
+                </div>
+                <div>
+                  <div style={{fontSize:'15px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.014em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{(q.client||{}).name||'\u2014'}</div>
+                  <div style={{fontSize:'12.5px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{(q.origin||'\u2014')+' \u2192 '+(q.destination||'\u2014')+' \u00b7 '+fd(q.created_at)}</div>
+                </div>
+                <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+                  <span style={{fontSize:'11.5px',fontWeight:600,color:'#1D1D1F',background:'#F5F5F7',borderRadius:'7px',padding:'3px 9px'}}>{String(q.containers_needed||0)+' \u00d7 '+(q.container_type||"40'HQ")}</span>
+                  {pcs>0 && <span style={{fontSize:'11.5px',fontWeight:500,color:'#5A5A5E',background:'#F5F5F7',borderRadius:'7px',padding:'3px 9px'}}>{pcs.toLocaleString()+' pcs'}</span>}
+                  <span style={{fontSize:'11.5px',fontWeight:500,color:'#5A5A5E',background:'#F5F5F7',borderRadius:'7px',padding:'3px 9px'}}>{Number(q.total_cbm||0).toFixed(1)+' CBM'}</span>
+                </div>
+                {/* bids band */}
+                <button onClick={()=>setBidsQuote(q)} style={{textAlign:'left',border:'none',cursor:'pointer',borderRadius:'12px',padding:'11px 13px',background:w?'#EAF3FE':bc>0?'#F0FDF4':'#F5F5F7'}}>
+                  {w ? (
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'8px'}}>
+                      <span style={{fontSize:'12.5px',fontWeight:700,color:'#0A84FF',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{'\u2713 '+(w.forwarder_name||'Selected')}</span>
+                      <span style={{fontSize:'12.5px',fontWeight:800,color:'#1D1D1F',fontVariantNumeric:'tabular-nums',flexShrink:0}}>{money0(eff)}<span style={{fontSize:'10px',fontWeight:600,color:'#86868B'}}>/ctr</span></span>
+                    </div>
+                  ) : bc>0 ? (
+                    <span style={{fontSize:'12.5px',fontWeight:700,color:'#15803D'}}>{String(bc)+' bid'+(bc===1?'':'s')+' in \u2014 compare & select'}</span>
+                  ) : q.status==='sent' ? (
+                    <span style={{fontSize:'12.5px',fontWeight:600,color:'#86868B'}}>Awaiting forwarder replies\u2026</span>
+                  ) : (
+                    <span style={{fontSize:'12.5px',fontWeight:600,color:'#86868B'}}>Not sent yet \u2014 RFQ it below</span>
+                  )}
+                  {w && <div style={{fontSize:'11px',color:'#5A5A5E',marginTop:'3px'}}>{'\u2248 '+money0(eff*ct)+' shipment total'+(w.transit_days?' \u00b7 '+w.transit_days+'d transit':'')}</div>}
+                </button>
+                {/* actions */}
+                <div style={{display:'flex',gap:'6px',alignItems:'center',borderTop:'1px solid rgba(0,0,0,.05)',paddingTop:'11px'}}>
+                  <button onClick={()=>setRfqQuote(q)} style={{display:'inline-flex',alignItems:'center',gap:'5px',background:'#0A84FF',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#fff',cursor:'pointer'}}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                    RFQ
+                  </button>
+                  <button onClick={()=>reopen(q)} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Sheet</button>
+                  <div style={{flex:1}} />
+                  <button title="Delete quote" onClick={()=>{ if(window.confirm('Delete freight quote '+q.quote_number+'? This cannot be undone.')) deleteQuote(q.id); }} style={{background:'none',border:'none',cursor:'pointer',padding:'5px',borderRadius:'7px',color:'#C7C7CC',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        )
+      )}
+
+      {/* ══ SHIPMENTS — voyage manifest ══ */}
+      {view==='shipments' && (
+        loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading\u2026</div>
+        : shownShips.length ? (
+        <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
+          <div className="ship-manifest-head" style={{display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Reference</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Voyage</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>ETD / ETA</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>Arrival</div>
           </div>
-          {shown.map((s,i)=>{
-            const po = s.shipment_pos?.[0]?.purchase_orders;
-            const ref = po?.client_po_number || po?.order_number || s.shipment_number || '—';
-            const clientName = (po?.client?.name || s.companies?.name || '—').toUpperCase();
+          {shownShips.map((s,i)=>{
+            const po = ((s.shipment_pos||[])[0]||{}).purchase_orders;
+            const ref = (po||{}).client_po_number || (po||{}).order_number || s.shipment_number || '\u2014';
+            const clientName = (((po||{}).client||{}).name || (s.companies||{}).name || '\u2014').toUpperCase();
             const days = s.actual_arrival ? null : etaDays(s.estimated_arrival);
             const overdue = days!==null && days<0;
             const delivered = (s.status==='delivered' || s.actual_arrival);
             const frac = delivered ? 1 : progressOf(s.status);
             return (
-              <div key={s.id} onClick={()=>setOpenId(s.id)} className="ship-manifest-row" style={{display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'16px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',cursor:'pointer',transition:'.12s',alignItems:'center'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-              {/* Reference */}
+              <div key={s.id} onClick={()=>setOpenId(s.id)} className="ship-manifest-row" style={{display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'16px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',cursor:'pointer',transition:'.12s',alignItems:'center'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
               <div style={{minWidth:0}}>
-                <div style={{fontFamily:'var(--mono)',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{ref}</div>
-                <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{clientName}</div>
+                <div style={{fontFamily:'var(--mono)',fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{ref}</div>
+                <div style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{clientName}</div>
               </div>
-              {/* Voyage — the signature: vessel + progress leg */}
               <div style={{minWidth:0}}>
                 <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={overdue?'#DC2626':'#6B7280'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M2 20a6 6 0 0 0 12 0c0-7-6-9-6-14 0 5-6 7-6 14z" opacity="0"/><path d="M3 18h18l-2-6H5l-2 6z"/><path d="M12 12V4M8 8h8"/></svg>
-                  <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.vessel_name||'Vessel TBD'}{s.voyage_no?' · '+s.voyage_no:''}</span>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={overdue?'#FF375F':'#6B7280'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18h18l-2-6H5l-2 6z"/><path d="M12 12V4M8 8h8"/></svg>
+                  <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.vessel_name||'Vessel TBD'}{s.voyage_no?' \u00b7 '+s.voyage_no:''}</span>
                   {s.container_no && <span style={{fontFamily:'var(--mono)',fontSize:'10.5px',color:'#A0A0A4',whiteSpace:'nowrap'}}>{s.container_no}</span>}
                 </div>
-                {/* progress leg */}
-                <div style={{position:'relative',height:'2px',background:'#ECECEE',borderRadius:'2px'}}>
-                  <div style={{position:'absolute',left:0,top:0,height:'100%',width:(frac*100)+'%',background:overdue?'#DC2626':delivered?'#16A34A':'#1A1A1C',borderRadius:'2px',transition:'width .4s'}} />
-                  <div style={{position:'absolute',top:'50%',left:(frac*100)+'%',width:'8px',height:'8px',borderRadius:'50%',background:overdue?'#DC2626':delivered?'#16A34A':'#1A1A1C',transform:'translate(-50%,-50%)',border:'2px solid #fff',boxShadow:'0 1px 2px rgba(0,0,0,.2)'}} />
+                <div style={{position:'relative',height:'3px',background:'#ECECEE',borderRadius:'2px'}}>
+                  <div style={{position:'absolute',left:0,top:0,height:'100%',width:(frac*100)+'%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',borderRadius:'2px',transition:'width .4s'}} />
+                  <div style={{position:'absolute',top:'50%',left:(frac*100)+'%',width:'9px',height:'9px',borderRadius:'50%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',transform:'translate(-50%,-50%)',border:'2px solid #fff',boxShadow:'0 1px 2px rgba(0,0,0,.2)'}} />
                 </div>
                 <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'6px',textTransform:'uppercase',letterSpacing:'.05em'}}>{legLabel(s.status)}</div>
               </div>
-              {/* ETD/ETA */}
               <div style={{textAlign:'right'}}>
-                <div style={{fontSize:'12px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C0C0C4'}}>ETD</span> {fmtDateShort(s.estimated_departure)}</div>
-                <div style={{fontSize:'13px',fontWeight:600,color:'#1A1A1C',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C0C0C4',fontWeight:400}}>ETA</span> {fmtDateShort(s.estimated_arrival)}</div>
+                <div style={{fontSize:'12px',color:'#86868B',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC'}}>ETD</span> {fmtDateShort(s.estimated_departure)}</div>
+                <div style={{fontSize:'13px',fontWeight:600,color:'#1D1D1F',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC',fontWeight:400}}>ETA</span> {fmtDateShort(s.estimated_arrival)}</div>
               </div>
-              {/* Arrival countdown */}
               <div style={{textAlign:'right'}}>
                 {delivered ? (
-                  <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'12px',fontWeight:600,color:'#16A34A'}}>
+                  <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'12px',fontWeight:600,color:'#30D158'}}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Delivered
                   </span>
                 ) : days!==null ? (
                   <>
-                    <div style={{fontSize:'16px',fontWeight:700,color:overdue?'#DC2626':'#1A1A1C',fontVariantNumeric:'tabular-nums',lineHeight:1}}>{overdue?'+'+Math.abs(days):days}<span style={{fontSize:'11px',color:'#A0A0A4',fontWeight:400}}>d</span></div>
-                    <div style={{fontSize:'9.5px',color:overdue?'#DC2626':'#A0A0A4',marginTop:'2px'}}>{overdue?'overdue':'to ETA'}</div>
+                    <div style={{fontSize:'16px',fontWeight:700,color:overdue?'#FF375F':'#1D1D1F',fontVariantNumeric:'tabular-nums',lineHeight:1}}>{overdue?'+'+Math.abs(days):days}<span style={{fontSize:'11px',color:'#A0A0A4',fontWeight:400}}>d</span></div>
+                    <div style={{fontSize:'9.5px',color:overdue?'#FF375F':'#A0A0A4',marginTop:'2px'}}>{overdue?'overdue':'to ETA'}</div>
                   </>
-                ) : <span style={{fontSize:'12px',color:'#C0C0C4'}}>—</span>}
+                ) : <span style={{fontSize:'12px',color:'#C7C7CC'}}>\u2014</span>}
               </div>
             </div>
             );
           })}
         </div>
-      ) : <div style={{background:'#fff',borderRadius:'16px',border:'1px solid #ECECEE',padding:'56px 32px',textAlign:'center'}}>
-            <div style={{width:'52px',height:'52px',borderRadius:'14px',background:'#F2F2F6',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#A0A0A4" strokeWidth="1.6"><path d="M3 18h18l-2-6H5l-2 6z"/><path d="M12 12V4M8 8h8"/></svg>
-            </div>
-            <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'7px'}}>No {tab==='active'?'active ':tab==='delivered'?'delivered ':''}shipments</div>
-            <div style={{color:'#8A8A8E',fontSize:'13.5px'}}>Shipments appear here when orders move to the shipping stage.</div>
-          </div>}
-      </>
-      )}
+      ) : (
+        <div style={{background:'#fff',borderRadius:'20px',padding:'64px 32px',textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.04)'}}>
+          <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',marginBottom:'8px',letterSpacing:'-.018em'}}>{rows.length===0?'No shipments yet':'Nothing matches'}</div>
+          <div style={{color:'#86868B',fontSize:'14px',maxWidth:'420px',margin:'0 auto',lineHeight:1.6}}>{rows.length===0?'Shipments appear here when orders move to the shipping stage.':'Try clearing the search or filter.'}</div>
+        </div>
+      ))}
+
       {openId && <ShipmentDetailModal id={openId} onClose={()=>setOpenId(null)} onSaved={()=>{setOpenId(null);reload();}} />}
       {showQuoteModal && <ShipmentQuoteModal onClose={()=>setShowQuoteModal(false)} onSaved={()=>{setShowQuoteModal(false);reloadQuotes();}} />}
-    </div>
-  );
-}
-
-// ── Freight Quotes list ───────────────────────────────────────────────────────
-function FreightQuotesView({ quotes, onDelete, bids, onRfq, onBids, onImportBids }) {
-  const bidCount = id => (bids||[]).filter(b=>b.shipment_quote_id===id).length;
-  const winnerOf = id => (bids||[]).find(b=>b.shipment_quote_id===id && b.selected);
-  const fd = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
-  const reopen = (q) => openFreightSheet(q, q.client?.name||'', q.forwarder?.name||'');
-  if (!quotes.length) return (
-    <div style={{background:'#fff',borderRadius:'16px',border:'1px solid #ECECEE',padding:'56px 32px',textAlign:'center'}}>
-      <div style={{width:'52px',height:'52px',borderRadius:'14px',background:'#F2F2F6',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#A0A0A4" strokeWidth="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v16"/></svg>
-      </div>
-      <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'7px'}}>No freight quotes yet</div>
-      <div style={{color:'#8A8A8E',fontSize:'13.5px'}}>Generate a quote sheet to send carton &amp; CBM data to your forwarders.</div>
-    </div>
-  );
-  return (
-    <div style={{background:'#fff',borderRadius:'16px',border:'1px solid #ECECEE',overflow:'hidden'}}>
-      <div style={{display:'flex',justifyContent:'flex-end',padding:'10px 22px',borderBottom:'1px solid #ECECEE',background:'#fff'}}>
-        <button onClick={onImportBids} style={{display:'inline-flex',alignItems:'center',gap:'7px',background:'#F2F2F6',border:'none',borderRadius:'8px',padding:'7px 13px',fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
-          Import forwarder reply
-        </button>
-      </div>
-      <div style={{display:'grid',gridTemplateColumns:'110px 1fr 90px 80px 96px 150px 84px 34px',gap:'10px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
-        {['Quote #','Client / Route','Pieces','CBM','Containers','Forwarder Quotes','Status',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i>=2&&i<5?'right':'left'}}>{h}</div>)}
-      </div>
-      {quotes.map((q,i)=>{
-        const pcs = (q.line_items||[]).reduce((a,l)=>a+(Number(l.pieces)||0),0);
-        return (
-        <div key={q.id} onClick={()=>reopen(q)} style={{display:'grid',gridTemplateColumns:'110px 1fr 90px 80px 96px 150px 84px 34px',gap:'10px',padding:'15px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-          <div style={{fontFamily:'var(--mono)',fontSize:'13px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.quote_number}</div>
-          <div style={{minWidth:0}}>
-            <div style={{fontSize:'13.5px',fontWeight:500,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{(q.client||{}).name||'—'}</div>
-            <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{(q.origin||'—')+' → '+(q.destination||'—')+' · '+fd(q.created_at)}</div>
-          </div>
-          <div style={{textAlign:'right',fontSize:'13px',color:'#4A4A4E',fontVariantNumeric:'tabular-nums'}}>{pcs>0?pcs.toLocaleString():'—'}</div>
-          <div style={{textAlign:'right',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{Number(q.total_cbm||0).toFixed(1)}</div>
-          <div style={{textAlign:'right',fontSize:'13px',color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{q.containers_needed} × {q.container_type||"40'HQ"}</div>
-          <div style={{display:'flex',gap:'6px',alignItems:'center'}} onClick={e=>e.stopPropagation()}>
-            <button onClick={()=>onRfq&&onRfq(q)} title="Send this quote sheet to forwarders and request rates" style={{display:'inline-flex',alignItems:'center',gap:'5px',background:'#EAF3FE',border:'1px solid #BFDBFE',borderRadius:'7px',padding:'5px 10px',fontSize:'11.5px',fontWeight:600,color:'#0071E3',cursor:'pointer',whiteSpace:'nowrap'}}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
-              RFQ
-            </button>
-            <button onClick={()=>onBids&&onBids(q)} title="Compare forwarder quotes received" style={{display:'inline-flex',alignItems:'center',gap:'5px',background:winnerOf(q.id)?'#EAF3FE':bidCount(q.id)>0?'#DCFCE7':'#F2F2F6',border:'1px solid '+(winnerOf(q.id)?'#93C5FD':bidCount(q.id)>0?'#86EFAC':'#E5E7EB'),borderRadius:'7px',padding:'5px 10px',fontSize:'11.5px',fontWeight:600,color:winnerOf(q.id)?'#0071E3':bidCount(q.id)>0?'#15803D':'#8A8A8E',cursor:'pointer',whiteSpace:'nowrap',maxWidth:'96px',overflow:'hidden',textOverflow:'ellipsis'}}>
-              {winnerOf(q.id) ? '✓ '+(winnerOf(q.id).forwarder_name||'Selected') : bidCount(q.id)+' bid'+(bidCount(q.id)===1?'':'s')}
-            </button>
-          </div>
-          <div><span style={{display:'inline-flex',alignItems:'center',fontSize:'11px',fontWeight:600,borderRadius:'6px',padding:'3px 9px',color:q.status==='sent'?'#15803D':'#B45309',background:q.status==='sent'?'#DCFCE7':'#FEF3C7'}}>{q.status==='sent'?'Sent':'Draft'}</span></div>
-          <button title="Delete quote sheet" onClick={e=>{e.stopPropagation(); if(window.confirm('Delete freight quote '+q.quote_number+'? This cannot be undone.')) onDelete&&onDelete(q.id);}} style={{background:'none',border:'none',cursor:'pointer',padding:'4px',borderRadius:'6px',display:'flex',alignItems:'center',justifyContent:'center',color:'#C0C0C4'}} onMouseEnter={e=>{e.currentTarget.style.color='#DC2626';e.currentTarget.style.background='#FEE2E2';}} onMouseLeave={e=>{e.currentTarget.style.color='#C0C0C4';e.currentTarget.style.background='none';}}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
-          </button>
-        </div>
-        );
-      })}
+      {rfqQuote && <ForwarderRFQModal quote={rfqQuote} onClose={()=>setRfqQuote(null)} onSent={()=>{setRfqQuote(null); reloadQuotes();}} />}
+      {showBidImport && <ImportBidsModal quotes={quotes} onClose={()=>setShowBidImport(false)} onApplied={()=>{setShowBidImport(false); reloadBids();}} />}
+      {bidsQuote && <BidsCompareModal quote={bidsQuote} bids={bids.filter(b=>b.shipment_quote_id===bidsQuote.id)} onClose={()=>setBidsQuote(null)} onDeleted={reloadBids} />}
     </div>
   );
 }
@@ -4572,9 +4518,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
           <div style={{display:"flex",gap:"10px",marginBottom:"16px",alignItems:"center",flexWrap:"wrap"}}>
             <button className="btn btn-ghost btn-sm" onClick={()=>setShowPicker(true)}>+ Add Item</button>
             {mode==='manual' && items.some(it=>it.desc.trim()) && (
-              <span title="Disabled — this action has known defects and has never completed successfully. Ask Matt." style={{display:'inline-flex'}}>
-                <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)',opacity:.45}} disabled onClick={saveAsProductsAndQuotes}>Save as products &amp; quotes</button>
-              </span>
+              <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)'}} onClick={saveAsProductsAndQuotes}>Save as products &amp; quotes</button>
             )}
             {saveMsg && <div style={{fontSize:'12.5px',fontWeight:500,padding:'6px 10px',borderRadius:'7px',background:saveMsg.startsWith('error:')?'#fef2f2':'#d1fae5',color:saveMsg.startsWith('error:')?'#991b1b':'#065f46'}}>{saveMsg.startsWith('error:')?'⚠ '+saveMsg.slice(6):'✓ '+saveMsg}</div>}
           </div>
@@ -5938,7 +5882,7 @@ export default function App() {
   const allowedPages = allowedPagesFor(role);
   const page = (allowedPages && !allowedPages.includes(rawPage)) ? allowedPages[0] : rawPage;
 
-  const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations'};
+  const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes','client-relations':'Client Relations'};
   const badges = {'client-relations': crUnread};
 
   return (
@@ -5959,9 +5903,7 @@ export default function App() {
         </div>
       ) : (
       <div className="main-area">
-        {/* codes draws its own heading, like testing — without it here the page
-            would show two stacked titles. */}
-        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='codes'||page==='inventory'||page==='shipments'||page==='pricing'||page==='programs')?{display:'none'}:undefined}>
+        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='inventory'||page==='shipments'||page==='pricing'||page==='programs')?{display:'none'}:undefined}>
           <h1 className="page-title">{titles[page]||''}</h1>
           <div className="page-actions">{pageActions[page]}</div>
         </div>
@@ -5972,9 +5914,8 @@ export default function App() {
           {page==='orders'           && <Orders navigate={navigate} />}
           {page==='order-detail'     && <OrderDetail id={params.id} navigate={navigate} />}
           {page==='companies'        && <Companies />}
-          {page==='products'         && <Products navigate={navigate} canCreateProducts={role !== 'limited_qc'} />}
+          {page==='products'         && <Products navigate={navigate} />}
           {page==='testing'          && <Testing />}
-          {page==='codes'            && <Codes />}
           {page==='pricing'          && <Pricing />}
           {page==='programs'         && <Programs userEmail={user?.email||''} />}
           {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} />}
