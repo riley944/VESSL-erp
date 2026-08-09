@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { SB } from '@/lib/supabase';
 import { SBQ } from '@/lib/supabaseQuotes';
 import Quotes from '@/app/quotes';
+import Codes from '@/app/codes';
 import Testing from '@/app/testing';
 import Pricing from '@/app/pricing';
 import Programs from '@/app/programs';
@@ -201,6 +202,7 @@ const Ic = {
   shipments:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6h13v9H1zM14 9h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg>,
   inventory:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
   quotes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9.5 14.5h3.5a1.5 1.5 0 0 0 0-3h-2a1.5 1.5 0 0 1 0-3H14"/></svg>,
+  codes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>,
   'client-relations':<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M17 8h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2v4l-4-4H9a1.9 1.9 0 0 1-1.4-.6"/><path d="M3 4h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2z"/></svg>,
   settings:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
 };
@@ -220,7 +222,7 @@ const isStaffEmail = email =>
 // Only roles listed here are limited, to exactly the page ids they map to.
 // Any other role — including no staff_profiles row, or a lookup error — is
 // unrestricted and sees every page, exactly as before.
-const ROLE_PAGES = { limited_qc: ['testing', 'shipments'] };
+const ROLE_PAGES = { limited_qc: ['testing', 'products', 'shipments', 'codes'] };
 // Returns the allowed page ids for a limited role, or null meaning unrestricted.
 // hasOwnProperty guard: role is free text, so a value like 'constructor' must
 // not pick up an inherited Object.prototype member and read as limited.
@@ -241,6 +243,7 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null }) {
     { id:'shipments',          label:'Shipments' },
     { id:'inventory',          label:'Inventory' },
     { id:'quotes',             label:'Quotes' },
+    { id:'codes',              label:'Codes' },
     { id:'client-relations',   label:'Client Relations' },
   ];
   const activeFor = { 'sales-orders':['sales-orders','so-detail'], 'orders':['orders','order-detail'] };
@@ -2857,10 +2860,16 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
               {saveMsg.startsWith('error:')?'⚠ '+saveMsg.slice(6):'✓ '+saveMsg}
             </div>
           )}
-          <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)',marginRight:'auto'}} onClick={saveAsProductsAndQuotes}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight:'4px'}}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-            Save as products &amp; quotes
-          </button>
+          {/* Disabled, not removed. The title lives on the wrapper because a disabled
+              button does not reliably fire hover events, so a title on the button
+              itself would never surface. marginRight:auto moves with it -- the span
+              is the flex child now. */}
+          <span title="Disabled — this action has known defects and has never completed successfully. Ask Matt." style={{marginRight:'auto',display:'inline-flex'}}>
+            <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)',opacity:.45}} disabled onClick={saveAsProductsAndQuotes}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight:'4px'}}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Save as products &amp; quotes
+            </button>
+          </span>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-dark" onClick={save}>Save Changes</button>
         </div>
@@ -3099,16 +3108,90 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
 }
 
 // ── Products ─────────────────────────────────────────────────────────────────
-function Products({ navigate }) {
+// canCreateProducts is a derived boolean rather than the role string, so the policy
+// stays beside ROLE_PAGES instead of scattering role names through view components.
+// It is intent, not enforcement: vessl.products carries a permissive `true` policy
+// (products_auth_all), so any authenticated @kinguniversal.com user can insert through
+// the API regardless. Locking that down is an RLS change, deliberately not made here.
+function Products({ navigate, canCreateProducts = true }) {
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [client, setClient] = useState('All');
   const [search, setSearch] = useState('');
   const [poQuote, setPoQuote] = useState(null);
   const [viewQuote, setViewQuote] = useState(null);
-  useEffect(()=>{
-    SBQ.from('quotes').select('*').order('created_at',{ascending:false}).then(({data})=>{ setQuotes(data||[]); setLoading(false); });
-  },[]);
+  const [prods, setProds] = useState([]);
+  const [activeF, setActiveF] = useState('All');
+  const load = async () => {
+    setLoading(true);
+    const [qRes, pRes] = await Promise.all([
+      SBQ.from('quotes').select('*').order('created_at',{ascending:false}),
+      SB.from('products').select('id,sku,name,active'),
+    ]);
+    setQuotes(qRes.data||[]); setProds(pRes.data||[]); setLoading(false);
+  };
+  useEffect(()=>{ load(); },[]);
+  // SKU alone is not enough -- products_sku_name_key is UNIQUE on (sku, name) and one
+  // SKU can carry several products (LL1-1629 has three sizes). The name alone IS enough
+  // to key on, so a SKU-less quote row still gets a key ('' + '|' + name) and can match
+  // a SKU-less product. That is what lets a product created from such a row match back
+  // on the very next render instead of being inserted again on the next click.
+  // Only a row with no name at all is unkeyable.
+  const prodKey = (sku, name) => {
+    const n = (name||'').trim();
+    return n ? (sku||'').trim()+'|'+n : null;
+  };
+  const prodBy = new Map(prods.map(p=>[prodKey(p.sku,p.name), p]).filter(([k])=>k));
+  const matchOf = q => { const k = prodKey(q.sku, q.product); return k ? (prodBy.get(k)||null) : null; };
+
+  // '' is the Not set option; the two real states arrive as strings from the <select>.
+  const parseActive = v => (v === '' ? null : v === 'true');
+  const activeValue = a => (a == null ? '' : (a ? 'true' : 'false'));
+  // Re-reads the row a 23505 says already exists. sku null needs .is(), not .eq() --
+  // PostgREST renders .eq('sku', null) as sku=eq.null, which matches nothing, and the
+  // insert would then repeat forever.
+  const fetchExisting = async (sku, name) => {
+    let qy = SB.from('products').select('id,sku,name,active').eq('name', name);
+    qy = sku ? qy.eq('sku', sku) : qy.is('sku', null);
+    const { data } = await qy.limit(1);
+    return (data && data[0]) || null;
+  };
+  // One write per interaction, never a delete or an overwrite of another product.
+  // No optimistic update: prods is only touched after the database agrees, so a
+  // rejected write leaves the cell showing what is actually stored.
+  const [busyId, setBusyId] = useState(null);
+  const setActive = async (q, prod, value) => {
+    setBusyId(q.id);
+    try {
+      if (prod) {
+        const { error } = await SB.from('products').update({ active: value }).eq('id', prod.id);
+        if (error) { window._toast?.('Could not change active state — '+error.message,'err'); return; }
+        setProds(prev => prev.map(p => p.id===prod.id ? {...p, active:value} : p));
+        return;
+      }
+      const sku = (q.sku||'').trim() || null, name = (q.product||'').trim();
+      if (!name) return;
+      const { data, error } = await SB.from('products').insert({ sku, name, active:value }).select('id,sku,name,active').single();
+      if (!error && data) {
+        // Adopting the returned row is what turns the hollow ring filled without a
+        // reload -- and proves the widened key matched it back.
+        setProds(prev => [...prev, data]);
+        return;
+      }
+      // products_name_nullsku_key (or products_sku_name_key) fired: somebody got here
+      // first. Their decision stands -- adopt the stored row rather than re-applying
+      // ours, so a race cannot quietly overwrite a call someone else made.
+      if (error && error.code === '23505') {
+        const existing = await fetchExisting(sku, name);
+        if (existing) {
+          setProds(prev => prev.some(p=>p.id===existing.id) ? prev : [...prev, existing]);
+          window._toast?.('“'+name+'” already exists — showing the saved state instead','info');
+          return;
+        }
+      }
+      window._toast?.('Could not create product — '+(error?.message||'unknown error'),'err');
+    } finally { setBusyId(null); }
+  };
   const tiersOf = q => { try { return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]); } catch { return []; } };
   const activeFreight = t => { const ship=t.ship||'ocean'; return ship==='air'?(Number(t.freightAir??t.freightDuty)||0):(Number(t.freightOcean??t.freightDuty)||0); };
   const moldPer = (m,qty)=>{ const f=Number(m)||0,qn=Number(qty)||0; return (f<=0||qn<=0)?0:f/qn; };
@@ -3123,8 +3206,19 @@ function Products({ navigate }) {
     { value:'All', label:'All Clients', count:quotes.length },
     ...clientList.map(c=>({ value:c, label:c, color:companyColor(c), count:counts[c] })),
   ];
+  // Counted over quote rows, not products, so the numbers match what the table shows.
+  // An unmatched row is neither active nor inactive and is excluded by either filter.
+  // active is nullable and null means undecided, so only an explicit true or false is
+  // counted -- an unruled product belongs to neither bucket.
+  const activeCounts = quotes.reduce((a,q)=>{ const p=matchOf(q); if(p&&p.active!=null) a[p.active?'active':'inactive']++; return a; }, {active:0,inactive:0});
+  const activeOptions = [
+    { value:'All', label:'All', count:quotes.length },
+    { value:'active', label:'Active', color:'var(--ok)', count:activeCounts.active },
+    { value:'inactive', label:'Inactive', color:'var(--hot)', count:activeCounts.inactive },
+  ];
   const filtered = quotes.filter(q=>{
     if(client!=='All' && ((q.client||'').trim()||'—')!==client) return false;
+    if(activeF!=='All'){ const p=matchOf(q); if(!p||p.active==null) return false; if((activeF==='active')!==p.active) return false; }
     const s=search.toLowerCase(); if(!s) return true;
     return `${q.product} ${q.client} ${q.factory} ${q.sku} ${q.country}`.toLowerCase().includes(s);
   });
@@ -3137,6 +3231,7 @@ function Products({ navigate }) {
       </div>
       <div className="fs-row" style={{marginBottom:'20px'}}>
         <FilterSelect label="All Clients" value={client} onChange={setClient} options={clientOptions} />
+        <FilterSelect label="All" value={activeF} onChange={setActiveF} options={activeOptions} />
       </div>
       {client!=='All' && (
         <div style={{display:'flex',alignItems:'center',gap:'8px',margin:'4px 0 16px',fontSize:'15px'}}>
@@ -3149,10 +3244,10 @@ function Products({ navigate }) {
       <div className="section-card">
         {loading ? <div className="loading">Loading products…</div> : filtered.length ? (
           <table className="data-table">
-            <thead><tr><th>SKU / Product</th><th>Factory</th><th>Tiers</th><th>Client Price</th><th>Avg Margin</th><th></th></tr></thead>
+            <thead><tr><th>SKU / Product</th><th>Factory</th><th>Tiers</th><th>Client Price</th><th>Avg Margin</th><th>Active</th><th></th></tr></thead>
             <tbody>
               {filtered.map(q=>{
-                const col=companyColor(q.client); const tiers=tiersOf(q); const m=avgMargin(q);
+                const col=companyColor(q.client); const tiers=tiersOf(q); const m=avgMargin(q); const prod=matchOf(q);
                 return (
                   <tr key={q.id} onClick={()=>setViewQuote(q)} style={{cursor:'pointer'}}>
                     <td>
@@ -3168,6 +3263,37 @@ function Products({ navigate }) {
                     <td className="mono">{tiers.length}</td>
                     <td className="mono">{priceRange(q)||'—'}</td>
                     <td className="mono" style={{color:m==null?'var(--faint)':m<15?'var(--hot)':m<25?'var(--warn)':'var(--ok)'}}>{m==null?'—':m+'%'}</td>
+                    {/* A FILLED dot means a product record exists — green/red/grey for
+                        true/false/undecided. A HOLLOW ring means no product record does,
+                        so this quote has drifted out of sync; setting it creates one.
+                        The em dash is narrower still: no SKU and no name, nothing to key
+                        on or create, so the control is disabled rather than misleading. */}
+                    <td onClick={e=>e.stopPropagation()} style={{whiteSpace:'nowrap'}}>
+                      {!prodKey(q.sku,q.product) ? (
+                        <span style={{color:'var(--faint)'}} title="No SKU and no product name — this row cannot be matched to a product or given one.">—</span>
+                      ) : (
+                        <span style={{display:'inline-flex',alignItems:'center',gap:'7px'}}>
+                          <span style={{width:'8px',height:'8px',borderRadius:'50%',flexShrink:0,boxSizing:'border-box',
+                            ...(prod
+                              ? {background: prod.active==null ? 'var(--muted)' : prod.active ? 'var(--ok)' : 'var(--hot)'}
+                              : {background:'transparent', border:'1.5px solid var(--muted)'})}} />
+                          <select
+                            value={activeValue(prod ? prod.active : null)}
+                            disabled={busyId===q.id || (!prod && !canCreateProducts)}
+                            onChange={e=>setActive(q, prod, parseActive(e.target.value))}
+                            aria-label={'Active state for '+(q.sku||q.product||'product')}
+                            title={prod ? 'Active state for this product'
+                              : canCreateProducts ? 'No product record yet — setting this creates one'
+                              : 'No product record yet — creating one is not available for your role'}
+                            style={{border:'1px solid var(--line)',borderRadius:'7px',padding:'3px 6px',fontSize:'11.5px',color:'var(--ink-2)',background:'#fff',fontFamily:'inherit',outline:'none',cursor:(busyId===q.id||(!prod&&!canCreateProducts))?'default':'pointer',opacity:(busyId===q.id||(!prod&&!canCreateProducts))?.55:1}}
+                          >
+                            <option value="">— Not set —</option>
+                            <option value="true">Active</option>
+                            <option value="false">Inactive</option>
+                          </select>
+                        </span>
+                      )}
+                    </td>
                     <td style={{textAlign:'right'}} onClick={e=>{e.stopPropagation();setPoQuote(q);}}><span className="pull-link">Create PO →</span></td>
                   </tr>
                 );
@@ -4518,7 +4644,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
           <div style={{display:"flex",gap:"10px",marginBottom:"16px",alignItems:"center",flexWrap:"wrap"}}>
             <button className="btn btn-ghost btn-sm" onClick={()=>setShowPicker(true)}>+ Add Item</button>
             {mode==='manual' && items.some(it=>it.desc.trim()) && (
-              <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)'}} onClick={saveAsProductsAndQuotes}>Save as products &amp; quotes</button>
+              <span title="Disabled — this action has known defects and has never completed successfully. Ask Matt." style={{display:'inline-flex'}}>
+                <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)',opacity:.45}} disabled onClick={saveAsProductsAndQuotes}>Save as products &amp; quotes</button>
+              </span>
             )}
             {saveMsg && <div style={{fontSize:'12.5px',fontWeight:500,padding:'6px 10px',borderRadius:'7px',background:saveMsg.startsWith('error:')?'#fef2f2':'#d1fae5',color:saveMsg.startsWith('error:')?'#991b1b':'#065f46'}}>{saveMsg.startsWith('error:')?'⚠ '+saveMsg.slice(6):'✓ '+saveMsg}</div>}
           </div>
@@ -5882,7 +6010,7 @@ export default function App() {
   const allowedPages = allowedPagesFor(role);
   const page = (allowedPages && !allowedPages.includes(rawPage)) ? allowedPages[0] : rawPage;
 
-  const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes','client-relations':'Client Relations'};
+  const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations'};
   const badges = {'client-relations': crUnread};
 
   return (
@@ -5893,7 +6021,7 @@ export default function App() {
       </button>
       <div className={'sidebar-backdrop ' + (navOpen?'show':'')} onClick={()=>setNavOpen(false)} />
       <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} allowedPages={allowedPages} />
-      <TopBar user={user} title={titles[page]||''} taskOpen={taskPanelOpen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
+      <TopBar user={user} title="" taskOpen={taskPanelOpen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
       <TaskPanel open={taskPanelOpen} onClose={()=>setTaskPanelOpen(false)} />
       {page==='quotes' ? (
         <div className="main-area">
@@ -5903,7 +6031,9 @@ export default function App() {
         </div>
       ) : (
       <div className="main-area">
-        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='inventory'||page==='shipments'||page==='pricing'||page==='programs')?{display:'none'}:undefined}>
+        {/* codes draws its own heading, like testing — without it here the page
+            would show two stacked titles. */}
+        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='codes'||page==='inventory'||page==='shipments'||page==='pricing'||page==='programs')?{display:'none'}:undefined}>
           <h1 className="page-title">{titles[page]||''}</h1>
           <div className="page-actions">{pageActions[page]}</div>
         </div>
@@ -5914,8 +6044,9 @@ export default function App() {
           {page==='orders'           && <Orders navigate={navigate} />}
           {page==='order-detail'     && <OrderDetail id={params.id} navigate={navigate} />}
           {page==='companies'        && <Companies />}
-          {page==='products'         && <Products navigate={navigate} />}
+          {page==='products'         && <Products navigate={navigate} canCreateProducts={role !== 'limited_qc'} />}
           {page==='testing'          && <Testing />}
+          {page==='codes'            && <Codes />}
           {page==='pricing'          && <Pricing />}
           {page==='programs'         && <Programs userEmail={user?.email||''} />}
           {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} />}
