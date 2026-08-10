@@ -663,14 +663,36 @@ function LabModal({ onClose, onSaved }) {
   );
 }
 
-// Fields mirror vessl.regulations exactly: code and name (both NOT NULL), category,
-// applies_to, age_group, requires_3p, active (default true), sort_order (default
-// 100). RegsView filters on active, so a rule created inactive would vanish from
-// that tab and the report picker the moment it was saved — it defaults on.
+// The four values vessl.regulations.certificate_required accepts, plus the empty
+// case. A <select> rather than a text box because the column carries a CHECK
+// constraint: anything else is rejected by the database, and a free-text field
+// would turn a typo into a raw constraint error. Labels are the source sheet's own
+// wording, so a row reads here the way it reads in the CPSC list.
+const CERT_OPTS = [
+  ['', '— Not set —'],
+  ['cpc', "CPC (children's product)"],
+  ['gcc', 'GCC (general use)'],
+  ['depends_on_age_grade', 'CPC or GCC — depends on age grading'],
+  ['verify', 'See note — verify status'],
+];
+
+// Fields mirror vessl.regulations exactly: code and name (both NOT NULL), citation,
+// certificate_required, notes, category, applies_to, age_group, requires_3p, active
+// (default true), sort_order (default 100). RegsView filters on active, so a rule
+// created inactive would vanish from that tab and the report picker the moment it
+// was saved — it defaults on.
+//
+// citation, certificate_required and notes were added to the table after this modal
+// was written, and for a while it could neither show nor change them -- 79 rows
+// carried a certificate type that was invisible from here. The old payload omitted
+// the three keys entirely, which is the only reason editing a rule did not wipe
+// them; now they are edited directly and that accident is no longer load-bearing.
 function RegModal({ data, onClose, onSaved }) {
   const editing = !!(data && data.id);
   const [f,setF]=useState({
     code:data?.code||'', name:data?.name||'', category:data?.category||'',
+    citation:data?.citation||'', certificate_required:data?.certificate_required||'',
+    notes:data?.notes||'',
     applies_to:data?.applies_to||'', age_group:data?.age_group||'',
     requires_3p:editing?!!data.requires_3p:false,
     active:editing?!!data.active:true,
@@ -685,6 +707,13 @@ function RegModal({ data, onClose, onSaved }) {
     setSaving(true);
     const payload = {
       code, name, category:f.category||null, applies_to:f.applies_to||null, age_group:f.age_group||null,
+      // Trimmed, then '' collapses to null so a cleared box empties the column rather
+      // than storing a blank. certificate_required needs no trim -- it can only hold a
+      // value the select put there -- but '' must still become null: the CHECK accepts
+      // null or one of four words, and '' is neither.
+      citation:f.citation.trim()||null,
+      certificate_required:f.certificate_required||null,
+      notes:f.notes.trim()||null,
       requires_3p:!!f.requires_3p, active:!!f.active,
     };
     // sort_order defaults to 100 in the database, and a default only fires when the
@@ -707,13 +736,33 @@ function RegModal({ data, onClose, onSaved }) {
           <div><label style={lbl}>Citation *</label><input style={inp} value={f.code} onChange={set('code')} placeholder="e.g. 16 CFR 1303" /></div>
           <div><label style={lbl}>Rule name *</label><input style={inp} value={f.name} onChange={set('name')} placeholder="e.g. Lead in paint" /></div>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
-          <div><label style={lbl}>Category</label><input style={inp} value={f.category} onChange={set('category')} placeholder="e.g. chemical, mechanical" /></div>
-          <div><label style={lbl}>Applies to</label><input style={inp} value={f.applies_to} onChange={set('applies_to')} placeholder="e.g. painted surfaces" /></div>
+        {/* Two fields, not one repeated. Citation above is the short unique key the
+            rest of the app cites -- 16 CFR 1263. This is the string as published,
+            which can name several subsections of that one part. The word "full" is
+            what separates them on screen. */}
+        <div>
+          <label style={lbl}>Full citation <span style={{textTransform:'none',letterSpacing:0,fontWeight:400,color:'#A0A0A4'}}>(as published)</span></label>
+          <input style={inp} value={f.citation} onChange={set('citation')} placeholder="e.g. 15 U.S.C. § 2056e; 16 CFR §§ 1263.3, 1263.4" />
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
+          <div><label style={lbl}>Certificate required</label>
+            <select style={inp} value={f.certificate_required} onChange={set('certificate_required')}>
+              {CERT_OPTS.map(([v,l])=><option key={v||'none'} value={v}>{l}</option>)}
+            </select>
+          </div>
+          <div><label style={lbl}>Category</label><input style={inp} value={f.category} onChange={set('category')} placeholder="e.g. chemical, mechanical" /></div>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
+          <div><label style={lbl}>Applies to</label><input style={inp} value={f.applies_to} onChange={set('applies_to')} placeholder="e.g. painted surfaces" /></div>
           <div><label style={lbl}>Age group</label><input style={inp} value={f.age_group} onChange={set('age_group')} placeholder="e.g. under 12" /></div>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
           <div><label style={lbl}>Sort order <span style={{textTransform:'none',letterSpacing:0,fontWeight:400,color:'#A0A0A4'}}>(blank = 100)</span></label><input type="number" style={inp} value={f.sort_order} onChange={set('sort_order')} placeholder="100" /></div>
+          <div></div>
+        </div>
+        <div>
+          <label style={lbl}>Notes</label>
+          <textarea style={{...inp,minHeight:'60px',resize:'vertical'}} value={f.notes} onChange={set('notes')} placeholder="Enforcement status, parallel standards, anything that qualifies the rule" />
         </div>
         <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',color:'#3A3A3E',cursor:'pointer'}}>
           <input type="checkbox" checked={f.requires_3p} onChange={setB('requires_3p')} /> Requires third-party testing
