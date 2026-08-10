@@ -398,8 +398,9 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
           <div key={p.id} onClick={()=>onEdit(p)} style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 170px 130px',gap:'16px',padding:'15px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.name||'—'}</div>
-              {/* Type only — a certificate number is too long to scan, so cpsc_code
-                  stays in the modal. 'No CPSC' rather than nothing: every product is
+              {/* Type only. The certificate number that used to sit beside it in the
+                  modal was removed as unused, not moved here — its column has never
+                  held a value. 'No CPSC' rather than nothing: every product is
                   unset today and the gap is the thing worth seeing. Deliberately the
                   same muted colour as the SKU — GCC vs CPC says which rule applies,
                   not pass or fail, so colouring it would imply a judgement. */}

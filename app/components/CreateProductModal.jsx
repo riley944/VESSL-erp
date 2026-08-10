@@ -20,8 +20,7 @@ import { CodeModal } from '@/app/components/CodeModal';
 // styles of its own.
 export function CreateProductModal({ data, regs = [], links = [], onClose, onCreated }) {
   const editing = !!(data && data.id);
-  // Read-only. LinkRulesModal is the only writer of product_regulations, and nothing
-  // here touches cpsc_code, which stays the certificate number.
+  // Read-only. LinkRulesModal is the only writer of product_regulations.
   //
   // Resolved by iterating regs rather than links, so the order matches the rule
   // library's own -- sort_order then code -- instead of whatever order the link rows
@@ -41,7 +40,7 @@ export function CreateProductModal({ data, regs = [], links = [], onClose, onCre
     sku:s(data?.sku), name:s(data?.name), desc:s(data?.description), hs:s(data?.hts_code),
     uom:s(data?.unit_of_measure), wt:s(data?.weight_kg), upc:s(data?.units_per_carton),
     cwt:s(data?.carton_weight_kg), cl:s(data?.carton_l_cm), cw:s(data?.carton_w_cm), ch:s(data?.carton_h_cm),
-    cpscType:s(data?.cpsc_type), cpscCode:s(data?.cpsc_code),
+    cpscType:s(data?.cpsc_type),
   });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   // Fetched here rather than by the Testing page's load(), which has no reason to pull
@@ -95,9 +94,22 @@ export function CreateProductModal({ data, regs = [], links = [], onClose, onCre
       // unit_of_measure has a DB default of 'pcs', but a default only fires when the
       // key is absent -- sending null keeps the column empty until someone types a unit.
       hts_code:form.hs||null, unit_of_measure:form.uom||null, weight_kg:Number(form.wt)||null,
-      // '' is not a certificate and 'N/A' is not a type -- both clear to NULL so the
-      // column reads the same whether it was never set or emptied out.
-      cpsc_type:form.cpscType||null, cpsc_code:form.cpscCode.trim()||null,
+      // 'N/A' is not a type, so it clears to NULL and the column reads the same
+      // whether it was never set or emptied out. products_cpsc_type_chk accepts only
+      // NULL, 'GCC' or 'CPC', which is why '' must not reach it.
+      cpsc_type:form.cpscType||null,
+      // cpsc_code is deliberately absent. Its input was removed because the column
+      // has never held a value -- null on all 271 rows, and nothing anywhere read it.
+      //
+      // The COLUMN is still there on purpose. Dropping it is irreversible, an empty
+      // column costs nothing, and the field can come back without a migration if
+      // certificate numbers turn out to matter. Omitting the key rather than sending
+      // null also means an update leaves the column alone, so a value written by hand
+      // would survive an edit here rather than being wiped by it.
+      //
+      // It is NOT superseded by the linked rules below. The rules are what a product
+      // is certified against; cpsc_code was the number off the issued GCC or CPC
+      // document. Different things -- this was removed as unused, not replaced.
       units_per_carton:Number(form.upc)||null, carton_weight_kg:Number(form.cwt)||null,
       carton_l_cm:Number(form.cl)||null, carton_w_cm:Number(form.cw)||null, carton_h_cm:Number(form.ch)||null
     };
@@ -172,7 +184,10 @@ export function CreateProductModal({ data, regs = [], links = [], onClose, onCre
               <option value="GCC">GCC</option>
               <option value="CPC">CPC</option>
             </select></div>
-            <div><label>CPSC Code</label><input className="form-input" value={form.cpscCode} onChange={e=>f('cpscCode')(e.target.value)} placeholder="Certificate number, if applicable" /></div>
+            {/* The CPSC Code input stood here. Removed as unused -- see the payload.
+                The empty cell keeps the select at half width, matching the rows above
+                and below it, rather than stretching it across the modal. */}
+            <div></div>
           </div>
           {/* Hidden on create: there is no product yet, so there can be no links, and a
               placeholder would describe a flow that cannot happen from here — Testing
