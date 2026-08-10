@@ -1,6 +1,8 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { SB } from '@/lib/supabase';
+import { HtsField, useHtsCodes } from '@/app/components/HtsField';
+import { CodeModal } from '@/app/components/CodeModal';
 
 // ── CreateProductModal (create or edit a row in vessl.products) ──────────────
 // Lifted out of page.jsx, where it was unreachable — it rendered only under a
@@ -45,6 +47,22 @@ export function CreateProductModal({ data, onClose, onCreated }) {
       });
     return ()=>{ alive = false; };
   },[]);
+  // HTS Code is a closed picker over vessl.htscodes, the same control the quote form
+  // uses. It cannot be typed into: a code that is not in the library is added through
+  // "+ Add code" below, which writes the library row first and then selects it.
+  //
+  // hts_code is empty on all 271 products today, so nothing here has to cope with a
+  // stored value the library does not know -- but HtsField renders whatever is stored
+  // regardless, because retiring or deleting a code creates exactly that case and
+  // there is no foreign key to prevent it. See the rule in HtsField.jsx.
+  const { codes: htsCodes, addCode } = useHtsCodes();
+  const [addingCode, setAddingCode] = useState(null);
+  const onCodeAdded = (row) => {
+    setAddingCode(null);
+    if (!row) return;
+    addCode(row);
+    setForm(prev=>({...prev, hs:row.code}));   // select it without leaving the modal
+  };
   const submit = async () => {
     // Name identifies a product here; a SKU is nice to have and often assigned later.
     const name = form.name.trim();
@@ -80,6 +98,13 @@ export function CreateProductModal({ data, onClose, onCreated }) {
   };
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      {/* Sibling of the modal box, not a child of modal-body -- that is overflow-y:auto
+          and would be a scroll container wrapping a fixed-position overlay. This is the
+          arrangement the quote form already uses. It needs no stopPropagation: its own
+          backdrop makes e.target the inner overlay, so the test above fails and the
+          product draft underneath survives. CodeModal is zIndex 300 against this
+          overlay's 100, so it stacks on top without help. */}
+      {addingCode && <CodeModal data={addingCode} onClose={()=>setAddingCode(null)} onSaved={onCodeAdded} />}
       <div className="modal-box">
         <div className="modal-head"><h3>{editing?'Edit Product':'New Product'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
@@ -100,8 +125,25 @@ export function CreateProductModal({ data, onClose, onCreated }) {
           </div>
           <div className="form-row"><label>Product Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
           <div className="form-row"><label>Description</label><textarea className="form-textarea" value={form.desc} onChange={e=>f('desc')(e.target.value)} /></div>
-          <div className="form-row-3">
-            <div><label>HTS Code</label><input className="form-input" value={form.hs} onChange={e=>f('hs')(e.target.value)} /></div>
+          {/* Its own full-width row rather than a third of a form-row-3. At ~170px the
+              closed control ellipsised the selected code and its description away, so
+              you could not read back what you had picked. Unit and Weight drop to a
+              form-row-2 below.
+
+              fieldStyle replaces the wrapper's default block layout: elsewhere in this
+              modal the caption is a <label> SIBLING of the input and gets its spacing
+              from globals.css:241, but HtsField nests a <span> caption inside a <label>
+              wrapper, which inherits the type but not the margin. The gap supplies it.
+              inputStyle sheds the uppercase and letter-spacing that same rule would
+              otherwise pass down to the trigger, which the sibling inputs never see. */}
+          <HtsField
+            value={form.hs} onChange={f('hs')} codes={htsCodes}
+            onAdd={seed=>setAddingCode({ code:seed || '' })}
+            fieldClassName="form-row" inputClassName="form-input"
+            fieldStyle={{display:'flex',flexDirection:'column',gap:'7px'}}
+            inputStyle={{textTransform:'none',letterSpacing:'normal'}}
+          />
+          <div className="form-row-2">
             <div><label>Unit</label><input className="form-input" value={form.uom} onChange={e=>f('uom')(e.target.value)} /></div>
             <div><label>Weight (kg)</label><input type="number" step="0.001" className="form-input" value={form.wt} onChange={e=>f('wt')(e.target.value)} /></div>
           </div>
