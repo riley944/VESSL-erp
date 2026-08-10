@@ -31,7 +31,7 @@ const Overlay = ({children,onClose}) => (
   </div>
 );
 
-export function CodeModal({ data, onClose, onSaved }) {
+export function CodeModal({ data, canDelete = false, onClose, onSaved, onDeleted }) {
   const editing = !!(data && data.id);
   const [f,setF] = useState({
     code: data?.code || '',
@@ -39,11 +39,63 @@ export function CodeModal({ data, onClose, onSaved }) {
     active: editing ? !!data.active : true,
   });
   const [saving,setSaving] = useState(false);
+  const [deleting,setDeleting] = useState(false);
   // Stripped on every keystroke rather than only on save, so a pasted
   // 6307.90.9000 visibly becomes 6307909000 in the box -- what you see is what
   // gets stored. No length rule: 39269090 is a real 8-digit subheading and a
   // 10-digit check would reject it.
   const setCode = e => setF(p=>({...p, code: e.target.value.replace(/\D/g,'')}));
+  // Delete is for mistakes. A code that is genuinely obsolete but still cited
+  // should be retired by unticking Active, which keeps it resolvable -- the confirm
+  // says so, but only on the path where the distinction actually matters.
+  //
+  // There is no foreign key from quotes.hts to htscodes, so a delete never fails
+  // and never cascades: it silently orphans any quote holding the code, which then
+  // shows "Not in the code library" with nothing explaining why. Everything below
+  // exists to put that consequence in front of someone before they accept it.
+  const remove = async () => {
+    setDeleting(true);
+    try {
+      // htscodes.code is clean -- this form has always stripped non-digits on input
+      // -- so an exact match is safe here. quotes.hts is NOT: it predates the closed
+      // picker and can hold whitespace or separators, which is why the scan below
+      // fetches and normalises in JS instead of filtering with .eq. Anyone assuming
+      // both are clean writes a count that silently reads zero.
+      const { count: siblings, error: sibErr } = await SB.from('htscodes')
+        .select('id', { count:'exact', head:true })
+        .eq('code', data.code).neq('id', data.id);
+      // A confirm that cannot establish the consequence must not offer to proceed.
+      if (sibErr) { toast('Could not check the code library — '+sibErr.message, 'err'); return; }
+
+      const label = data.code + (data.description ? ' — '+data.description : '');
+      let message;
+      if (siblings > 0) {
+        message = 'Delete '+label+'?\n\nAnother entry for '+data.code+' remains in the library, '
+          + 'so quotes using this code still resolve.\n\nThis cannot be undone.';
+      } else {
+        const { data:rows, error:qErr } = await SB.from('quotes').select('id,product,client,hts').not('hts','is',null);
+        if (qErr) { toast('Could not check which quotes use this code — '+qErr.message, 'err'); return; }
+        const users = (rows||[]).filter(q => String(q.hts ?? '').replace(/\D/g,'') === data.code);
+        if (users.length === 0) {
+          message = 'Delete '+label+'?\n\nThis is the only entry for '+data.code+', but no quotes use it. '
+            + 'Nothing will be orphaned.\n\nThis cannot be undone.';
+        } else {
+          const names = users.slice(0,2).map(q => q.product || q.client || 'a quote').join(', ');
+          message = 'Delete '+label+'?\n\nThis is the only entry for '+data.code+'. '
+            + users.length+(users.length===1?' quote uses':' quotes use')+' it — including '+names+' — and will show '
+            + '"Not in the code library" with nothing explaining why.\n\n'
+            + 'If the code is obsolete but still cited, close this and untick Active instead — that keeps it resolvable.'
+            + '\n\nThis cannot be undone.';
+        }
+      }
+      if (!window.confirm(message)) return;
+
+      const { error } = await SB.from('htscodes').delete().eq('id', data.id);
+      if (error) { toast('Could not delete code: '+error.message, 'err'); return; }
+      toast('Code deleted', 'ok');
+      onDeleted();
+    } finally { setDeleting(false); }
+  };
   const save = async () => {
     const code = f.code.trim();
     // description is NOT NULL with a no-blank CHECK, so it is validated here the same
@@ -90,6 +142,11 @@ export function CodeModal({ data, onClose, onSaved }) {
         </label>
       </div>
       <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
+        {/* Edit path only, so this can never appear in the quote form -- HtsField
+            opens the modal with {code: seed} and no id, making `editing` false. */}
+        {editing && canDelete && (
+          <button onClick={remove} disabled={deleting||saving} style={{marginRight:'auto',background:'none',border:'1px solid #F0C8C8',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',color:'#B91C1C',opacity:(deleting||saving)?0.6:1}}>{deleting?'Checking…':'Delete'}</button>
+        )}
         <button onClick={onClose} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',color:'#4A4A4E'}}>Cancel</button>
         <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':(editing?'Save changes':'Save code')}</button>
       </div>

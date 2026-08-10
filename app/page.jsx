@@ -6046,7 +6046,7 @@ export default function App() {
           {page==='companies'        && <Companies />}
           {page==='products'         && <Products navigate={navigate} canCreateProducts={role !== 'limited_qc'} />}
           {page==='testing'          && <Testing />}
-          {page==='codes'            && <Codes />}
+          {page==='codes'            && <Codes canDeleteCodes={role !== 'limited_qc'} />}
           {page==='pricing'          && <Pricing />}
           {page==='programs'         && <Programs userEmail={user?.email||''} />}
           {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} />}

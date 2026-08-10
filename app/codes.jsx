@@ -17,7 +17,11 @@ import { CodeModal } from "@/app/components/CodeModal";
 const card = {background:'#fff',border:'1px solid #ECECEE',borderRadius:'16px',boxShadow:'0 0 0 1px rgba(0,0,0,.02),0 2px 5px rgba(0,0,0,.04),0 12px 28px -8px rgba(20,20,40,.05)'};
 
 // ═══════════════════════════════════════════════════════════════════════════
-export default function Codes() {
+// canDeleteCodes is a derived boolean rather than the role string, keeping the
+// policy next to ROLE_PAGES in page.jsx. Jenn has this page but no Quotes page, so
+// deleting a code would orphan quotes she cannot see, in a table she cannot open.
+// Retiring stays available to her, which covers the legitimate case.
+export default function Codes({ canDeleteCodes = true }) {
   const [codes, setCodes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
@@ -92,7 +96,7 @@ export default function Codes() {
         </div>
       )}
 
-      {modal && <CodeModal data={modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
+      {modal && <CodeModal data={modal} canDelete={canDeleteCodes} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} onDeleted={()=>{setModal(null);load();}} />}
     </div>
   );
 }
