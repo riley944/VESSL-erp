@@ -2021,8 +2021,15 @@ function HtsField({ f, codes, onPick, onAdd }) {
     [codes, q]
   );
   // Display only. Never feeds the value -- see the rule above.
-  const known = codes.find((c) => c.code === (f.hts || ""));
-  const unlisted = !!f.hts && !known;
+  //
+  // A code can carry several library rows with different descriptions, and the quote
+  // stores only the code, so when several match there is no way to know which was
+  // picked. Show nothing rather than whichever happened to sort first. `unlisted`
+  // keys off zero matches specifically: an ambiguous code IS in the library and must
+  // not be flagged as missing.
+  const forValue = f.hts ? codes.filter((c) => c.code === f.hts) : [];
+  const known = forValue.length === 1 ? forValue[0] : null;
+  const unlisted = !!f.hts && forValue.length === 0;
   const commit = (code) => { onPick(code); setTyped(""); setOpen(false); };
 
   return (
@@ -2210,7 +2217,10 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   const [htsCodes, setHtsCodes] = useState([]);
   useEffect(() => {
     let alive = true;
-    SBQ.from("htscodes").select("code,description").eq("active", true).order("code")
+    // id is fetched purely so the option rows have a stable React key: once one code
+    // can appear on several rows, key={c.id || c.code} would fall back to a value
+    // that is no longer unique.
+    SBQ.from("htscodes").select("id,code,description").eq("active", true).order("code")
       .then(({ data, error }) => { if (alive && !error && data) setHtsCodes(data); });
     return () => { alive = false; };
   }, []);

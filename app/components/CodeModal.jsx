@@ -60,8 +60,11 @@ export function CodeModal({ data, onClose, onSaved }) {
       : await SB.from('htscodes').insert(payload).select('id,code,description,active').single();
     setSaving(false);
     if (error) {
-      const dupe = error.code === '23505' || /duplicate key|htscodes_code_key/i.test(error.message||'');
-      toast(dupe ? 'That code already exists' : 'Could not save code: '+error.message, 'err');
+      // Uniqueness is on (code, description), so a repeat code is fine as long as
+      // the description differs -- one tariff line legitimately covers several kinds
+      // of product. The message says which half to change.
+      const dupe = error.code === '23505' || /duplicate key|htscodes_code_description_key/i.test(error.message||'');
+      toast(dupe ? 'That code already exists with the same description' : 'Could not save code: '+error.message, 'err');
       return;   // stay open so the entry is not lost
     }
     toast(editing ? 'Code updated' : 'Code added', 'ok');
