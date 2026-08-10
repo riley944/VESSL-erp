@@ -46,9 +46,14 @@ export function CodeModal({ data, onClose, onSaved }) {
   const setCode = e => setF(p=>({...p, code: e.target.value.replace(/\D/g,'')}));
   const save = async () => {
     const code = f.code.trim();
+    // description is NOT NULL with a no-blank CHECK, so it is validated here the same
+    // way code is. Writing `|| null` would hand the database a value it rejects and
+    // surface a raw constraint error instead of a sentence.
+    const description = f.description.trim();
     if (!code) { toast('A code is required','err'); return; }
+    if (!description) { toast('A description is required','err'); return; }
     setSaving(true);
-    const payload = { code, description: f.description.trim() || null, active: !!f.active };
+    const payload = { code, description, active: !!f.active };
     // .select().single() on both paths so onSaved can hand the row back.
     const { data:row, error } = editing
       ? await SB.from('htscodes').update(payload).eq('id', data.id).select('id,code,description,active').single()
@@ -73,7 +78,7 @@ export function CodeModal({ data, onClose, onSaved }) {
           <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'5px'}}>Digits only — separators are stripped as you type.</div>
         </div>
         <div>
-          <label style={lbl}>Description</label>
+          <label style={lbl}>Description *</label>
           <input style={inp} value={f.description} onChange={e=>setF(p=>({...p,description:e.target.value}))} placeholder="What this code covers" />
         </div>
         <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',color:'#3A3A3E',cursor:'pointer'}}>
