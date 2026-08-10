@@ -2,6 +2,11 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { SB } from "@/lib/supabase";
 import { CreateProductModal } from "@/app/components/CreateProductModal";
+// The regulations list and its editor moved to app/components so the Codes page
+// shows the same two rather than copies. Delete went into RegModal with them --
+// see the comment on the regs tab below.
+import { RegulationsList, regSearchFields } from "@/app/components/RegulationsList";
+import { RegModal } from "@/app/components/RegModal";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -169,7 +174,7 @@ export default function Testing() {
     return list;
   }, [reports, q, repFilter]);
   const shownRegs = useMemo(() => !q ? regs : regs.filter(r =>
-    matches(q, r.code, r.name, r.category)
+    matches(q, ...regSearchFields(r))
   ), [regs, q]);
   const shownCount = { products:shownProducts, materials:shownMaterials, reports:shownReports, regs:shownRegs }[tab].length;
   const totalCount = { products, materials, reports, regs }[tab].length;
@@ -226,21 +231,6 @@ export default function Testing() {
     if (error) {
       const inUse = error.code === '23503' || /foreign key/i.test(error.message || '');
       setStatusErr(inUse ? "This material is in use and can't be deleted" : 'Could not delete material — ' + error.message);
-      return;
-    }
-    await load();
-  };
-
-  // test_results.regulation_id carries NO on-delete rule, so Postgres blocks a
-  // regulation that any recorded result cites. That is the real 23503 here.
-  const deleteReg = async (r) => {
-    const label = r.code || r.name || 'this regulation';
-    if (!window.confirm('Delete ' + label + '?\n\nThis removes the rule from the library. Reports that already cite it keep their recorded citation text.')) return;
-    setStatusErr('');
-    const { error } = await SB.from('regulations').delete().eq('id', r.id);
-    if (error) {
-      const inUse = error.code === '23503' || /foreign key/i.test(error.message || '');
-      setStatusErr(inUse ? "This regulation has test results recorded against it and can't be deleted — set it inactive instead" : 'Could not delete regulation — ' + error.message);
       return;
     }
     await load();
@@ -351,13 +341,22 @@ export default function Testing() {
           {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter} />}
           {tab==='materials' && <MaterialsView materials={shownMaterials} expiryOf={expiryOf} reports={reports} onEdit={(m)=>setModal({type:'material',data:m})} onTest={(m)=>setModal({type:'report',data:{material_id:m.id}})} onDelete={deleteMaterial} searching={searching} term={search.trim()} filtered={!!matFilter} />}
           {tab==='reports'   && <ReportsView reports={shownReports} onEdit={(r)=>setModal({type:'report',row:r})} onDelete={deleteReport} searching={searching} term={search.trim()} filtered={!!repFilter} />}
-          {tab==='regs'      && <RegsView regs={shownRegs} onEdit={(r)=>setModal({type:'reg',data:r})} onDelete={deleteReg} searching={searching} term={search.trim()} />}
+          {/* RegulationsList renders rows only -- the empty state stays here because its
+              wording is this page's, not the shared component's. Delete moved into
+              RegModal, so the row no longer carries a bin: a rule can be cited by test
+              results and linked to products, and the confirm has to establish both
+              before it can say what deleting one would do. */}
+          {tab==='regs'      && (shownRegs.length === 0
+            ? <Empty
+                title={searching ? 'No regulations match “'+search.trim()+'”' : 'No regulations loaded'}
+                sub={searching ? 'Try a different term, or clear the search.' : 'Run the compliance schema seed to load the CPSC rule library.'} />
+            : <RegulationsList regs={shownRegs} onEdit={(r)=>setModal({type:'reg',data:r})} cardStyle={card} dividerColor="#F5F5F7" />)}
         </>
       )}
 
       {modal?.type==='product'  && <CreateProductModal data={modal.data} onClose={()=>setModal(null)} onCreated={()=>{setModal(null);load();}} />}
       {modal?.type==='lab'      && <LabModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
-      {modal?.type==='reg'      && <RegModal data={modal.data} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
+      {modal?.type==='reg'      && <RegModal data={modal.data} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} onDeleted={()=>{setModal(null);load();}} />}
       {modal?.type==='material' && <MaterialModal data={modal.data} labs={labs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='report'   && <ReportModal preset={modal.data} data={modal.row} materials={materials} products={products} labs={labs} regs={regs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='link'     && <LinkModal product={modal.data} materials={materials} existing={prodMats.filter(l=>l.product_id===modal.data.id)} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
@@ -551,39 +550,6 @@ function ReportsView({ reports, onEdit, onDelete, searching, term, filtered }) {
   );
 }
 
-// ── REGULATIONS VIEW ─────────────────────────────────────────────────────────
-function RegsView({ regs, onEdit, onDelete, searching, term }) {
-  if(!regs.length) return searching
-    ? <Empty title={'No regulations match \u201C'+term+'\u201D'} sub="Try a different term, or clear the search." />
-    : <Empty title="No regulations loaded" sub="Run the compliance schema seed to load the CPSC rule library." />;
-  return (
-    <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
-      <div style={{display:'grid',gridTemplateColumns:'180px 1fr 130px 120px 40px',gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
-        {['Code','Rule','Category','Testing',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>{h}</div>)}
-      </div>
-      {regs.map((r,i)=>(
-        <div key={r.id} onClick={()=>onEdit(r)} style={{display:'grid',gridTemplateColumns:'180px 1fr 130px 120px 40px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-          {/* Same overflow treatment as the Rule cell beside it. The track holds about
-              24 mono characters and the longest code is exactly 24 -- 16 CFR
-              1500.86(a)(7)-(8) -- so this is the margin, not decoration. */}
-          <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{r.code}</div>
-          <div style={{minWidth:0}}>
-            <div style={{fontSize:'13px',color:'#1D1D1F',fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{r.name}</div>
-            {(r.applies_to||r.age_group)&&<div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[r.applies_to,r.age_group].filter(Boolean).join(' \u00b7 ')}</div>}
-          </div>
-          <div>{r.category ? <span style={{fontSize:'11.5px',fontWeight:600,color:'#4A4A4E',background:'#F5F5F7',borderRadius:'980px',padding:'3px 10px',textTransform:'capitalize'}}>{r.category}</span> : <span style={{fontSize:'12px',color:'#C7C7CC'}}>—</span>}</div>
-          <div>{r.requires_3p ? <span style={{fontSize:'11px',fontWeight:700,color:'#0A84FF',background:'#EAF3FE',borderRadius:'980px',padding:'3px 10px'}}>3P required</span> : <span style={{fontSize:'12px',color:'#C7C7CC'}}>—</span>}</div>
-          <div style={{textAlign:'right'}}>
-            <button onClick={e=>{e.stopPropagation();onDelete(r);}} title={'Delete '+(r.code||'regulation')} aria-label={'Delete '+(r.code||'regulation')} style={{background:'none',border:'none',padding:'4px',color:'#C7C7CC',cursor:'pointer'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
-            </button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ── MODALS ───────────────────────────────────────────────────────────────────
 const Overlay = ({children,onClose}) => (
   <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.42)',backdropFilter:'blur(2px)',zIndex:200,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'40px 16px',overflowY:'auto'}}>
@@ -666,124 +632,6 @@ function LabModal({ onClose, onSaved }) {
       <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
         <button onClick={onClose} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',color:'#4A4A4E'}}>Cancel</button>
         <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':'Save lab'}</button>
-      </div>
-    </Overlay>
-  );
-}
-
-// The four values vessl.regulations.certificate_required accepts, plus the empty
-// case. A <select> rather than a text box because the column carries a CHECK
-// constraint: anything else is rejected by the database, and a free-text field
-// would turn a typo into a raw constraint error. Labels are the source sheet's own
-// wording, so a row reads here the way it reads in the CPSC list.
-const CERT_OPTS = [
-  ['', '— Not set —'],
-  ['cpc', "CPC (children's product)"],
-  ['gcc', 'GCC (general use)'],
-  ['depends_on_age_grade', 'CPC or GCC — depends on age grading'],
-  ['verify', 'See note — verify status'],
-];
-
-// Fields mirror vessl.regulations exactly: code and name (both NOT NULL), citation,
-// certificate_required, notes, category, applies_to, age_group, requires_3p, active
-// (default true), sort_order (default 100). RegsView filters on active, so a rule
-// created inactive would vanish from that tab and the report picker the moment it
-// was saved — it defaults on.
-//
-// citation, certificate_required and notes were added to the table after this modal
-// was written, and for a while it could neither show nor change them -- 79 rows
-// carried a certificate type that was invisible from here. The old payload omitted
-// the three keys entirely, which is the only reason editing a rule did not wipe
-// them; now they are edited directly and that accident is no longer load-bearing.
-function RegModal({ data, onClose, onSaved }) {
-  const editing = !!(data && data.id);
-  const [f,setF]=useState({
-    code:data?.code||'', name:data?.name||'', category:data?.category||'',
-    citation:data?.citation||'', certificate_required:data?.certificate_required||'',
-    notes:data?.notes||'',
-    applies_to:data?.applies_to||'', age_group:data?.age_group||'',
-    requires_3p:editing?!!data.requires_3p:false,
-    active:editing?!!data.active:true,
-    sort_order:data?.sort_order==null?'':String(data.sort_order),
-  });
-  const [saving,setSaving]=useState(false);
-  const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
-  const setB=k=>e=>setF(p=>({...p,[k]:e.target.checked}));
-  const save=async()=>{
-    const code=f.code.trim(), name=f.name.trim();
-    if(!code||!name){ alert('Code and rule name are both required'); return; }
-    setSaving(true);
-    const payload = {
-      code, name, category:f.category||null, applies_to:f.applies_to||null, age_group:f.age_group||null,
-      // Trimmed, then '' collapses to null so a cleared box empties the column rather
-      // than storing a blank. certificate_required needs no trim -- it can only hold a
-      // value the select put there -- but '' must still become null: the CHECK accepts
-      // null or one of four words, and '' is neither.
-      citation:f.citation.trim()||null,
-      certificate_required:f.certificate_required||null,
-      notes:f.notes.trim()||null,
-      requires_3p:!!f.requires_3p, active:!!f.active,
-    };
-    // sort_order defaults to 100 in the database, and a default only fires when the
-    // key is absent -- so on create send it only when a number was typed. On edit the
-    // column already has a value, so a cleared box means "put it back to the default".
-    const sort = f.sort_order===''?null:Number(f.sort_order);
-    const { error } = editing
-      ? await SB.from('regulations').update({ ...payload, sort_order:sort==null?100:sort }).eq('id', data.id)
-      : await SB.from('regulations').insert(sort==null?payload:{ ...payload, sort_order:sort });
-    setSaving(false);
-    if(error){ alert('Error: '+error.message); return; }
-    onSaved();
-  };
-  return (
-    <Overlay onClose={onClose}>
-      <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'6px'}}>{editing?'Edit regulation':'New regulation'}</div>
-      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>{editing?'Reports already filed keep the code they recorded.':'A rule that test results can be recorded against.'}</div>
-      <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:'12px'}}>
-          <div><label style={lbl}>Code *</label><input style={inp} value={f.code} onChange={set('code')} placeholder="e.g. 16 CFR 1303" /></div>
-          <div><label style={lbl}>Rule name *</label><input style={inp} value={f.name} onChange={set('name')} placeholder="e.g. Lead in paint" /></div>
-        </div>
-        {/* Two fields, not one repeated. Code above is the short unique key the rest
-            of the app cites -- 16 CFR 1263. This is the string as published, which can
-            name several subsections of that one part.
-            Both labels match their column names on purpose: the list header calls the
-            code column Code too, so no label anywhere means one thing in one place and
-            something else in another. */}
-        <div>
-          <label style={lbl}>Citation</label>
-          <input style={inp} value={f.citation} onChange={set('citation')} placeholder="e.g. 15 U.S.C. § 2056e; 16 CFR §§ 1263.3, 1263.4" />
-        </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
-          <div><label style={lbl}>Certificate required</label>
-            <select style={inp} value={f.certificate_required} onChange={set('certificate_required')}>
-              {CERT_OPTS.map(([v,l])=><option key={v||'none'} value={v}>{l}</option>)}
-            </select>
-          </div>
-          <div><label style={lbl}>Category</label><input style={inp} value={f.category} onChange={set('category')} placeholder="e.g. chemical, mechanical" /></div>
-        </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
-          <div><label style={lbl}>Applies to</label><input style={inp} value={f.applies_to} onChange={set('applies_to')} placeholder="e.g. painted surfaces" /></div>
-          <div><label style={lbl}>Age group</label><input style={inp} value={f.age_group} onChange={set('age_group')} placeholder="e.g. under 12" /></div>
-        </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
-          <div><label style={lbl}>Sort order <span style={{textTransform:'none',letterSpacing:0,fontWeight:400,color:'#A0A0A4'}}>(blank = 100)</span></label><input type="number" style={inp} value={f.sort_order} onChange={set('sort_order')} placeholder="100" /></div>
-          <div></div>
-        </div>
-        <div>
-          <label style={lbl}>Notes</label>
-          <textarea style={{...inp,minHeight:'60px',resize:'vertical'}} value={f.notes} onChange={set('notes')} placeholder="Enforcement status, parallel standards, anything that qualifies the rule" />
-        </div>
-        <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',color:'#3A3A3E',cursor:'pointer'}}>
-          <input type="checkbox" checked={f.requires_3p} onChange={setB('requires_3p')} /> Requires third-party testing
-        </label>
-        <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',color:'#3A3A3E',cursor:'pointer'}}>
-          <input type="checkbox" checked={f.active} onChange={setB('active')} /> Active <span style={{color:'#A0A0A4'}}>— inactive rules are hidden everywhere</span>
-        </label>
-      </div>
-      <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
-        <button onClick={onClose} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',color:'#4A4A4E'}}>Cancel</button>
-        <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':(editing?'Save changes':'Save regulation')}</button>
       </div>
     </Overlay>
   );
