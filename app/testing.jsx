@@ -7,6 +7,7 @@ import { CreateProductModal } from "@/app/components/CreateProductModal";
 // see the comment on the regs tab below.
 import { RegulationsList, regSearchFields } from "@/app/components/RegulationsList";
 import { RegModal } from "@/app/components/RegModal";
+import { LinkRulesModal } from "@/app/components/LinkRulesModal";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -71,6 +72,7 @@ export default function Testing() {
   const [regs, setRegs] = useState([]);
   const [labs, setLabs] = useState([]);
   const [prodMats, setProdMats] = useState([]);
+  const [prodRegs, setProdRegs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // {type:'material'|'report'|'link', data}
   const [search, setSearch] = useState('');
@@ -82,7 +84,7 @@ export default function Testing() {
 
   const load = async () => {
     setLoading(true);
-    const [p, m, r, rg, lb, pm] = await Promise.all([
+    const [p, m, r, rg, lb, pm, pr] = await Promise.all([
       SB.from('products').select('id,sku,name,compliance_status,cpsc_type').order('sku',{nullsFirst:false}),
       SB.from('materials').select('*,supplier:companies!supplier_id(name)').order('created_at',{ascending:false}),
       SB.from('test_reports').select('*,lab:labs(name),material:materials(name),product:products(name,sku),test_results(*)').order('test_date',{ascending:false}),
@@ -94,9 +96,12 @@ export default function Testing() {
       SB.from('regulations').select('*').eq('active',true).order('sort_order').order('code'),
       SB.from('labs').select('*').order('name'),
       SB.from('product_materials').select('*,material:materials(id,name,status)'),
+      // Ids only. The rule rows themselves come from `regs` above, so joining
+      // regulations here would fetch the same 82 rows a second time.
+      SB.from('product_regulations').select('id,product_id,regulation_id'),
     ]);
     setProducts(p.data||[]); setMaterials(m.data||[]); setReports(r.data||[]);
-    setRegs(rg.data||[]); setLabs(lb.data||[]); setProdMats(pm.data||[]);
+    setRegs(rg.data||[]); setLabs(lb.data||[]); setProdMats(pm.data||[]); setProdRegs(pr.data||[]);
     setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
@@ -338,7 +343,7 @@ export default function Testing() {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter} />}
           {tab==='materials' && <MaterialsView materials={shownMaterials} expiryOf={expiryOf} reports={reports} onEdit={(m)=>setModal({type:'material',data:m})} onTest={(m)=>setModal({type:'report',data:{material_id:m.id}})} onDelete={deleteMaterial} searching={searching} term={search.trim()} filtered={!!matFilter} />}
           {tab==='reports'   && <ReportsView reports={shownReports} onEdit={(r)=>setModal({type:'report',row:r})} onDelete={deleteReport} searching={searching} term={search.trim()} filtered={!!repFilter} />}
           {/* RegulationsList renders rows only -- the empty state stays here because its
@@ -360,12 +365,15 @@ export default function Testing() {
       {modal?.type==='material' && <MaterialModal data={modal.data} labs={labs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='report'   && <ReportModal preset={modal.data} data={modal.row} materials={materials} products={products} labs={labs} regs={regs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='link'     && <LinkModal product={modal.data} materials={materials} existing={prodMats.filter(l=>l.product_id===modal.data.id)} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
+      {/* regs is already filtered to active, so a retired rule cannot be linked to a
+          new product while ones already linked to it keep their link. */}
+      {modal?.type==='linkrules' && <LinkRulesModal product={modal.data} regs={regs} existing={prodRegs.filter(l=>l.product_id===modal.data.id)} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
     </div>
   );
 }
 
 // ── PRODUCTS VIEW ────────────────────────────────────────────────────────────
-function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus, onEdit, onDelete, searching, term, filtered }) {
+function ProductsView({ products, prodMats, productStatus, onLink, onLinkRules, onSetStatus, onEdit, onDelete, searching, term, filtered }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
   // well exist, it just does not match.
   if(!products.length) return (searching || filtered)
@@ -433,6 +441,7 @@ function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus, 
                 stop the event or it would do both. */}
             <div style={{display:'flex',gap:'6px',justifyContent:'flex-end',alignItems:'center'}}>
               <button onClick={e=>{e.stopPropagation();onLink(p);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Materials</button>
+              <button onClick={e=>{e.stopPropagation();onLinkRules(p);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Rules</button>
               <button onClick={e=>{e.stopPropagation();onDelete(p);}} title={'Delete '+(p.name||p.sku||'product')} aria-label={'Delete '+(p.name||p.sku||'product')} style={{background:'none',border:'none',padding:'5px',borderRadius:'7px',color:'#C7C7CC',cursor:'pointer',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
               </button>

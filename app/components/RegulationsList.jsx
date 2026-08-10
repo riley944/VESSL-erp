@@ -23,7 +23,7 @@
 
 // Short forms. The full sheet wording lives in RegModal's select; at 130px a column
 // needs a label, not a sentence.
-const CERT_PILL = {
+export const CERT_PILL = {
   cpc:                  { label:'CPC',          color:'#0A84FF', bg:'#EAF3FE' },
   gcc:                  { label:'GCC',          color:'#4A4A4E', bg:'#F5F5F7' },
   depends_on_age_grade: { label:'By age grade', color:'#B45309', bg:'#FEF3C7' },
