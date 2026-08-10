@@ -65,6 +65,7 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
   const [sel,setSel] = useState(new Set(existing.map(e=>e.regulation_id)));
   const [saving,setSaving] = useState(false);
   const [search,setSearch] = useState('');
+  const [showAll,setShowAll] = useState(false);
   // Held in state and saved with the links, so changing it regroups the list here and
   // now rather than sending someone to Edit Product and back. It is the same field
   // that modal writes, saved once -- not a duplicate control that only displays.
@@ -80,13 +81,36 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
   // Search is display only. sel, and therefore what gets written, is never derived
   // from the filtered arrays -- otherwise typing a term would silently unlink every
   // rule the term happened to exclude.
-  const shown = useMemo(()=> !q ? regs : regs.filter(r => matches(q, ...regSearchFields(r))), [regs, q]);
-  const [applies, others] = useMemo(()=>{
-    if (!want) return [[], shown];
-    const a=[], o=[];
-    shown.forEach(r => ((r.certificate_required === want || r.certificate_required === 'depends_on_age_grade') ? a : o).push(r));
-    return [a, o];
-  },[shown, want]);
+  const matching = useMemo(()=> !q ? regs : regs.filter(r => matches(q, ...regSearchFields(r))), [regs, q]);
+
+  // Sticky visibility. A rule linked when this opened stays on screen for the whole
+  // session even after it is unticked, so nothing vanishes under the cursor at the
+  // moment it is clicked, and a newly ticked one cannot disappear either.
+  const openedWith = useMemo(()=> new Set(existing.map(e=>e.regulation_id)), [existing]);
+
+  // Four buckets. `other` is the other certificate's rules that ARE on screen;
+  // `hidden` is the ones that are not. They are counted separately because the header
+  // claims a hidden count, and a count that included visible rows would be a lie.
+  const { applies, unknown, other, hidden } = useMemo(()=>{
+    const a=[], u=[], o=[], h=[];
+    matching.forEach(r => {
+      if (!want) { a.push(r); return; }   // no type chosen: one flat list, nothing filtered
+      if (r.certificate_required === want || r.certificate_required === 'depends_on_age_grade') { a.push(r); return; }
+      // Blank is unknown, not "does not apply". CA Prop 65 carries no CPSC certificate
+      // and applies to nearly anything sold in California; 16 CFR 1260 is stayed and
+      // unresolved. Hiding either would be asserting something the data does not say.
+      if (r.certificate_required == null || r.certificate_required === 'verify') { u.push(r); return; }
+      // A linked rule for the OTHER certificate is shown on purpose, and this is not a
+      // hole in the filter. It is a contradiction -- either the product's type is wrong
+      // or the link is -- and it is the one row in the list that needs someone's
+      // attention. Hiding it would bury exactly that.
+      ((showAll || sel.has(r.id) || openedWith.has(r.id)) ? o : h).push(r);
+    });
+    return { applies:a, unknown:u, other:o, hidden:h };
+  },[matching, want, showAll, sel, openedWith]);
+
+  const visibleCount = applies.length + unknown.length + other.length;
+  const otherLabel = want === 'gcc' ? 'CPC' : 'GCC';
 
   // Two tables in one action, and there is no transaction across them: PostgREST
   // calls are independent requests and supabase-js has no multi-table transaction,
@@ -192,23 +216,63 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
           than collapsing the distinction between them. */}
       <div style={{fontSize:'12px',color:'#6A6A6E',marginBottom:'12px',lineHeight:1.5}}>
         {want ? (
-          <>{applies.length} apply to a {want.toUpperCase()} · {others.length} others{searching && ' · '+shown.length+' of '+regs.length}</>
+          <>
+            {applies.length} apply to a {want.toUpperCase()} · {unknown.length} with no certificate stated
+            {showAll
+              ? ' · '+other.length+' apply to a '+otherLabel+' only'
+              : (other.length > 0 ? ' · '+other.length+' linked but '+otherLabel+'-only' : '')
+                + ' · '+hidden.length+' hidden'}
+            {searching && ' · '+visibleCount+' of '+regs.length}
+          </>
         ) : (
           // Still says why there is no divider, but now points at the control directly
           // above rather than at another modal.
-          <>Pick a CPSC type above to group by what applies.{searching ? ' · '+shown.length+' of '+regs.length : ' · '+regs.length+' rules'}</>
+          <>Pick a CPSC type above to filter by what applies.{searching ? ' · '+visibleCount+' of '+regs.length : ' · '+regs.length+' rules'}</>
         )}
         {sel.size > 0 && <span style={{color:'#1A1A1C',fontWeight:600}}>{' · '+sel.size+' selected'}</span>}
       </div>
 
-      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search rules — code, name, certificate, note…" style={{...inp,marginBottom:'12px'}} />
+      <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'12px',flexWrap:'wrap'}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search rules — code, name, certificate, note…" style={{...inp,flex:'1 1 240px',width:'auto'}} />
+        {/* Only offered when a type is chosen -- with none, nothing is filtered and a
+            "show all" that changes nothing would suggest something was being kept back. */}
+        {want && (
+          <label style={{display:'flex',alignItems:'center',gap:'7px',fontSize:'12.5px',color:'#3A3A3E',cursor:'pointer',whiteSpace:'nowrap'}}>
+            <input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)} />
+            Show all {regs.length} rules
+          </label>
+        )}
+      </div>
 
       <div style={{display:'flex',flexDirection:'column',gap:'6px',maxHeight:'360px',overflowY:'auto'}}>
-        {shown.length===0 && <div style={{fontSize:'13px',color:'#8A8A8E',padding:'12px 2px'}}>No rules match “{search.trim()}”.</div>}
+        {/* "No rules match" on its own would be false whenever the filter is holding
+            matches back -- which is the objection to filtering, arriving through the
+            search box instead of the list. The count and the way out go with it. */}
+        {visibleCount===0 && (
+          <div style={{fontSize:'13px',color:'#8A8A8E',padding:'12px 2px',lineHeight:1.5}}>
+            {searching ? (
+              <>
+                No rules match “{search.trim()}”{hidden.length>0 ? ' here.' : '.'}
+                {hidden.length>0 && ' '+hidden.length+(hidden.length===1?' hidden rule does':' hidden rules do')
+                  +' — tick “Show all '+regs.length+' rules” to include '+(hidden.length===1?'it':'them')+'.'}
+              </>
+            ) : 'No rules available.'}
+          </div>
+        )}
         {want && applies.length>0 && <Divider text={'Applies to a '+want.toUpperCase()} />}
         {applies.map(Row)}
-        {want && others.length>0 && <Divider text="Other rules" />}
-        {others.map(Row)}
+        {want && unknown.length>0 && <Divider text="No certificate stated" />}
+        {unknown.map(Row)}
+        {want && other.length>0 && <Divider text={'Applies to a '+otherLabel+' only'} />}
+        {other.map(Row)}
+        {/* Reached when the search matches nothing visible is false -- i.e. there ARE
+            visible rows, and more matches sit behind the filter. Same honesty, quieter
+            placement, since the list above already answered the question. */}
+        {searching && visibleCount>0 && hidden.length>0 && (
+          <div style={{fontSize:'11.5px',color:'#A0A0A4',padding:'8px 2px 2px'}}>
+            {hidden.length+(hidden.length===1?' more rule matches but is hidden':' more rules match but are hidden')} by the {want.toUpperCase()} filter.
+          </div>
+        )}
       </div>
 
       <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
