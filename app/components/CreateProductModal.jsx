@@ -10,11 +10,30 @@ import { CodeModal } from '@/app/components/CodeModal';
 // only caller is app/testing.jsx, which page.jsx already imports; importing it
 // back the other way would be circular.
 //
+// regs and links are passed in rather than fetched. app/testing.jsx already holds
+// both, and a second fetch would let this modal and the product row behind it
+// disagree about the same product -- the row would show one count and the modal
+// another, with nothing to say which was right.
+//
 // Pass `data` to edit that row, omit it to create — the same shape MaterialModal
 // uses. Every class name below resolves from globals.css, so this file needs no
 // styles of its own.
-export function CreateProductModal({ data, onClose, onCreated }) {
+export function CreateProductModal({ data, regs = [], links = [], onClose, onCreated }) {
   const editing = !!(data && data.id);
+  // Read-only. LinkRulesModal is the only writer of product_regulations, and nothing
+  // here touches cpsc_code, which stays the certificate number.
+  //
+  // Resolved by iterating regs rather than links, so the order matches the rule
+  // library's own -- sort_order then code -- instead of whatever order the link rows
+  // came back in.
+  //
+  // regs is filtered to active by the Testing page, so a link to a RETIRED rule
+  // resolves to nothing. Counting the shortfall rather than letting those rows
+  // silently disappear: the link is real, and a block that quietly shows fewer rules
+  // than are linked is the same failure as a picker that blanks an unlisted code.
+  const linkedIds = new Set(links.map(l => l.regulation_id));
+  const linkedRules = regs.filter(r => linkedIds.has(r.id));
+  const retiredCount = links.length - linkedRules.length;
   const [saving, setSaving] = useState(false);
   // The DB hands numbers back as numbers; every box here is a string.
   const s = v => (v === null || v === undefined ? '' : String(v));
@@ -155,6 +174,37 @@ export function CreateProductModal({ data, onClose, onCreated }) {
             </select></div>
             <div><label>CPSC Code</label><input className="form-input" value={form.cpscCode} onChange={e=>f('cpscCode')(e.target.value)} placeholder="Certificate number, if applicable" /></div>
           </div>
+          {/* Hidden on create: there is no product yet, so there can be no links, and a
+              placeholder would describe a flow that cannot happen from here — Testing
+              has no create path.
+
+              The CPSC type is deliberately NOT repeated on each row. The dropdown
+              holding it is directly above, and a product has one type while it can
+              link many rules, so putting it on every row would read as a per-rule
+              property rather than a per-product one. */}
+          {editing && (
+            <div className="form-row">
+              <label>CPSC Rules <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(set with the Rules button)</span></label>
+              {links.length === 0 ? (
+                <div style={{fontSize:'13px',color:'var(--muted)'}}>No rules linked</div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:'7px'}}>
+                  {linkedRules.map(r=>(
+                    <div key={r.id} style={{display:'flex',gap:'8px',alignItems:'baseline',minWidth:0,fontSize:'13px',color:'var(--ink)'}}>
+                      <span style={{fontFamily:'var(--mono)',fontSize:'11.5px',fontWeight:600,whiteSpace:'nowrap',flexShrink:0}}>{r.code}</span>
+                      <span style={{color:'var(--muted)',flexShrink:0}}>—</span>
+                      <span style={{minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.name}</span>
+                    </div>
+                  ))}
+                  {retiredCount > 0 && (
+                    <div style={{fontSize:'12px',color:'var(--muted)'}}>
+                      {retiredCount === 1 ? '1 linked rule is retired' : retiredCount+' linked rules are retired'} and not shown here.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <span className="form-section-label">Carton / Case Pack</span>
           <div className="form-row-3">
             <div><label>Units/Carton</label><input type="number" className="form-input" value={form.upc} onChange={e=>f('upc')(e.target.value)} /></div>
