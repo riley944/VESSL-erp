@@ -38,10 +38,24 @@ const Overlay = ({children,onClose}) => (
 // small change worth making, but it belongs with a pass over CreateProductModal.
 const CPSC_TYPES = [['', '— N/A —'], ['GCC', 'GCC'], ['CPC', 'CPC']];
 
-// products.cpsc_type is a free text column whose only writers offer GCC and CPC.
-// Anything else is treated as "not set" rather than being matched loosely -- an
-// unrecognised value must not silently promote the 15 depends_on_age_grade rules
-// as though a type had been chosen.
+// ┌───────────────────────────────────────────────────────────────────────────┐
+// │ The two CPSC vocabularies do NOT share casing, and this is the only place  │
+// │ they meet.                                                                 │
+// │                                                                            │
+// │   products.cpsc_type          'GCC' | 'CPC' | null      (UPPERCASE)        │
+// │   regulations.certificate_required                                         │
+// │       'gcc' | 'cpc' | 'depends_on_age_grade' | 'verify' | null (lowercase) │
+// │                                                                            │
+// │ Comparing them directly -- r.certificate_required === p.cpsc_type -- is    │
+// │ always false and fails silently, matching nothing at all. Lowercasing here │
+// │ is what bridges them; do not remove it on the assumption they agree.       │
+// └───────────────────────────────────────────────────────────────────────────┘
+//
+// products_cpsc_type_chk constrains the column to those two values or null, so an
+// unrecognised value can no longer be stored -- but this still guards rather than
+// trusting the constraint, because a value that slipped in before it existed must
+// not silently promote the 15 depends_on_age_grade rules as though a type had been
+// chosen. "Not recognised" and "not set" are treated the same on purpose.
 const asCertType = (v) => {
   const t = String(v ?? '').trim().toLowerCase();
   return (t === 'gcc' || t === 'cpc') ? t : null;
@@ -88,13 +102,18 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
   const save=async()=>{
     setSaving(true);
     try {
+      // Tracks what has actually been written, so a later failure can say what landed
+      // without claiming a save that never ran. Without it the link-failure message
+      // would have to guess, and would be wrong every time the type was untouched.
+      let typeSaved = false;
       const wantType = cpscType || null;
       if (wantType !== (product.cpsc_type || null)) {
         const { error } = await SB.from('products').update({ cpsc_type: wantType }).eq('id', product.id);
         if (error) {
-          toast('Could not save the CPSC type: '+error.message+' — no rules were linked.', 'err');
+          toast('Could not save the CPSC type: '+error.message+' — nothing was changed; press Save to try again.', 'err');
           return;   // nothing else has run, so the product is exactly as it was
         }
+        typeSaved = true;
       }
 
       const have=new Set(existing.map(e=>e.regulation_id));
@@ -108,17 +127,28 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
         );
         if(error){
           const dupe = error.code === '23505';
+          // The duplicate case deliberately does not say "try again": the stored state
+          // has diverged from what this modal is holding, so reopening is the right
+          // move and retrying would just fail the same way.
           toast(dupe
             ? 'Some of those rules are already linked — close and reopen to see the current state.'
-            : 'Could not link rules: '+error.message, 'err');
-          return;   // no onSaved: the links did not change. The CPSC type above may
-                    // have, which is why that toast is worded separately.
+            : (typeSaved ? 'CPSC type saved, but the rules were not linked: ' : 'Could not link rules: ')
+              + error.message + ' — press Save to try again; closing loses the selection.', 'err');
+          return;   // no onSaved: the links did not change, so there is nothing new for
+                    // the parent to show. Retrying in place is what avoids the stale
+                    // read that closing and editing the product would give.
         }
       }
       if(toRemove.length){
         const { error } = await SB.from('product_regulations').delete().in('id', toRemove.map(e=>e.id));
         if(error){
-          toast('Linked the new rules, but could not remove the unlinked ones: '+error.message, 'err');
+          // Built from what actually ran rather than assumed: additions are skipped
+          // entirely when nothing was added, and the type when it was unchanged.
+          const done = [];
+          if (typeSaved) done.push('CPSC type saved');
+          if (toAdd.length) done.push('new rules linked');
+          toast((done.length ? done.join(', ')+', but could not remove' : 'Could not remove')
+            + ' the unlinked ones: '+error.message+' — press Save to try again; closing loses the selection.', 'err');
           return;
         }
       }
