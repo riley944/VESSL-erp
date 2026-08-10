@@ -559,7 +559,7 @@ function RegsView({ regs, onEdit, onDelete, searching, term }) {
   return (
     <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
       <div style={{display:'grid',gridTemplateColumns:'180px 1fr 130px 120px 40px',gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
-        {['Citation','Rule','Category','Testing',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>{h}</div>)}
+        {['Code','Rule','Category','Testing',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>{h}</div>)}
       </div>
       {regs.map((r,i)=>(
         <div key={r.id} onClick={()=>onEdit(r)} style={{display:'grid',gridTemplateColumns:'180px 1fr 130px 120px 40px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
@@ -711,7 +711,7 @@ function RegModal({ data, onClose, onSaved }) {
   const setB=k=>e=>setF(p=>({...p,[k]:e.target.checked}));
   const save=async()=>{
     const code=f.code.trim(), name=f.name.trim();
-    if(!code||!name){ alert('Citation and rule name are both required'); return; }
+    if(!code||!name){ alert('Code and rule name are both required'); return; }
     setSaving(true);
     const payload = {
       code, name, category:f.category||null, applies_to:f.applies_to||null, age_group:f.age_group||null,
@@ -738,18 +738,20 @@ function RegModal({ data, onClose, onSaved }) {
   return (
     <Overlay onClose={onClose}>
       <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'6px'}}>{editing?'Edit regulation':'New regulation'}</div>
-      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>{editing?'Reports already filed keep the citation text they recorded.':'A rule that test results can be recorded against.'}</div>
+      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>{editing?'Reports already filed keep the code they recorded.':'A rule that test results can be recorded against.'}</div>
       <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:'12px'}}>
-          <div><label style={lbl}>Citation *</label><input style={inp} value={f.code} onChange={set('code')} placeholder="e.g. 16 CFR 1303" /></div>
+          <div><label style={lbl}>Code *</label><input style={inp} value={f.code} onChange={set('code')} placeholder="e.g. 16 CFR 1303" /></div>
           <div><label style={lbl}>Rule name *</label><input style={inp} value={f.name} onChange={set('name')} placeholder="e.g. Lead in paint" /></div>
         </div>
-        {/* Two fields, not one repeated. Citation above is the short unique key the
-            rest of the app cites -- 16 CFR 1263. This is the string as published,
-            which can name several subsections of that one part. The word "full" is
-            what separates them on screen. */}
+        {/* Two fields, not one repeated. Code above is the short unique key the rest
+            of the app cites -- 16 CFR 1263. This is the string as published, which can
+            name several subsections of that one part.
+            Both labels match their column names on purpose: the list header calls the
+            code column Code too, so no label anywhere means one thing in one place and
+            something else in another. */}
         <div>
-          <label style={lbl}>Full citation <span style={{textTransform:'none',letterSpacing:0,fontWeight:400,color:'#A0A0A4'}}>(as published)</span></label>
+          <label style={lbl}>Citation</label>
           <input style={inp} value={f.citation} onChange={set('citation')} placeholder="e.g. 15 U.S.C. § 2056e; 16 CFR §§ 1263.3, 1263.4" />
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
