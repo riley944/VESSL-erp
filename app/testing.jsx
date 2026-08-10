@@ -558,6 +558,10 @@ const Overlay = ({children,onClose}) => (
 );
 const inp = {width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'10px 12px',fontSize:'14px',outline:'none',fontFamily:'inherit',boxSizing:'border-box'};
 const lbl = {display:'block',fontSize:'11px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'6px'};
+// ToastProvider in page.jsx publishes this global and wraps every page, so it works
+// from a modal without prop plumbing. The other modals in this file still call
+// alert(); moving them across is its own cleanup, not this one.
+const toast = (msg, type) => { if (typeof window !== 'undefined') window._toast?.(msg, type); };
 
 function MaterialModal({ data, labs, onClose, onSaved }) {
   const [f,setF]=useState({ name:data?.name||'', material_type:data?.material_type||'', supplier_name:data?.supplier_name||'', composition:data?.composition||'', color:data?.color||'', notes:data?.notes||'' });
@@ -748,14 +752,56 @@ function LinkModal({ product, materials, existing, onClose, onSaved }) {
   const [sel,setSel]=useState(new Set(existing.map(e=>e.material_id)));
   const [saving,setSaving]=useState(false);
   const toggle=id=>setSel(p=>{ const n=new Set(p); n.has(id)?n.delete(id):n.add(id); return n; });
+  // Neither write used to be checked, and onSaved() ran unconditionally: a refused
+  // insert closed the modal, reloaded the parent, and reported success for links that
+  // were never created. Both are checked now and onSaved() is reached only when
+  // everything asked for actually happened.
   const save=async()=>{
     setSaving(true);
-    const have=new Set(existing.map(e=>e.material_id));
-    const toAdd=[...sel].filter(id=>!have.has(id));
-    const toRemove=existing.filter(e=>!sel.has(e.material_id));
-    if(toAdd.length) await SB.from('product_materials').insert(toAdd.map(mid=>({ product_id:product.id, material_id:mid, is_required:true })));
-    for(const e of toRemove) await SB.from('product_materials').delete().eq('id',e.id);
-    setSaving(false); onSaved();
+    try {
+      const have=new Set(existing.map(e=>e.material_id));
+      const toAdd=[...sel].filter(id=>!have.has(id));
+      const toRemove=existing.filter(e=>!sel.has(e.material_id));
+
+      // Additions first, deliberately. If this fails nothing has been removed yet, so
+      // the stored link set is exactly what it was and the selection can be retried
+      // as it stands. Doing removals first would lose them to a failed insert.
+      if(toAdd.length){
+        // upsert, not insert. A retry after a failure recomputes toAdd from `existing`,
+        // which is stale until the parent reloads -- so rows the first attempt did
+        // write would be offered again, and a plain insert is atomic, meaning that one
+        // collision would reject the whole batch including the genuinely new rows.
+        // product_materials has UNIQUE (product_id, material_id), which is what the
+        // conflict target needs.
+        const { error } = await SB.from('product_materials').upsert(
+          toAdd.map(mid=>({ product_id:product.id, material_id:mid, is_required:true })),
+          { onConflict:'product_id,material_id', ignoreDuplicates:true }
+        );
+        if(error){
+          // Unreachable via the conflict target above, so a 23505 here means the
+          // constraint is not the one this assumes -- worth saying rather than
+          // showing a raw message that reads like a bug in the user's input.
+          const dupe = error.code === '23505';
+          toast(dupe
+            ? 'Some of those materials are already linked — close and reopen to see the current state.'
+            : 'Could not link materials: '+error.message, 'err');
+          return;   // no onSaved: nothing changed, so there is nothing to reload
+        }
+      }
+
+      // One statement rather than a request per row.
+      if(toRemove.length){
+        const { error } = await SB.from('product_materials').delete().in('id', toRemove.map(e=>e.id));
+        if(error){
+          // Partial: the additions landed, the removals did not. The modal stays open
+          // on the same selection, and because the upsert above is idempotent, pressing
+          // Save again re-attempts only what is genuinely outstanding.
+          toast('Linked the new materials, but could not remove the unlinked ones: '+error.message, 'err');
+          return;
+        }
+      }
+      onSaved();
+    } finally { setSaving(false); }
   };
   return (
     <Overlay onClose={onClose}>
