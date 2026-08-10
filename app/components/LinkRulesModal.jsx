@@ -32,7 +32,13 @@ const Overlay = ({children,onClose}) => (
   </div>
 );
 
-// products.cpsc_type is a free text column whose only writer offers GCC and CPC.
+// The same three CreateProductModal offers, because both write products.cpsc_type
+// and a value one accepts that the other does not would be invisible until someone
+// hit it. They are declared in both files rather than shared; unifying them is a
+// small change worth making, but it belongs with a pass over CreateProductModal.
+const CPSC_TYPES = [['', '— N/A —'], ['GCC', 'GCC'], ['CPC', 'CPC']];
+
+// products.cpsc_type is a free text column whose only writers offer GCC and CPC.
 // Anything else is treated as "not set" rather than being matched loosely -- an
 // unrecognised value must not silently promote the 15 depends_on_age_grade rules
 // as though a type had been chosen.
@@ -45,9 +51,15 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
   const [sel,setSel] = useState(new Set(existing.map(e=>e.regulation_id)));
   const [saving,setSaving] = useState(false);
   const [search,setSearch] = useState('');
+  // Held in state and saved with the links, so changing it regroups the list here and
+  // now rather than sending someone to Edit Product and back. It is the same field
+  // that modal writes, saved once -- not a duplicate control that only displays.
+  const [cpscType,setCpscType] = useState(product.cpsc_type || '');
   const toggle=id=>setSel(p=>{ const n=new Set(p); n.has(id)?n.delete(id):n.add(id); return n; });
 
-  const want = asCertType(product.cpsc_type);
+  // Grouping follows the selector, not the stored value, so the split moves as soon
+  // as the type changes and before anything is written.
+  const want = asCertType(cpscType);
   const q = normalizeTerm(search);
   const searching = q.length > 0;
 
@@ -62,9 +74,29 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
     return [a, o];
   },[shown, want]);
 
+  // Two tables in one action, and there is no transaction across them: PostgREST
+  // calls are independent requests and supabase-js has no multi-table transaction,
+  // so real atomicity would need a Postgres function behind an RPC. Given that, the
+  // order is chosen so the cheapest write fails first and costs nothing.
+  //
+  //   cpsc_type fails            -> nothing changed at all, retry as it stands
+  //   cpsc_type ok, links fail   -> type saved, links not; the toast says so, the
+  //                                 selection survives, and Save again retries
+  //
+  // It is written only when it actually differs, so a retry after a partial failure
+  // does not repeat it.
   const save=async()=>{
     setSaving(true);
     try {
+      const wantType = cpscType || null;
+      if (wantType !== (product.cpsc_type || null)) {
+        const { error } = await SB.from('products').update({ cpsc_type: wantType }).eq('id', product.id);
+        if (error) {
+          toast('Could not save the CPSC type: '+error.message+' — no rules were linked.', 'err');
+          return;   // nothing else has run, so the product is exactly as it was
+        }
+      }
+
       const have=new Set(existing.map(e=>e.regulation_id));
       const toAdd=[...sel].filter(id=>!have.has(id));
       const toRemove=existing.filter(e=>!sel.has(e.regulation_id));
@@ -79,7 +111,8 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
           toast(dupe
             ? 'Some of those rules are already linked — close and reopen to see the current state.'
             : 'Could not link rules: '+error.message, 'err');
-          return;   // no onSaved: nothing changed, so there is nothing to reload
+          return;   // no onSaved: the links did not change. The CPSC type above may
+                    // have, which is why that toast is worded separately.
         }
       }
       if(toRemove.length){
@@ -114,17 +147,26 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
       <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'4px'}}>CPSC rules for {label}</div>
       <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'14px'}}>Link the rules this product has to be certified against.</div>
 
+      {/* The type sits above the list because it decides how the list is arranged.
+          It replaces the line that used to point at Edit Product: the friction that
+          line existed to explain is what this control removes. */}
+      <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'10px',flexWrap:'wrap'}}>
+        <span style={{fontSize:'11px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',whiteSpace:'nowrap'}}>CPSC type</span>
+        <select value={cpscType} onChange={e=>setCpscType(e.target.value)} style={{...inp,width:'auto',minWidth:'120px',padding:'7px 10px',fontSize:'13px'}}>
+          {CPSC_TYPES.map(([v,l])=><option key={v||'none'} value={v}>{l}</option>)}
+        </select>
+        <span style={{fontSize:'11.5px',color:'#A0A0A4'}}>saved with the links</span>
+      </div>
+
       {/* The counts are of the FILTERED set, so searching narrows both groups rather
           than collapsing the distinction between them. */}
       <div style={{fontSize:'12px',color:'#6A6A6E',marginBottom:'12px',lineHeight:1.5}}>
         {want ? (
           <>{applies.length} apply to a {want.toUpperCase()} · {others.length} others{searching && ' · '+shown.length+' of '+regs.length}</>
         ) : (
-          // Explains the missing divider instead of leaving a flat list looking wrong,
-          // and names where the field is so nobody goes hunting for it. Left
-          // non-actionable on purpose: a second cpsc_type control here would be a
-          // second writer of one column.
-          <>Set a CPSC type in Edit Product to see which rules apply to it.{searching ? ' · '+shown.length+' of '+regs.length : ' · '+regs.length+' rules'}</>
+          // Still says why there is no divider, but now points at the control directly
+          // above rather than at another modal.
+          <>Pick a CPSC type above to group by what applies.{searching ? ' · '+shown.length+' of '+regs.length : ' · '+regs.length+' rules'}</>
         )}
         {sel.size > 0 && <span style={{color:'#1A1A1C',fontWeight:600}}>{' · '+sel.size+' selected'}</span>}
       </div>
