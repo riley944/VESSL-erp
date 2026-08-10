@@ -81,7 +81,12 @@ export default function Testing() {
       SB.from('products').select('id,sku,name,compliance_status,cpsc_type').order('sku',{nullsFirst:false}),
       SB.from('materials').select('*,supplier:companies!supplier_id(name)').order('created_at',{ascending:false}),
       SB.from('test_reports').select('*,lab:labs(name),material:materials(name),product:products(name,sku),test_results(*)').order('test_date',{ascending:false}),
-      SB.from('regulations').select('*').eq('active',true).order('sort_order'),
+      // Secondary sort on code, because sort_order does not identify a row: the column
+      // defaults to 100, so every rule created through RegModal without an explicit
+      // number ties with 16 CFR 1633 and with every other such rule. Postgres may
+      // return a tie in a different order between queries, which would reorder both
+      // the Regulations tab and ReportModal's rule picker between page loads.
+      SB.from('regulations').select('*').eq('active',true).order('sort_order').order('code'),
       SB.from('labs').select('*').order('name'),
       SB.from('product_materials').select('*,material:materials(id,name,status)'),
     ]);
@@ -553,12 +558,15 @@ function RegsView({ regs, onEdit, onDelete, searching, term }) {
     : <Empty title="No regulations loaded" sub="Run the compliance schema seed to load the CPSC rule library." />;
   return (
     <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
-      <div style={{display:'grid',gridTemplateColumns:'150px 1fr 130px 120px 40px',gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
+      <div style={{display:'grid',gridTemplateColumns:'180px 1fr 130px 120px 40px',gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
         {['Citation','Rule','Category','Testing',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>{h}</div>)}
       </div>
       {regs.map((r,i)=>(
-        <div key={r.id} onClick={()=>onEdit(r)} style={{display:'grid',gridTemplateColumns:'150px 1fr 130px 120px 40px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-          <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:600,color:'#1D1D1F'}}>{r.code}</div>
+        <div key={r.id} onClick={()=>onEdit(r)} style={{display:'grid',gridTemplateColumns:'180px 1fr 130px 120px 40px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          {/* Same overflow treatment as the Rule cell beside it. The track holds about
+              24 mono characters and the longest code is exactly 24 -- 16 CFR
+              1500.86(a)(7)-(8) -- so this is the margin, not decoration. */}
+          <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{r.code}</div>
           <div style={{minWidth:0}}>
             <div style={{fontSize:'13px',color:'#1D1D1F',fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{r.name}</div>
             {(r.applies_to||r.age_group)&&<div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[r.applies_to,r.age_group].filter(Boolean).join(' \u00b7 ')}</div>}
