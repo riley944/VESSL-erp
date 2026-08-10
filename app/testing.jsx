@@ -6,12 +6,13 @@ import { matches, normalizeTerm } from "@/lib/textFilter";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const fmtDate = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
+const daysUntil = s => { if(!s) return null; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); if(isNaN(d)) return null; return Math.round((d.getTime()-Date.now())/86400000); };
 const MAT_STATUS = {
-  untested:   { label:'Untested',    color:'#8A8A8E', bg:'#F2F2F4' },
-  in_progress:{ label:'In Progress', color:'#B45309', bg:'#FEF3C7' },
-  passed:     { label:'Passed',      color:'#15803D', bg:'#DCFCE7' },
-  failed:     { label:'Failed',      color:'#B91C1C', bg:'#FEE2E2' },
-  expired:    { label:'Expired',     color:'#B91C1C', bg:'#FEE2E2' },
+  untested:   { label:'Untested',    color:'#8A8A8E', bg:'#F2F2F4', dot:'#C7C7CC' },
+  in_progress:{ label:'In Progress', color:'#B45309', bg:'#FEF3C7', dot:'#F59E0B' },
+  passed:     { label:'Passed',      color:'#15803D', bg:'#DCFCE7', dot:'#22C55E' },
+  failed:     { label:'Failed',      color:'#B91C1C', bg:'#FEE2E2', dot:'#EF4444' },
+  expired:    { label:'Expired',     color:'#B91C1C', bg:'#FEE2E2', dot:'#EF4444' },
 };
 // 'passed', 'pending' and 'failed' are the three a human can set. The rest are only
 // reachable on a row whose status was written before the derivation was dropped, or
@@ -44,13 +45,17 @@ const TABS = [
   ['reports','Test Reports','test reports'],
   ['regs','Regulations','regulations'],
 ];
+// Reports whose expiry lands inside this window count as "expiring" on the pulse
+// strip and the reports filter. 60 days is the re-test lead time that gives a lab
+// round-trip comfortable margin.
+const EXPIRY_WINDOW_DAYS = 60;
 
 function StatusPill({ map, status }) {
   const s = map[status] || { label:status||'—', color:'#8A8A8E', bg:'#F2F2F4' };
-  return <span style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'11.5px',fontWeight:600,color:s.color,background:s.bg,borderRadius:'7px',padding:'3px 9px',whiteSpace:'nowrap'}}>{s.dot&&<span style={{width:'6px',height:'6px',borderRadius:'50%',background:s.dot}}/>}{s.label}</span>;
+  return <span style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'11.5px',fontWeight:600,color:s.color,background:s.bg,borderRadius:'980px',padding:'3px 10px',whiteSpace:'nowrap'}}>{s.dot&&<span style={{width:'6px',height:'6px',borderRadius:'50%',background:s.dot}}/>}{s.label}</span>;
 }
 
-const card = {background:'#fff',border:'1px solid #ECECEE',borderRadius:'16px',boxShadow:'0 0 0 1px rgba(0,0,0,.02),0 2px 5px rgba(0,0,0,.04),0 12px 28px -8px rgba(20,20,40,.05)'};
+const card = {background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)'};
 
 // ═══════════════════════════════════════════════════════════════════════════
 export default function Testing() {
@@ -64,6 +69,11 @@ export default function Testing() {
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // {type:'material'|'report'|'link', data}
   const [search, setSearch] = useState('');
+  // One filter slot per tab, driven by the pulse tiles and the pill rows. Kept
+  // separate so switching tabs doesn't drag a products filter onto materials.
+  const [prodFilter, setProdFilter] = useState('');   // '' | compliant | pending | issues | nocpsc | unset
+  const [matFilter, setMatFilter] = useState('');     // '' | passed | untested | attention
+  const [repFilter, setRepFilter] = useState('');     // '' | pass | fail | expiring
 
   const load = async () => {
     setLoading(true);
@@ -81,39 +91,24 @@ export default function Testing() {
   };
   useEffect(()=>{ load(); },[]);
 
-  // Everything is already in memory from load(), so filtering is a pass over arrays --
-  // no query runs on a keystroke. These feed the four VIEWS ONLY: ReportModal's product
-  // and material pickers and LinkModal's material list keep the unfiltered arrays, or a
-  // search would silently narrow what is selectable inside a modal.
-  const q = normalizeTerm(search);
-  const searching = q.length > 0;
-  const shownProducts = useMemo(() => !q ? products : products.filter(p =>
-    // cpsc_type is matched through its displayed fallback, so "no cpsc" finds exactly
-    // the products missing one -- the gap the fallback exists to show.
-    matches(q, p.name, p.sku, p.cpsc_type || 'No CPSC')
-  ), [products, q]);
-  const shownMaterials = useMemo(() => !q ? materials : materials.filter(m =>
-    // master_sku is not rendered on the row, unlike the rest. It is included because a
-    // pasted SKU should find its material; it is NULL on every row today because
-    // MaterialModal's save does not send it.
-    matches(q, m.name, m.composition, m.material_type, m.supplier?.name, m.supplier_name, m.master_sku)
-  ), [materials, q]);
-  const shownReports = useMemo(() => !q ? reports : reports.filter(r =>
-    // All three headline fallbacks, since which one renders varies by row, plus the
-    // regulation codes from the nested results grid.
-    matches(q, r.report_number, r.lab?.name, r.material?.name, r.product?.sku, r.product?.name,
-      ...(r.test_results || []).map(t => t.regulation_code))
-  ), [reports, q]);
-  const shownRegs = useMemo(() => !q ? regs : regs.filter(r =>
-    matches(q, r.code, r.name, r.category)
-  ), [regs, q]);
-  const shownCount = { products:shownProducts, materials:shownMaterials, reports:shownReports, regs:shownRegs }[tab].length;
-  const totalCount = { products, materials, reports, regs }[tab].length;
+  // ── derived signals ──
+  // Latest report per material (reports arrive test_date desc, so first hit wins).
+  // Its expiry is the material's re-test clock — the same "most recent report" the
+  // report_recalc trigger derives status from, so the two never disagree.
+  const latestByMaterial = useMemo(()=>{
+    const map = {};
+    reports.forEach(r=>{ if(r.material_id && !map[r.material_id]) map[r.material_id] = r; });
+    return map;
+  },[reports]);
+  const expiryOf = (materialId) => { const r = latestByMaterial[materialId]; return r ? r.expiry_date : null; };
 
-  // Derived product status from linked materials. Deliberately unreferenced: product
-  // compliance is now the stored value alone (see effectiveStatus), so nothing calls
-  // this. Kept because it may come back as a secondary signal shown alongside the
-  // manual status rather than as a substitute for it.
+  const expiringReports = useMemo(()=>reports.filter(r=>{
+    const d = daysUntil(r.expiry_date);
+    return d!==null && d>=0 && d<=EXPIRY_WINDOW_DAYS;
+  }),[reports]);
+
+  // Derived product status from linked materials. Shown as a quiet secondary line
+  // under the manual pill — a signal beside Jenn's call, never a substitute for it.
   const productStatus = (prodId) => {
     const links = prodMats.filter(l=>l.product_id===prodId && l.is_required);
     if(!links.length) return 'no_materials';
@@ -125,6 +120,55 @@ export default function Testing() {
     return 'pending';
   };
 
+  // Everything is already in memory from load(), so filtering is a pass over arrays --
+  // no query runs on a keystroke. These feed the four VIEWS ONLY: ReportModal's product
+  // and material pickers and LinkModal's material list keep the unfiltered arrays, or a
+  // search would silently narrow what is selectable inside a modal.
+  const q = normalizeTerm(search);
+  const searching = q.length > 0;
+  const shownProducts = useMemo(() => {
+    let list = !q ? products : products.filter(p =>
+      // cpsc_type is matched through its displayed fallback, so "no cpsc" finds exactly
+      // the products missing one -- the gap the fallback exists to show.
+      matches(q, p.name, p.sku, p.cpsc_type || 'No CPSC')
+    );
+    if (prodFilter==='compliant') list = list.filter(p=>['compliant','passed'].includes(effectiveStatus(p)));
+    if (prodFilter==='pending')   list = list.filter(p=>effectiveStatus(p)==='pending');
+    if (prodFilter==='issues')    list = list.filter(p=>['failed','expired'].includes(effectiveStatus(p)));
+    if (prodFilter==='unset')     list = list.filter(p=>!effectiveStatus(p));
+    if (prodFilter==='nocpsc')    list = list.filter(p=>!p.cpsc_type);
+    return list;
+  }, [products, q, prodFilter]);
+  const shownMaterials = useMemo(() => {
+    let list = !q ? materials : materials.filter(m =>
+      // master_sku is not rendered on the row, unlike the rest. It is included because a
+      // pasted SKU should find its material; it is NULL on every row today because
+      // MaterialModal's save does not send it.
+      matches(q, m.name, m.composition, m.material_type, m.supplier?.name, m.supplier_name, m.master_sku)
+    );
+    if (matFilter==='passed')    list = list.filter(m=>m.status==='passed');
+    if (matFilter==='untested')  list = list.filter(m=>['untested','in_progress'].includes(m.status));
+    if (matFilter==='attention') list = list.filter(m=>['failed','expired'].includes(m.status));
+    return list;
+  }, [materials, q, matFilter]);
+  const shownReports = useMemo(() => {
+    let list = !q ? reports : reports.filter(r =>
+      // All three headline fallbacks, since which one renders varies by row, plus the
+      // regulation codes from the nested results grid.
+      matches(q, r.report_number, r.lab?.name, r.material?.name, r.product?.sku, r.product?.name,
+        ...(r.test_results || []).map(t => t.regulation_code))
+    );
+    if (repFilter==='pass') list = list.filter(r=>r.overall_result==='pass');
+    if (repFilter==='fail') list = list.filter(r=>r.overall_result==='fail');
+    if (repFilter==='expiring') list = list.filter(r=>{ const d=daysUntil(r.expiry_date); return d!==null && d>=0 && d<=EXPIRY_WINDOW_DAYS; });
+    return list;
+  }, [reports, q, repFilter]);
+  const shownRegs = useMemo(() => !q ? regs : regs.filter(r =>
+    matches(q, r.code, r.name, r.category)
+  ), [regs, q]);
+  const shownCount = { products:shownProducts, materials:shownMaterials, reports:shownReports, regs:shownRegs }[tab].length;
+  const totalCount = { products, materials, reports, regs }[tab].length;
+
   // Stored statuses only, matching the table beneath. A product nobody has ruled on
   // counts toward none of the three — the totals are what has been decided, not a
   // partition of every product.
@@ -132,7 +176,9 @@ export default function Testing() {
     compliant: products.filter(p=>['compliant','passed'].includes(effectiveStatus(p))).length,
     pending:   products.filter(p=>['pending'].includes(effectiveStatus(p))).length,
     issues:    products.filter(p=>['failed','expired'].includes(effectiveStatus(p))).length,
-    materials: materials.length,
+    matGaps:   materials.filter(m=>['untested','in_progress','failed','expired'].includes(m.status)).length,
+    expiring:  expiringReports.length,
+    noCpsc:    products.filter(p=>!p.cpsc_type).length,
   };
 
   // No optimistic update on purpose: the select is controlled from `products`, so a
@@ -207,73 +253,99 @@ export default function Testing() {
     await load();
   };
 
+  // Pulse tiles: each is a live count and a shortcut. Tapping switches to the tab
+  // that answers it and toggles the matching filter; tapping again clears it.
+  const goto = (t, setter, current, val) => () => { setTab(t); setSearch(''); setter(current===val?'':val); };
+  const pulse = [
+    { k:'Compliant',        v:counts.compliant, c:'#30D158', go:goto('products',setProdFilter,prodFilter,'compliant'), on:tab==='products'&&prodFilter==='compliant' },
+    { k:'Pending decision', v:counts.pending,   c:'#FF9F0A', go:goto('products',setProdFilter,prodFilter,'pending'),   on:tab==='products'&&prodFilter==='pending' },
+    { k:'Issues',           v:counts.issues,    c:'#FF375F', go:goto('products',setProdFilter,prodFilter,'issues'),    on:tab==='products'&&prodFilter==='issues' },
+    { k:'Material gaps',    v:counts.matGaps,   c:'#FF9F0A', go:goto('materials',setMatFilter,matFilter,'attention'), on:tab==='materials'&&matFilter==='attention' },
+    { k:'Expiring \u2264'+EXPIRY_WINDOW_DAYS+'d', v:counts.expiring, c:'#FF375F', go:goto('reports',setRepFilter,repFilter,'expiring'), on:tab==='reports'&&repFilter==='expiring' },
+    { k:'No CPSC type',     v:counts.noCpsc,    c:'#0A84FF', go:goto('products',setProdFilter,prodFilter,'nocpsc'),    on:tab==='products'&&prodFilter==='nocpsc' },
+  ];
+
   return (
-    <div className="db-wrap" style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
-      {/* Title */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'22px',gap:'14px',flexWrap:'wrap'}}>
+    <div className="db-apple" style={{padding:'30px 28px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
+
+      {/* ── Header ── */}
+      <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'16px',marginBottom:'22px',flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:'24px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em'}}>Testing &amp; Compliance</div>
-          <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Material testing, CPSC readiness &amp; product certification</div>
+          <div style={{fontSize:'28px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.021em',lineHeight:1.05}}>Testing &amp; Compliance</div>
+          <div style={{fontSize:'14.5px',color:'#86868B',marginTop:'5px',letterSpacing:'-.01em'}}>{String(materials.length)+' materials \u00b7 '+String(reports.length)+' reports \u00b7 '+String(regs.length)+' active rules'}</div>
         </div>
-        <div style={{display:'flex',gap:'8px'}}>
-          <button onClick={()=>setModal({type:'material'})} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Material</button>
-          <button onClick={()=>setModal({type:'lab'})} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Lab</button>
-          <button onClick={()=>setModal({type:'reg'})} style={{background:'#fff',color:'#1A1A1C',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Regulation</button>
-          <button onClick={()=>setModal({type:'report'})} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Log Test Report</button>
+        <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
+          <button onClick={()=>setModal({type:'material'})} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Material</button>
+          <button onClick={()=>setModal({type:'lab'})} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Lab</button>
+          <button onClick={()=>setModal({type:'reg'})} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Regulation</button>
+          <button onClick={()=>setModal({type:'report'})} style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Log Test Report</button>
         </div>
       </div>
 
-      {/* Summary tiles */}
-      <div className="db-kpi-grid" style={{display:'grid',gridTemplateColumns:'repeat(4,minmax(0,1fr))',gap:'14px',marginBottom:'20px'}}>
-        {[
-          {k:'Compliant products', v:counts.compliant, tint:'#22C55E', bg:'#DCFCE7'},
-          {k:'Pending testing',    v:counts.pending,   tint:'#F59E0B', bg:'#FEF3C7'},
-          {k:'Issues / expired',   v:counts.issues,    tint:'#EF4444', bg:'#FEE2E2'},
-          {k:'Materials tracked',  v:counts.materials, tint:'#6366F1', bg:'#EEF'},
-        ].map(m=>(
-          <div key={m.k} style={{...card,padding:'18px 20px'}}>
-            <div style={{display:'flex',alignItems:'center',gap:'9px',marginBottom:'13px'}}>
-              <div style={{width:'9px',height:'9px',borderRadius:'50%',background:m.tint}}/>
-              <div style={{fontSize:'12.5px',fontWeight:500,color:'#8A8A8E'}}>{m.k}</div>
-            </div>
-            <div style={{fontSize:'30px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
-          </div>
+      {/* ── Pulse strip ── */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:'12px',marginBottom:'22px'}}>
+        {pulse.map(m=>(
+          <button key={m.k} onClick={m.go} style={{background:m.on?'#1D1D1F':'#fff',borderRadius:'16px',padding:'14px 16px',border:'none',boxShadow:'0 1px 3px rgba(0,0,0,.04)',cursor:'pointer',textAlign:'left',transition:'.15s'}}>
+            <div style={{fontSize:'24px',fontWeight:600,letterSpacing:'-.02em',lineHeight:1,color:m.on?'#fff':(m.v>0?m.c:'#1D1D1F'),fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
+            <div style={{fontSize:'11.5px',color:m.on?'rgba(255,255,255,.65)':'#86868B',marginTop:'5px',letterSpacing:'-.006em'}}>{m.k}</div>
+          </button>
         ))}
       </div>
 
-      {/* Tabs */}
-      {/* The row already wrapped, so the search group drops to its own line on narrow
-          screens instead of squashing the tabs. Changing tab clears the term: otherwise
-          you land on Materials, see an empty list, and have no idea why. */}
-      <div style={{display:'flex',gap:'6px',marginBottom:'18px',flexWrap:'wrap',alignItems:'center'}}>
-        {TABS.map(([v,l])=>(
-          <button key={v} onClick={()=>{setTab(v);setSearch('');}} style={{padding:'8px 15px',borderRadius:'9px',border:'1px solid '+(tab===v?'transparent':'#E5E7EB'),cursor:'pointer',fontSize:'13px',fontWeight:500,background:tab===v?'#1A1A1C':'#fff',color:tab===v?'#fff':'#4A4A4E'}}>{l}</button>
-        ))}
-        <div style={{display:'flex',alignItems:'center',gap:'10px',marginLeft:'auto',flex:'1 1 240px',maxWidth:'400px',justifyContent:'flex-end'}}>
-          {/* .prod-search comes from globals.css, imported once in layout.jsx — no
-              import here and no reference back to page.jsx. */}
-          <div className="prod-search" style={{flex:'1 1 auto',minWidth:0}}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-            <input placeholder={'Search '+(TABS.find(t=>t[0]===tab)||[])[2]+'…'} value={search} onChange={e=>setSearch(e.target.value)} />
-          </div>
-          {/* The tiles above stay at totals while the list is filtered. This count makes
-              that read as deliberate rather than as the tiles being wrong. */}
-          {searching && <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{shownCount} of {totalCount}</span>}
+      {/* ── Controls: segmented tabs + search + per-tab filter pills ── */}
+      {/* Changing tab clears the term: otherwise you land on Materials, see an empty
+          list, and have no idea why. Filters persist per tab so a tile shortcut
+          survives a detour through another view. */}
+      <div style={{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap',marginBottom:'18px'}}>
+        <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',boxShadow:'inset 0 1px 2px rgba(0,0,0,.05)'}}>
+          {TABS.map(([v,l])=>(
+            <button key={v} onClick={()=>{setTab(v);setSearch('');}} style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'9px 16px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:tab===v?'#1D1D1F':'transparent',color:tab===v?'#fff':'#5A5A5E',boxShadow:tab===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
+              {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 7px',background:tab===v?'rgba(255,255,255,.22)':'#DCDCE0',color:tab===v?'#fff':'#6A6A6E'}}>{ {products:products.length,materials:materials.length,reports:reports.length,regs:regs.length}[v] }</span>
+            </button>
+          ))}
         </div>
+        <div style={{position:'relative',flex:'1 1 200px',maxWidth:'320px'}}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#A0A0A4" strokeWidth="2" strokeLinecap="round" style={{position:'absolute',left:'13px',top:'50%',transform:'translateY(-50%)'}}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={'Search '+(TABS.find(t=>t[0]===tab)||[])[2]+'\u2026'} style={{width:'100%',border:'none',borderRadius:'980px',padding:'10px 15px 10px 38px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
+        </div>
+        {/* The tiles above stay at totals while the list is filtered. This count makes
+            that read as deliberate rather than as the tiles being wrong. */}
+        {searching && <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{shownCount} of {totalCount}</span>}
+        {tab==='products' && (
+          <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+            {[['','All'],['compliant','Compliant'],['pending','Pending'],['issues','Issues'],['unset','Not set'],['nocpsc','No CPSC']].map(([v,l])=>(
+              <button key={v||'all'} onClick={()=>setProdFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:prodFilter===v?'#1D1D1F':'#fff',color:prodFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
+            ))}
+          </div>
+        )}
+        {tab==='materials' && (
+          <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+            {[['','All'],['passed','Passed'],['untested','Untested'],['attention','Failed / expired']].map(([v,l])=>(
+              <button key={v||'all'} onClick={()=>setMatFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:matFilter===v?'#1D1D1F':'#fff',color:matFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
+            ))}
+          </div>
+        )}
+        {tab==='reports' && (
+          <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+            {[['','All'],['pass','Pass'],['fail','Fail'],['expiring','Expiring \u2264'+EXPIRY_WINDOW_DAYS+'d']].map(([v,l])=>(
+              <button key={v||'all'} onClick={()=>setRepFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:repFilter===v?'#1D1D1F':'#fff',color:repFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
+            ))}
+          </div>
+        )}
       </div>
 
       {statusErr && (
-        <div style={{display:'flex',alignItems:'center',gap:'10px',background:'#FEE2E2',border:'1px solid #FCA5A5',color:'#B91C1C',borderRadius:'10px',padding:'11px 14px',fontSize:'13px',marginBottom:'14px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'10px',background:'#FEE2E2',border:'1px solid #FCA5A5',color:'#B91C1C',borderRadius:'12px',padding:'11px 14px',fontSize:'13px',marginBottom:'14px'}}>
           <span style={{flex:1}}>{statusErr}</span>
           <button onClick={()=>setStatusErr('')} style={{background:'none',border:'none',color:'#B91C1C',fontSize:'15px',cursor:'pointer',lineHeight:1,padding:0}}>×</button>
         </div>
       )}
 
-      {loading ? <div style={{padding:'60px',textAlign:'center',color:'#8A8A8E'}}>Loading…</div> : (
+      {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} onLink={(p)=>setModal({type:'link',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} />}
-          {tab==='materials' && <MaterialsView materials={shownMaterials} onEdit={(m)=>setModal({type:'material',data:m})} onTest={(m)=>setModal({type:'report',data:{material_id:m.id}})} onDelete={deleteMaterial} searching={searching} term={search.trim()} />}
-          {tab==='reports'   && <ReportsView reports={shownReports} onEdit={(r)=>setModal({type:'report',row:r})} onDelete={deleteReport} searching={searching} term={search.trim()} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter} />}
+          {tab==='materials' && <MaterialsView materials={shownMaterials} expiryOf={expiryOf} reports={reports} onEdit={(m)=>setModal({type:'material',data:m})} onTest={(m)=>setModal({type:'report',data:{material_id:m.id}})} onDelete={deleteMaterial} searching={searching} term={search.trim()} filtered={!!matFilter} />}
+          {tab==='reports'   && <ReportsView reports={shownReports} onEdit={(r)=>setModal({type:'report',row:r})} onDelete={deleteReport} searching={searching} term={search.trim()} filtered={!!repFilter} />}
           {tab==='regs'      && <RegsView regs={shownRegs} onEdit={(r)=>setModal({type:'reg',data:r})} onDelete={deleteReg} searching={searching} term={search.trim()} />}
         </>
       )}
@@ -289,49 +361,77 @@ export default function Testing() {
 }
 
 // ── PRODUCTS VIEW ────────────────────────────────────────────────────────────
-function ProductsView({ products, prodMats, onLink, onSetStatus, onEdit, onDelete, searching, term }) {
+function ProductsView({ products, prodMats, productStatus, onLink, onSetStatus, onEdit, onDelete, searching, term, filtered }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
   // well exist, it just does not match.
-  if(!products.length) return searching
-    ? <Empty title={'No products match “'+term+'”'} sub="Try a different term, or clear the search." />
+  if(!products.length) return (searching || filtered)
+    ? <Empty title={searching?('No products match \u201C'+term+'\u201D'):'Nothing in this filter'} sub="Try a different term, or clear the search / filter." />
     : <Empty title="No products yet" sub="Products appear here once they exist. Open one to link the materials it is built from and set its compliance status." />;
   return (
-    <div style={{...card,overflow:'hidden'}}>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 140px 120px 130px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
-        {['Product','Materials','Status',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i>=1&&i<3?'left':i===3?'right':'left'}}>{h}</div>)}
+    <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 170px 130px',gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
+        {['Product','Built from','Compliance',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i===3?'right':'left'}}>{h}</div>)}
       </div>
       {products.map((p,i)=>{
-        const links=prodMats.filter(l=>l.product_id===p.id);
-        const st=effectiveStatus(p);
+        const links = prodMats.filter(l=>l.product_id===p.id);
+        const st = effectiveStatus(p);
+        const derived = productStatus(p.id);
+        const dInfo = PROD_STATUS[derived] || PROD_STATUS.not_set;
         return (
-          <div key={p.id} onClick={()=>onEdit(p)} style={{display:'grid',gridTemplateColumns:'1fr 140px 120px 130px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          <div key={p.id} onClick={()=>onEdit(p)} style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 170px 130px',gap:'16px',padding:'15px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
             <div style={{minWidth:0}}>
-              <div style={{fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.name||'—'}</div>
+              <div style={{fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.name||'—'}</div>
               {/* Type only — a certificate number is too long to scan, so cpsc_code
                   stays in the modal. 'No CPSC' rather than nothing: every product is
                   unset today and the gap is the thing worth seeing. Deliberately the
                   same muted colour as the SKU — GCC vs CPC says which rule applies,
                   not pass or fail, so colouring it would imply a judgement. */}
-              <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[p.sku, p.cpsc_type || 'No CPSC'].filter(Boolean).join(' · ')}</div>
+              <div style={{fontSize:'12px',color:'#86868B',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[p.sku, p.cpsc_type || 'No CPSC'].filter(Boolean).join(' \u00b7 ')}</div>
             </div>
-            <div style={{fontSize:'12.5px',color:'#4A4A4E'}}>{links.length? links.length+' linked':<span style={{color:'#C0C0C4'}}>none</span>}</div>
-            <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:'5px',minWidth:0}}>
-              <StatusPill map={PROD_STATUS} status={st || 'not_set'} />
+            {/* The materials cell shows what the product is actually built from, with
+                each material's status as a dot — and opens the link modal directly. */}
+            <div onClick={e=>{e.stopPropagation();onLink(p);}} style={{minWidth:0,cursor:'pointer'}} title="Edit linked materials">
+              {links.length ? (
+                <div style={{display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}}>
+                  {links.slice(0,2).map(l=>{
+                    const ms = MAT_STATUS[l.material?.status] || MAT_STATUS.untested;
+                    return (
+                      <span key={l.id} style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'11.5px',fontWeight:500,color:'#4A4A4E',background:'#F5F5F7',borderRadius:'980px',padding:'3px 9px',maxWidth:'150px'}}>
+                        <span style={{width:'6px',height:'6px',borderRadius:'50%',background:ms.dot,flexShrink:0}}/>
+                        <span style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{l.material?.name||'—'}</span>
+                      </span>
+                    );
+                  })}
+                  {links.length>2 && <span style={{fontSize:'11px',fontWeight:600,color:'#86868B'}}>+{links.length-2}</span>}
+                </div>
+              ) : <span style={{fontSize:'12px',color:'#C7C7CC'}}>no materials linked</span>}
+            </div>
+            <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:'4px',minWidth:0}} onClick={e=>e.stopPropagation()}>
+              {/* The pill is Jenn's stored call; the select writes it. The line under is
+                  the material-derived signal — advisory context beside the decision,
+                  never a substitute for it. */}
               <select
                 value={p.compliance_status||''}
                 onChange={e=>onSetStatus(p.id,e.target.value)}
-                onClick={e=>e.stopPropagation()}
                 aria-label={'Compliance status for '+(p.sku||p.name||'product')}
-                style={{width:'100%',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'3px 5px',fontSize:'11px',color:'#4A4A4E',background:'#fff',cursor:'pointer',fontFamily:'inherit',outline:'none'}}
+                style={{border:'1px solid rgba(0,0,0,.1)',borderRadius:'8px',padding:'5px 8px',fontSize:'12px',fontWeight:600,color:(PROD_STATUS[st||'not_set']||{}).color,background:'#fff',cursor:'pointer',fontFamily:'inherit',outline:'none',maxWidth:'100%'}}
               >
                 {COMPLIANCE_OPTS.map(([v,l])=><option key={v} value={v}>{l}</option>)}
               </select>
+              {links.length>0 && (
+                <span style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'10.5px',color:'#86868B'}}>
+                  <span style={{width:'5px',height:'5px',borderRadius:'50%',background:dInfo.dot||'#C7C7CC'}}/>
+                  materials: {dInfo.label.toLowerCase()}
+                </span>
+              )}
             </div>
             {/* The row itself opens the editor, so anything clickable inside it has to
                 stop the event or it would do both. */}
             <div style={{display:'flex',gap:'6px',justifyContent:'flex-end',alignItems:'center'}}>
-              <button onClick={e=>{e.stopPropagation();onLink(p);}} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'8px',padding:'5px 11px',fontSize:'12px',fontWeight:500,color:'#4A4A4E',cursor:'pointer'}}>Materials</button>
-              <button onClick={e=>{e.stopPropagation();onDelete(p);}} title={'Delete '+(p.name||p.sku||'product')} aria-label={'Delete '+(p.name||p.sku||'product')} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'8px',padding:'4px 9px',fontSize:'15px',lineHeight:1,fontWeight:500,color:'#B91C1C',cursor:'pointer'}}>×</button>
+              <button onClick={e=>{e.stopPropagation();onLink(p);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Materials</button>
+              <button onClick={e=>{e.stopPropagation();onDelete(p);}} title={'Delete '+(p.name||p.sku||'product')} aria-label={'Delete '+(p.name||p.sku||'product')} style={{background:'none',border:'none',padding:'5px',borderRadius:'7px',color:'#C7C7CC',cursor:'pointer',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
+              </button>
             </div>
           </div>
         );
@@ -341,73 +441,107 @@ function ProductsView({ products, prodMats, onLink, onSetStatus, onEdit, onDelet
 }
 
 // ── MATERIALS VIEW ───────────────────────────────────────────────────────────
-function MaterialsView({ materials, onEdit, onTest, onDelete, searching, term }) {
-  if(!materials.length) return searching
-    ? <Empty title={'No materials match “'+term+'”'} sub="Try a different term, or clear the search." />
+function MaterialsView({ materials, expiryOf, reports, onEdit, onTest, onDelete, searching, term, filtered }) {
+  if(!materials.length) return (searching || filtered)
+    ? <Empty title={searching?('No materials match \u201C'+term+'\u201D'):'Nothing in this filter'} sub="Try a different term, or clear the search / filter." />
     : <Empty title="No materials yet" sub="Add a material (fabric, dye, zipper…) — it's the unit that gets tested and that SKUs inherit compliance from." />;
+  const reportCount = id => reports.filter(r=>r.material_id===id).length;
   return (
-    <div style={{...card,overflow:'hidden'}}>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 130px 120px 120px 150px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
-        {['Material','Type','Supplier','Status','Last tested'].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4'}}>{h}</div>)}
+    <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(200px,1.3fr) 110px minmax(120px,1fr) 118px 150px 120px',gap:'14px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
+        {['Material','Type','Supplier','Status','Testing',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i===5?'right':'left'}}>{h}</div>)}
       </div>
-      {materials.map((m,i)=>(
-        <div key={m.id} onClick={()=>onEdit(m)} style={{display:'grid',gridTemplateColumns:'1fr 130px 120px 120px 150px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-          <div style={{minWidth:0}}>
-            <div style={{fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.name}</div>
-            {m.composition&&<div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.composition}</div>}
+      {materials.map((m,i)=>{
+        const exp = expiryOf(m.id);
+        const d = daysUntil(exp);
+        const expSoon = d!==null && d>=0 && d<=EXPIRY_WINDOW_DAYS;
+        const expPast = d!==null && d<0;
+        const rc = reportCount(m.id);
+        return (
+          <div key={m.id} onClick={()=>onEdit(m)} style={{display:'grid',gridTemplateColumns:'minmax(200px,1.3fr) 110px minmax(120px,1fr) 118px 150px 120px',gap:'14px',padding:'15px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.name}</div>
+              {m.composition&&<div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.composition}</div>}
+            </div>
+            <div style={{fontSize:'12.5px',color:'#4A4A4E',textTransform:'capitalize',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.material_type||'—'}</div>
+            <div style={{fontSize:'12.5px',color:'#4A4A4E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.supplier?.name||m.supplier_name||'—'}</div>
+            <div><StatusPill map={MAT_STATUS} status={m.status} /></div>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:'12px',color:'#4A4A4E',fontVariantNumeric:'tabular-nums'}}>{m.last_tested?fmtDate(m.last_tested):'never tested'}{rc>0?' \u00b7 '+rc+' rpt'+(rc===1?'':'s'):''}</div>
+              {/* The re-test clock, from the latest report's expiry — the list a
+                  compliance operator actually plans lab work from. */}
+              {expSoon && <div style={{fontSize:'11px',fontWeight:700,color:'#B45309',marginTop:'2px'}}>{'re-test in '+d+'d'}</div>}
+              {expPast && <div style={{fontSize:'11px',fontWeight:700,color:'#FF375F',marginTop:'2px'}}>{'expired '+Math.abs(d)+'d ago'}</div>}
+            </div>
+            <div style={{display:'flex',gap:'6px',justifyContent:'flex-end',alignItems:'center'}}>
+              <button onClick={e=>{e.stopPropagation();onTest(m);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer',whiteSpace:'nowrap'}}>+ Test</button>
+              <button onClick={e=>{e.stopPropagation();onDelete(m);}} title={'Delete '+(m.name||'material')} aria-label={'Delete '+(m.name||'material')} style={{background:'none',border:'none',padding:'5px',borderRadius:'7px',color:'#C7C7CC',cursor:'pointer',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
+              </button>
+            </div>
           </div>
-          <div style={{fontSize:'12.5px',color:'#4A4A4E',textTransform:'capitalize'}}>{m.material_type||'—'}</div>
-          <div style={{fontSize:'12.5px',color:'#4A4A4E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.supplier?.name||m.supplier_name||'—'}</div>
-          <div><StatusPill map={MAT_STATUS} status={m.status} /></div>
-          <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
-            <span style={{fontSize:'12.5px',color:'#8A8A8E'}}>{m.last_tested?fmtDate(m.last_tested):'—'}</span>
-            <button onClick={e=>{e.stopPropagation();onTest(m);}} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'4px 9px',fontSize:'11px',fontWeight:500,color:'#4A4A4E',cursor:'pointer',marginLeft:'auto'}}>+ Test</button>
-            <button onClick={e=>{e.stopPropagation();onDelete(m);}} title={'Delete '+(m.name||'material')} aria-label={'Delete '+(m.name||'material')} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'3px 8px',fontSize:'14px',lineHeight:1,fontWeight:500,color:'#B91C1C',cursor:'pointer'}}>×</button>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
 // ── REPORTS VIEW ─────────────────────────────────────────────────────────────
-function ReportsView({ reports, onEdit, onDelete, searching, term }) {
-  if(!reports.length) return searching
-    ? <Empty title={'No test reports match “'+term+'”'} sub="Try a different term, or clear the search." />
+function ReportsView({ reports, onEdit, onDelete, searching, term, filtered }) {
+  if(!reports.length) return (searching || filtered)
+    ? <Empty title={searching?('No test reports match \u201C'+term+'\u201D'):'Nothing in this filter'} sub="Try a different term, or clear the search / filter." />
     : <Empty title="No test reports yet" sub="Log a lab report to record pass/fail results against CPSC regulations." />;
   return (
-    <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
-      {reports.map(r=>(
-        <div key={r.id} onClick={()=>onEdit(r)} style={{...card,padding:'18px 20px',cursor:'pointer'}}>
-          <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'14px',marginBottom:'12px'}}>
-            <div style={{minWidth:0}}>
-              <div style={{fontSize:'14px',fontWeight:600,color:'#1A1A1C'}}>{r.material?.name||r.product?.sku||r.product?.name||'Report'}</div>
-              <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'3px'}}>{r.lab?.name||'—'} · Report {r.report_number||'—'} · Tested {fmtDate(r.test_date)}</div>
-            </div>
-            <div style={{display:'flex',alignItems:'center',gap:'8px',flexShrink:0}}>
-              <StatusPill map={{pass:{label:'Pass',color:'#15803D',bg:'#DCFCE7'},fail:{label:'Fail',color:'#B91C1C',bg:'#FEE2E2'},pending:{label:'Pending',color:'#B45309',bg:'#FEF3C7'}}} status={r.overall_result} />
-              <button onClick={e=>{e.stopPropagation();onDelete(r);}} title="Delete report" aria-label={'Delete report '+(r.report_number||'')} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'3px 8px',fontSize:'14px',lineHeight:1,fontWeight:500,color:'#B91C1C',cursor:'pointer'}}>×</button>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(360px,1fr))',gap:'14px'}}>
+      {reports.map(r=>{
+        const d = daysUntil(r.expiry_date);
+        const expSoon = d!==null && d>=0 && d<=EXPIRY_WINDOW_DAYS;
+        const expPast = d!==null && d<0;
+        const rail = r.overall_result==='pass'?'#30D158':r.overall_result==='fail'?'#FF375F':'#FF9F0A';
+        return (
+          <div key={r.id} onClick={()=>onEdit(r)} style={{background:'#fff',borderRadius:'18px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',cursor:'pointer',overflow:'hidden',display:'flex'}}>
+            <div style={{width:'4px',background:rail,flexShrink:0}} />
+            <div style={{padding:'16px 18px',flex:1,minWidth:0}}>
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'12px',marginBottom:'10px'}}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:'14px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{r.material?.name||r.product?.sku||r.product?.name||'Report'}</div>
+                  <div style={{fontSize:'12px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{(r.lab?.name||'—')+' \u00b7 '+(r.report_number||'no #')+' \u00b7 '+fmtDate(r.test_date)}</div>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:'7px',flexShrink:0}}>
+                  <StatusPill map={{pass:{label:'Pass',color:'#15803D',bg:'#DCFCE7'},fail:{label:'Fail',color:'#B91C1C',bg:'#FEE2E2'},pending:{label:'Pending',color:'#B45309',bg:'#FEF3C7'}}} status={r.overall_result} />
+                  <button onClick={e=>{e.stopPropagation();onDelete(r);}} title="Delete report" aria-label={'Delete report '+(r.report_number||'')} style={{background:'none',border:'none',padding:'4px',color:'#C7C7CC',cursor:'pointer',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
+                  </button>
+                </div>
+              </div>
+              {(expSoon || expPast || r.expiry_date) && (
+                <div style={{marginBottom:r.test_results?.length?'10px':'0'}}>
+                  <span style={{display:'inline-flex',fontSize:'11px',fontWeight:700,borderRadius:'980px',padding:'3px 10px',color:expPast?'#B91C1C':expSoon?'#B45309':'#4A4A4E',background:expPast?'#FEE2E2':expSoon?'#FEF3C7':'#F5F5F7'}}>
+                    {expPast?('Expired '+Math.abs(d)+'d ago'):expSoon?('Expires in '+d+'d'):('Valid until '+fmtDate(r.expiry_date))}
+                  </span>
+                </div>
+              )}
+              {r.test_results?.length>0 && (
+                <div style={{display:'grid',gridTemplateColumns:'1fr auto auto auto',gap:'5px 12px',fontSize:'12px',paddingTop:'10px',borderTop:'1px solid #F5F5F7'}}>
+                  <div style={{fontSize:'9.5px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',color:'#A0A0A4'}}>Regulation</div>
+                  <div style={{fontSize:'9.5px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',color:'#A0A0A4',textAlign:'right'}}>Measured</div>
+                  <div style={{fontSize:'9.5px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',color:'#A0A0A4',textAlign:'right'}}>Limit</div>
+                  <div style={{fontSize:'9.5px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',color:'#A0A0A4',textAlign:'right'}}>Result</div>
+                  {r.test_results.map(tr=>(
+                    <React.Fragment key={tr.id}>
+                      <div style={{color:'#1D1D1F',fontWeight:500,fontFamily:'var(--mono)',fontSize:'11.5px'}}>{tr.regulation_code||'—'}</div>
+                      <div style={{textAlign:'right',color:'#4A4A4E',fontVariantNumeric:'tabular-nums'}}>{tr.measured_value||'—'}</div>
+                      <div style={{textAlign:'right',color:'#86868B',fontVariantNumeric:'tabular-nums'}}>{tr.limit_value||'—'}</div>
+                      <div style={{textAlign:'right',fontWeight:700,fontSize:'11px',color:tr.result==='pass'?'#15803D':tr.result==='fail'?'#B91C1C':'#8A8A8E'}}>{(tr.result||'—').toUpperCase()}</div>
+                    </React.Fragment>
+                  ))}
+                </div>
+              )}
+              {r.pdf_url && <a href={r.pdf_url} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{display:'inline-block',marginTop:'11px',fontSize:'12.5px',color:'#0A84FF',fontWeight:600,textDecoration:'none'}}>View report PDF \u2192</a>}
             </div>
           </div>
-          {r.test_results?.length>0 && (
-            <div style={{display:'grid',gridTemplateColumns:'1fr auto auto auto',gap:'6px 14px',fontSize:'12px',paddingTop:'12px',borderTop:'1px solid #F2F2F4'}}>
-              <div style={{fontSize:'10px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',color:'#A0A0A4'}}>Regulation</div>
-              <div style={{fontSize:'10px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',color:'#A0A0A4',textAlign:'right'}}>Measured</div>
-              <div style={{fontSize:'10px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',color:'#A0A0A4',textAlign:'right'}}>Limit</div>
-              <div style={{fontSize:'10px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',color:'#A0A0A4',textAlign:'right'}}>Result</div>
-              {r.test_results.map(tr=>(
-                <React.Fragment key={tr.id}>
-                  <div style={{color:'#1A1A1C',fontWeight:500}}>{tr.regulation_code||'—'}</div>
-                  <div style={{textAlign:'right',color:'#4A4A4E',fontVariantNumeric:'tabular-nums'}}>{tr.measured_value||'—'}</div>
-                  <div style={{textAlign:'right',color:'#8A8A8E',fontVariantNumeric:'tabular-nums'}}>{tr.limit_value||'—'}</div>
-                  <div style={{textAlign:'right',fontWeight:600,color:tr.result==='pass'?'#15803D':tr.result==='fail'?'#B91C1C':'#8A8A8E'}}>{(tr.result||'—').toUpperCase()}</div>
-                </React.Fragment>
-              ))}
-            </div>
-          )}
-          {r.pdf_url && <a href={r.pdf_url} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{display:'inline-block',marginTop:'12px',fontSize:'12.5px',color:'#0071E3',fontWeight:500}}>View report PDF →</a>}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -415,20 +549,26 @@ function ReportsView({ reports, onEdit, onDelete, searching, term }) {
 // ── REGULATIONS VIEW ─────────────────────────────────────────────────────────
 function RegsView({ regs, onEdit, onDelete, searching, term }) {
   if(!regs.length) return searching
-    ? <Empty title={'No regulations match “'+term+'”'} sub="Try a different term, or clear the search." />
+    ? <Empty title={'No regulations match \u201C'+term+'\u201D'} sub="Try a different term, or clear the search." />
     : <Empty title="No regulations loaded" sub="Run the compliance schema seed to load the CPSC rule library." />;
   return (
-    <div style={{...card,overflow:'hidden'}}>
-      <div style={{display:'grid',gridTemplateColumns:'150px 1fr 130px 40px',gap:'16px',padding:'12px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
-        {['Citation','Rule','Category',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4'}}>{h}</div>)}
+    <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
+      <div style={{display:'grid',gridTemplateColumns:'150px 1fr 130px 120px 40px',gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
+        {['Citation','Rule','Category','Testing',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>{h}</div>)}
       </div>
       {regs.map((r,i)=>(
-        <div key={r.id} onClick={()=>onEdit(r)} style={{display:'grid',gridTemplateColumns:'150px 1fr 130px 40px',gap:'16px',padding:'13px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-          <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:600,color:'#1A1A1C'}}>{r.code}</div>
-          <div style={{fontSize:'13px',color:'#3A3A3E'}}>{r.name}</div>
-          <div style={{fontSize:'12px',color:'#8A8A8E',textTransform:'capitalize'}}>{r.category||'—'}</div>
+        <div key={r.id} onClick={()=>onEdit(r)} style={{display:'grid',gridTemplateColumns:'150px 1fr 130px 120px 40px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:600,color:'#1D1D1F'}}>{r.code}</div>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:'13px',color:'#1D1D1F',fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{r.name}</div>
+            {(r.applies_to||r.age_group)&&<div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[r.applies_to,r.age_group].filter(Boolean).join(' \u00b7 ')}</div>}
+          </div>
+          <div>{r.category ? <span style={{fontSize:'11.5px',fontWeight:600,color:'#4A4A4E',background:'#F5F5F7',borderRadius:'980px',padding:'3px 10px',textTransform:'capitalize'}}>{r.category}</span> : <span style={{fontSize:'12px',color:'#C7C7CC'}}>—</span>}</div>
+          <div>{r.requires_3p ? <span style={{fontSize:'11px',fontWeight:700,color:'#0A84FF',background:'#EAF3FE',borderRadius:'980px',padding:'3px 10px'}}>3P required</span> : <span style={{fontSize:'12px',color:'#C7C7CC'}}>—</span>}</div>
           <div style={{textAlign:'right'}}>
-            <button onClick={e=>{e.stopPropagation();onDelete(r);}} title={'Delete '+(r.code||'regulation')} aria-label={'Delete '+(r.code||'regulation')} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'3px 8px',fontSize:'14px',lineHeight:1,fontWeight:500,color:'#B91C1C',cursor:'pointer'}}>×</button>
+            <button onClick={e=>{e.stopPropagation();onDelete(r);}} title={'Delete '+(r.code||'regulation')} aria-label={'Delete '+(r.code||'regulation')} style={{background:'none',border:'none',padding:'4px',color:'#C7C7CC',cursor:'pointer'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
+            </button>
           </div>
         </div>
       ))}
@@ -438,11 +578,11 @@ function RegsView({ regs, onEdit, onDelete, searching, term }) {
 
 // ── MODALS ───────────────────────────────────────────────────────────────────
 const Overlay = ({children,onClose}) => (
-  <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(20,20,30,.4)',backdropFilter:'blur(2px)',zIndex:200,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'40px 16px',overflowY:'auto'}}>
-    <div onClick={e=>e.stopPropagation()} style={{...card,width:'100%',maxWidth:'560px',padding:'24px'}}>{children}</div>
+  <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.42)',backdropFilter:'blur(2px)',zIndex:200,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'40px 16px',overflowY:'auto'}}>
+    <div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:'18px',boxShadow:'0 12px 48px rgba(0,0,0,.2)',width:'100%',maxWidth:'560px',padding:'24px'}}>{children}</div>
   </div>
 );
-const inp = {width:'100%',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 12px',fontSize:'14px',outline:'none',fontFamily:'inherit'};
+const inp = {width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'10px 12px',fontSize:'14px',outline:'none',fontFamily:'inherit',boxSizing:'border-box'};
 const lbl = {display:'block',fontSize:'11px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'6px'};
 
 function MaterialModal({ data, labs, onClose, onSaved }) {
@@ -737,7 +877,7 @@ function LinkModal({ product, materials, existing, onClose, onSaved }) {
 
 function Empty({ title, sub }) {
   return (
-    <div style={{...card,padding:'56px 32px',textAlign:'center'}}>
+    <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',padding:'56px 32px',textAlign:'center'}}>
       <div style={{width:'52px',height:'52px',borderRadius:'14px',background:'#F2F2F6',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#A0A0A4" strokeWidth="1.6"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
       </div>
