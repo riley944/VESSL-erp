@@ -15,6 +15,29 @@ import { CodeModal } from '@/app/components/CodeModal';
 // disagree about the same product -- the row would show one count and the modal
 // another, with nothing to say which was right.
 //
+// fmtDay is a deliberate duplicate of fmtDate in app/testing.jsx, not an import.
+// That module imports THIS one, so importing back would close a cycle -- the same
+// circularity this file's header already warns about for page.jsx. Passing a
+// formatted string in would need a new prop, and efiled_date is already on `data`.
+//
+// The T12:00:00 is the whole point of copying it rather than writing something
+// shorter. A bare 'YYYY-MM-DD' parses as UTC midnight, which toLocaleDateString
+// renders as the PREVIOUS day anywhere west of UTC. Landing the instant at local
+// noon means neither direction can cross midnight. A filing date off by one is
+// exactly what nobody notices.
+//
+// The honest fix is moving fmtDate to lib/ beside textFilter.js, which is the
+// precedent for a pure function shared by a page module and a component. That
+// edits testing.jsx, so it belongs with the next pass over that file.
+const fmtDay = (s) => {
+  if (!s) return '';
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? s + 'T12:00:00' : s);
+  // Falls back to the stored text rather than an em dash: efiled_date is a `date`
+  // column so this cannot fire today, but if it ever does, seeing the bad value
+  // beats seeing a placeholder that looks like "not filed".
+  return isNaN(d) ? String(s) : d.toLocaleDateString('en-US', { month:'short', day:'2-digit', year:'numeric' });
+};
+
 // Pass `data` to edit that row, omit it to create — the same shape MaterialModal
 // uses. Every class name below resolves from globals.css, so this file needs no
 // styles of its own.
@@ -189,6 +212,21 @@ export function CreateProductModal({ data, regs = [], links = [], onClose, onCre
                 and below it, rather than stretching it across the modal. */}
             <div></div>
           </div>
+          {/* Read-only, like the rules block below. EfilingModal on the product row is
+              the only writer. Hidden on create for the same reason: no product, so no
+              filing to show.
+
+              Placed above the rules block rather than below it so the two single-line
+              facts -- type and filing -- stay together under the CPSC row, and the list
+              that can run long sits last. */}
+          {editing && (
+            <div className="form-row">
+              <label>eFiling <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(set with the eFiling button)</span></label>
+              {data.efiled_date
+                ? <div style={{fontSize:'13px',color:'var(--ink)'}}>{fmtDay(data.efiled_date)}</div>
+                : <div style={{fontSize:'13px',color:'var(--muted)'}}>Not eFiled</div>}
+            </div>
+          )}
           {/* Hidden on create: there is no product yet, so there can be no links, and a
               placeholder would describe a flow that cannot happen from here — Testing
               has no create path.
