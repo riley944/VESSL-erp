@@ -185,8 +185,9 @@ export default function Programs({ userEmail }) {
 
       <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'16px',marginBottom:'22px',flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:'28px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.021em',lineHeight:1.05}}>Programs</div>
-          <div style={{fontSize:'14.5px',color:'#86868B',marginTop:'5px',letterSpacing:'-.01em'}}>{programs.length} active on the board</div>
+          <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#0A84FF'}}/><span style={{fontSize:'11px',fontWeight:700,letterSpacing:'.12em',textTransform:'uppercase',color:'#86868B'}}>Product Development</span></div>
+          <div style={{fontSize:'32px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.032em',lineHeight:1.02}}>Programs</div>
+          <div style={{fontSize:'14.5px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>{programs.length} active on the board</div>
         </div>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           <button onClick={()=>setShowImport(true)} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>Import factory sheet</button>
