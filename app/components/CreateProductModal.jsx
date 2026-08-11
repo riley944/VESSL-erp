@@ -203,9 +203,14 @@ export function CreateProductModal({ data, regs = [], links = [], onClose, onCre
           </div>
           <div className="form-row-2">
             <div><label>CPSC</label><select className="form-select" value={form.cpscType} onChange={e=>f('cpscType')(e.target.value)}>
+              {/* Must stay in step with CPSC_TYPES in LinkRulesModal and with
+                  products_cpsc_type_chk. BOTH is stored uppercase like the other two:
+                  the product row renders cpsc_type raw, so 'Both' would read
+                  "· Both" beside "· GCC". */}
               <option value="">— N/A —</option>
               <option value="GCC">GCC</option>
               <option value="CPC">CPC</option>
+              <option value="BOTH">Both</option>
             </select></div>
             {/* The CPSC Code input stood here. Removed as unused -- see the payload.
                 The empty cell keeps the select at half width, matching the rows above

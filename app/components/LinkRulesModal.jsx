@@ -32,33 +32,52 @@ const Overlay = ({children,onClose}) => (
   </div>
 );
 
-// The same three CreateProductModal offers, because both write products.cpsc_type
+// The same four CreateProductModal offers, because both write products.cpsc_type
 // and a value one accepts that the other does not would be invisible until someone
 // hit it. They are declared in both files rather than shared; unifying them is a
 // small change worth making, but it belongs with a pass over CreateProductModal.
-const CPSC_TYPES = [['', '— N/A —'], ['GCC', 'GCC'], ['CPC', 'CPC']];
+//
+// BOTH is stored uppercase like the other two, not 'Both': the product row renders
+// cpsc_type raw, so a mixed-case value would read "· Both" beside "· GCC".
+const CPSC_TYPES = [['', '— N/A —'], ['GCC', 'GCC'], ['CPC', 'CPC'], ['BOTH', 'Both']];
 
 // ┌───────────────────────────────────────────────────────────────────────────┐
 // │ The two CPSC vocabularies do NOT share casing, and this is the only place  │
 // │ they meet.                                                                 │
 // │                                                                            │
-// │   products.cpsc_type          'GCC' | 'CPC' | null      (UPPERCASE)        │
+// │   products.cpsc_type          'GCC' | 'CPC' | 'BOTH' | null  (UPPERCASE)   │
 // │   regulations.certificate_required                                         │
 // │       'gcc' | 'cpc' | 'depends_on_age_grade' | 'verify' | null (lowercase) │
 // │                                                                            │
 // │ Comparing them directly -- r.certificate_required === p.cpsc_type -- is    │
 // │ always false and fails silently, matching nothing at all. Lowercasing here │
 // │ is what bridges them; do not remove it on the assumption they agree.       │
+// │                                                                            │
+// │ 'both' is a cpsc_type only. No rule carries it: a rule states the ONE       │
+// │ certificate it belongs to, or depends_on_age_grade, or nothing. Never look  │
+// │ for certificate_required === 'both'.                                        │
 // └───────────────────────────────────────────────────────────────────────────┘
 //
-// products_cpsc_type_chk constrains the column to those two values or null, so an
+// products_cpsc_type_chk constrains the column to those three values or null, so an
 // unrecognised value can no longer be stored -- but this still guards rather than
 // trusting the constraint, because a value that slipped in before it existed must
 // not silently promote the 15 depends_on_age_grade rules as though a type had been
 // chosen. "Not recognised" and "not set" are treated the same on purpose.
 const asCertType = (v) => {
   const t = String(v ?? '').trim().toLowerCase();
-  return (t === 'gcc' || t === 'cpc') ? t : null;
+  return (t === 'gcc' || t === 'cpc' || t === 'both') ? t : null;
+};
+
+// The certificate a rule would have to carry to NOT apply. Null under 'both',
+// because there is no such certificate -- every rule that names one is in scope.
+//
+// Deliberately a switch and not `want === 'gcc' ? 'CPC' : 'GCC'`. That ternary
+// answers 'GCC' for 'both', which is wrong quietly: it would label a divider that
+// should never render, and stay wrong if the bucket it labels ever filled.
+const otherCertOf = (want) => {
+  if (want === 'gcc') return 'CPC';
+  if (want === 'cpc') return 'GCC';
+  return null;
 };
 
 export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
@@ -95,7 +114,15 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
     const a=[], u=[], o=[], h=[];
     matching.forEach(r => {
       if (!want) { a.push(r); return; }   // no type chosen: one flat list, nothing filtered
-      if (r.certificate_required === want || r.certificate_required === 'depends_on_age_grade') { a.push(r); return; }
+      // 'both' means every rule that names a certificate is in scope, so nothing can
+      // land in `other` or `hidden` -- the product needs a GCC and a CPC, and each
+      // rule belongs to one of them. The unknowns below are still separated: their
+      // status is unstated, which is orthogonal to which certificate is needed, and
+      // flattening here would make BOTH the one mode where CA Prop 65 is
+      // indistinguishable from a rule that genuinely applies.
+      if (want === 'both'
+        ? (r.certificate_required === 'gcc' || r.certificate_required === 'cpc' || r.certificate_required === 'depends_on_age_grade')
+        : (r.certificate_required === want || r.certificate_required === 'depends_on_age_grade')) { a.push(r); return; }
       // Blank is unknown, not "does not apply". CA Prop 65 carries no CPSC certificate
       // and applies to nearly anything sold in California; 16 CFR 1260 is stayed and
       // unresolved. Hiding either would be asserting something the data does not say.
@@ -104,13 +131,26 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
       // hole in the filter. It is a contradiction -- either the product's type is wrong
       // or the link is -- and it is the one row in the list that needs someone's
       // attention. Hiding it would bury exactly that.
+      //
+      // Note this branch is unreachable under 'both', so the contradiction flag cannot
+      // fire there. That is correct -- every rule applies, so no link can contradict
+      // the type -- but it also means BOTH can be used to silence the flag rather than
+      // resolve it. A product widened to BOTH after a mismatch looks identical to one
+      // that genuinely needs both certificates. A lot of BOTH products is worth a
+      // second look for that reason.
       ((showAll || sel.has(r.id) || openedWith.has(r.id)) ? o : h).push(r);
     });
     return { applies:a, unknown:u, other:o, hidden:h };
   },[matching, want, showAll, sel, openedWith]);
 
   const visibleCount = applies.length + unknown.length + other.length;
-  const otherLabel = want === 'gcc' ? 'CPC' : 'GCC';
+  const otherLabel = otherCertOf(want);
+  // What the applicable group is called. 'both' needs its own phrasing -- "apply to a
+  // BOTH" is not a sentence, and interpolating want.toUpperCase() would produce it.
+  const wantLabel = want === 'both' ? 'GCC and a CPC' : String(want).toUpperCase();
+  // Under 'both' nothing is filtered out, so there is nothing to reveal. Offering the
+  // checkbox anyway would suggest something was being kept back.
+  const canHide = !!otherLabel;
 
   // Two tables in one action, and there is no transaction across them: PostgREST
   // calls are independent requests and supabase-js has no multi-table transaction,
@@ -217,11 +257,13 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
       <div style={{fontSize:'12px',color:'#6A6A6E',marginBottom:'12px',lineHeight:1.5}}>
         {want ? (
           <>
-            {applies.length} apply to a {want.toUpperCase()} · {unknown.length} with no certificate stated
-            {showAll
+            {applies.length} apply to a {wantLabel} · {unknown.length} with no certificate stated
+            {/* Under 'both' there is no third clause at all: nothing is hidden, nothing
+                is another certificate's, so a "0 hidden" would be noise. */}
+            {canHide && (showAll
               ? ' · '+other.length+' apply to a '+otherLabel+' only'
               : (other.length > 0 ? ' · '+other.length+' linked but '+otherLabel+'-only' : '')
-                + ' · '+hidden.length+' hidden'}
+                + ' · '+hidden.length+' hidden')}
             {searching && ' · '+visibleCount+' of '+regs.length}
           </>
         ) : (
@@ -236,7 +278,7 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search rules — code, name, certificate, note…" style={{...inp,flex:'1 1 240px',width:'auto'}} />
         {/* Only offered when a type is chosen -- with none, nothing is filtered and a
             "show all" that changes nothing would suggest something was being kept back. */}
-        {want && (
+        {canHide && (
           <label style={{display:'flex',alignItems:'center',gap:'7px',fontSize:'12.5px',color:'#3A3A3E',cursor:'pointer',whiteSpace:'nowrap'}}>
             <input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)} />
             Show all {regs.length} rules
@@ -259,7 +301,7 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
             ) : 'No rules available.'}
           </div>
         )}
-        {want && applies.length>0 && <Divider text={'Applies to a '+want.toUpperCase()} />}
+        {want && applies.length>0 && <Divider text={'Applies to a '+wantLabel} />}
         {applies.map(Row)}
         {want && unknown.length>0 && <Divider text="No certificate stated" />}
         {unknown.map(Row)}
@@ -270,7 +312,7 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
             placement, since the list above already answered the question. */}
         {searching && visibleCount>0 && hidden.length>0 && (
           <div style={{fontSize:'11.5px',color:'#A0A0A4',padding:'8px 2px 2px'}}>
-            {hidden.length+(hidden.length===1?' more rule matches but is hidden':' more rules match but are hidden')} by the {want.toUpperCase()} filter.
+            {hidden.length+(hidden.length===1?' more rule matches but is hidden':' more rules match but are hidden')} by the {wantLabel} filter.
           </div>
         )}
       </div>
