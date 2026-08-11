@@ -813,11 +813,24 @@ function EfilingModal({ product, onClose, onSaved }) {
       <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>The date this product was eFiled with CPSC.</div>
       <div>
         <label style={lbl}>eFiled date</label>
-        <input type="date" style={inp} value={date} onChange={e=>setDate(e.target.value)} />
-        {/* Clearing is the only route back to "not filed", so it is stated rather
-            than left for someone to guess whether blanking the box is allowed. */}
+        {/* A native date input offers no way to empty itself -- Chrome shows no clear
+            affordance at all -- so without this button the only route back to "not
+            filed" would be one the widget does not afford, however the hint worded it.
+            It only empties local state; the null still goes through the existing
+            `date || null` on save, so nothing writes until Save is pressed.
+
+            Glyph and colours copied from the search clear at page.jsx:1043 rather
+            than the lucide <X> used in quotes.jsx and HtsField: this file imports no
+            icon library, and it already uses × as its dismiss glyph twice. */}
+        <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+          <input type="date" style={{...inp,flex:1,minWidth:0}} value={date} onChange={e=>setDate(e.target.value)} />
+          {date && (
+            <button type="button" onClick={()=>setDate('')} title="Clear the date" aria-label="Clear the date"
+              style={{flexShrink:0,width:'20px',height:'20px',borderRadius:'50%',border:'none',background:'#F0F0F2',color:'#8A8A8E',fontSize:'14px',lineHeight:1,cursor:'pointer'}}>×</button>
+          )}
+        </div>
         <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'6px'}}>
-          {date ? 'Clear the date and save to mark this product not filed.' : 'No date means not filed.'}
+          {date ? 'Clear it with the × beside the field, then save, to mark this product not filed.' : 'No date means not filed.'}
         </div>
       </div>
       <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
