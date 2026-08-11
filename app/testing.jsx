@@ -85,7 +85,7 @@ export default function Testing() {
   const load = async () => {
     setLoading(true);
     const [p, m, r, rg, lb, pm, pr] = await Promise.all([
-      SB.from('products').select('id,sku,name,compliance_status,cpsc_type').order('sku',{nullsFirst:false}),
+      SB.from('products').select('id,sku,name,compliance_status,cpsc_type,efiled_date').order('sku',{nullsFirst:false}),
       SB.from('materials').select('*,supplier:companies!supplier_id(name)').order('created_at',{ascending:false}),
       SB.from('test_reports').select('*,lab:labs(name),material:materials(name),product:products(name,sku),test_results(*)').order('test_date',{ascending:false}),
       // Secondary sort on code, because sort_order does not identify a row: the column
@@ -145,13 +145,16 @@ export default function Testing() {
     let list = !q ? products : products.filter(p =>
       // cpsc_type is matched through its displayed fallback, so "no cpsc" finds exactly
       // the products missing one -- the gap the fallback exists to show.
-      matches(q, p.name, p.sku, p.cpsc_type || 'No CPSC')
+      // efiled_date joins through its DISPLAYED state, not its value, for the same
+      // reason cpsc_type does: nobody searches for a date, they search for the gap.
+      matches(q, p.name, p.sku, p.cpsc_type || 'No CPSC', p.efiled_date ? 'eFiled' : 'Not eFiled')
     );
     if (prodFilter==='compliant') list = list.filter(p=>['compliant','passed'].includes(effectiveStatus(p)));
     if (prodFilter==='pending')   list = list.filter(p=>effectiveStatus(p)==='pending');
     if (prodFilter==='issues')    list = list.filter(p=>['failed','expired'].includes(effectiveStatus(p)));
     if (prodFilter==='unset')     list = list.filter(p=>!effectiveStatus(p));
     if (prodFilter==='nocpsc')    list = list.filter(p=>!p.cpsc_type);
+    if (prodFilter==='noefile')   list = list.filter(p=>!p.efiled_date);
     return list;
   }, [products, q, prodFilter]);
   const shownMaterials = useMemo(() => {
@@ -313,7 +316,12 @@ export default function Testing() {
         {searching && <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{shownCount} of {totalCount}</span>}
         {tab==='products' && (
           <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
-            {[['','All'],['compliant','Compliant'],['pending','Pending'],['issues','Issues'],['unset','Not set'],['nocpsc','No CPSC']].map(([v,l])=>(
+            {/* A pill rather than a seventh pulse tile: with nothing filed yet the tile
+                would read 271 beside "No CPSC type" 271, two tiles saying the same
+                thing -- that nothing has been entered. It earns a tile once the count
+                is meaningfully below the total, and this filter is what it would
+                point at. */}
+            {[['','All'],['compliant','Compliant'],['pending','Pending'],['issues','Issues'],['unset','Not set'],['nocpsc','No CPSC'],['noefile','Not eFiled']].map(([v,l])=>(
               <button key={v||'all'} onClick={()=>setProdFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:prodFilter===v?'#1D1D1F':'#fff',color:prodFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
             ))}
           </div>
@@ -343,7 +351,7 @@ export default function Testing() {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter} />}
           {tab==='materials' && <MaterialsView materials={shownMaterials} expiryOf={expiryOf} reports={reports} onEdit={(m)=>setModal({type:'material',data:m})} onTest={(m)=>setModal({type:'report',data:{material_id:m.id}})} onDelete={deleteMaterial} searching={searching} term={search.trim()} filtered={!!matFilter} />}
           {tab==='reports'   && <ReportsView reports={shownReports} onEdit={(r)=>setModal({type:'report',row:r})} onDelete={deleteReport} searching={searching} term={search.trim()} filtered={!!repFilter} />}
           {/* RegulationsList renders rows only -- the empty state stays here because its
@@ -370,12 +378,13 @@ export default function Testing() {
       {/* regs is already filtered to active, so a retired rule cannot be linked to a
           new product while ones already linked to it keep their link. */}
       {modal?.type==='linkrules' && <LinkRulesModal product={modal.data} regs={regs} existing={prodRegs.filter(l=>l.product_id===modal.data.id)} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
+      {modal?.type==='efiling'   && <EfilingModal product={modal.data} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
     </div>
   );
 }
 
 // ── PRODUCTS VIEW ────────────────────────────────────────────────────────────
-function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onSetStatus, onEdit, onDelete, searching, term, filtered }) {
+function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onEdit, onDelete, searching, term, filtered }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
   // well exist, it just does not match.
   if(!products.length) return (searching || filtered)
@@ -383,7 +392,7 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
     : <Empty title="No products yet" sub="Products appear here once they exist. Open one to link the materials it is built from and set its compliance status." />;
   return (
     <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
-      <div style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 170px 130px',gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 170px max-content',gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
         {['Product','Built from','Compliance',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i===3?'right':'left'}}>{h}</div>)}
       </div>
       {products.map((p,i)=>{
@@ -395,7 +404,7 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
         const derived = productStatus(p.id);
         const dInfo = PROD_STATUS[derived] || PROD_STATUS.not_set;
         return (
-          <div key={p.id} onClick={()=>onEdit(p)} style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 170px 130px',gap:'16px',padding:'15px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          <div key={p.id} onClick={()=>onEdit(p)} style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 170px max-content',gap:'16px',padding:'15px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.name||'—'}</div>
               {/* Type only. The certificate number that used to sit beside it in the
@@ -448,6 +457,15 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
             <div style={{display:'flex',gap:'6px',justifyContent:'flex-end',alignItems:'center'}}>
               <button onClick={e=>{e.stopPropagation();onLink(p);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Materials</button>
               <button onClick={e=>{e.stopPropagation();onLinkRules(p);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Rules{ruleCount>0 && ' ('+ruleCount+')'}</button>
+              {/* A dot rather than a count: filing is binary, so a number would say
+                  nothing. Filled means a date is stored, hollow means none — the gap is
+                  what is worth scanning down the column. The date itself is in the
+                  modal and on the tooltip; it is too wide for the row and rarely needed
+                  at a glance. */}
+              <button onClick={e=>{e.stopPropagation();onEfiling(p);}} title={p.efiled_date ? 'eFiled '+fmtDate(p.efiled_date) : 'Not eFiled'} style={{display:'inline-flex',alignItems:'center',gap:'6px',background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer',whiteSpace:'nowrap'}}>
+                <span style={{width:'7px',height:'7px',borderRadius:'50%',flexShrink:0,background:p.efiled_date?'#30D158':'transparent',border:p.efiled_date?'none':'1.5px solid #C7C7CC'}}/>
+                eFiling
+              </button>
               <button onClick={e=>{e.stopPropagation();onDelete(p);}} title={'Delete '+(p.name||p.sku||'product')} aria-label={'Delete '+(p.name||p.sku||'product')} style={{background:'none',border:'none',padding:'5px',borderRadius:'7px',color:'#C7C7CC',cursor:'pointer',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
               </button>
@@ -758,6 +776,52 @@ function ReportModal({ preset, data, materials, products, labs, regs, onClose, o
       <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
         <button onClick={onClose} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',color:'#4A4A4E'}}>Cancel</button>
         <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':(editing?'Save changes':'Save report')}</button>
+      </div>
+    </Overlay>
+  );
+}
+
+// One nullable date. A date means filed, null means not filed, and there is no
+// "not applicable" state -- whether a product needs filing is a judgement for
+// whoever is looking, not something the app decides. If that turns out to be
+// wanted it is a third state added later, not a sentinel value smuggled in here.
+//
+// Local to this file rather than app/components: one host, and it reuses the
+// Overlay, inp, lbl and toast already defined above. Extracting it would mean
+// copying four style constants to save nothing -- the opposite of the CodeModal
+// case, where two pages needed the same editor.
+function EfilingModal({ product, onClose, onSaved }) {
+  // Straight from the column, straight back to it. <input type="date"> both reads
+  // and writes 'YYYY-MM-DD', which is exactly what a Postgres `date` wants, so no
+  // Date object is constructed anywhere on this path. Round-tripping through one
+  // is how a filing date silently moves by a day, and nobody notices.
+  const [date,setDate] = useState(product.efiled_date || '');
+  const [saving,setSaving] = useState(false);
+  const save = async () => {
+    setSaving(true);
+    try {
+      const { error } = await SB.from('products').update({ efiled_date: date || null }).eq('id', product.id);
+      if (error) { toast('Could not save the eFiling date: '+error.message, 'err'); return; }
+      onSaved();
+    } finally { setSaving(false); }
+  };
+  const label = product.sku || product.name || 'this product';
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'4px'}}>eFiling for {label}</div>
+      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>The date this product was eFiled with CPSC.</div>
+      <div>
+        <label style={lbl}>eFiled date</label>
+        <input type="date" style={inp} value={date} onChange={e=>setDate(e.target.value)} />
+        {/* Clearing is the only route back to "not filed", so it is stated rather
+            than left for someone to guess whether blanking the box is allowed. */}
+        <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'6px'}}>
+          {date ? 'Clear the date and save to mark this product not filed.' : 'No date means not filed.'}
+        </div>
+      </div>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
+        <button onClick={onClose} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',color:'#4A4A4E'}}>Cancel</button>
+        <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':'Save'}</button>
       </div>
     </Overlay>
   );
