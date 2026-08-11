@@ -647,8 +647,9 @@ function Dashboard({ navigate }) {
       {/* ── Header ── */}
       <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'20px',marginBottom:'30px',flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:'28px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.021em',lineHeight:1.05}}>Overview</div>
-          <div style={{fontSize:'15px',color:'#86868B',marginTop:'6px',letterSpacing:'-.01em'}}>{open_count} open orders · {active_clients} active clients</div>
+          <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#0A84FF'}}/><span style={{fontSize:'11px',fontWeight:700,letterSpacing:'.12em',textTransform:'uppercase',color:'#86868B'}}>{new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}</span></div>
+          <div style={{fontSize:'32px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.032em',lineHeight:1.02}}>Overview</div>
+          <div style={{fontSize:'15px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>{open_count} open orders · {active_clients} active clients</div>
         </div>
         <button onClick={()=>navigate('sales-orders')} style={{background:'#0066CC',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'14px',fontWeight:500,letterSpacing:'-.01em',cursor:'pointer'}}>View orders</button>
       </div>
@@ -849,8 +850,9 @@ function Inventory() {
       {/* ── Header ── */}
       <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'20px',marginBottom:'30px',flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:'28px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.021em',lineHeight:1.05}}>Inventory</div>
-          <div style={{fontSize:'15px',color:'#86868B',marginTop:'6px',letterSpacing:'-.01em'}}>Units on order across live production · updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+          <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#BF5AF2'}}/><span style={{fontSize:'11px',fontWeight:700,letterSpacing:'.12em',textTransform:'uppercase',color:'#86868B'}}>Stock &amp; Production</span></div>
+          <div style={{fontSize:'32px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.032em',lineHeight:1.02}}>Inventory</div>
+          <div style={{fontSize:'15px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>Units on order across live production · updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
         </div>
         <button onClick={load} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 18px',fontSize:'14px',fontWeight:500,letterSpacing:'-.01em',cursor:'pointer'}}>Refresh</button>
       </div>
@@ -1003,8 +1005,9 @@ function SalesOrders({navigate}){
       {/* Title */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'22px',gap:'14px',flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:'24px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.02em'}}>Sales Orders</div>
-          <div style={{fontSize:'13.5px',color:'#8A8A8E',marginTop:'3px'}}>Client POs received by KUI</div>
+          <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#30D158'}}/><span style={{fontSize:'11px',fontWeight:700,letterSpacing:'.12em',textTransform:'uppercase',color:'#86868B'}}>Revenue Pipeline</span></div>
+          <div style={{fontSize:'32px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.032em',lineHeight:1.02}}>Sales Orders</div>
+          <div style={{fontSize:'14px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>Client POs received by KUI</div>
         </div>
         <button onClick={()=>setShowCreate(true)} style={{display:'inline-flex',alignItems:'center',gap:'7px',background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',flexShrink:0,boxShadow:'0 1px 2px rgba(0,0,0,.08)'}}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -3514,8 +3517,9 @@ function Shipments({ onNewShipment }) {
       {/* ── Header ── */}
       <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'16px',marginBottom:'22px',flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:'28px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.021em',lineHeight:1.05}}>Shipments</div>
-          <div style={{fontSize:'14.5px',color:'#86868B',marginTop:'5px',letterSpacing:'-.01em'}}>{String(quotes.length)+' quotes \u00b7 '+String(activeShips.length)+' in motion'}</div>
+          <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#0A84FF'}}/><span style={{fontSize:'11px',fontWeight:700,letterSpacing:'.12em',textTransform:'uppercase',color:'#86868B'}}>Freight &amp; Logistics</span></div>
+          <div style={{fontSize:'32px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.032em',lineHeight:1.02}}>Shipments</div>
+          <div style={{fontSize:'14.5px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>{String(quotes.length)+' quotes \u00b7 '+String(activeShips.length)+' in motion'}</div>
         </div>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           <button onClick={()=>setShowQuoteModal(true)} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>
@@ -4001,7 +4005,132 @@ function ImportBidsModal({ quotes, onClose, onApplied }) {
   );
 }
 
+// ── Apply a winning bid into the product quote's freight builder ─────────────
+const APPLY_CAPS = { '20GP':32, '40GP':58, '40HQ':68, '45HQ':83 };
+
+function ApplyBidModal({ bid, shipQuote, onClose, onDone }) {
+  const [pq, setPq] = useState([]);           // product quotes from the quotes DB
+  const [selId, setSelId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [loadingQ, setLoadingQ] = useState(true);
+
+  useEffect(()=>{
+    SBQ.from('quotes').select('id,product,sku,client,units_per_carton,carton_l,carton_w,carton_h,tiers').order('created_at',{ascending:false}).limit(400).then(({data})=>{
+      const list = data||[];
+      setPq(list);
+      // best match: explicit source link → sku/product text → client
+      let best = '';
+      if (shipQuote.source_quote_id && list.some(q=>q.id===shipQuote.source_quote_id)) best = shipQuote.source_quote_id;
+      if (!best) {
+        const d = (((shipQuote.line_items||[])[0]||{}).desc||'').toLowerCase().trim();
+        if (d) { const hit = list.find(q=>{ const t=((q.product||'')+' '+(q.sku||'')).toLowerCase(); return t.includes(d)||d.includes((q.sku||'').toLowerCase()&& (q.sku||'').toLowerCase()); }); if (hit) best = hit.id; }
+      }
+      if (!best) {
+        const cn = ((shipQuote.client||{}).name||'').toLowerCase().trim();
+        if (cn) { const hit = list.find(q=>(q.client||'').toLowerCase().trim()===cn); if (hit) best = hit.id; }
+      }
+      setSelId(best || (list[0]? list[0].id : ''));
+      setLoadingQ(false);
+    });
+  },[]);
+
+  const chosen = pq.find(q=>q.id===selId) || null;
+  const ctType = shipQuote.container_type || '40HQ';
+  const cap = APPLY_CAPS[ctType] || 68;
+
+  // units per container from the product quote's carton data
+  let unitsPerCtr = 0, cartonMsg = '';
+  if (chosen) {
+    const upc = Number(chosen.units_per_carton)||0;
+    const cbm = (Number(chosen.carton_l)*Number(chosen.carton_w)*Number(chosen.carton_h))/1000000;
+    if (upc>0 && isFinite(cbm) && cbm>0) unitsPerCtr = Math.floor(cap/cbm)*upc;
+    else cartonMsg = 'This quote is missing carton dimensions or units-per-carton, so per-container costs cannot be spread per unit.';
+  }
+
+  // build legs from the bid (per-container basis, spread over unitsPerCtr)
+  const rates = (bid.rates||{})[ctType] || {};
+  const legsRaw = [];
+  if (Number(rates.ocean)>0)  legsRaw.push({ cat:'Ocean freight', amount:Number(rates.ocean) });
+  if (Number(rates.origin)>0) legsRaw.push({ cat:'Origin costs',  amount:Number(rates.origin) });
+  (bid.dest_charges||[]).forEach(d=>{ if(Number(d.amount)>0) legsRaw.push({ cat:d.fee||'Destination fee', amount:Number(d.amount), desc:d.basis||'' }); });
+  const legs = unitsPerCtr>0 ? legsRaw.map(l=>({ cat:l.cat, desc:l.desc||'', basis:'container', amount:l.amount, per:unitsPerCtr, perUnit:+(l.amount/unitsPerCtr).toFixed(4) })) : [];
+  const freightPerUnit = legs.reduce((a,l)=>a+l.perUnit,0);
+
+  const apply = async () => {
+    if (!chosen || !legs.length) return;
+    setBusy(true);
+    try {
+      const tiers = Array.isArray(chosen.tiers) ? chosen.tiers : [];
+      if (!tiers.length) { alert('That quote has no pricing tiers yet — add a tier first, then apply.'); setBusy(false); return; }
+      const newTiers = tiers.map(t=>{
+        const kept = (Array.isArray(t.fb)?t.fb:[]).filter(l=>l.basis==='pct');   // preserve duty legs
+        const fb = legs.concat(kept);
+        const total = fb.reduce((a,l)=>a+(Number(l.perUnit)||0),0);
+        return { ...t, ship:'ocean', freightAir:null, freightOcean:+total.toFixed(3), fb:fb, duty_only:false };
+      });
+      const { error } = await SBQ.from('quotes').update({
+        tiers: newTiers,
+        freight_duty_updated_at: new Date().toISOString(),
+        freight_duty_updated_by: 'Bid — '+(bid.forwarder_name||'forwarder'),
+      }).eq('id', chosen.id);
+      if (error) { alert('Could not update the quote: '+error.message); setBusy(false); return; }
+      // applying implies selecting the winner
+      await SB.from('forwarder_bids').update({ selected:false }).eq('shipment_quote_id', shipQuote.id);
+      await SB.from('forwarder_bids').update({ selected:true }).eq('id', bid.id);
+      onDone && onDone();
+    } catch (e) {
+      alert('Something went wrong: '+(e&&e.message?e.message:e));
+    }
+    setBusy(false);
+  };
+
+  const money = v => '$'+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:2});
+  const keptDuty = chosen && Array.isArray(chosen.tiers) && chosen.tiers.some(t=>Array.isArray(t.fb)&&t.fb.some(l=>l.basis==='pct'));
+
+  return (
+    <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'36px 16px',zIndex:1200,overflowY:'auto'}}>
+      <div style={{background:'#fff',borderRadius:'18px',width:'100%',maxWidth:'540px',boxShadow:'0 12px 48px rgba(0,0,0,.22)'}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:'20px 24px 0'}}>
+          <div style={{fontSize:'17px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.015em'}}>Apply bid to quote</div>
+          <div style={{fontSize:'13px',color:'#8A8A8E',marginTop:'4px',lineHeight:1.5}}>{(bid.forwarder_name||'This bid')+"'s awarded costs become the quote's freight build-up — per-container charges spread across the units that fit a "+ctType+'. Duty legs on the quote are preserved.'}</div>
+        </div>
+        <div style={{padding:'18px 24px'}}>
+          <label style={{display:'block',fontSize:'10px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'5px'}}>Product quote</label>
+          {loadingQ ? <div style={{fontSize:'13px',color:'#8A8A8E'}}>Loading quotes…</div> : (
+            <select value={selId} onChange={e=>setSelId(e.target.value)} style={{width:'100%',border:'1px solid #E5E7EB',borderRadius:'9px',padding:'9px 12px',fontSize:'13px',outline:'none',boxSizing:'border-box',background:'#fff'}}>
+              {pq.map(q=><option key={q.id} value={q.id}>{[(q.sku||'').trim(),(q.product||'').trim(),(q.client||'').trim()].filter(Boolean).join(' — ')||q.id.slice(0,8)}</option>)}
+            </select>
+          )}
+          {chosen && shipQuote.source_quote_id===chosen.id && <div style={{fontSize:'11.5px',color:'#15803D',marginTop:'6px',fontWeight:500}}>Linked — this freight quote was generated from this product quote.</div>}
+          {cartonMsg && <div style={{fontSize:'12.5px',color:'#B45309',marginTop:'10px',lineHeight:1.5,background:'#FEF3C7',borderRadius:'9px',padding:'9px 12px'}}>{cartonMsg}</div>}
+          {chosen && unitsPerCtr>0 && (
+            <div style={{marginTop:'14px'}}>
+              <div style={{fontSize:'11.5px',color:'#8A8A8E',marginBottom:'8px'}}>{unitsPerCtr.toLocaleString()+' units fit a '+ctType+' · each per-container cost ÷ '+unitsPerCtr.toLocaleString()}</div>
+              {legs.map((l,i)=>(
+                <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',fontSize:'12.5px',borderTop:i>0?'1px solid #F2F2F4':'none'}}>
+                  <span style={{color:'#4A4A4E'}}>{l.cat}{l.desc?' · '+l.desc:''} <span style={{color:'#B0B0B4'}}>{money(l.amount)+'/ctr'}</span></span>
+                  <span style={{fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{'$'+l.perUnit.toFixed(3)+'/unit'}</span>
+                </div>
+              ))}
+              <div style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderTop:'2px solid #ECECEE',marginTop:'4px',fontSize:'13px'}}>
+                <span style={{fontWeight:700,color:'#1A1A1C'}}>Freight per unit{keptDuty?' (+ existing duty kept)':''}</span>
+                <span style={{fontWeight:800,color:'#0071E3',fontVariantNumeric:'tabular-nums'}}>{'$'+freightPerUnit.toFixed(3)}</span>
+              </div>
+              <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'4px'}}>Applies to every pricing tier on the quote and updates its freight & duty stamp.</div>
+            </div>
+          )}
+        </div>
+        <div style={{padding:'0 24px 20px',display:'flex',justifyContent:'flex-end',gap:'8px'}}>
+          <button onClick={onClose} style={{background:'#F2F2F6',border:'none',borderRadius:'10px',padding:'9px 17px',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>Cancel</button>
+          <button onClick={apply} disabled={busy||!chosen||!legs.length||unitsPerCtr<=0} style={{background:(!busy&&chosen&&legs.length&&unitsPerCtr>0)?'#0071E3':'#C7C7CC',color:'#fff',border:'none',borderRadius:'10px',padding:'9px 18px',fontSize:'13.5px',fontWeight:600,cursor:(!busy&&chosen&&legs.length&&unitsPerCtr>0)?'pointer':'not-allowed'}}>{busy?'Applying…':'Apply to quote'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BidsCompareModal({ quote, bids, onClose, onDeleted }) {
+  const [applyBid, setApplyBid] = useState(null);
   const ctType = quote.container_type||'40HQ';
   const ct = Math.max(1, Number(quote.containers_needed)||1);
   const sorted = bids.slice().sort((a,b)=>bidEffective(a,ctType)-bidEffective(b,ctType));
@@ -4052,15 +4181,17 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted }) {
                   </div>
                 )}
                 {b.notes && <div style={{fontSize:'12px',color:'#4A4A4E',marginTop:'6px',fontStyle:'italic'}}>{b.notes}</div>}
-                <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'8px'}}>
+                <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'8px',alignItems:'center'}}>
                   <button onClick={()=>del(b.id)} style={{background:'none',border:'none',color:'#C0C0C4',fontSize:'12px',cursor:'pointer'}}>Remove</button>
-                  {!isSel && <button onClick={()=>selectWinner(b)} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'8px',padding:'6px 14px',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>Select winner</button>}
+                  {!isSel && <button onClick={()=>selectWinner(b)} style={{background:'#F2F2F6',color:'#1A1A1C',border:'none',borderRadius:'8px',padding:'6px 14px',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>Select winner</button>}
+                  <button onClick={()=>setApplyBid(b)} title="Write this bid's costs into the product quote's freight build-up" style={{background:'#0071E3',color:'#fff',border:'none',borderRadius:'8px',padding:'6px 14px',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>Apply to quote →</button>
                 </div>
               </div>
             );
           })}
         </div>
       </div>
+      {applyBid && <ApplyBidModal bid={applyBid} shipQuote={quote} onClose={()=>setApplyBid(null)} onDone={()=>{ setApplyBid(null); onDeleted&&onDeleted(); alert('Applied. The product quote\'s freight build-up now carries '+(applyBid.forwarder_name||'the bid')+"'s awarded costs."); }} />}
     </div>
   );
 }
