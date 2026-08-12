@@ -85,7 +85,7 @@ export default function Testing() {
   const load = async () => {
     setLoading(true);
     const [p, m, r, rg, lb, pm, pr] = await Promise.all([
-      SB.from('products').select('id,sku,name,compliance_status,cpsc_type,efiled_date').order('sku',{nullsFirst:false}),
+      SB.from('products').select('id,sku,name,compliance_status,cpsc_type,efiled_date,ships_to,trade_direction,importer_of_record,testing_paid_by').order('sku',{nullsFirst:false}),
       SB.from('materials').select('*,supplier:companies!supplier_id(name)').order('created_at',{ascending:false}),
       SB.from('test_reports').select('*,lab:labs(name),material:materials(name),product:products(name,sku),test_results(*)').order('test_date',{ascending:false}),
       // Secondary sort on code, because sort_order does not identify a row: the column

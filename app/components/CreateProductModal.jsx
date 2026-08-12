@@ -38,6 +38,30 @@ const fmtDay = (s) => {
   return isNaN(d) ? String(s) : d.toLocaleDateString('en-US', { month:'short', day:'2-digit', year:'numeric' });
 };
 
+// Turns typed text into ISO 3166-1 alpha-2 codes, or says why it will not.
+//
+// products_ships_to_alpha2_chk rejects anything that is not two uppercase letters, so
+// validating here is not belt and braces -- it is the difference between being told
+// now and being told by a constraint error after pressing Save.
+//
+// UK is the case the CHECK cannot catch: it is two uppercase letters, so the database
+// would take it, and it is wrong. GB is the ISO code and UK is what people type. It is
+// rejected with a reason rather than silently rewritten -- stripping punctuation from
+// an HTS code removes noise, but turning UK into GB changes what someone said.
+//
+// Comma-splitting is here because a pasted "US, JP" is likelier than two deliberate
+// keystrokes, and splitting it costs one line.
+function parseCountryInput(raw, existing) {
+  const parts = String(raw || '').split(',').map(p => p.trim().toUpperCase()).filter(Boolean);
+  const added = [], seen = new Set(existing);
+  for (const p of parts) {
+    if (p === 'UK') return { added, error: 'The ISO code for the United Kingdom is GB.' };
+    if (!/^[A-Z]{2}$/.test(p)) return { added, error: 'Two letters, ISO alpha-2 — e.g. US, JP, GB.' };
+    if (!seen.has(p)) { seen.add(p); added.push(p); }
+  }
+  return { added, error: '' };
+}
+
 // Pass `data` to edit that row, omit it to create — the same shape MaterialModal
 // uses. Every class name below resolves from globals.css, so this file needs no
 // styles of its own.
@@ -64,8 +88,24 @@ export function CreateProductModal({ data, regs = [], links = [], onClose, onCre
     uom:s(data?.unit_of_measure), wt:s(data?.weight_kg), upc:s(data?.units_per_carton),
     cwt:s(data?.carton_weight_kg), cl:s(data?.carton_l_cm), cw:s(data?.carton_w_cm), ch:s(data?.carton_h_cm),
     cpscType:s(data?.cpsc_type),
+    // Trade & compliance. ships_to is the only array -- PostgREST hands text[] back as
+    // a real JS array, so it needs no parsing, just a guard for null and for a row
+    // fetched before the column existed.
+    shipsTo:Array.isArray(data?.ships_to) ? data.ships_to : [],
+    tradeDirection:s(data?.trade_direction), importerOfRecord:s(data?.importer_of_record),
+    testingPaidBy:s(data?.testing_paid_by),
   });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
+  // Chip input state. countryDraft is what is being typed; countryErr is cleared on the
+  // next keystroke so a rejection does not outlive the thing that caused it.
+  const [countryDraft, setCountryDraft] = useState('');
+  const [countryErr, setCountryErr] = useState('');
+  const commitCountry = () => {
+    const { added, error } = parseCountryInput(countryDraft, form.shipsTo);
+    if (error) { setCountryErr(error); return; }
+    if (added.length) setForm(p=>({...p, shipsTo:[...p.shipsTo, ...added]}));
+    setCountryDraft(''); setCountryErr('');
+  };
   // Fetched here rather than by the Testing page's load(), which has no reason to pull
   // quotes for any other tab. PostgREST has no DISTINCT, and a SKU repeats across quote
   // rows, so the de-dupe happens here -- ~275 rows collapse to ~240 SKUs.
@@ -121,6 +161,12 @@ export function CreateProductModal({ data, regs = [], links = [], onClose, onCre
       // whether it was never set or emptied out. products_cpsc_type_chk accepts only
       // NULL, 'GCC' or 'CPC', which is why '' must not reach it.
       cpsc_type:form.cpscType||null,
+      // NULL rather than an empty array when nothing is set. The column comment asks
+      // for one spelling of "not recorded", and the CHECK rejects '{}' anyway.
+      ships_to:form.shipsTo.length ? form.shipsTo : null,
+      trade_direction:form.tradeDirection.trim()||null,
+      importer_of_record:form.importerOfRecord.trim()||null,
+      testing_paid_by:form.testingPaidBy.trim()||null,
       // cpsc_code is deliberately absent. Its input was removed because the column
       // has never held a value -- null on all 271 rows, and nothing anywhere read it.
       //
@@ -263,6 +309,44 @@ export function CreateProductModal({ data, regs = [], links = [], onClose, onCre
               )}
             </div>
           )}
+          <span className="form-section-label">Trade &amp; Compliance</span>
+          <div className="form-row">
+            <label>Country Product Ships To <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(ISO codes — type one and press Enter)</span></label>
+            {/* Multi-valued because one product genuinely goes to several markets, and
+                that is what decides which rules apply. Validated before a chip appears
+                rather than at Save: products_ships_to_alpha2_chk would reject the same
+                thing, but a constraint error after pressing Save is a worse way to find
+                out what the field wanted. */}
+            <div style={{display:'flex',flexWrap:'wrap',gap:'6px',alignItems:'center',marginBottom:form.shipsTo.length?'8px':0}}>
+              {form.shipsTo.map(c=>(
+                <span key={c} style={{display:'inline-flex',alignItems:'center',gap:'6px',background:'#F0F0F2',borderRadius:'980px',padding:'4px 6px 4px 11px',fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',fontFamily:'var(--mono)'}}>
+                  {c}
+                  <button type="button" onClick={()=>setForm(p=>({...p, shipsTo:p.shipsTo.filter(x=>x!==c)}))} title={'Remove '+c} aria-label={'Remove '+c}
+                    style={{width:'16px',height:'16px',borderRadius:'50%',border:'none',background:'#DCDCE0',color:'#5A5A5E',fontSize:'12px',lineHeight:1,cursor:'pointer',padding:0}}>×</button>
+                </span>
+              ))}
+            </div>
+            <input className="form-input" value={countryDraft}
+              onChange={e=>{setCountryDraft(e.target.value); if(countryErr) setCountryErr('');}}
+              onKeyDown={e=>{ if(e.key==='Enter'||e.key===','){ e.preventDefault(); commitCountry(); } }}
+              onBlur={()=>{ if(countryDraft.trim()) commitCountry(); }}
+              placeholder="US" />
+            {countryErr
+              ? <div style={{fontSize:'11.5px',color:'#B91C1C',marginTop:'5px'}}>{countryErr}</div>
+              : <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'5px'}}>Two-letter ISO codes. The United Kingdom is GB, not UK.</div>}
+          </div>
+          <div className="form-row-2">
+            {/* All three are free text on purpose. Domestic / Import / Export are not
+                exclusive -- everything here is made in China and some goes on to Japan,
+                so one product is both -- and the other two wait on Jenn's real lists
+                rather than a guessed vocabulary that would have to be widened. */}
+            <div><label>Domestic / Import / Export</label><input className="form-input" value={form.tradeDirection} onChange={e=>f('tradeDirection')(e.target.value)} /></div>
+            <div><label>Importer of Record</label><input className="form-input" value={form.importerOfRecord} onChange={e=>f('importerOfRecord')(e.target.value)} /></div>
+          </div>
+          <div className="form-row-2">
+            <div><label>Who Pays for Testing</label><input className="form-input" value={form.testingPaidBy} onChange={e=>f('testingPaidBy')(e.target.value)} /></div>
+            <div></div>
+          </div>
           <span className="form-section-label">Carton / Case Pack</span>
           <div className="form-row-3">
             <div><label>Units/Carton</label><input type="number" className="form-input" value={form.upc} onChange={e=>f('upc')(e.target.value)} /></div>
