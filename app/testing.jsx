@@ -147,7 +147,12 @@ export default function Testing() {
       // the products missing one -- the gap the fallback exists to show.
       // efiled_date joins through its DISPLAYED state, not its value, for the same
       // reason cpsc_type does: nobody searches for a date, they search for the gap.
-      matches(q, p.name, p.sku, p.cpsc_type || 'No CPSC', p.efiled_date ? 'eFiled' : 'Not eFiled')
+      // ships_to is joined explicitly rather than passed as an array. matches() would
+      // stringify it to "US,JP" via Array.prototype.toString and happen to work, but
+      // relying on that means a search silently changes if the field ever holds
+      // anything but strings. Spaces, so "JP" matches without the comma.
+      matches(q, p.name, p.sku, p.cpsc_type || 'No CPSC', p.efiled_date ? 'eFiled' : 'Not eFiled',
+              (p.ships_to || []).join(' '), p.trade_direction, p.importer_of_record, p.testing_paid_by)
     );
     if (prodFilter==='compliant') list = list.filter(p=>['compliant','passed'].includes(effectiveStatus(p)));
     if (prodFilter==='pending')   list = list.filter(p=>effectiveStatus(p)==='pending');
@@ -155,6 +160,11 @@ export default function Testing() {
     if (prodFilter==='unset')     list = list.filter(p=>!effectiveStatus(p));
     if (prodFilter==='nocpsc')    list = list.filter(p=>!p.cpsc_type);
     if (prodFilter==='noefile')   list = list.filter(p=>!p.efiled_date);
+    // The worklist for filling the Trade & Compliance block across 271 products: none
+    // of the four set. Not "any missing" -- with nothing filled yet those are the same
+    // list, and this one keeps shrinking as work is done rather than staying long
+    // because one field of four is blank.
+    if (prodFilter==='notrade')   list = list.filter(p=>!(p.ships_to && p.ships_to.length) && !p.trade_direction && !p.importer_of_record && !p.testing_paid_by);
     return list;
   }, [products, q, prodFilter]);
   const shownMaterials = useMemo(() => {
@@ -322,7 +332,7 @@ export default function Testing() {
                 thing -- that nothing has been entered. It earns a tile once the count
                 is meaningfully below the total, and this filter is what it would
                 point at. */}
-            {[['','All'],['compliant','Compliant'],['pending','Pending'],['issues','Issues'],['unset','Not set'],['nocpsc','No CPSC'],['noefile','Not eFiled']].map(([v,l])=>(
+            {[['','All'],['compliant','Compliant'],['pending','Pending'],['issues','Issues'],['unset','Not set'],['nocpsc','No CPSC'],['noefile','Not eFiled'],['notrade','No trade info']].map(([v,l])=>(
               <button key={v||'all'} onClick={()=>setProdFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:prodFilter===v?'#1D1D1F':'#fff',color:prodFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
             ))}
           </div>
