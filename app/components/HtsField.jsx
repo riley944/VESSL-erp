@@ -72,7 +72,9 @@ export function useHtsCodes() {
     // id is fetched purely so the option rows have a stable React key: once one code
     // can appear on several rows, key={c.id || c.code} would fall back to a value
     // that is no longer unique.
-    SB.from("htscodes").select("id,code,description").eq("active", true).order("code")
+    // total_duty rides along for the quote form's duty calculation. CreateProductModal
+    // ignores it; one fetch shared beats two that can disagree about which codes exist.
+    SB.from("htscodes").select("id,code,description,total_duty").eq("active", true).order("code")
       .then(({ data, error }) => { if (alive && !error && data) setCodes(data); });
     return () => { alive = false; };
   }, []);

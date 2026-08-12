@@ -78,11 +78,44 @@ function fmtStamp(iso) {
 }
 
 // EXW (raw) cost is stored in tier.landed; total cost = EXW + freight/duty
-function activeFreight(t) {
+//
+// Freight alone -- what the Freight input edits. freightDuty is the legacy key from
+// before air and ocean were separate, and predates duty being split out, so a tier
+// still carrying it has freight and duty combined in this number.
+function tierFreight(t) {
   const ship = t.ship || "ocean";
   if (ship === "air") return Number(t.freightAir ?? t.freightDuty) || 0;
   return Number(t.freightOcean ?? t.freightDuty) || 0;
 }
+// Duty alone. Not ship-specific: it is a percentage of EXW, and US customs assesses
+// on transaction value, so how the goods travel does not enter it.
+function tierDuty(t) { return Number(t.duty) || 0; }
+// Duty from a rate, or "" when there is nothing to compute from.
+//
+// The blank-EXW guard is the point of the explicit test: Number("") is 0, so a rated
+// code on a tier with no EXW yet would fill 0, and a duty reading 0 says "no duty
+// applies" rather than "nothing to calculate from". Those are different answers.
+//
+// 4dp rather than freight's 3: duty on a low-value unit loses real cents at 3.
+// One rate or none, from whatever library rows carry a code. Several rows agreeing on
+// a single rate is still unambiguous; several disagreeing is not.
+function rateFromRows(rows) {
+  const rated = (rows || []).filter((r) => r.total_duty != null);
+  const distinct = [...new Set(rated.map((r) => Number(r.total_duty)))];
+  return distinct.length === 1 ? distinct[0] : null;
+}
+function computeDuty(exw, rate) {
+  if (rate == null) return "";
+  const e = Number(exw);
+  if (exw === "" || exw == null || !isFinite(e) || e <= 0) return "";
+  return String(+(e * rate / 100).toFixed(4));
+}
+// Deliberately keeps the name it had when it was the only accessor. Every consumer
+// goes through this -- tierTotalCost, the detail view, the printed quote and the CSV
+// -- and all four want freight AND duty. Renaming it would have meant touching each
+// one, and a miss would have dropped duty out of a total, an export or a customer's
+// quote without saying anything.
+function activeFreight(t) { return tierFreight(t) + tierDuty(t); }
 function moldPerUnit(moldFee, qty) {
   const f = Number(moldFee) || 0;
   const q = Number(qty) || 0;
@@ -301,7 +334,7 @@ function rowToForm(r) {
     if (t.freightDuty != null && t.freightDuty !== "" && air === "" && ocean === "") {
       if (ship === "air") air = t.freightDuty; else ocean = t.freightDuty;
     }
-    return { qty: t.qty ?? "", landed: t.landed ?? "", ship, freightAir: air, freightOcean: ocean, client: t.client ?? "", fb: Array.isArray(t.fb) ? t.fb : null, duty_only: t.duty_only || false, sizeQty: qtyMapFrom(t.sizeQty) };
+    return { qty: t.qty ?? "", landed: t.landed ?? "", ship, freightAir: air, freightOcean: ocean, client: t.client ?? "", fb: Array.isArray(t.fb) ? t.fb : null, duty_only: t.duty_only || false, duty: t.duty ?? "", dutyManual: !!t.dutyManual, sizeQty: qtyMapFrom(t.sizeQty) };
   });
   return {
     id: r.id,
@@ -335,6 +368,13 @@ function formToRow(f) {
       client: t.client === "" || t.client == null ? null : Number(t.client),
       fb: Array.isArray(t.fb) && t.fb.length ? t.fb : null,
       duty_only: t.duty_only || false,
+      // Duty is stored beside freight rather than inside fb: 29 of 30 quotes have no
+      // fb at all, so an fb-only duty would be invisible on nearly all of them.
+      // dutyManual travels with it because a number alone cannot say whether it came
+      // from the rate or from a person, and that is what decides if EXW changing may
+      // overwrite it.
+      duty: t.duty === "" || t.duty == null ? null : Number(t.duty),
+      dutyManual: !!t.dutyManual,
     };
     const sizeQty = qtyMapToRow(t.sizeQty, f.sizeScale);
     if (sizeQty) out.sizeQty = sizeQty;
@@ -2124,21 +2164,61 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
     if (ok) { setSavingFactory(false); setFactoryPresetName(""); }
   };
 
-  const setTier = (i, key, val) => {
-    setF((p) => {
-      const tiers = p.tiers.map((t, idx) => idx === i ? { ...t, [key]: val } : t);
-      return { ...p, tiers };
-    });
-  };
   // Read-only, and only the active codes: a retired one should not be offered for a
   // new quote, though a quote already carrying one still displays it, since the
   // picker never constrains what the field holds. The active filter lives in
   // useHtsCodes so this host and the Edit Product modal cannot drift on it.
   const { codes: htsCodes, addCode } = useHtsCodes();
+  // One rate, or the reason there isn't one. A code stopped determining a rate when
+  // 4202320000 was split into five rows at 32.5 / 30.1 / 28.5 / 32.5 / 32.5, so this
+  // fills only where the answer is unambiguous and says why when it is not. Several
+  // rows agreeing on one rate still counts as unambiguous.
+  //
+  // `reason` deliberately reads as an instruction rather than a diagnosis -- the
+  // column is flex 1.0, and "set one in Codes" is more use in that space than the
+  // code, which is three fields further up the same form.
+  const dutyRate = useMemo(() => {
+    if (!f.hts) return { rate: null, reason: null };
+    const rows = htsCodes.filter((c) => c.code === f.hts);
+    if (!rows.length) return { rate: null, reason: "not in Codes", full: "This code is not in the code library, so there is no rate to apply. Add it from the HTS field above." };
+    const rated = rows.filter((r) => r.total_duty != null);
+    if (!rated.length) return { rate: null, reason: "no rate — set one in Codes", full: "This code is in the library but carries no total duty. Set one on the Codes page and it will fill in here." };
+    const distinct = [...new Set(rated.map((r) => Number(r.total_duty)))];
+    if (distinct.length > 1) return { rate: null, reason: "several rates — type it", full: "This code covers several items with different duty rates (" + distinct.map((d) => d + "%").join(", ") + "), so the right one cannot be chosen automatically. Type it." };
+    return { rate: distinct[0], reason: null, full: "Computed from " + distinct[0] + "% of EXW. Type over it to override." };
+  }, [f.hts, htsCodes]);
+  // Duty recompute lives in the setter, not at the call sites, so nothing can change
+  // an EXW without the duty following it.
+  //
+  // dutyManual is what protects an override. It is set the moment the duty box is
+  // typed in, and only cleared when the HTS code changes -- an override attaches to a
+  // rate, and picking a different code retires the rate it was attached to.
+  const setTier = (i, key, val) => {
+    setF((p) => {
+      const tiers = p.tiers.map((t, idx) => {
+        if (idx !== i) return t;
+        const next = { ...t, [key]: val };
+        if (key === "duty") next.dutyManual = true;
+        if (key === "landed" && !next.dutyManual) next.duty = computeDuty(val, dutyRate.rate);
+        return next;
+      });
+      return { ...p, tiers };
+    });
+  };
   // The only writer of f.hts. Values arrive already normalised -- either from a
   // library row, or from CodeModal, which strips as you type. formToRow is
   // untouched and still writes hts: f.hts || null.
-  const pickHts = (code) => setF((p) => ({ ...p, hts: code || "" }));
+  //
+  // Changing the code recomputes every tier and clears every override, because the
+  // rate an override was overriding is no longer the rate that applies.
+  // `extra` exists for the "+ Add code" path. onCodeAdded calls addCode then pickHts
+  // in the same tick, so htsCodes has not re-rendered yet and the code just created
+  // would look absent -- the duty would come out blank on the one path where the rate
+  // is most certainly known. CodeModal hands the saved row back, so it is passed here.
+  const pickHts = (code, extra) => setF((p) => {
+    const rate = rateFromRows((extra ? htsCodes.concat(extra) : htsCodes).filter((c) => c.code === code));
+    return { ...p, hts: code || "", tiers: p.tiers.map((t) => ({ ...t, dutyManual: false, duty: computeDuty(t.landed, rate) })) };
+  });
   // "+ Add code" from inside the picker. The seeded value is whatever was typed
   // into the filter, so a code someone was hunting for is pre-filled.
   const [addingCode, setAddingCode] = useState(null);
@@ -2146,7 +2226,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
     setAddingCode(null);
     if (!row) return;
     addCode(row);
-    pickHts(row.code);   // select it straight away -- never leaves the quote form
+    pickHts(row.code, row);   // select it straight away -- never leaves the quote form
   };
   const autoFillClient = (i) => {
     setF((p) => {
@@ -2157,10 +2237,12 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
       return { ...p, tiers };
     });
   };
-  const addTier = (qty = "") => setF((p) => ({ ...p, tiers: [...p.tiers, { qty, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] }));
+  // duty starts blank on a new tier and stays blank until an EXW is typed -- there is
+  // nothing to take a percentage of yet.
+  const addTier = (qty = "") => setF((p) => ({ ...p, tiers: [...p.tiers, { qty, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "", duty: "", dutyManual: false }] }));
   const addPresets = () => setF((p) => {
     const have = new Set(p.tiers.map((t) => Number(t.qty)));
-    const additions = PRESET_QTYS.filter((q) => !have.has(q)).map((q) => ({ qty: q, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }));
+    const additions = PRESET_QTYS.filter((q) => !have.has(q)).map((q) => ({ qty: q, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "", duty: "", dutyManual: false }));
     return { ...p, tiers: [...p.tiers, ...additions] };
   });
   const removeTier = (i) => setF((p) => ({ ...p, tiers: p.tiers.filter((_, idx) => idx !== i) }));
@@ -2326,7 +2408,8 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                 <div style={{ flex: 1.0 }}>Quantity</div>
                 <div style={{ flex: 1.0 }}>EXW Cost</div>
                 <div style={{ flex: 1.0 }}>Method</div>
-                <div style={{ flex: 1.5 }}>Frt+Duty</div>
+                <div style={{ flex: 1.2 }}>Freight</div>
+                <div style={{ flex: 1.0 }}>Duty</div>
                 <div style={{ flex: 1.1, textAlign: "right" }}>Total Cost</div>
                 <div style={{ flex: 1.3 }}>Client Price</div>
                 <div style={{ flex: 0.8, textAlign: "right" }}>Margin</div>
@@ -2368,9 +2451,19 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "air" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "air")}>Air</button>
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "ocean" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "ocean")}>Ocean</button>
                     </div>
-                    <div style={{ flex: 1.5, display: "flex", gap: 3 }}>
+                    <div style={{ flex: 1.2, display: "flex", gap: 3 }}>
                       <input style={S.tierInput} type="number" value={t[freightKey] ?? ""} onChange={(e) => setTier(i, freightKey, e.target.value)} placeholder={ship === "air" ? "$ air" : "$ ocean"} />
                       <button type="button" onClick={() => setFbTier(i)} title="Build the freight & duty number from its cost legs — containers, warehousing, trucking, duty" style={{ flexShrink: 0, padding: "0 8px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, letterSpacing: ".02em", cursor: "pointer", background: (t.fb && t.fb.length) ? "#2f6df6" : "#e7edfd", color: (t.fb && t.fb.length) ? "#fff" : "#3551c4", whiteSpace: "nowrap" }}>build</button>
+                    </div>
+                    {/* Computed from the HTS code where that is unambiguous, typed
+                        otherwise, and typing always wins -- setTier flags the tier
+                        manual on the first keystroke so a later EXW edit leaves it
+                        alone. The hint is terse because the column is flex 1.0; the
+                        sentence lives on the title, like the eFiling button. */}
+                    <div style={{ flex: 1.0, display: "flex", flexDirection: "column", gap: 2 }}>
+                      <input style={S.tierInput} type="number" value={t.duty ?? ""} onChange={(e) => setTier(i, "duty", e.target.value)} placeholder="$ duty" title={dutyRate.full || "Duty per unit. Set an HTS code with a rate and this fills itself."} />
+                      {dutyRate.reason && <span title={dutyRate.full} style={{ fontSize: 9.5, color: "#b0763a", lineHeight: 1.25, cursor: "help" }}>{dutyRate.reason}</span>}
+                      {!dutyRate.reason && t.dutyManual && dutyRate.rate != null && <span title={"Computed would be " + computeDuty(t.landed, dutyRate.rate) + " at " + dutyRate.rate + "%."} style={{ fontSize: 9.5, color: "#6a7488", lineHeight: 1.25, cursor: "help" }}>overridden</span>}
                     </div>
                     <div style={{ flex: 1.1, textAlign: "right", alignSelf: "center", ...S.num, fontWeight: 600, color: "#0f1729" }}>{total ? `$${fmt(total)}` : "—"}</div>
                     {/* Column, not a row: the mix line sits under both the input and the
@@ -2410,7 +2503,10 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       </div>
                       <div style={{ flex: 1.0 }} />
                       <div style={{ flex: 1.0 }} />
-                      <div style={{ flex: 1.5 }} />
+                      {/* Two spacers where there was one, mirroring the split above --
+                          these keep every size row aligned under its tier's columns. */}
+                      <div style={{ flex: 1.2 }} />
+                      <div style={{ flex: 1.0 }} />
                       <div style={{ flex: 1.1, textAlign: "right", ...S.tierSizeCell }}>{total ? `$${fmt(total)}` : "—"}</div>
                       {/* The parenthetical is what the base was moved BY, so it only makes
                           sense next to a base. With none the delta is the whole price and
