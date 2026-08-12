@@ -36,6 +36,9 @@ export function CodeModal({ data, canDelete = false, onClose, onSaved, onDeleted
   const [f,setF] = useState({
     code: data?.code || '',
     description: data?.description || '',
+    // numeric comes back from PostgREST as a string ("36.50"), which is what the input
+    // wants anyway. null becomes '' so the box is empty rather than showing "null".
+    total_duty: data?.total_duty == null ? '' : String(data.total_duty),
     active: editing ? !!data.active : true,
   });
   const [saving,setSaving] = useState(false);
@@ -45,6 +48,19 @@ export function CodeModal({ data, canDelete = false, onClose, onSaved, onDeleted
   // gets stored. No length rule: 39269090 is a real 8-digit subheading and a
   // 10-digit check would reject it.
   const setCode = e => setF(p=>({...p, code: e.target.value.replace(/\D/g,'')}));
+  // Digits and at most one dot, sanitised on every keystroke like the code above, so
+  // a pasted "40.3%" visibly becomes 40.3. The first dot is kept and later ones
+  // dropped by position rather than by regex -- /(\..*)\./g leaves "1.2.3.4" as
+  // "1.2.34", which is not a number, and the field would look accepted until save.
+  //
+  // The % is a static suffix beside the box, never part of the value: what is typed
+  // is what is stored. total_duty holds the percentage NUMBER, so 40.3 means 40.3%
+  // and nothing here multiplies or divides.
+  const setDuty = e => setF(p=>{
+    const c = e.target.value.replace(/[^\d.]/g,'');
+    const i = c.indexOf('.');
+    return {...p, total_duty: i === -1 ? c : c.slice(0,i+1) + c.slice(i+1).replace(/\./g,'')};
+  });
   // Delete is for mistakes. A code that is genuinely obsolete but still cited
   // should be retired by unticking Active, which keeps it resolvable -- the confirm
   // says so, but only on the path where the distinction actually matters.
@@ -104,12 +120,27 @@ export function CodeModal({ data, canDelete = false, onClose, onSaved, onDeleted
     const description = f.description.trim();
     if (!code) { toast('A code is required','err'); return; }
     if (!description) { toast('A description is required','err'); return; }
+    // Blank is a real answer -- "no rate established" -- and must reach the column as
+    // NULL, not 0. Number('') is 0, so the empty case is tested before any conversion.
+    //
+    // A lone '.' is the one thing the keystroke sanitiser can still leave behind, and
+    // JSON.stringify turns NaN into null, so without this an unfinished entry would
+    // silently save as "no rate" rather than being questioned.
+    const dutyRaw = f.total_duty.trim();
+    const duty = dutyRaw === '' ? null : Number(dutyRaw);
+    if (duty !== null && !isFinite(duty)) { toast('Total duty must be a number, or blank for no rate','err'); return; }
+    // numeric(5,2) tops out at 999.99. Caught here so an overflow reads as a sentence
+    // rather than as a raw 22003 from Postgres.
+    if (duty !== null && duty > 999.99) { toast('Total duty cannot be above 999.99%','err'); return; }
     setSaving(true);
-    const payload = { code, description, active: !!f.active };
+    // One payload, keyed on id. Duty belongs to the ROW, not the code -- 4202320000 is
+    // 32.50 for a coin purse and 30.10 for a fabric zip pouch -- so editing one row
+    // must never reach another sharing its code.
+    const payload = { code, description, total_duty: duty, active: !!f.active };
     // .select().single() on both paths so onSaved can hand the row back.
     const { data:row, error } = editing
-      ? await SB.from('htscodes').update(payload).eq('id', data.id).select('id,code,description,active').single()
-      : await SB.from('htscodes').insert(payload).select('id,code,description,active').single();
+      ? await SB.from('htscodes').update(payload).eq('id', data.id).select('id,code,description,total_duty,active').single()
+      : await SB.from('htscodes').insert(payload).select('id,code,description,total_duty,active').single();
     setSaving(false);
     if (error) {
       // Uniqueness is on (code, description), so a repeat code is fine as long as
@@ -135,6 +166,15 @@ export function CodeModal({ data, canDelete = false, onClose, onSaved, onDeleted
         <div>
           <label style={lbl}>Description *</label>
           <input style={inp} value={f.description} onChange={e=>setF(p=>({...p,description:e.target.value}))} placeholder="What this code covers" />
+        </div>
+        <div>
+          <label style={lbl}>Total duty</label>
+          {/* The % sits outside the input so it can never end up in the value. */}
+          <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+            <input style={{...inp,flex:1,minWidth:0}} value={f.total_duty} onChange={setDuty} inputMode="decimal" placeholder="e.g. 36.5" />
+            <span style={{fontSize:'14px',color:'#8A8A8E',flexShrink:0}}>%</span>
+          </div>
+          <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'5px'}}>The percentage itself — 36.5 means 36.5%. Leave blank if no rate is established.</div>
         </div>
         <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',color:'#3A3A3E',cursor:'pointer'}}>
           <input type="checkbox" checked={f.active} onChange={e=>setF(p=>({...p,active:e.target.checked}))} />

@@ -62,7 +62,7 @@ export default function Codes({ canDeleteCodes = true }) {
   const load = async () => {
     setLoading(true); setLoadErr('');
     const [c, r] = await Promise.all([
-      SB.from('htscodes').select('id,code,description,active').order('code'),
+      SB.from('htscodes').select('id,code,description,total_duty,active').order('code'),
       SB.from('regulations').select('*').order('sort_order').order('code'),
     ]);
     if (c.error || r.error) { setLoadErr((c.error || r.error).message); setCodes([]); setRegs([]); }
@@ -130,18 +130,29 @@ export default function Codes({ canDeleteCodes = true }) {
         />
       ) : hts ? (
         <div style={{...card,overflow:'hidden'}}>
-          <div style={{display:'grid',gridTemplateColumns:'180px 1fr 130px',gap:'16px',padding:'13px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
-            {['Code','Description','Status'].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i===2?'right':'left'}}>{h}</div>)}
+          {/* Four tracks here against RegulationsList's three, so the toggle no longer
+              swaps contents alone. Deliberate: duty is information a CPSC rule does not
+              have, and the parity rule was about not showing the SAME information two
+              ways, not about refusing to show more where there is more. */}
+          <div style={{display:'grid',gridTemplateColumns:'180px 1fr 100px 110px',gap:'16px',padding:'13px 22px',borderBottom:'1px solid #ECECEE',background:'#FAFAFB'}}>
+            {['Code','Description','Duty','Status'].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i>=2?'right':'left'}}>{h}</div>)}
           </div>
           {shownCodes.map((c,i)=>(
             // Retired codes stay listed so quotes that already cite them remain
             // resolvable — dimmed rather than hidden, and still editable so they
             // can be brought back.
             <div key={c.id} onClick={()=>setModal(c)}
-              style={{display:'grid',gridTemplateColumns:'180px 1fr 130px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer',opacity:c.active?1:0.55}}
+              style={{display:'grid',gridTemplateColumns:'180px 1fr 100px 110px',gap:'16px',padding:'14px 22px',borderTop:i>0?'1px solid #F2F2F4':'none',alignItems:'center',cursor:'pointer',opacity:c.active?1:0.55}}
               onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
               <div style={{fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{c.code}</div>
               <div style={{fontSize:'13px',color:'#3A3A3E',minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.description || <span style={{color:'#C0C0C4'}}>—</span>}</div>
+              {/* parseFloat drops the stored scale, so 36.50 reads 36.5% and 30.00 reads
+                  30%. The em dash is the same one the Description cell uses for empty --
+                  9 rows have no rate, 2 of them permanently, so it is a normal state
+                  rather than an error. */}
+              <div style={{fontSize:'13px',color:'#3A3A3E',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>
+                {c.total_duty == null ? <span style={{color:'#C0C0C4'}}>—</span> : parseFloat(c.total_duty)+'%'}
+              </div>
               <div style={{fontSize:'12px',fontWeight:600,textAlign:'right',color:c.active?'#15803D':'#8A8A8E'}}>{c.active?'Active':'Inactive'}</div>
             </div>
           ))}
