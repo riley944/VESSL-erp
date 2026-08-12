@@ -334,7 +334,18 @@ function rowToForm(r) {
     if (t.freightDuty != null && t.freightDuty !== "" && air === "" && ocean === "") {
       if (ship === "air") air = t.freightDuty; else ocean = t.freightDuty;
     }
-    return { qty: t.qty ?? "", landed: t.landed ?? "", ship, freightAir: air, freightOcean: ocean, client: t.client ?? "", fb: Array.isArray(t.fb) ? t.fb : null, duty_only: t.duty_only || false, duty: t.duty ?? "", dutyManual: !!t.dutyManual, sizeQty: qtyMapFrom(t.sizeQty) };
+    // Set here and nowhere else, because rowToForm is the boundary between what was
+    // STORED and what is on screen -- and the question this answers is entirely about
+    // the stored row. True means the tier predates duty being split out: it carries a
+    // freight figure written when freight and duty were one box, so if duty now
+    // computes on top, the freight number may already contain it.
+    //
+    // It is a form-only flag. formToRow's whitelist does not name it, so it can never
+    // be written back -- which is the point. This is a transitional concern about 19
+    // tiers, and duty_only is already sitting in that jsonb as a dead key nobody
+    // reads; a second one would outlive its purpose the same way.
+    const legacyFreight = (t.duty == null || t.duty === "") && (air !== "" || ocean !== "");
+    return { qty: t.qty ?? "", landed: t.landed ?? "", ship, freightAir: air, freightOcean: ocean, client: t.client ?? "", fb: Array.isArray(t.fb) ? t.fb : null, duty_only: t.duty_only || false, duty: t.duty ?? "", dutyManual: !!t.dutyManual, dutyLegacy: legacyFreight, sizeQty: qtyMapFrom(t.sizeQty) };
   });
   return {
     id: r.id,
@@ -2200,6 +2211,9 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
         const next = { ...t, [key]: val };
         if (key === "duty") next.dutyManual = true;
         if (key === "landed" && !next.dutyManual) next.duty = computeDuty(val, dutyRate.rate);
+        // Touching freight is the acknowledgement. The marker asks a question about
+        // that number, so editing it answers the question -- whatever the new value is.
+        if (key === "freightOcean" || key === "freightAir") next.dutyLegacy = false;
         return next;
       });
       return { ...p, tiers };
@@ -2462,6 +2476,15 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                         sentence lives on the title, like the eFiling button. */}
                     <div style={{ flex: 1.0, display: "flex", flexDirection: "column", gap: 2 }}>
                       <input style={S.tierInput} type="number" value={t.duty ?? ""} onChange={(e) => setTier(i, "duty", e.target.value)} placeholder="$ duty" title={dutyRate.full || "Duty per unit. Set an HTS code with a rate and this fills itself."} />
+                      {/* Fires when a duty has landed on a tier whose freight was written
+                          before duty was a separate box. Deliberately NOT an attempt to
+                          detect duty inside freight: measuring the 19 such tiers put 3
+                          beyond doubt, 10 beyond suspicion and left 6 genuinely
+                          undecidable, and a detector wrong 6 times in 19 is worse than
+                          a plain question. It states the risk and lets a human look. */}
+                      {t.dutyLegacy && Number(t.duty) > 0 && (
+                        <span title="This tier's freight was entered before duty had its own box, so it may already include duty — in which case the total now counts it twice. Check the freight figure; editing it clears this." style={{ fontSize: 9.5, fontWeight: 600, color: "#9a3412", background: "#ffedd5", borderRadius: 4, padding: "1px 4px", lineHeight: 1.3, cursor: "help" }}>check freight</span>
+                      )}
                       {dutyRate.reason && <span title={dutyRate.full} style={{ fontSize: 9.5, color: "#b0763a", lineHeight: 1.25, cursor: "help" }}>{dutyRate.reason}</span>}
                       {!dutyRate.reason && t.dutyManual && dutyRate.rate != null && <span title={"Computed would be " + computeDuty(t.landed, dutyRate.rate) + " at " + dutyRate.rate + "%."} style={{ fontSize: 9.5, color: "#6a7488", lineHeight: 1.25, cursor: "help" }}>overridden</span>}
                     </div>
