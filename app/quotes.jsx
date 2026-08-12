@@ -2481,8 +2481,22 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                           detect duty inside freight: measuring the 19 such tiers put 3
                           beyond doubt, 10 beyond suspicion and left 6 genuinely
                           undecidable, and a detector wrong 6 times in 19 is worse than
-                          a plain question. It states the risk and lets a human look. */}
-                      {t.dutyLegacy && Number(t.duty) > 0 && (
+                          a plain question. It states the risk and lets a human look.
+
+                          The freight >= duty test is arithmetic, not inference: a number
+                          cannot contain a duty larger than itself. It takes 19 tiers to
+                          9 and every one it silences is one where the old combined field
+                          demonstrably does not hold today's duty. Strictly it rules out
+                          TODAY's rate -- a freight figure could still hide a duty struck
+                          at some older, smaller rate -- but that quote is already wrong
+                          for reasons this marker was never going to catch.
+
+                          Known limit, accepted rather than overlooked: the flag clears on
+                          save whether or not anyone read it, so a tier gets one showing
+                          and it disappears at the moment the double count is committed.
+                          This is a prompt, not a guard. Do not treat it as a safety net,
+                          and do not assume a quiet tier was ever checked. */}
+                      {t.dutyLegacy && Number(t.duty) > 0 && tierFreight(t) >= Number(t.duty) && (
                         <span title="This tier's freight was entered before duty had its own box, so it may already include duty — in which case the total now counts it twice. Check the freight figure; editing it clears this." style={{ fontSize: 9.5, fontWeight: 600, color: "#9a3412", background: "#ffedd5", borderRadius: 4, padding: "1px 4px", lineHeight: 1.3, cursor: "help" }}>check freight</span>
                       )}
                       {dutyRate.reason && <span title={dutyRate.full} style={{ fontSize: 9.5, color: "#b0763a", lineHeight: 1.25, cursor: "help" }}>{dutyRate.reason}</span>}
