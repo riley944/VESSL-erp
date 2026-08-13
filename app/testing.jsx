@@ -646,13 +646,36 @@ function MaterialModal({ data, labs, onClose, onSaved }) {
   const [f,setF]=useState({ name:data?.name||'', material_type:data?.material_type||'', supplier_name:data?.supplier_name||'', composition:data?.composition||'', color:data?.color||'', notes:data?.notes||'' });
   const [saving,setSaving]=useState(false);
   const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  // Checked, not discarded -- the same shape LabModal uses, and for the reason its
+  // comment gives. Until now the result was thrown away and onSaved() ran either way,
+  // so a refused write closed the modal, reloaded the parent and reported success for
+  // a material that was never saved. That is why nobody could say whether this modal
+  // had ever written a row: a rejected insert and a never-clicked button looked
+  // identical from outside.
+  //
+  // vessl.materials.name is UNIQUE as of materials_name_key, so 23505 is now reachable
+  // from here for the first time -- both on a new material and on renaming one onto
+  // another's name. The message matches AddMaterialModal's leading sentence, since the
+  // two are the only writers of this table and the same collision should not read as
+  // two different problems.
   const save=async()=>{
-    if(!f.name.trim()) return;
+    const name=f.name.trim();
+    // Was a bare return, which made Save do nothing at all with no reason given.
+    if(!name){ toast('A material name is required','err'); return; }
     setSaving(true);
-    const payload={ name:f.name.trim(), material_type:f.material_type||null, supplier_name:f.supplier_name||null, composition:f.composition||null, color:f.color||null, notes:f.notes||null };
-    if(data?.id) await SB.from('materials').update(payload).eq('id',data.id);
-    else await SB.from('materials').insert(payload);
-    setSaving(false); onSaved();
+    const payload={ name, material_type:f.material_type||null, supplier_name:f.supplier_name||null, composition:f.composition||null, color:f.color||null, notes:f.notes||null };
+    const { error } = data?.id
+      ? await SB.from('materials').update(payload).eq('id',data.id)
+      : await SB.from('materials').insert(payload);
+    setSaving(false);
+    if(error){
+      const dupe = error.code === '23505' || /materials_name_key/i.test(error.message||'');
+      toast(dupe
+        ? 'A material with that name already exists — give this one a different name.'
+        : 'Could not save material: '+error.message, 'err');
+      return;   // stay open so the entry is not lost, and no onSaved: nothing was written
+    }
+    onSaved();
   };
   return (
     <Overlay onClose={onClose}>
