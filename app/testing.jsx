@@ -475,7 +475,16 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
             {/* The row itself opens the editor, so anything clickable inside it has to
                 stop the event or it would do both. */}
             <div style={{display:'flex',gap:'6px',justifyContent:'flex-end',alignItems:'center'}}>
-              <button onClick={e=>{e.stopPropagation();onLink(p);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Materials</button>
+              {/* Counted like Rules beside it, and suppressed at zero for the same
+                  reason. Two adjacent pills where one counts and the other never does
+                  read as "this one has nothing to count" rather than "this one does not
+                  say", which is most of why the materials control was hard to find at
+                  all. links is already computed above for the Built from cell.
+
+                  A count and not eFiling's dot: filing is binary so a dot is the right
+                  shape there, but a dot here would throw away the difference between
+                  one material and five, which is the thing worth opening the cell for. */}
+              <button onClick={e=>{e.stopPropagation();onLink(p);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Materials{links.length>0 && ' ('+links.length+')'}</button>
               <button onClick={e=>{e.stopPropagation();onLinkRules(p);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Rules{ruleCount>0 && ' ('+ruleCount+')'}</button>
               {/* A dot rather than a count: filing is binary, so a number would say
                   nothing. Filled means a date is stored, hollow means none — the gap is
