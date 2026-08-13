@@ -169,10 +169,13 @@ export default function Testing() {
   }, [products, q, prodFilter]);
   const shownMaterials = useMemo(() => {
     let list = !q ? materials : materials.filter(m =>
-      // master_sku is not rendered on the row, unlike the rest. It is included because a
-      // pasted SKU should find its material; it is NULL on every row today because
-      // MaterialModal's save does not send it.
-      matches(q, m.name, m.composition, m.material_type, m.supplier?.name, m.supplier_name, m.master_sku)
+      // material_code is the identifier a person actually holds -- database-generated,
+      // populated on every row, and now printed on the row itself -- so a pasted MAT-0007
+      // has to find its material.
+      // master_sku stays beside it though it is NULL on all 14 and MaterialModal's save
+      // does not send it. What it is meant to hold is still open; leaving it in the list
+      // costs nothing and means the search does not have to be remembered later.
+      matches(q, m.name, m.composition, m.material_type, m.supplier?.name, m.supplier_name, m.material_code, m.master_sku)
     );
     if (matFilter==='passed')    list = list.filter(m=>m.status==='passed');
     if (matFilter==='untested')  list = list.filter(m=>['untested','in_progress'].includes(m.status));
@@ -509,11 +512,23 @@ function MaterialsView({ materials, expiryOf, reports, onEdit, onTest, onDelete,
         const expSoon = d!==null && d>=0 && d<=EXPIRY_WINDOW_DAYS;
         const expPast = d!==null && d<0;
         const rc = reportCount(m.id);
+        // The subtitle leads with the identifier on every row, so it sits at the same
+        // offset down the list and can be scanned like a column without being one.
+        // Composition joins it only where it says something the name does not: the
+        // import writes the same string to both on purpose -- a report certifies a
+        // composition, so for those rows the composition IS the name -- and rendering
+        // both put the identical string on the row twice.
+        // Compared trimmed because MaterialModal trims name but not composition, so the
+        // two can differ by whitespace alone and still read as an exact pair.
+        // Built by filter/join rather than a conditional suffix so a row with no
+        // material_code degrades to composition alone instead of a dangling separator.
+        const showComp = m.composition && m.composition.trim() !== (m.name||'').trim();
+        const sub = [m.material_code, showComp?m.composition:null].filter(Boolean).join(' · ');
         return (
           <div key={m.id} onClick={()=>onEdit(m)} style={{display:'grid',gridTemplateColumns:'minmax(200px,1.3fr) 110px minmax(120px,1fr) 118px 150px 120px',gap:'14px',padding:'15px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.name}</div>
-              {m.composition&&<div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.composition}</div>}
+              {sub&&<div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{sub}</div>}
             </div>
             <div style={{fontSize:'12.5px',color:'#4A4A4E',textTransform:'capitalize',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.material_type||'—'}</div>
             <div style={{fontSize:'12.5px',color:'#4A4A4E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.supplier?.name||m.supplier_name||'—'}</div>
