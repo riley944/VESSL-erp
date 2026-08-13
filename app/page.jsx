@@ -3423,7 +3423,9 @@ function Shipments({ onNewShipment }) {
   const [shipFilter, setShipFilter] = useState('');      // '' | arriving | overdue
   const [search, setSearch] = useState('');
   const [quotes, setQuotes] = useState([]);
-  const [showQuoteModal, setShowQuoteModal] = useState(false);
+  // null when closed, 'new' to create, or the freight quote row to edit. One state
+  // rather than two, so the two paths cannot both be open at once.
+  const [quoteModal, setQuoteModal] = useState(null);
   const [bids, setBids] = useState([]);
   const [rfqQuote, setRfqQuote] = useState(null);
   const [showBidImport, setShowBidImport] = useState(false);
@@ -3522,7 +3524,7 @@ function Shipments({ onNewShipment }) {
           <div style={{fontSize:'14.5px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>{String(quotes.length)+' quotes \u00b7 '+String(activeShips.length)+' in motion'}</div>
         </div>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
-          <button onClick={()=>setShowQuoteModal(true)} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>
+          <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>
           {onNewShipment && <button onClick={onNewShipment} style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
         </div>
       </div>
@@ -3622,6 +3624,7 @@ function Shipments({ onNewShipment }) {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
                     RFQ
                   </button>
+                  <button onClick={()=>setQuoteModal(q)} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Edit</button>
                   <button onClick={()=>reopen(q)} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Sheet</button>
                   <div style={{flex:1}} />
                   <button title="Delete quote" onClick={()=>{ if(window.confirm('Delete freight quote '+q.quote_number+'? This cannot be undone.')) deleteQuote(q.id); }} style={{background:'none',border:'none',cursor:'pointer',padding:'5px',borderRadius:'7px',color:'#C7C7CC',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
@@ -3700,7 +3703,7 @@ function Shipments({ onNewShipment }) {
       ))}
 
       {openId && <ShipmentDetailModal id={openId} onClose={()=>setOpenId(null)} onSaved={()=>{setOpenId(null);reload();}} />}
-      {showQuoteModal && <ShipmentQuoteModal onClose={()=>setShowQuoteModal(false)} onSaved={()=>{setShowQuoteModal(false);reloadQuotes();}} />}
+      {quoteModal && <ShipmentQuoteModal data={quoteModal==='new'?null:quoteModal} onClose={()=>setQuoteModal(null)} onSaved={()=>{setQuoteModal(null);reloadQuotes();}} />}
       {rfqQuote && <ForwarderRFQModal quote={rfqQuote} onClose={()=>setRfqQuote(null)} onSent={()=>{setRfqQuote(null); reloadQuotes();}} />}
       {showBidImport && <ImportBidsModal quotes={quotes} onClose={()=>setShowBidImport(false)} onApplied={()=>{setShowBidImport(false); reloadBids();}} />}
       {bidsQuote && <BidsCompareModal quote={bidsQuote} bids={bids.filter(b=>b.shipment_quote_id===bidsQuote.id)} onClose={()=>setBidsQuote(null)} onDeleted={reloadBids} />}
@@ -5179,7 +5182,15 @@ const CONTAINER_TYPES = [
 const CONTAINER_MAP = Object.fromEntries(CONTAINER_TYPES.map(c=>[c.key,c]));
 const CBM_MAX_40HQ = 68; // legacy default fallback
 
-function ShipmentQuoteModal({ onClose, onSaved }) {
+// Pass `data` to edit that row, omit it to create — the same shape CreateProductModal
+// and MaterialModal use.
+//
+// Until now this was create-only: no data prop, insert on both paths, and nothing on
+// the freight quote card reopened it. A quote could be printed but never corrected,
+// which is what Kristy hit — updated_at equalled created_at on all seven rows because
+// no UPDATE had ever run against this table.
+function ShipmentQuoteModal({ data, onClose, onSaved }) {
+  const editing = !!(data && data.id);
   const [mode, setMode] = useState('po'); // 'po' | 'product'
   const [picked, setPicked] = useState(null); // {kind, id, label, sub}
   const [companies, setCompanies] = useState([]);
@@ -5187,11 +5198,31 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
   const [products, setProducts] = useState([]);
   const [poSearch, setPoSearch] = useState('');
   const [prodSearch, setProdSearch] = useState('');
-  const [form, setForm] = useState({
+  // Lazy initialisers: the create branch mints a quote number from the clock, and
+  // computing it on every render to throw it away invites the two paths drifting.
+  const [form, setForm] = useState(() => editing ? {
+    number: data.quote_number||'',
+    client: data.client_company_id||'', forwarder: data.forwarder_company_id||'',
+    poId: data.po_id||'',
+    origin: data.origin||'', destination: data.destination||'',
+    incoterm: data.incoterm||'FOB',
+    // A `date` column arrives as 'YYYY-MM-DD'; the input wants exactly that, and
+    // slicing guards a row that ever holds a timestamp.
+    ready: data.ready_date ? String(data.ready_date).slice(0,10) : '',
+    notes: data.notes||'', containerType: data.container_type||'40HQ',
+  } : {
     number: 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase(),
     client:'', forwarder:'', poId:'', origin:'', destination:'', incoterm:'FOB', ready:'', notes:'', containerType:'40HQ'
   });
-  const [lines, setLines] = useState([{ desc:'', upc:'', cartons:'', cbmPer:'', weight:'' }]);
+  // line_items is jsonb holding numbers; every box in this form is a string. The stored
+  // shape uses cbm_per where the form uses cbmPer, and carries pieces and cbm_total,
+  // which are derived on save and so are not read back.
+  const [lines, setLines] = useState(() => {
+    const stored = editing && Array.isArray(data.line_items) ? data.line_items : [];
+    if (!stored.length) return [{ desc:'', upc:'', cartons:'', cbmPer:'', weight:'' }];
+    const s = v => (v === null || v === undefined ? '' : String(v));
+    return stored.map(l=>({ desc:l.desc||'', upc:s(l.upc), cartons:s(l.cartons), cbmPer:s(l.cbm_per), weight:s(l.weight) }));
+  });
   const [saving, setSaving] = useState(false);
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
 
@@ -5360,11 +5391,27 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
     sent_at: status==='sent'? new Date().toISOString() : null,
   });
 
+  // status and sent_at are dropped from the edit payload rather than sent. PostgREST
+  // writes only the keys given, so omitting them leaves both alone -- correcting a
+  // carton count must not restamp when the quote went out, nor flip a sent quote back
+  // to draft. Same reasoning as CreateProductModal omitting category_id on edit.
+  //
+  // updated_at is set explicitly because vessl.shipment_quotes has NO trigger: the
+  // column's default now() fires on INSERT only. Leaving it out would keep the column
+  // claiming the row had never been touched, which is exactly the signal that proved
+  // no edit had ever run here.
+  const editPayload = () => {
+    const { status, sent_at, ...rest } = buildPayload('draft');
+    return { ...rest, updated_at: new Date().toISOString() };
+  };
   const save = async (status) => {
     if (!form.client) { alert('Pick a client'); return; }
     setSaving(true);
-    const { error } = await SB.from('shipment_quotes').insert(buildPayload(status));
+    const { error } = editing
+      ? await SB.from('shipment_quotes').update(editPayload()).eq('id', data.id)
+      : await SB.from('shipment_quotes').insert(buildPayload(status));
     setSaving(false);
+    // Checked, and the modal stays open on failure so the entry is not lost.
     if (error) { alert('Error: '+error.message); return; }
     onSaved();
   };
@@ -5387,14 +5434,19 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div className="modal-box modal-lg">
-        <div className="modal-head"><h3>New Freight Quote</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>{editing?'Edit Freight Quote':'New Freight Quote'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
 
-          {/* mode toggle — identical pattern to New PO */}
+          {/* mode toggle — identical pattern to New PO. Hidden on edit along with both
+              pickers: "generate from" is how a quote is SOURCED, and re-sourcing an
+              existing one would overwrite the cargo lines with the PO's, discarding
+              whatever was corrected by hand since. Editing works on the row as saved. */}
+          {!editing && (
           <div className="qp-toggle">
             <button className={mode==='po'?'on':''} onClick={()=>{setMode('po');resetPick();}}>Generate from PO</button>
             <button className={mode==='product'?'on':''} onClick={()=>{setMode('product');resetPick();}}>Generate from Product</button>
           </div>
+          )}
 
           {/* selected banner */}
           {picked && (
@@ -5405,7 +5457,7 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
           )}
 
           {/* PO PICKER */}
-          {mode==='po' && !picked && (
+          {mode==='po' && !picked && !editing && (
             <>
               <div className="qp-search">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
@@ -5428,7 +5480,7 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
           )}
 
           {/* PRODUCT PICKER */}
-          {mode==='product' && !picked && (
+          {mode==='product' && !picked && !editing && (
             <>
               <div className="qp-search">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
@@ -5451,10 +5503,21 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
           )}
 
           {/* SHARED SHEET FORM — only after a PO or product is picked */}
-          {picked && (
+          {(picked || editing) && (
           <>
           <div className="form-row-2">
-            <div><label style={lblS}>Quote #</label><input style={inputS} value={form.number} onChange={e=>f('number')(e.target.value)} /></div>
+            {/* Read-only on edit, the same treatment the eFiling and CPSC Rules blocks
+                get in Edit Product: shown, not offered. On create nobody holds the
+                number yet, so typing over it costs nothing. Once the quote has been
+                RFQ'd it is the identifier three forwarders are quoting against, and
+                quote_number has NO unique constraint — nothing anywhere would catch a
+                collision or a silent renumbering. */}
+            <div>
+              <label style={lblS}>Quote #{editing && <span style={{textTransform:'none',letterSpacing:0,fontWeight:500,color:'#A0A0A4'}}> (fixed — forwarders quote against it)</span>}</label>
+              {editing
+                ? <div style={{fontFamily:'var(--mono)',fontSize:'13.5px',fontWeight:700,color:'#1A1A1C',padding:'9px 0'}}>{form.number}</div>
+                : <input style={inputS} value={form.number} onChange={e=>f('number')(e.target.value)} />}
+            </div>
             <div><label style={lblS}>Client *</label><select style={inputS} value={form.client} onChange={e=>f('client')(e.target.value)}><option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           </div>
           <div className="form-row-2" style={{marginTop:'12px'}}>
@@ -5535,10 +5598,18 @@ function ShipmentQuoteModal({ onClose, onSaved }) {
         </div>
         <div className="modal-foot" style={{display:'flex',justifyContent:'space-between',gap:'10px'}}>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          {picked && <div style={{display:'flex',gap:'8px'}}>
+          {/* On edit there is one action: save the corrections. Generate & Send and
+              Save draft belong to creation -- the card already carries RFQ for sending
+              and Sheet for printing, and re-running either from here would restamp a
+              quote that has already gone out to forwarders. */}
+          {editing ? (
+            <button className="btn btn-dark" onClick={()=>save()} disabled={saving}>{saving?'Saving…':'Save changes'}</button>
+          ) : picked ? (
+          <div style={{display:'flex',gap:'8px'}}>
             <button className="btn btn-ghost" onClick={()=>save('draft')} disabled={saving}>Save draft</button>
             <button className="btn btn-dark" onClick={generate} disabled={saving}>{saving?'Working…':'Generate & Send'}</button>
-          </div>}
+          </div>
+          ) : null}
         </div>
       </div>
     </div>
