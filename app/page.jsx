@@ -3413,6 +3413,15 @@ function ProductDetailModal({quote:initQ, onClose, onCreatePO}){
 }
 
 // ── Shipments ─────────────────────────────────────────────────────────────────
+// Five base-36 characters off the millisecond clock, which is what the create form has
+// always minted. Extracted because there are two callers now -- the form and the
+// duplicate -- and a second inline copy would be a second thing to change.
+//
+// It is NOT a uniqueness guarantee: quote_number is NOT NULL with no unique constraint,
+// and two forms opened in the same millisecond would produce the same value with
+// nothing at any layer to catch it.
+const newQuoteNumber = () => 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase();
+
 function Shipments({ onNewShipment }) {
   const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3451,6 +3460,47 @@ function Shipments({ onNewShipment }) {
     const { error } = await SB.from('shipment_quotes').delete().eq('id',id);
     if (error) { alert('Could not delete: '+error.message); return; }
     setQuotes(prev=>prev.filter(q=>q.id!==id));
+  };
+  // Same shape as duplicateQuote in app/quotes.jsx: rebuild the row from the source,
+  // replace the identifying field, plain insert, reload, toast.
+  //
+  // The number is REGENERATED rather than suffixed, unlike quotes.jsx appending
+  // "-copy" to a SKU. This one is read off the card into emails to three different
+  // forwarders, and FQ-UZCK0 sitting beside FQ-UZCK0-copy in that context is a mix-up
+  // waiting to happen. The link back to the original is carried by the cargo, not by
+  // the name.
+  //
+  // status resets to draft and sent_at stays null. A copy has not been sent, and
+  // inheriting 'sent' would drop it straight into "Awaiting forwarder replies" for
+  // replies that can never arrive -- it would also give it a sent_at from a mailing it
+  // was never part of.
+  //
+  // forwarder_company_id is deliberately NOT carried over. Duplicating is how one
+  // shipment gets quoted by three forwarders, so the forwarder is the single field the
+  // copy exists to change -- prefilling it with the source's means every duplicate
+  // opens holding the wrong one, and forgetting to change it sends two quotes to the
+  // same forwarder under different numbers. Empty forces the one decision being made.
+  // The column is nullable and the create form already allows saving without one.
+  //
+  // Columns are listed rather than spread from the row: the fetched object carries
+  // joined client and forwarder objects, which are not columns and would be rejected,
+  // and id / created_at / updated_at have to come from their defaults.
+  const duplicateQuote = async (q) => {
+    const { error } = await SB.from('shipment_quotes').insert({
+      quote_number: newQuoteNumber(),
+      client_company_id: q.client_company_id, forwarder_company_id: null,
+      po_id: q.po_id,
+      origin: q.origin, destination: q.destination,
+      incoterm: q.incoterm, ready_date: q.ready_date,
+      container_type: q.container_type, cbm_max: q.cbm_max,
+      total_cartons: q.total_cartons, total_cbm: q.total_cbm, total_weight_kg: q.total_weight_kg,
+      containers_needed: q.containers_needed, utilization_pct: q.utilization_pct,
+      line_items: q.line_items, notes: q.notes,
+      status: 'draft', sent_at: null,
+    });
+    if (error) { window._toast?.('Duplicate failed: '+error.message, 'err'); return; }
+    await reloadQuotes();
+    window._toast?.('Quote duplicated', 'ok');
   };
   useEffect(()=>{ reload(); reloadQuotes(); reloadBids(); },[]);
 
@@ -3627,6 +3677,13 @@ function Shipments({ onNewShipment }) {
                   <button onClick={()=>setQuoteModal(q)} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Edit</button>
                   <button onClick={()=>reopen(q)} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Sheet</button>
                   <div style={{flex:1}} />
+                  {/* lucide's Copy glyph, drawn inline rather than imported. page.jsx
+                      imports no icon library and uses inline SVG throughout -- the same
+                      call the eFiling clear button made. The path is lucide's own, so it
+                      is the identical icon to the Duplicate control on the Quotes page. */}
+                  <button title="Duplicate" aria-label={'Duplicate freight quote '+(q.quote_number||'')} onClick={()=>duplicateQuote(q)} style={{background:'none',border:'none',cursor:'pointer',padding:'5px',borderRadius:'7px',color:'#C7C7CC',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#1D1D1F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                  </button>
                   <button title="Delete quote" onClick={()=>{ if(window.confirm('Delete freight quote '+q.quote_number+'? This cannot be undone.')) deleteQuote(q.id); }} style={{background:'none',border:'none',cursor:'pointer',padding:'5px',borderRadius:'7px',color:'#C7C7CC',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
                   </button>
@@ -5211,7 +5268,7 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
     ready: data.ready_date ? String(data.ready_date).slice(0,10) : '',
     notes: data.notes||'', containerType: data.container_type||'40HQ',
   } : {
-    number: 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase(),
+    number: newQuoteNumber(),
     client:'', forwarder:'', poId:'', origin:'', destination:'', incoterm:'FOB', ready:'', notes:'', containerType:'40HQ'
   });
   // line_items is jsonb holding numbers; every box in this form is a string. The stored
