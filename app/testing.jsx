@@ -8,6 +8,7 @@ import { CreateProductModal } from "@/app/components/CreateProductModal";
 import { RegulationsList, regSearchFields } from "@/app/components/RegulationsList";
 import { RegModal } from "@/app/components/RegModal";
 import { LinkRulesModal } from "@/app/components/LinkRulesModal";
+import { materialLabel } from "@/app/components/MaterialField";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -95,7 +96,10 @@ export default function Testing() {
       // the Regulations tab and ReportModal's rule picker between page loads.
       SB.from('regulations').select('*').eq('active',true).order('sort_order').order('code'),
       SB.from('labs').select('*').order('name'),
-      SB.from('product_materials').select('*,material:materials(id,name,status)'),
+      // material_code rides along on the join so the link row can label itself. That
+      // is what lets Edit Product render a linked material without looking it up in
+      // the materials list -- see the rule in MaterialField.jsx.
+      SB.from('product_materials').select('*,material:materials(id,name,status,material_code)'),
       // Ids only. The rule rows themselves come from `regs` above, so joining
       // regulations here would fetch the same 82 rows a second time.
       SB.from('product_regulations').select('id,product_id,regulation_id'),
@@ -387,7 +391,11 @@ export default function Testing() {
 
       {/* regs and the product's links are passed rather than refetched, so this modal
           and the row it opened from cannot disagree about the same product. */}
-      {modal?.type==='product'  && <CreateProductModal data={modal.data} regs={regs} links={modal.data ? prodRegs.filter(l=>l.product_id===modal.data.id) : []} onClose={()=>setModal(null)} onCreated={()=>{setModal(null);load();}} />}
+      {/* materials is the unfiltered array, like the pickers above it: narrowing it by
+          the page's search would silently change what is selectable inside the modal.
+          matLinks is this product's link rows, carrying the joined material so the
+          modal can label what is stored without consulting the list. */}
+      {modal?.type==='product'  && <CreateProductModal data={modal.data} regs={regs} links={modal.data ? prodRegs.filter(l=>l.product_id===modal.data.id) : []} materials={materials} matLinks={modal.data ? prodMats.filter(l=>l.product_id===modal.data.id) : []} onClose={()=>setModal(null)} onCreated={()=>{setModal(null);load();}} />}
       {modal?.type==='lab'      && <LabModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='reg'      && <RegModal data={modal.data} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} onDeleted={()=>{setModal(null);load();}} />}
       {modal?.type==='material' && <MaterialModal data={modal.data} labs={labs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
@@ -770,7 +778,11 @@ function ReportModal({ preset, data, materials, products, labs, regs, onClose, o
       <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>{editing?'Saving replaces this report’s per-regulation results and recalculates the material’s status.':'Enter the lab result. A material passing here cascades to every SKU built from it.'}</div>
       <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
-          <div><label style={lbl}>Material</label><select style={inp} value={f.material_id} onChange={set('material_id')}><option value="">— select —</option>{materials.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></div>
+          {/* Labelled through materialLabel, the same helper the Edit Product picker
+              and the Materials row use. The names here are near-identical composition
+              strings -- "100% Cotton", "Cotton", "80% Cotton 20% Polyester" -- and the
+              code is what tells two of them apart. One format, one place to change it. */}
+          <div><label style={lbl}>Material</label><select style={inp} value={f.material_id} onChange={set('material_id')}><option value="">— select —</option>{materials.map(m=><option key={m.id} value={m.id}>{materialLabel(m)}</option>)}</select></div>
           <div><label style={lbl}>or Product (direct)</label><select style={inp} value={f.product_id} onChange={set('product_id')}><option value="">— none —</option>{products.map(p=><option key={p.id} value={p.id}>{p.sku||p.name}</option>)}</select></div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'12px'}}>
