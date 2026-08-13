@@ -8,6 +8,7 @@ import { CreateProductModal } from "@/app/components/CreateProductModal";
 import { RegulationsList, regSearchFields } from "@/app/components/RegulationsList";
 import { RegModal } from "@/app/components/RegModal";
 import { LinkRulesModal } from "@/app/components/LinkRulesModal";
+import { AddMaterialModal } from "@/app/components/AddMaterialModal";
 import { materialLabel } from "@/lib/materialLabel";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 
@@ -884,6 +885,23 @@ function LinkModal({ product, materials, existing, onClose, onSaved }) {
   const [sel,setSel]=useState(new Set(existing.map(e=>e.material_id)));
   const [saving,setSaving]=useState(false);
   const toggle=id=>setSel(p=>{ const n=new Set(p); n.has(id)?n.delete(id):n.add(id); return n; });
+  // A material added from here is held locally until the parent reloads, which happens
+  // on save. Deduped by id in case that reload lands while this is still mounted.
+  const [added,setAdded]=useState([]);
+  const [adding,setAdding]=useState(false);
+  const allMaterials = useMemo(()=>{
+    const seen=new Set();
+    return [...materials, ...added].filter(m=>{ if(!m||seen.has(m.id)) return false; seen.add(m.id); return true; });
+  },[materials, added]);
+  // Ticked on arrival. You do not open this modal and add a material in order to leave
+  // it unlinked, and a new row would otherwise land at the bottom of the list unticked
+  // and easy to miss.
+  const onAdded=(row)=>{
+    setAdding(false);
+    if(!row) return;
+    setAdded(p=>[...p, row]);
+    setSel(p=>{ const n=new Set(p); n.add(row.id); return n; });
+  };
   // Neither write used to be checked, and onSaved() ran unconditionally: a refused
   // insert closed the modal, reloaded the parent, and reported success for links that
   // were never created. Both are checked now and onSaved() is reached only when
@@ -937,21 +955,36 @@ function LinkModal({ product, materials, existing, onClose, onSaved }) {
   };
   return (
     <Overlay onClose={onClose}>
+      {adding && <AddMaterialModal onClose={()=>setAdding(false)} onSaved={onAdded} />}
       <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'4px'}}>Materials in {product.sku||product.name}</div>
-      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>Link the materials this product is built from. Its compliance status is derived from these.</div>
+      {/* The old line said the product's compliance status is derived from these. It is
+          not, and has not been since the derivation was dropped -- compliance_status is
+          Jenn's stored call and nothing here writes it. What the materials do feed is
+          the advisory line under the status on the product row, which is a different
+          claim and a much weaker one. */}
+      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>Link the materials this product is built from. Their test statuses show as an advisory line on the product row; the compliance status itself is set there by hand.</div>
       <div style={{display:'flex',flexDirection:'column',gap:'6px',maxHeight:'340px',overflowY:'auto'}}>
-        {materials.length===0 && <div style={{fontSize:'13px',color:'#8A8A8E'}}>No materials yet — add some first.</div>}
-        {materials.map(m=>{ const on=sel.has(m.id); return (
+        {allMaterials.length===0 && <div style={{fontSize:'13px',color:'#8A8A8E'}}>No materials yet — add the first one below.</div>}
+        {allMaterials.map(m=>{ const on=sel.has(m.id); return (
           <button key={m.id} onClick={()=>toggle(m.id)} style={{display:'flex',alignItems:'center',gap:'11px',padding:'11px 13px',borderRadius:'10px',border:'1px solid '+(on?'#1A1A1C':'#E5E7EB'),background:on?'#FAFAFB':'#fff',cursor:'pointer',textAlign:'left'}}>
             <div style={{width:'18px',height:'18px',borderRadius:'5px',border:'1px solid '+(on?'#1A1A1C':'#D1D5DB'),background:on?'#1A1A1C':'#fff',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>{on&&<span style={{color:'#fff',fontSize:'12px'}}>✓</span>}</div>
             <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:'13px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.name}</div>
+              {/* materialLabel, so this reads the same as the Materials row, Edit
+                  Product's block and ReportModal's dropdown. It was the last surface
+                  showing bare names, against fourteen near-identical composition
+                  strings -- which is the whole reason the code is on screen at all. */}
+              <div style={{fontSize:'13px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{materialLabel(m)}</div>
               <div style={{fontSize:'11.5px',color:'#8A8A8E',textTransform:'capitalize'}}>{m.material_type}</div>
             </div>
             <StatusPill map={MAT_STATUS} status={m.status} />
           </button>
         ); })}
       </div>
+      {/* Always present, not only on the empty state. An add button that disappears the
+          moment you use it once puts the same dead end one material further along --
+          you would still be stuck the first time you need a fifteenth mid-link. Same
+          placement as HtsField's "+ Add code", at the foot of the list it adds to. */}
+      <button onClick={()=>setAdding(true)} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',gap:'6px',width:'100%',marginTop:'8px',background:'#F5F5F7',color:'#3461E0',border:'none',borderRadius:'10px',padding:'9px 12px',fontSize:'13px',fontWeight:600,cursor:'pointer'}}>+ Add material</button>
       <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
         <button onClick={onClose} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',color:'#4A4A4E'}}>Cancel</button>
         <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':'Save'}</button>
