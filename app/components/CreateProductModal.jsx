@@ -379,39 +379,6 @@ export function CreateProductModal({ data, regs = [], links = [], materials = []
                 : <div style={{fontSize:'13px',color:'var(--muted)'}}>Not eFiled</div>}
             </div>
           )}
-          {/* Hidden on create for the reason the blocks around it are: product_materials
-              .product_id is NOT NULL, so there is nothing to link to until the row
-              exists. Placed between the two read-only facts and the rules list so the
-              list that can run long still sits last.
-
-              Single-select, and the one control in this block that writes. Where the
-              product already has SEVERAL materials -- which LinkModal, behind the
-              Materials button, can create -- it falls back to naming them and pointing
-              there, rather than offering one slot for a set it would silently trim. */}
-          {editing && (multiLinked ? (
-            <div className="form-row">
-              <label>Material <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(several linked — set with the Materials button)</span></label>
-              <div style={{display:'flex',flexDirection:'column',gap:'7px'}}>
-                {matLinks.map(l=>(
-                  <div key={l.id} style={{fontSize:'13px',color:'var(--ink)',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{materialLabel(l.material)||l.material_id}</div>
-                ))}
-              </div>
-              <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'5px'}}>
-                This product is built from {matLinks.length} materials. Choosing one here would drop the rest, so they are edited with the Materials button on the product row.
-              </div>
-            </div>
-          ) : (
-            <MaterialField
-              value={form.materialId} valueLabel={form.materialLabel}
-              onChange={(id,label)=>setForm(p=>({...p, materialId:id, materialLabel:label}))}
-              materials={allMaterials}
-              onAdd={seed=>setAddingMaterial({ seed: seed || '' })}
-              label="Material" placeholder="No material linked"
-              fieldClassName="form-row" inputClassName="form-input"
-              fieldStyle={{display:'flex',flexDirection:'column',gap:'7px'}}
-              inputStyle={{textTransform:'none',letterSpacing:'normal'}}
-            />
-          ))}
           {/* Hidden on create: there is no product yet, so there can be no links, and a
               placeholder would describe a flow that cannot happen from here — Testing
               has no create path.
@@ -443,6 +410,40 @@ export function CreateProductModal({ data, regs = [], links = [], materials = []
               )}
             </div>
           )}
+          {/* Hidden on create for the reason the blocks above it are: product_materials
+              .product_id is NOT NULL, so there is nothing to link to until the row
+              exists. Last of the four, below the rules list rather than above it: it is
+              the only one of them that writes, and putting the control after the facts
+              means nothing editable sits between two read-only blocks.
+
+              Single-select. Where the product already has SEVERAL materials -- which
+              LinkModal, behind the Materials button, can create -- it falls back to
+              naming them and pointing there, rather than offering one slot for a set it
+              would silently trim. */}
+          {editing && (multiLinked ? (
+            <div className="form-row">
+              <label>Material <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(several linked — set with the Materials button)</span></label>
+              <div style={{display:'flex',flexDirection:'column',gap:'7px'}}>
+                {matLinks.map(l=>(
+                  <div key={l.id} style={{fontSize:'13px',color:'var(--ink)',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{materialLabel(l.material)||l.material_id}</div>
+                ))}
+              </div>
+              <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'5px'}}>
+                This product is built from {matLinks.length} materials. Choosing one here would drop the rest, so they are edited with the Materials button on the product row.
+              </div>
+            </div>
+          ) : (
+            <MaterialField
+              value={form.materialId} valueLabel={form.materialLabel}
+              onChange={(id,label)=>setForm(p=>({...p, materialId:id, materialLabel:label}))}
+              materials={allMaterials}
+              onAdd={seed=>setAddingMaterial({ seed: seed || '' })}
+              label="Material" placeholder="No material linked"
+              fieldClassName="form-row" inputClassName="form-input"
+              fieldStyle={{display:'flex',flexDirection:'column',gap:'7px'}}
+              inputStyle={{textTransform:'none',letterSpacing:'normal'}}
+            />
+          ))}
           <span className="form-section-label">Trade &amp; Compliance</span>
           <div className="form-row">
             <label>Country Product Ships To <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(ISO codes — type one and press Enter)</span></label>
