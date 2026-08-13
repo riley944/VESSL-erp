@@ -111,16 +111,6 @@ export default function Testing() {
   useEffect(()=>{ load(); },[]);
 
   // ── derived signals ──
-  // Latest report per material (reports arrive test_date desc, so first hit wins).
-  // Its expiry is the material's re-test clock — the same "most recent report" the
-  // report_recalc trigger derives status from, so the two never disagree.
-  const latestByMaterial = useMemo(()=>{
-    const map = {};
-    reports.forEach(r=>{ if(r.material_id && !map[r.material_id]) map[r.material_id] = r; });
-    return map;
-  },[reports]);
-  const expiryOf = (materialId) => { const r = latestByMaterial[materialId]; return r ? r.expiry_date : null; };
-
   const expiringReports = useMemo(()=>reports.filter(r=>{
     const d = daysUntil(r.expiry_date);
     return d!==null && d>=0 && d<=EXPIRY_WINDOW_DAYS;
@@ -374,7 +364,10 @@ export default function Testing() {
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
           {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter} />}
-          {tab==='materials' && <MaterialsView materials={shownMaterials} expiryOf={expiryOf} reports={reports} onEdit={(m)=>setModal({type:'material',data:m})} onTest={(m)=>setModal({type:'report',data:{material_id:m.id}})} onDelete={deleteMaterial} searching={searching} term={search.trim()} filtered={!!matFilter} />}
+          {/* No onTest: the per-material shortcut into ReportModal went with the Testing
+              column. "+ Log Test Report" in the header is the way in, and its Material
+              dropdown is what picks the material. */}
+          {tab==='materials' && <MaterialsView materials={shownMaterials} onEdit={(m)=>setModal({type:'material',data:m})} onDelete={deleteMaterial} searching={searching} term={search.trim()} filtered={!!matFilter} />}
           {tab==='reports'   && <ReportsView reports={shownReports} onEdit={(r)=>setModal({type:'report',row:r})} onDelete={deleteReport} searching={searching} term={search.trim()} filtered={!!repFilter} />}
           {/* RegulationsList renders rows only -- the empty state stays here because its
               wording is this page's, not the shared component's. Delete moved into
@@ -504,22 +497,24 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
 }
 
 // ── MATERIALS VIEW ───────────────────────────────────────────────────────────
-function MaterialsView({ materials, expiryOf, reports, onEdit, onTest, onDelete, searching, term, filtered }) {
+// Material, Type and Supplier, and nothing else. Status and the testing clock were
+// dropped from the row: what a material IS belongs here, and where it is up to in the
+// lab is answered by the Test Reports tab, which holds the reports themselves.
+//
+// Status survives as a dot on the name, because the Untested pill and the Material
+// issues tile both filter this list on m.status and a filter has to be able to show
+// its own criterion. It is a dot and not the column it replaced: the pill already
+// names the status in words, so the row only has to distinguish, not label.
+function MaterialsView({ materials, onEdit, onDelete, searching, term, filtered }) {
   if(!materials.length) return (searching || filtered)
     ? <Empty title={searching?('No materials match \u201C'+term+'\u201D'):'Nothing in this filter'} sub="Try a different term, or clear the search / filter." />
     : <Empty title="No materials yet" sub="Add a material (fabric, dye, zipper…) — it's the unit that gets tested and that SKUs inherit compliance from." />;
-  const reportCount = id => reports.filter(r=>r.material_id===id).length;
   return (
     <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
-      <div style={{display:'grid',gridTemplateColumns:'minmax(200px,1.3fr) 110px minmax(120px,1fr) 118px 150px 120px',gap:'14px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
-        {['Material','Type','Supplier','Status','Testing',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i===5?'right':'left'}}>{h}</div>)}
+      <div style={{display:'grid',gridTemplateColumns:'minmax(200px,1.3fr) 110px minmax(120px,1fr) 120px',gap:'14px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
+        {['Material','Type','Supplier',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i===3?'right':'left'}}>{h}</div>)}
       </div>
       {materials.map((m,i)=>{
-        const exp = expiryOf(m.id);
-        const d = daysUntil(exp);
-        const expSoon = d!==null && d>=0 && d<=EXPIRY_WINDOW_DAYS;
-        const expPast = d!==null && d<0;
-        const rc = reportCount(m.id);
         // The subtitle leads with the identifier on every row, so it sits at the same
         // offset down the list and can be scanned like a column without being one.
         // Composition joins it only where it says something the name does not: the
@@ -530,26 +525,29 @@ function MaterialsView({ materials, expiryOf, reports, onEdit, onTest, onDelete,
         // two can differ by whitespace alone and still read as an exact pair.
         // Built by filter/join rather than a conditional suffix so a row with no
         // material_code degrades to composition alone instead of a dangling separator.
+        const ms = MAT_STATUS[m.status] || MAT_STATUS.untested;
         const showComp = m.composition && m.composition.trim() !== (m.name||'').trim();
         const sub = [m.material_code, showComp?m.composition:null].filter(Boolean).join(' · ');
         return (
-          <div key={m.id} onClick={()=>onEdit(m)} style={{display:'grid',gridTemplateColumns:'minmax(200px,1.3fr) 110px minmax(120px,1fr) 118px 150px 120px',gap:'14px',padding:'15px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          <div key={m.id} onClick={()=>onEdit(m)} style={{display:'grid',gridTemplateColumns:'minmax(200px,1.3fr) 110px minmax(120px,1fr) 120px',gap:'14px',padding:'15px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
             <div style={{minWidth:0}}>
-              <div style={{fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.name}</div>
-              {sub&&<div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{sub}</div>}
+              {/* The status, as a dot on the name rather than a column. The Untested pill
+                  and the Material issues tile both filter this list on m.status, and a
+                  filter whose criterion is invisible on the rows it returns is the same
+                  fault as a tile pointing at a filter that excludes what it counts. Same
+                  map and same untested fallback as the dots on the product row, so one
+                  material reads identically in both places. */}
+              <div style={{display:'flex',alignItems:'center',gap:'7px',minWidth:0}}>
+                <span title={ms.label} aria-label={ms.label} style={{width:'7px',height:'7px',borderRadius:'50%',background:ms.dot,flexShrink:0}}/>
+                <div style={{fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.name}</div>
+              </div>
+              {/* Indented by the dot's width plus its gap so the two text lines still
+                  start at the same x. */}
+              {sub&&<div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',marginLeft:'14px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{sub}</div>}
             </div>
             <div style={{fontSize:'12.5px',color:'#4A4A4E',textTransform:'capitalize',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.material_type||'—'}</div>
             <div style={{fontSize:'12.5px',color:'#4A4A4E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{m.supplier?.name||m.supplier_name||'—'}</div>
-            <div><StatusPill map={MAT_STATUS} status={m.status} /></div>
-            <div style={{minWidth:0}}>
-              <div style={{fontSize:'12px',color:'#4A4A4E',fontVariantNumeric:'tabular-nums'}}>{m.last_tested?fmtDate(m.last_tested):'never tested'}{rc>0?' \u00b7 '+rc+' rpt'+(rc===1?'':'s'):''}</div>
-              {/* The re-test clock, from the latest report's expiry — the list a
-                  compliance operator actually plans lab work from. */}
-              {expSoon && <div style={{fontSize:'11px',fontWeight:700,color:'#B45309',marginTop:'2px'}}>{'re-test in '+d+'d'}</div>}
-              {expPast && <div style={{fontSize:'11px',fontWeight:700,color:'#FF375F',marginTop:'2px'}}>{'expired '+Math.abs(d)+'d ago'}</div>}
-            </div>
             <div style={{display:'flex',gap:'6px',justifyContent:'flex-end',alignItems:'center'}}>
-              <button onClick={e=>{e.stopPropagation();onTest(m);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer',whiteSpace:'nowrap'}}>+ Test</button>
               <button onClick={e=>{e.stopPropagation();onDelete(m);}} title={'Delete '+(m.name||'material')} aria-label={'Delete '+(m.name||'material')} style={{background:'none',border:'none',padding:'5px',borderRadius:'7px',color:'#C7C7CC',cursor:'pointer',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
               </button>
