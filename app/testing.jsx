@@ -204,7 +204,11 @@ export default function Testing() {
     compliant: products.filter(p=>['compliant','passed'].includes(effectiveStatus(p))).length,
     pending:   products.filter(p=>['pending'].includes(effectiveStatus(p))).length,
     issues:    products.filter(p=>['failed','expired'].includes(effectiveStatus(p))).length,
-    matGaps:   materials.filter(m=>['untested','in_progress','failed','expired'].includes(m.status)).length,
+    // Deliberately the same two statuses the 'attention' filter matches (see
+    // shownMaterials): the tile navigates straight there, so counting anything that
+    // filter excludes produces a number its own destination cannot show. Untested is
+    // not here on purpose — it is a pill, for the reason the products pills are.
+    matIssues: materials.filter(m=>['failed','expired'].includes(m.status)).length,
     expiring:  expiringReports.length,
     noCpsc:    products.filter(p=>!p.cpsc_type).length,
   };
@@ -273,7 +277,7 @@ export default function Testing() {
     { k:'Compliant',        v:counts.compliant, c:'#30D158', go:goto('products',setProdFilter,prodFilter,'compliant'), on:tab==='products'&&prodFilter==='compliant' },
     { k:'Pending decision', v:counts.pending,   c:'#FF9F0A', go:goto('products',setProdFilter,prodFilter,'pending'),   on:tab==='products'&&prodFilter==='pending' },
     { k:'Issues',           v:counts.issues,    c:'#FF375F', go:goto('products',setProdFilter,prodFilter,'issues'),    on:tab==='products'&&prodFilter==='issues' },
-    { k:'Material gaps',    v:counts.matGaps,   c:'#FF9F0A', go:goto('materials',setMatFilter,matFilter,'attention'), on:tab==='materials'&&matFilter==='attention' },
+    { k:'Material issues',  v:counts.matIssues, c:'#FF9F0A', go:goto('materials',setMatFilter,matFilter,'attention'), on:tab==='materials'&&matFilter==='attention' },
     { k:'Expiring \u2264'+EXPIRY_WINDOW_DAYS+'d', v:counts.expiring, c:'#FF375F', go:goto('reports',setRepFilter,repFilter,'expiring'), on:tab==='reports'&&repFilter==='expiring' },
     { k:'No CPSC type',     v:counts.noCpsc,    c:'#0A84FF', go:goto('products',setProdFilter,prodFilter,'nocpsc'),    on:tab==='products'&&prodFilter==='nocpsc' },
   ];
