@@ -3662,9 +3662,9 @@ function Shipments({ onNewShipment }) {
                   ) : bc>0 ? (
                     <span style={{fontSize:'12.5px',fontWeight:700,color:'#15803D'}}>{String(bc)+' bid'+(bc===1?'':'s')+' in \u2014 compare & select'}</span>
                   ) : q.status==='sent' ? (
-                    <span style={{fontSize:'12.5px',fontWeight:600,color:'#86868B'}}>Awaiting forwarder replies\u2026</span>
+                    <span style={{fontSize:'12.5px',fontWeight:600,color:'#86868B'}}>Awaiting forwarder replies…</span>
                   ) : (
-                    <span style={{fontSize:'12.5px',fontWeight:600,color:'#86868B'}}>Not sent yet \u2014 RFQ it below</span>
+                    <span style={{fontSize:'12.5px',fontWeight:600,color:'#86868B'}}>Not sent yet — RFQ it below</span>
                   )}
                   {w && <div style={{fontSize:'11px',color:'#5A5A5E',marginTop:'3px'}}>{'\u2248 '+money0(eff*ct)+' shipment total'+(w.transit_days?' \u00b7 '+w.transit_days+'d transit':'')}</div>}
                 </button>
@@ -3697,7 +3697,7 @@ function Shipments({ onNewShipment }) {
 
       {/* ══ SHIPMENTS — voyage manifest ══ */}
       {view==='shipments' && (
-        loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading\u2026</div>
+        loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div>
         : shownShips.length ? (
         <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
           <div className="ship-manifest-head" style={{display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
@@ -3746,7 +3746,7 @@ function Shipments({ onNewShipment }) {
                     <div style={{fontSize:'16px',fontWeight:700,color:overdue?'#FF375F':'#1D1D1F',fontVariantNumeric:'tabular-nums',lineHeight:1}}>{overdue?'+'+Math.abs(days):days}<span style={{fontSize:'11px',color:'#A0A0A4',fontWeight:400}}>d</span></div>
                     <div style={{fontSize:'9.5px',color:overdue?'#FF375F':'#A0A0A4',marginTop:'2px'}}>{overdue?'overdue':'to ETA'}</div>
                   </>
-                ) : <span style={{fontSize:'12px',color:'#C7C7CC'}}>\u2014</span>}
+                ) : <span style={{fontSize:'12px',color:'#C7C7CC'}}>—</span>}
               </div>
             </div>
             );
@@ -3924,7 +3924,7 @@ function ForwarderRFQModal({ quote, onClose, onSent }) {
             <div style={{display:'flex',gap:'7px',flexWrap:'wrap',marginBottom:'14px'}}>{rest.slice(0,14).map(c=>chip(c.name, c.email))}</div>
           </>}
           <div style={{display:'flex',gap:'6px'}}>
-            <input value={extra} onChange={e=>setExtra(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addExtra()} placeholder="Add email manually\u2026" style={{flex:1,border:'1px solid #E5E7EB',borderRadius:'9px',padding:'9px 12px',fontSize:'13px',outline:'none',boxSizing:'border-box'}} />
+            <input value={extra} onChange={e=>setExtra(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addExtra()} placeholder="Add email manually…" style={{flex:1,border:'1px solid #E5E7EB',borderRadius:'9px',padding:'9px 12px',fontSize:'13px',outline:'none',boxSizing:'border-box'}} />
             <button onClick={addExtra} style={{background:'#F2F2F6',border:'none',borderRadius:'9px',padding:'9px 15px',fontSize:'13px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>Add</button>
           </div>
           {sel.length>0 && <div style={{fontSize:'12px',color:'#4A4A4E',marginTop:'12px',lineHeight:1.6}}><b>{sel.length}</b> recipient{sel.length===1?'':'s'}: {sel.join(', ')}</div>}
@@ -4210,7 +4210,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted }) {
             <div style={{fontSize:'17px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.015em'}}>Forwarder quotes</div>
             <div style={{fontSize:'13px',color:'#8A8A8E',marginTop:'3px'}}>{(quote.quote_number||'')+' \u00b7 '+(quote.origin||'?')+' \u2192 '+(quote.destination||'?')+' \u00b7 '+String(ct)+' \u00d7 '+ctType}</div>
           </div>
-          <button onClick={onClose} style={{background:'#F2F2F6',border:'none',borderRadius:'50%',width:'28px',height:'28px',fontSize:'15px',color:'#5A5A5E',cursor:'pointer'}}>\u00d7</button>
+          <button onClick={onClose} style={{background:'#F2F2F6',border:'none',borderRadius:'50%',width:'28px',height:'28px',fontSize:'15px',color:'#5A5A5E',cursor:'pointer'}}>×</button>
         </div>
         <div style={{padding:'14px 24px 20px'}}>
           {sorted.length===0 && <div style={{fontSize:'13.5px',color:'#8A8A8E',textAlign:'center',padding:'26px 0'}}>No bids yet. Send the RFQ, then import the replies as they come back.</div>}

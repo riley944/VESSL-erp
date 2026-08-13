@@ -620,7 +620,7 @@ function ReportsView({ reports, onEdit, onDelete, searching, term, filtered }) {
                   ))}
                 </div>
               )}
-              {r.pdf_url && <a href={r.pdf_url} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{display:'inline-block',marginTop:'11px',fontSize:'12.5px',color:'#0A84FF',fontWeight:600,textDecoration:'none'}}>View report PDF \u2192</a>}
+              {r.pdf_url && <a href={r.pdf_url} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{display:'inline-block',marginTop:'11px',fontSize:'12.5px',color:'#0A84FF',fontWeight:600,textDecoration:'none'}}>View report PDF →</a>}
             </div>
           </div>
         );
