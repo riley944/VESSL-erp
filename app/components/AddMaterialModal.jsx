@@ -3,9 +3,8 @@ import { useState } from 'react';
 import { SB } from '@/lib/supabase';
 
 // ── AddMaterialModal (create one vessl.materials row) ────────────────────────
-// The "+ Add material" target for MaterialField, mirroring what CodeModal is to
-// HtsField: it writes the row, then hands it back so the caller can select it
-// without a refetch.
+// The "+ Add material" target, mirroring what CodeModal is to HtsField: it writes
+// the row, then hands it back so the caller can select it without a refetch.
 //
 // Create only. Editing a material is MaterialModal's job on the Testing page, and
 // this deliberately does not grow into a second editor for the same table.

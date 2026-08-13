@@ -1,10 +1,9 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { SB } from '@/lib/supabase';
 import { HtsField, useHtsCodes } from '@/app/components/HtsField';
 import { CodeModal } from '@/app/components/CodeModal';
-import { MaterialField, materialLabel } from '@/app/components/MaterialField';
-import { AddMaterialModal } from '@/app/components/AddMaterialModal';
+import { materialLabel } from '@/lib/materialLabel';
 
 // ── CreateProductModal (create or edit a row in vessl.products) ──────────────
 // Lifted out of page.jsx, where it was unreachable — it rendered only under a
@@ -67,7 +66,7 @@ function parseCountryInput(raw, existing) {
 // Pass `data` to edit that row, omit it to create — the same shape MaterialModal
 // uses. Every class name below resolves from globals.css, so this file needs no
 // styles of its own.
-export function CreateProductModal({ data, regs = [], links = [], materials = [], matLinks = [], onClose, onCreated }) {
+export function CreateProductModal({ data, regs = [], links = [], matLinks = [], onClose, onCreated }) {
   const editing = !!(data && data.id);
   // Read-only. LinkRulesModal is the only writer of product_regulations.
   //
@@ -82,25 +81,17 @@ export function CreateProductModal({ data, regs = [], links = [], materials = []
   const linkedIds = new Set(links.map(l => l.regulation_id));
   const linkedRules = regs.filter(r => linkedIds.has(r.id));
   const retiredCount = links.length - linkedRules.length;
-  // ── material link ──
-  // Single-select, writing one product_materials row. product_materials is
-  // many-to-many with UNIQUE (product_id, material_id), so multiple is a later UI
-  // change rather than a migration -- but the many-to-many is ALREADY reachable:
-  // LinkModal, behind the Materials button on the same row, links as many as you
-  // like. So a product can arrive here with more than one.
+  // Read-only, like the rules block above it. LinkModal, behind the Materials pill on
+  // the product row, is the only writer of product_materials -- the picker that briefly
+  // lived here was retired rather than made multi-select, because two controls writing
+  // one table with different UIs drift, and the drift is invisible since both look
+  // right. This modal edits product COLUMNS and names its links; the links themselves
+  // each have their own writer, which is already how eFiling and CPSC Rules read.
   //
-  // In that case this control goes read-only and lists them. A single-select
-  // reconciling a set it can only hold one of would silently delete the rest on
-  // save, and the person doing it would have no way to know. Nothing today has two
-  // -- product_materials was empty before this work -- so this is a guard against
-  // the state LinkModal can create, not a case being handled after the fact.
-  const multiLinked = matLinks.length > 1;
-  const storedLink = matLinks.length === 1 ? matLinks[0] : null;
-  // Resolved from the LINK ROW's own join, never by looking the id up in `materials`.
-  // That is what lets MaterialField render a stored value the picker's list has not
-  // got -- see the rule in MaterialField.jsx. Falls back to the raw id so a link whose
-  // join came back empty still shows something rather than reading as "not set".
-  const storedLabel = storedLink ? (materialLabel(storedLink.material) || storedLink.material_id) : '';
+  // Labelled from the LINK ROW's own join rather than by looking the id up in a
+  // materials list, so a fetch that failed or has not arrived cannot blank a real
+  // link. Falls back to the raw id if the join came back empty, so a broken link shows
+  // as something rather than as "not set".
   const [saving, setSaving] = useState(false);
   // The DB hands numbers back as numbers; every box here is a string.
   const s = v => (v === null || v === undefined ? '' : String(v));
@@ -115,10 +106,6 @@ export function CreateProductModal({ data, regs = [], links = [], materials = []
     shipsTo:Array.isArray(data?.ships_to) ? data.ships_to : [],
     tradeDirection:s(data?.trade_direction), importerOfRecord:s(data?.importer_of_record),
     testingPaidBy:s(data?.testing_paid_by),
-    // The id is what gets written; the label is what gets shown, and the two are
-    // carried separately on purpose so the display never has to be recovered from
-    // the picker's list.
-    materialId:storedLink?.material_id || '', materialLabel:storedLabel,
   });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   // Chip input state. countryDraft is what is being typed; countryErr is cleared on the
@@ -169,33 +156,6 @@ export function CreateProductModal({ data, regs = [], links = [], materials = []
     addCode(row);
     setForm(prev=>({...prev, hs:row.code}));   // select it without leaving the modal
   };
-  // Materials are passed in rather than fetched, like regs and links, so this modal
-  // and the Testing page behind it cannot disagree about which materials exist.
-  //
-  // A material added through "+ Add material" is held here until the parent reloads,
-  // which happens on save. Deduped by id because that reload can land while this is
-  // still mounted, and the same material arriving from both sides would render two
-  // options that write the same link.
-  const [addedMaterials, setAddedMaterials] = useState([]);
-  const [addingMaterial, setAddingMaterial] = useState(null);
-  const allMaterials = useMemo(()=>{
-    const seen = new Set();
-    return [...materials, ...addedMaterials]
-      .filter(m=>{ if(!m || seen.has(m.id)) return false; seen.add(m.id); return true; })
-      // By code, so the order is the order they were created and a list read twice
-      // reads the same. The Testing page sorts materials by created_at desc, which is
-      // the same order inverted; matching it here would put MAT-0014 first in a picker
-      // whose options are labelled by code.
-      .sort((a,b)=>String(a.material_code||'').localeCompare(String(b.material_code||'')));
-  },[materials, addedMaterials]);
-  const onMaterialAdded = (row) => {
-    setAddingMaterial(null);
-    if (!row) return;
-    setAddedMaterials(prev=>[...prev, row]);
-    // Selected straight away, label included, so the new material is chosen without
-    // waiting for a refetch to tell us what the database called it.
-    setForm(prev=>({...prev, materialId:row.id, materialLabel:materialLabel(row)}));
-  };
   const submit = async () => {
     // Name identifies a product here; a SKU is nice to have and often assigned later.
     const name = form.name.trim();
@@ -240,58 +200,12 @@ export function CreateProductModal({ data, regs = [], links = [], materials = []
     const { error } = editing
       ? await SB.from('products').update(payload).eq('id', data.id)
       : await SB.from('products').insert({ ...payload, category_id:null });
+    setSaving(false);
     if (error) {
-      setSaving(false);
       const dupe = error.code === '23505' || /duplicate key|products_sku_key/i.test(error.message||'');
       alert(dupe ? 'That SKU already exists' : 'Error: '+error.message);
       return;   // stay open so the entry is not lost
     }
-    // ── the material link ──
-    // Edit only: product_materials.product_id is NOT NULL, so on create there is no
-    // id to link to yet. That is the same reason LinkRulesModal is not inside this
-    // modal at all, and why the field below is hidden on create.
-    //
-    // Two tables, and PostgREST gives no transaction across them. There is no
-    // rollback to be had, so the order is chosen for its failure mode instead:
-    //
-    //   product fails      -> nothing else runs, the link is untouched, retry as is
-    //   product ok, add    -> product saved, link not; the alert says so and Save
-    //     fails               retries. The update is the same payload twice, so
-    //                         repeating it costs nothing.
-    //   add ok, delete     -> both links exist for a moment. UNIQUE is on the PAIR,
-    //     fails               not on product_id, so that state is legal and visible
-    //                         rather than corrupt, and Save again clears it.
-    //
-    // Insert before delete, not "delete and insert": if the insert is going to fail
-    // it fails while the old link is still there, so a failure never leaves the
-    // product with no material at all. upsert with ignoreDuplicates for the retry
-    // path -- matLinks is stale until the parent reloads, so a second Save can offer
-    // a row the first one already wrote.
-    if (editing && !multiLinked) {
-      const chosen = form.materialId || '';
-      if (chosen !== (storedLink?.material_id || '')) {
-        if (chosen) {
-          const { error:addErr } = await SB.from('product_materials').upsert(
-            [{ product_id:data.id, material_id:chosen, is_required:true }],
-            { onConflict:'product_id,material_id', ignoreDuplicates:true }
-          );
-          if (addErr) {
-            setSaving(false);
-            alert('The product was saved, but the material could not be linked: '+addErr.message+'\n\nPress Save to try again — the product details will simply be written again.');
-            return;
-          }
-        }
-        if (storedLink) {
-          const { error:delErr } = await SB.from('product_materials').delete().eq('id', storedLink.id);
-          if (delErr) {
-            setSaving(false);
-            alert('The product was saved and the new material linked, but the previous material could not be unlinked: '+delErr.message+'\n\nBoth are linked until this succeeds. Press Save to try again.');
-            return;
-          }
-        }
-      }
-    }
-    setSaving(false);
     onCreated();
   };
   return (
@@ -303,9 +217,6 @@ export function CreateProductModal({ data, regs = [], links = [], materials = []
           product draft underneath survives. CodeModal is zIndex 300 against this
           overlay's 100, so it stacks on top without help. */}
       {addingCode && <CodeModal data={addingCode} onClose={()=>setAddingCode(null)} onSaved={onCodeAdded} />}
-      {/* Same arrangement and the same reason as CodeModal above: a sibling of the
-          modal box rather than a child of .modal-body, which is overflow-y:auto. */}
-      {addingMaterial && <AddMaterialModal seed={addingMaterial.seed} onClose={()=>setAddingMaterial(null)} onSaved={onMaterialAdded} />}
       <div className="modal-box">
         <div className="modal-head"><h3>{editing?'Edit Product':'New Product'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
         <div className="modal-body">
@@ -410,40 +321,28 @@ export function CreateProductModal({ data, regs = [], links = [], materials = []
               )}
             </div>
           )}
-          {/* Hidden on create for the reason the blocks above it are: product_materials
-              .product_id is NOT NULL, so there is nothing to link to until the row
-              exists. Last of the four, below the rules list rather than above it: it is
-              the only one of them that writes, and putting the control after the facts
-              means nothing editable sits between two read-only blocks.
+          {/* Read-only, and hidden on create for the reason the blocks above it are:
+              product_materials.product_id is NOT NULL, so there is nothing to link to
+              until the row exists.
 
-              Single-select. Where the product already has SEVERAL materials -- which
-              LinkModal, behind the Materials button, can create -- it falls back to
-              naming them and pointing there, rather than offering one slot for a set it
-              would silently trim. */}
-          {editing && (multiLinked ? (
+              Reads the same as eFiling and CPSC Rules on purpose -- a list of what is
+              linked and the name of the control that sets it. All three follow one rule
+              now: this modal writes product COLUMNS, and every link on a product has a
+              single writer of its own, reached from the product row. */}
+          {editing && (
             <div className="form-row">
-              <label>Material <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(several linked — set with the Materials button)</span></label>
-              <div style={{display:'flex',flexDirection:'column',gap:'7px'}}>
-                {matLinks.map(l=>(
-                  <div key={l.id} style={{fontSize:'13px',color:'var(--ink)',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{materialLabel(l.material)||l.material_id}</div>
-                ))}
-              </div>
-              <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'5px'}}>
-                This product is built from {matLinks.length} materials. Choosing one here would drop the rest, so they are edited with the Materials button on the product row.
-              </div>
+              <label>Material <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(set with the Materials button)</span></label>
+              {matLinks.length === 0 ? (
+                <div style={{fontSize:'13px',color:'var(--muted)'}}>No materials linked</div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:'7px'}}>
+                  {matLinks.map(l=>(
+                    <div key={l.id} style={{fontSize:'13px',color:'var(--ink)',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{materialLabel(l.material)||l.material_id}</div>
+                  ))}
+                </div>
+              )}
             </div>
-          ) : (
-            <MaterialField
-              value={form.materialId} valueLabel={form.materialLabel}
-              onChange={(id,label)=>setForm(p=>({...p, materialId:id, materialLabel:label}))}
-              materials={allMaterials}
-              onAdd={seed=>setAddingMaterial({ seed: seed || '' })}
-              label="Material" placeholder="No material linked"
-              fieldClassName="form-row" inputClassName="form-input"
-              fieldStyle={{display:'flex',flexDirection:'column',gap:'7px'}}
-              inputStyle={{textTransform:'none',letterSpacing:'normal'}}
-            />
-          ))}
+          )}
           <span className="form-section-label">Trade &amp; Compliance</span>
           <div className="form-row">
             <label>Country Product Ships To <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(ISO codes — type one and press Enter)</span></label>

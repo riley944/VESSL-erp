@@ -8,7 +8,7 @@ import { CreateProductModal } from "@/app/components/CreateProductModal";
 import { RegulationsList, regSearchFields } from "@/app/components/RegulationsList";
 import { RegModal } from "@/app/components/RegModal";
 import { LinkRulesModal } from "@/app/components/LinkRulesModal";
-import { materialLabel } from "@/app/components/MaterialField";
+import { materialLabel } from "@/lib/materialLabel";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -96,9 +96,10 @@ export default function Testing() {
       // the Regulations tab and ReportModal's rule picker between page loads.
       SB.from('regulations').select('*').eq('active',true).order('sort_order').order('code'),
       SB.from('labs').select('*').order('name'),
-      // material_code rides along on the join so the link row can label itself. That
-      // is what lets Edit Product render a linked material without looking it up in
-      // the materials list -- see the rule in MaterialField.jsx.
+      // material_code rides along on the join so the link row can label itself. That is
+      // what lets Edit Product name a linked material without looking it up in a
+      // materials list, so a fetch that failed or has not arrived cannot blank a real
+      // link.
       SB.from('product_materials').select('*,material:materials(id,name,status,material_code)'),
       // Ids only. The rule rows themselves come from `regs` above, so joining
       // regulations here would fetch the same 82 rows a second time.
@@ -384,11 +385,10 @@ export default function Testing() {
 
       {/* regs and the product's links are passed rather than refetched, so this modal
           and the row it opened from cannot disagree about the same product. */}
-      {/* materials is the unfiltered array, like the pickers above it: narrowing it by
-          the page's search would silently change what is selectable inside the modal.
-          matLinks is this product's link rows, carrying the joined material so the
-          modal can label what is stored without consulting the list. */}
-      {modal?.type==='product'  && <CreateProductModal data={modal.data} regs={regs} links={modal.data ? prodRegs.filter(l=>l.product_id===modal.data.id) : []} materials={materials} matLinks={modal.data ? prodMats.filter(l=>l.product_id===modal.data.id) : []} onClose={()=>setModal(null)} onCreated={()=>{setModal(null);load();}} />}
+      {/* matLinks is this product's link rows, carrying the joined material so the modal
+          can name what is linked without consulting a materials list. It takes no
+          materials array: the block is read-only, so there is nothing to choose from. */}
+      {modal?.type==='product'  && <CreateProductModal data={modal.data} regs={regs} links={modal.data ? prodRegs.filter(l=>l.product_id===modal.data.id) : []} matLinks={modal.data ? prodMats.filter(l=>l.product_id===modal.data.id) : []} onClose={()=>setModal(null)} onCreated={()=>{setModal(null);load();}} />}
       {modal?.type==='lab'      && <LabModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='reg'      && <RegModal data={modal.data} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} onDeleted={()=>{setModal(null);load();}} />}
       {modal?.type==='material' && <MaterialModal data={modal.data} labs={labs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
