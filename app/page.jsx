@@ -4497,6 +4497,46 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     return n ? clients.find(c=>(c.name||'').trim().toLowerCase()===n) : undefined;
   };
 
+  // Resolve a quote to the product it is for, or to nothing.
+  //
+  // Matches on SKU **and** name together, both trimmed, both required to be non-blank.
+  // The rule this replaces was "SKU else name" over products.find():
+  //
+  //   products.find(p => (q.sku && p.sku.toLowerCase() === q.sku.toLowerCase())
+  //                   || p.name.toLowerCase() === q.product.toLowerCase())
+  //
+  // Three faults, and the third is the reason for the change.
+  //
+  //   It did not trim, unlike findClient directly above, so "BUC-152 " and "BUC-152"
+  //   were different products.
+  //
+  //   Only the SKU clause checked the quote had one. The name clause compared
+  //   unconditionally, so a quote with no product name compared '' against every
+  //   product name and matched any product whose name was blank.
+  //
+  //   products.sku is NOT unique -- 29 SKUs across 60 rows -- so SKU-alone is ambiguous
+  //   for 8 of the PO item rows, and find() silently took whichever sorted first.
+  //   JON-106 resolves to both "Wine Container White" and "Wine Chiller"; LL1-380 to a
+  //   Small, a Medium and a Large. Picking one asserts a product nobody chose.
+  //
+  // The pair is products' own natural key -- products_sku_name_key = UNIQUE (sku, name)
+  // -- so matching on both is matching on the real identity of a product. All 141
+  // quote-sourced PO item rows resolved to exactly one product this way in the backfill,
+  // with nothing left ambiguous, which is why no tie-break is needed here either.
+  //
+  // Returns '' rather than guessing when the pair does not resolve. An unset product on
+  // a line is recoverable -- the per-line picker is right there -- and a wrong one is
+  // not, because nothing downstream ever questions it again.
+  const productIdForQuote = (q) => {
+    const sku  = (q?.sku || '').trim().toLowerCase();
+    const name = (q?.product || '').trim().toLowerCase();
+    if (!sku || !name) return '';
+    const hits = products.filter(p =>
+      (p.sku || '').trim().toLowerCase() === sku &&
+      (p.name || '').trim().toLowerCase() === name);
+    return hits.length === 1 ? hits[0].id : '';
+  };
+
   // when a quote+tier is chosen, prefill the PO form & line item
   const applyQuote = async (q, ti=0) => {
     setPicked(q); setTierIdx(ti);
@@ -4504,7 +4544,6 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     const matchFactory = factories.find(fc=>(fc.name||'').toLowerCase()===(q.factory||'').toLowerCase());
     const matchClient = findClient(q.client);
     setClientNote(matchClient ? '' : (q.client||'').trim());
-    const matchProduct = products.find(p=>(q.sku && (p.sku||'').toLowerCase()===(q.sku||'').toLowerCase()) || (p.name||'').toLowerCase()===(q.product||'').toLowerCase());
     setForm(prev=>({...prev,
       factoryId: matchFactory?matchFactory.id:prev.factoryId,
       clientId: matchClient?matchClient.id:prev.clientId,
@@ -4517,7 +4556,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     }));
     const qScale = q.size_scale || null;
     const qPrice = t.landed!=null?String(t.landed):'';
-    setItems([{ prodId: matchProduct?matchProduct.id:'', desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: qPrice, ci:'', carton:'', sizeScale: qScale, sizeQty:{}, sizePrice: seedPrices(qScale,qPrice) }]);
+    setItems([{ prodId: productIdForQuote(q), desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: qPrice, ci:'', carton:'', sizeScale: qScale, sizeQty:{}, sizePrice: seedPrices(qScale,qPrice) }]);
   };
   const pickTier = ti => { if(picked) applyQuote(picked, ti); };
   const addExtraFromQuote = async (q, ti) => {
@@ -4526,7 +4565,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     if (!t) { alert('Could not read tier data — try re-selecting the quote.'); return; }
     const xScale = q.size_scale || null;
     const xPrice = t.landed!=null?String(t.landed):'';
-    const newItem = { prodId:'', desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:xPrice, ci:'', carton:'', sizeScale:xScale, sizeQty:{}, sizePrice:seedPrices(xScale,xPrice) };
+    // Matched too. This line comes from a quote just as items[0] does; leaving it
+    // blank was why a multi-line PO could only ever carry one resolved product.
+    const newItem = { prodId:productIdForQuote(q), desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:xPrice, ci:'', carton:'', sizeScale:xScale, sizeQty:{}, sizePrice:seedPrices(xScale,xPrice) };
     setItems(prev=>[...prev, newItem]);
     // If no client set yet on this PO, pull it from this quote's client
     if (!form.clientId && q.client) {
