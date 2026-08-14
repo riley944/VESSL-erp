@@ -769,14 +769,27 @@ function ReportModal({ preset, data, materials, products, labs, regs, onClose, o
   const save=async()=>{
     if(!f.material_id && !f.product_id){ alert('Pick a material or product'); return; }
     setSaving(true);
-    const anyFail=lines.some(l=>l.result==='fail');
-    const overall=anyFail?'fail':'pass';
+    // Only lines carrying a regulation are written (see `rows` below), so those are the
+    // ones a verdict can be derived FROM. The old code tested every line including the
+    // blank one the form always starts with, so a report with nothing filled in derived
+    // 'pass' -- no fails found, therefore passed.
+    //
+    // With no scored lines there is nothing to derive and the stored verdict stands.
+    // That matters for reports whose result was recorded without a per-regulation
+    // breakdown: a fail with no lines would otherwise be silently flipped to pass by
+    // someone opening it to read it, and the value it was flipped from would be gone.
+    //
+    // On create with no lines the key is omitted entirely so the column default,
+    // 'pending', applies. A report nobody has scored has not passed.
+    const scored = lines.filter(l=>l.regulation_id);
     const payload={
       material_id:f.material_id||null, product_id:f.product_id||null, lab_id:f.lab_id||null,
       report_number:f.report_number||null, test_date:f.test_date||null, expiry_date:f.expiry_date||null,
       manufacture_place:f.manufacture_place||null, sample_description:f.sample_description||null,
-      pdf_url:f.pdf_url||null, overall_result:overall,
+      pdf_url:f.pdf_url||null,
     };
+    if (scored.length) payload.overall_result = scored.some(l=>l.result==='fail') ? 'fail' : 'pass';
+    else if (editing) payload.overall_result = data.overall_result ?? null;
     // Writing overall_result on either path fires report_recalc, which re-derives the
     // linked material's status from its latest report. That is the point of saving.
     const { data:rep, error } = editing
@@ -792,7 +805,7 @@ function ReportModal({ preset, data, materials, products, labs, regs, onClose, o
       const { error:delErr } = await SB.from('test_results').delete().eq('report_id', data.id);
       if(delErr){ setSaving(false); alert('Error replacing results: '+delErr.message); return; }
     }
-    const rows=lines.filter(l=>l.regulation_id).map(l=>{
+    const rows=scored.map(l=>{
       const reg=regs.find(r=>r.id===l.regulation_id);
       return { report_id:rep.id, regulation_id:l.regulation_id, regulation_code:reg?.code||null, measured_value:l.measured_value||null, limit_value:l.limit_value||null, result:l.result };
     });
