@@ -9,6 +9,7 @@ import { RegulationsList, regSearchFields } from "@/app/components/RegulationsLi
 import { RegModal } from "@/app/components/RegModal";
 import { LinkRulesModal } from "@/app/components/LinkRulesModal";
 import { AddMaterialModal } from "@/app/components/AddMaterialModal";
+import { FilterSelect } from "@/app/components/FilterSelect";
 import { materialLabel } from "@/lib/materialLabel";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 
@@ -88,6 +89,9 @@ export default function Testing() {
   const [brandFilter, setBrandFilter] = useState(''); // '' | merlin | non_merlin | unclassified
   // A third axis again, ANDed with both the others for the same reason brand is.
   const [dateFilter, setDateFilter] = useState('');   // '' | 30 | 60 | 90 | nolink
+  // Fourth axis. A dropdown rather than a fourth pill row: 13 clients will not sit
+  // beside COMPLIANCE, BRAND and ORDERED without wrapping into a wall of pills.
+  const [clientFilter, setClientFilter] = useState(''); // '' | <company uuid> | unassigned
   const [prodFilter, setProdFilter] = useState('');   // '' | compliant | pending | issues | nocpsc | unset
   const [matFilter, setMatFilter] = useState('');     // '' | passed | untested | attention
   const [repFilter, setRepFilter] = useState('');     // '' | pass | fail | expiring
@@ -98,7 +102,7 @@ export default function Testing() {
       // brand_group is named explicitly like every other column here -- this select is
       // not `*`, so a column left off it arrives undefined and the brand filter would
       // quietly read every product as unclassified rather than erroring.
-      SB.from('products').select('id,sku,name,compliance_status,cpsc_type,efiled_date,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group').order('sku',{nullsFirst:false}),
+      SB.from('products').select('id,sku,name,compliance_status,cpsc_type,efiled_date,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
       SB.from('materials').select('*,supplier:companies!supplier_id(name)').order('created_at',{ascending:false}),
       SB.from('test_reports').select('*,lab:labs(name),material:materials(name),product:products(name,sku),test_results(*)').order('test_date',{ascending:false}),
       // Secondary sort on code, because sort_order does not identify a row: the column
@@ -188,6 +192,33 @@ export default function Testing() {
     const pad = x => String(x).padStart(2,'0');
     return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
   };
+  // Built from the products themselves, not from a companies fetch, so the list holds
+  // only clients that actually have products and every count matches what the table
+  // shows. Same approach the nav Products page takes with quotes.client -- different
+  // object, different question, deliberately not the same control.
+  //
+  // Keyed on company id rather than name: two clients could share a name across types,
+  // and the id is what the column stores.
+  const clientOptions = useMemo(()=>{
+    const byId = new Map();
+    products.forEach(p=>{
+      if(!p.client_company_id) return;
+      const cur = byId.get(p.client_company_id)
+        || { value:p.client_company_id, label:p.client?.name || '(unnamed client)', count:0 };
+      cur.count += 1;
+      byId.set(p.client_company_id, cur);
+    });
+    const named = [...byId.values()].sort((a,b)=>a.label.localeCompare(b.label));
+    const unassigned = products.filter(p=>p.client_company_id == null).length;
+    return [
+      { value:'', label:'All Clients', count:products.length },
+      ...named,
+      // Its own entry rather than an absence. The six products here are the ones whose
+      // SKU names no guide prefix -- they are unresolved, not clientless, and they have
+      // to be reachable without clearing the filter.
+      ...(unassigned ? [{ value:'unassigned', label:'Unassigned', count:unassigned }] : []),
+    ];
+  },[products]);
   const orderCoverage = useMemo(()=>({
     withOrder: products.filter(p=>ordersByProduct[p.id]).length,
     total: products.length,
@@ -262,6 +293,12 @@ export default function Testing() {
     // purchase_orders.order_date is nullable but defaults to CURRENT_DATE and is set on
     // all 54 rows, so this cannot happen today. Bucketing it would mean guessing whether
     // an undated order is recent.
+    // Equality on both branches, never <> and never NOT -- the same rule brand_group
+    // follows and for the same reason. client_company_id is NULL on the six products
+    // whose SKU names no guide prefix; those are unresolved, not "some other client".
+    // p.client_company_id !== id would sweep all six into every named client's result.
+    if (clientFilter==='unassigned') list = list.filter(p=>p.client_company_id == null);
+    else if (clientFilter)           list = list.filter(p=>p.client_company_id === clientFilter);
     if (dateFilter==='nolink') list = list.filter(p=>!ordersByProduct[p.id]);
     else if (dateFilter==='over90') {
       const cutoff = isoDaysAgo(90);
@@ -272,7 +309,7 @@ export default function Testing() {
       list = list.filter(p=>{ const o = ordersByProduct[p.id]; return !!o && !!o.last && o.last >= cutoff; });
     }
     return list;
-  }, [products, q, prodFilter, brandFilter, dateFilter, ordersByProduct]);
+  }, [products, q, prodFilter, brandFilter, dateFilter, clientFilter, ordersByProduct]);
   const shownMaterials = useMemo(() => {
     let list = !q ? materials : materials.filter(m =>
       // material_code is the identifier a person actually holds -- database-generated,
@@ -471,6 +508,22 @@ export default function Testing() {
             ))}
           </div>
         )}
+        {/* Fourth axis, and the one that could not be pills. 13 clients plus All plus
+            Unassigned is 15 controls, which would not sit beside COMPLIANCE, BRAND and
+            ORDERED without wrapping into a wall. FilterSelect is the dropdown the nav
+            pages already use for exactly this, counts included.
+
+            The nav Products page has a client filter too, and that is not a duplicate:
+            it filters QUOTES by their own free-text client, this filters PRODUCTS by the
+            client their SKU prefix names. Different objects, different questions. They
+            can disagree -- a quote can name a client whose prefix is not in the SKU --
+            and that disagreement is information rather than drift. */}
+        {tab==='products' && (
+          <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',width:'100%'}}>
+            <span style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',marginRight:'2px'}}>Client</span>
+            <FilterSelect label="All Clients" value={clientFilter} onChange={setClientFilter} options={clientOptions} />
+          </div>
+        )}
         {/* Third axis, third row, ANDed with the other two.
 
             The caption is not decoration. Only 59 of 271 products have a reachable order
@@ -518,7 +571,7 @@ export default function Testing() {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter || !!brandFilter || !!dateFilter} ordersByProduct={ordersByProduct} dateFilter={dateFilter} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter || !!brandFilter || !!dateFilter || !!clientFilter} ordersByProduct={ordersByProduct} dateFilter={dateFilter} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
@@ -607,6 +660,16 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                   narrow window this is the segment that disappears. That is the right one
                   to lose, and it is 59 rows. */}
               <div style={{fontSize:'12px',color:'#86868B',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[p.sku, p.cpsc_type || 'No CPSC', ord && ord.last ? 'Last ordered '+fmtDate(ord.last)+' \u00b7 '+ord.count+' order'+(ord.count===1?'':'s') : null].filter(Boolean).join(' \u00b7 ')}</div>
+              {/* Its own line rather than a fourth segment above. That line is already at
+                  capacity and truncates; a client appended to it would be the piece that
+                  disappears, on the rows where it matters.
+                  Client is also a GROUPING attribute -- it is read down the column, not
+                  across the row -- and that only works from a fixed vertical position,
+                  which a segment after a variable-length SKU is not.
+                  Nothing rendered when unresolved, same rule as the order segment. Here
+                  the blank is rare (6 of 271) rather than the norm, so it reads as the
+                  exception it is. */}
+              {p.client?.name && <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.client.name}</div>}
             </div>
             {/* The materials cell shows what the product is actually built from, with
                 each material's status as a dot — and opens the link modal directly. */}
