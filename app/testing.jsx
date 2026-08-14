@@ -767,7 +767,20 @@ function ReportModal({ preset, data, materials, products, labs, regs, onClose, o
   const rmLine=i=>setLines(p=>p.filter((_,j)=>j!==i));
 
   const save=async()=>{
-    if(!f.material_id && !f.product_id){ alert('Pick a material or product'); return; }
+    // Create only. The guard exists to stop the modal MAKING an orphan -- a report
+    // logged against nothing is a record of nothing, and picking the material is the
+    // first thing you do here.
+    //
+    // On edit it was doing something else entirely: refusing to save a report that is
+    // legitimately unlinked. The imported test reports carry a style ref that mostly
+    // does not resolve to a product, so most of them have neither id, and the guard
+    // made every one of them read-only -- a wrong date could not be corrected, a PDF
+    // link could not be added. The only way past it was to attach an unrelated product
+    // to satisfy it, which is worse than not saving.
+    //
+    // Both columns are nullable and both foreign keys are ON DELETE CASCADE, so an
+    // unlinked report is a state the schema allows and the reports list already renders.
+    if(!editing && !f.material_id && !f.product_id){ alert('Pick a material or product'); return; }
     setSaving(true);
     // Only lines carrying a regulation are written (see `rows` below), so those are the
     // ones a verdict can be derived FROM. The old code tested every line including the
