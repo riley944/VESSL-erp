@@ -75,6 +75,7 @@ export default function Testing() {
   const [labs, setLabs] = useState([]);
   const [prodMats, setProdMats] = useState([]);
   const [prodRegs, setProdRegs] = useState([]);
+  const [prodOrders, setProdOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // {type:'material'|'report'|'link', data}
   const [search, setSearch] = useState('');
@@ -85,13 +86,15 @@ export default function Testing() {
   // brand values into it would make "Merlin" and "Not eFiled" mutually exclusive, when
   // "Merlin products that are not eFiled" is the actual question being asked.
   const [brandFilter, setBrandFilter] = useState(''); // '' | merlin | non_merlin | unclassified
+  // A third axis again, ANDed with both the others for the same reason brand is.
+  const [dateFilter, setDateFilter] = useState('');   // '' | 30 | 60 | 90 | nolink
   const [prodFilter, setProdFilter] = useState('');   // '' | compliant | pending | issues | nocpsc | unset
   const [matFilter, setMatFilter] = useState('');     // '' | passed | untested | attention
   const [repFilter, setRepFilter] = useState('');     // '' | pass | fail | expiring
 
   const load = async () => {
     setLoading(true);
-    const [p, m, r, rg, lb, pm, pr] = await Promise.all([
+    const [p, m, r, rg, lb, pm, pr, ord] = await Promise.all([
       // brand_group is named explicitly like every other column here -- this select is
       // not `*`, so a column left off it arrives undefined and the brand filter would
       // quietly read every product as unclassified rather than erroring.
@@ -113,9 +116,17 @@ export default function Testing() {
       // Ids only. The rule rows themselves come from `regs` above, so joining
       // regulations here would fetch the same 82 rows a second time.
       SB.from('product_regulations').select('id,product_id,regulation_id'),
+      // Order dates, as a separate fetch mapped by product_id -- the same shape
+      // product_materials and product_regulations already use here, rather than hanging
+      // an embed off the products select.
+      //
+      // Filtered to lines that actually resolved to a product: 78 of 196. The other 118
+      // carry no product_id and could not be attributed to one anyway.
+      SB.from('purchase_order_items').select('product_id,purchase_order_id,po:purchase_orders(order_date)').not('product_id','is',null),
     ]);
     setProducts(p.data||[]); setMaterials(m.data||[]); setReports(r.data||[]);
     setRegs(rg.data||[]); setLabs(lb.data||[]); setProdMats(pm.data||[]); setProdRegs(pr.data||[]);
+    setProdOrders(ord.data||[]);
     setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
@@ -138,6 +149,49 @@ export default function Testing() {
     if(st.every(s=>s==='passed')) return 'compliant';
     return 'pending';
   };
+
+  // Most recent order date and order count per product, from the PO lines that resolved
+  // to one.
+  //
+  // ┌──────────────────────────────────────────────────────────────────────────┐
+  // │ This measures LINKED lines, which is 78 of 196. A product with nothing    │
+  // │ here has not been shown to be unordered -- its PO line could not be       │
+  // │ matched to it. 212 of 271 are in that position, so the absence is the     │
+  // │ common case and must never be worded as "never ordered". The caption      │
+  // │ under the pills states the coverage for exactly this reason.              │
+  // └──────────────────────────────────────────────────────────────────────────┘
+  //
+  // order_date itself is worth reading with suspicion: it defaults to CURRENT_DATE and
+  // differs from created_at on only 12 of 54 POs, so on the other 42 it records when the
+  // PO was typed in rather than when the order was placed.
+  //
+  // Compared as 'YYYY-MM-DD' strings, which sort correctly and keep this off the Date
+  // round-trip that EfilingModal's comment warns about. Counting rows is counting orders:
+  // purchase_order_items_purchase_order_id_product_id_key makes one product appear at
+  // most once per PO.
+  const ordersByProduct = useMemo(()=>{
+    const map = {};
+    prodOrders.forEach(r=>{
+      if(!r.product_id) return;
+      const d = r.po?.order_date || null;
+      const cur = map[r.product_id] || { last:null, count:0 };
+      cur.count += 1;
+      if (d && (!cur.last || d > cur.last)) cur.last = d;
+      map[r.product_id] = cur;
+    });
+    return map;
+  },[prodOrders]);
+  // Local date, not toISOString(): that returns UTC and would move the window boundary by
+  // a day for anyone west of it.
+  const isoDaysAgo = (n) => {
+    const d = new Date(); d.setDate(d.getDate() - n);
+    const pad = x => String(x).padStart(2,'0');
+    return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+  };
+  const orderCoverage = useMemo(()=>({
+    withOrder: products.filter(p=>ordersByProduct[p.id]).length,
+    total: products.length,
+  }),[products, ordersByProduct]);
 
   // Everything is already in memory from load(), so filtering is a pass over arrays --
   // no query runs on a keystroke. These feed the four VIEWS ONLY: ReportModal's product
@@ -189,8 +243,36 @@ export default function Testing() {
     if (brandFilter==='merlin')       list = list.filter(p=>p.brand_group === 'merlin');
     if (brandFilter==='non_merlin')   list = list.filter(p=>p.brand_group === 'non_merlin');
     if (brandFilter==='unclassified') list = list.filter(p=>p.brand_group == null);
+    // Rolling from today, so the windows drain as time passes without new linked orders.
+    // With the most recent linked order at 2026-07-21, "30 days" already returns 1 -- that
+    // is the data being thin, not the filter being broken.
+    //
+    // 'nolink' is the absence of a linked line, which today is the same set as "no order
+    // date" because a linked line always has one. Its label says linked for the reason in
+    // the box above.
+    //
+    // The five windows partition the catalogue: 30 ⊂ 60 ⊂ 90 are nested, 'over90' is the
+    // rest of the linked set, and 'nolink' is everything else. Without over90 the 8
+    // products whose most recent linked order predates the 90-day cutoff matched no pill
+    // at all -- too old for the windows, but not unlinked -- and were reachable only
+    // under All.
+    //
+    // One hole, documented rather than papered over: a product whose linked PO carries a
+    // NULL order_date would fall outside all five, since every branch requires o.last.
+    // purchase_orders.order_date is nullable but defaults to CURRENT_DATE and is set on
+    // all 54 rows, so this cannot happen today. Bucketing it would mean guessing whether
+    // an undated order is recent.
+    if (dateFilter==='nolink') list = list.filter(p=>!ordersByProduct[p.id]);
+    else if (dateFilter==='over90') {
+      const cutoff = isoDaysAgo(90);
+      list = list.filter(p=>{ const o = ordersByProduct[p.id]; return !!o && !!o.last && o.last < cutoff; });
+    }
+    else if (dateFilter) {
+      const cutoff = isoDaysAgo(Number(dateFilter));
+      list = list.filter(p=>{ const o = ordersByProduct[p.id]; return !!o && !!o.last && o.last >= cutoff; });
+    }
     return list;
-  }, [products, q, prodFilter, brandFilter]);
+  }, [products, q, prodFilter, brandFilter, dateFilter, ordersByProduct]);
   const shownMaterials = useMemo(() => {
     let list = !q ? materials : materials.filter(m =>
       // material_code is the identifier a person actually holds -- database-generated,
@@ -389,6 +471,28 @@ export default function Testing() {
             ))}
           </div>
         )}
+        {/* Third axis, third row, ANDed with the other two.
+
+            The caption is not decoration. Only 59 of 271 products have a reachable order
+            date, so someone pressing "90 days" sees 51 and can read that as "only 51 were
+            ordered in 90 days" -- when the truth is the other 220 were never checked,
+            because their PO line could not be matched to a product. The negative pill is
+            the one that looks dangerous and the positive ones are the ones that actually
+            mislead, so the caption sits under all five and states the coverage rather than
+            wording any single pill around it. It stops being needed when coverage
+            improves, and the numbers are live so it will say so. */}
+        {tab==='products' && (
+          <div style={{display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center',width:'100%'}}>
+            <span style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',marginRight:'2px'}}>Ordered</span>
+            {[['','All'],['30','30 days'],['60','60 days'],['90','90 days'],['over90','Over 90 days'],['nolink','No linked order']].map(([v,l])=>(
+              <button key={v||'all'} onClick={()=>setDateFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:dateFilter===v?'#1D1D1F':'#fff',color:dateFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
+            ))}
+            <span style={{flexBasis:'100%',height:0}} />
+            <span style={{fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5}}>
+              {'Order dates cover '+orderCoverage.withOrder+' of '+orderCoverage.total+' products — the rest have no linked PO line, which is not the same as never ordered.'}
+            </span>
+          </div>
+        )}
         {tab==='materials' && (
           <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
             {[['','All'],['passed','Passed'],['untested','Untested'],['attention','Failed / expired']].map(([v,l])=>(
@@ -414,7 +518,7 @@ export default function Testing() {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter || !!brandFilter} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter || !!brandFilter || !!dateFilter} ordersByProduct={ordersByProduct} dateFilter={dateFilter} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
@@ -453,11 +557,20 @@ export default function Testing() {
 }
 
 // ── PRODUCTS VIEW ────────────────────────────────────────────────────────────
-function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onEdit, onDelete, searching, term, filtered }) {
+function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onEdit, onDelete, searching, term, filtered, ordersByProduct = {}, dateFilter = '' }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
   // well exist, it just does not match.
-  if(!products.length) return (searching || filtered)
-    ? <Empty title={searching?('No products match \u201C'+term+'\u201D'):'Nothing in this filter'} sub="Try a different term, or clear the search / filter." />
+  // The order filters get their own empty copy. "Nothing in this filter" would be read as
+  // "nothing was ordered in that window", and for these five pills that is the one
+  // sentence the data cannot support: what is missing is the LINK, on 212 of 271
+  // products, not the order.
+  if(!products.length) return searching
+    ? <Empty title={'No products match \u201C'+term+'\u201D'} sub="Try a different term, or clear the search / filter." />
+    : dateFilter
+    ? <Empty title="No products with a linked order in this window"
+             sub="These filters read purchase order lines that resolved to a product. Most products have no linked line, which is not the same as never ordered." />
+    : filtered
+    ? <Empty title="Nothing in this filter" sub="Try a different term, or clear the search / filter." />
     : <Empty title="No products yet" sub="Products appear here once they exist. Open one to link the materials it is built from and set its compliance status." />;
   return (
     <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
@@ -469,6 +582,7 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
         // Counts LINK rows, not resolved rules, so a link to a retired rule still
         // counts here even though the modal cannot name it.
         const ruleCount = prodRegs.filter(l=>l.product_id===p.id).length;
+        const ord = ordersByProduct[p.id];
         const st = effectiveStatus(p);
         const derived = productStatus(p.id);
         const dInfo = PROD_STATUS[derived] || PROD_STATUS.not_set;
@@ -482,7 +596,17 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                   unset today and the gap is the thing worth seeing. Deliberately the
                   same muted colour as the SKU — GCC vs CPC says which rule applies,
                   not pass or fail, so colouring it would imply a judgement. */}
-              <div style={{fontSize:'12px',color:'#86868B',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[p.sku, p.cpsc_type || 'No CPSC'].filter(Boolean).join(' \u00b7 ')}</div>
+              {/* A third segment when there is a linked order, and NOTHING when there is
+                  not. 212 of 271 would otherwise carry the same placeholder, which is how
+                  73 test reports all came to be titled "Report" -- text on every row stops
+                  being read and crowds out the text that is not on every row. Silence also
+                  asserts nothing, and any wording here would be asserting something about
+                  a product whose orders simply could not be reached.
+
+                  It is last in the line and the line ellipsises, so on a long SKU or a
+                  narrow window this is the segment that disappears. That is the right one
+                  to lose, and it is 59 rows. */}
+              <div style={{fontSize:'12px',color:'#86868B',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[p.sku, p.cpsc_type || 'No CPSC', ord && ord.last ? 'Last ordered '+fmtDate(ord.last)+' \u00b7 '+ord.count+' order'+(ord.count===1?'':'s') : null].filter(Boolean).join(' \u00b7 ')}</div>
             </div>
             {/* The materials cell shows what the product is actually built from, with
                 each material's status as a dot — and opens the link modal directly. */}
