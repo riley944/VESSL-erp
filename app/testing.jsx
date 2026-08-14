@@ -587,7 +587,17 @@ function ReportsView({ reports, onEdit, onDelete, searching, term, filtered }) {
             <div style={{padding:'16px 18px',flex:1,minWidth:0}}>
               <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'12px',marginBottom:'10px'}}>
                 <div style={{minWidth:0}}>
-                  <div style={{fontSize:'14px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{r.material?.name||r.product?.sku||r.product?.name||'Report'}</div>
+                  {/* Six links, most specific first. The imported reports mostly resolve
+                      to nothing -- 11 of 84 carry a product and none a material -- so
+                      without the last three every one of the rest rendered as the word
+                      "Report" and the list read as 73 identical rows.
+
+                      style_ref is what the lab register actually identified the sample
+                      by, and is the right answer whenever it exists; sample_description
+                      is the lab's own wording and the last thing that still says
+                      something. 'Report' now only shows for a row carrying none of the
+                      five, which no imported row does. */}
+                  <div style={{fontSize:'14px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{r.material?.name||r.product?.sku||r.product?.name||r.style_ref||r.sample_description||'Report'}</div>
                   <div style={{fontSize:'12px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{(r.lab?.name||'—')+' \u00b7 '+(r.report_number||'no #')+' \u00b7 '+fmtDate(r.test_date)}</div>
                 </div>
                 <div style={{display:'flex',alignItems:'center',gap:'7px',flexShrink:0}}>
