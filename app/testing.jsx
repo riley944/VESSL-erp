@@ -180,9 +180,16 @@ export default function Testing() {
   }, [materials, q, matFilter]);
   const shownReports = useMemo(() => {
     let list = !q ? reports : reports.filter(r =>
-      // All three headline fallbacks, since which one renders varies by row, plus the
+      // All FIVE headline fallbacks, since which one renders varies by row, plus the
       // regulation codes from the nested results grid.
+      //
+      // style_ref and sample_description joined the title chain and had to join this
+      // with it: 73 of the 84 imported reports resolve to no material and no product, so
+      // one of those two is the only text on the row, and searching for what you can see
+      // has to find it. Same gap material_code had on the Materials tab -- a field
+      // promoted to the visible identifier while the filter still looked past it.
       matches(q, r.report_number, r.lab?.name, r.material?.name, r.product?.sku, r.product?.name,
+        r.style_ref, r.sample_description,
         ...(r.test_results || []).map(t => t.regulation_code))
     );
     if (repFilter==='pass') list = list.filter(r=>r.overall_result==='pass');
