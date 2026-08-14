@@ -80,6 +80,11 @@ export default function Testing() {
   const [search, setSearch] = useState('');
   // One filter slot per tab, driven by the pulse tiles and the pill rows. Kept
   // separate so switching tabs doesn't drag a products filter onto materials.
+  // Brand is a SEPARATE axis from compliance, so it gets its own state and is ANDed with
+  // prodFilter rather than sharing it. prodFilter holds one value at a time; folding the
+  // brand values into it would make "Merlin" and "Not eFiled" mutually exclusive, when
+  // "Merlin products that are not eFiled" is the actual question being asked.
+  const [brandFilter, setBrandFilter] = useState(''); // '' | merlin | non_merlin | unclassified
   const [prodFilter, setProdFilter] = useState('');   // '' | compliant | pending | issues | nocpsc | unset
   const [matFilter, setMatFilter] = useState('');     // '' | passed | untested | attention
   const [repFilter, setRepFilter] = useState('');     // '' | pass | fail | expiring
@@ -87,7 +92,10 @@ export default function Testing() {
   const load = async () => {
     setLoading(true);
     const [p, m, r, rg, lb, pm, pr] = await Promise.all([
-      SB.from('products').select('id,sku,name,compliance_status,cpsc_type,efiled_date,ships_to,trade_direction,importer_of_record,testing_paid_by').order('sku',{nullsFirst:false}),
+      // brand_group is named explicitly like every other column here -- this select is
+      // not `*`, so a column left off it arrives undefined and the brand filter would
+      // quietly read every product as unclassified rather than erroring.
+      SB.from('products').select('id,sku,name,compliance_status,cpsc_type,efiled_date,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group').order('sku',{nullsFirst:false}),
       SB.from('materials').select('*,supplier:companies!supplier_id(name)').order('created_at',{ascending:false}),
       SB.from('test_reports').select('*,lab:labs(name),material:materials(name),product:products(name,sku),test_results(*)').order('test_date',{ascending:false}),
       // Secondary sort on code, because sort_order does not identify a row: the column
@@ -161,8 +169,28 @@ export default function Testing() {
     // list, and this one keeps shrinking as work is done rather than staying long
     // because one field of four is blank.
     if (prodFilter==='notrade')   list = list.filter(p=>!(p.ships_to && p.ships_to.length) && !p.trade_direction && !p.importer_of_record && !p.testing_paid_by);
+    // ┌──────────────────────────────────────────────────────────────────────────┐
+    // │ Each brand filter tests EQUALITY. Never <> and never NOT.                │
+    // │                                                                          │
+    // │ brand_group has three states and the third is the point: 'merlin',       │
+    // │ 'non_merlin', and NULL meaning nobody could tell from the SKU prefix.    │
+    // │ Six products are NULL today -- the five SL-117 sizes and the row whose   │
+    // │ SKU and name are swapped -- and SL is a Sea Life ref that may well turn  │
+    // │ out to BE Merlin once Jenn answers it.                                   │
+    // │                                                                          │
+    // │ p.brand_group !== 'merlin' would sweep all six into the non-Merlin       │
+    // │ result. Jenn filters to non-Merlin, is shown a Merlin product, and       │
+    // │ nothing on screen says the row was a guess. That is the exact failure    │
+    // │ the third state exists to prevent, and it is one character away.         │
+    // │                                                                          │
+    // │ An unclassified product therefore appears under 'Unclassified' and       │
+    // │ under 'All', and nowhere else.                                           │
+    // └──────────────────────────────────────────────────────────────────────────┘
+    if (brandFilter==='merlin')       list = list.filter(p=>p.brand_group === 'merlin');
+    if (brandFilter==='non_merlin')   list = list.filter(p=>p.brand_group === 'non_merlin');
+    if (brandFilter==='unclassified') list = list.filter(p=>p.brand_group == null);
     return list;
-  }, [products, q, prodFilter]);
+  }, [products, q, prodFilter, brandFilter]);
   const shownMaterials = useMemo(() => {
     let list = !q ? materials : materials.filter(m =>
       // material_code is the identifier a person actually holds -- database-generated,
@@ -347,6 +375,20 @@ export default function Testing() {
             ))}
           </div>
         )}
+        {/* Its own row, captioned, rather than four more pills on the end of the one
+            above. Those are all one question -- where has this product got to -- and
+            share a single state, so they are mutually exclusive by design. Brand is a
+            different question about the same product, and the two have to combine:
+            "Merlin products that are not eFiled" is the thing worth filtering to. On the
+            same row and the same state, picking Merlin would silently clear Not eFiled. */}
+        {tab==='products' && (
+          <div style={{display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center',width:'100%'}}>
+            <span style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',marginRight:'2px'}}>Brand</span>
+            {[['','All'],['merlin','Merlin'],['non_merlin','Non-Merlin'],['unclassified','Unclassified']].map(([v,l])=>(
+              <button key={v||'all'} onClick={()=>setBrandFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:brandFilter===v?'#1D1D1F':'#fff',color:brandFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
+            ))}
+          </div>
+        )}
         {tab==='materials' && (
           <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
             {[['','All'],['passed','Passed'],['untested','Untested'],['attention','Failed / expired']].map(([v,l])=>(
@@ -372,7 +414,7 @@ export default function Testing() {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter || !!brandFilter} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
