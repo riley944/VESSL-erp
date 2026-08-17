@@ -16,6 +16,7 @@ import { CodeModal } from "@/app/components/CodeModal";
 // structural rule it carries has to govern both, and a comment only governs the
 // file it is in. useHtsCodes owns the active-only fetch for every host.
 import { HtsField, useHtsCodes } from "@/app/components/HtsField";
+import { HtsRuleHints, useHtsRuleMap } from "@/app/components/HtsRuleHints";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 
 // ============================================================
@@ -2180,6 +2181,10 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   // picker never constrains what the field holds. The active filter lives in
   // useHtsCodes so this host and the Edit Product modal cannot drift on it.
   const { codes: htsCodes, addCode } = useHtsCodes();
+  // Display only -- the hint block reads this and writes nothing. Quotes have no
+  // quote_regulations table, which is the point: it proves the mapping on real data
+  // before any linking is built on top of it.
+  const { chapters: htsChapters, rules: htsChapterRules } = useHtsRuleMap();
   // One rate, or the reason there isn't one. A code stopped determining a rate when
   // 4202320000 was split into five rows at 32.5 / 30.1 / 28.5 / 32.5 / 32.5, so this
   // fills only where the answer is unambiguous and says why when it is not. Several
@@ -2319,6 +2324,13 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
             <HtsField value={f.hts} onChange={pickHts} codes={htsCodes}
               onAdd={(seed) => setAddingCode({ code: seed || "" })}
               fieldStyle={S.field} labelStyle={S.fieldLabel} inputStyle={S.input} />
+            {/* Full-width inside the section grid. FormSection lays children out as
+                repeat(auto-fit, minmax(150px, 1fr)), so without gridColumn this would
+                become one ~150px cell beside Quote Date instead of a band under the
+                field it explains. It appears and disappears as a code is picked, which
+                reflows the form -- that is correct: the block is about the code. */}
+            <HtsRuleHints code={f.hts} chapters={htsChapters} rules={htsChapterRules}
+              style={{ gridColumn: "1 / -1" }} />
             <Field label="Quote Date" k="quoteDate" type="date" f={f} set={set} />
           </FormSection>
 
