@@ -318,7 +318,7 @@ export default function Testing() {
       // master_sku stays beside it though it is NULL on all 14 and MaterialModal's save
       // does not send it. What it is meant to hold is still open; leaving it in the list
       // costs nothing and means the search does not have to be remembered later.
-      matches(q, m.name, m.composition, m.material_type, m.supplier?.name, m.supplier_name, m.material_code, m.master_sku)
+      matches(q, m.name, m.material_type, m.supplier?.name, m.supplier_name, m.material_code, m.master_sku)
     );
     if (matFilter==='passed')    list = list.filter(m=>m.status==='passed');
     if (matFilter==='untested')  list = list.filter(m=>['untested','in_progress'].includes(m.status));
@@ -763,12 +763,18 @@ function MaterialsView({ materials, onEdit, onDelete, searching, term, filtered 
       {materials.map((m,i)=>{
         // The subtitle leads with the identifier on every row, so it sits at the same
         // offset down the list and can be scanned like a column without being one.
-        // Composition joins it only where it says something the name does not: the
-        // import writes the same string to both on purpose -- a report certifies a
-        // composition, so for those rows the composition IS the name -- and rendering
-        // both put the identical string on the row twice.
-        // Compared trimmed because MaterialModal trims name but not composition, so the
-        // two can differ by whitespace alone and still read as an exact pair.
+        // Composition joins it only where it says something the name does not.
+        //
+        // That branch is DORMANT: materials are fibres now -- Cotton, Polyester -- and
+        // composition is null on all 12, so showComp is false on every row and the
+        // subtitle is the code alone. It is kept rather than deleted because it costs one
+        // expression and is the correct behaviour if the column is ever populated again;
+        // deleting it would mean a repopulated composition silently never rendered.
+        //
+        // It was written for the previous shape, where a material WAS a composition
+        // string and the import wrote the same value to name and composition, so the two
+        // matched and the subtitle would otherwise have printed it twice. Compared
+        // trimmed because MaterialModal trimmed name but not composition.
         // Built by filter/join rather than a conditional suffix so a row with no
         // material_code degrades to composition alone instead of a dangling separator.
         const ms = MAT_STATUS[m.status] || MAT_STATUS.untested;
@@ -889,7 +895,12 @@ const lbl = {display:'block',fontSize:'11px',fontWeight:600,textTransform:'upper
 const toast = (msg, type) => { if (typeof window !== 'undefined') window._toast?.(msg, type); };
 
 function MaterialModal({ data, labs, onClose, onSaved }) {
-  const [f,setF]=useState({ name:data?.name||'', material_type:data?.material_type||'', supplier_name:data?.supplier_name||'', composition:data?.composition||'', color:data?.color||'', notes:data?.notes||'' });
+  // composition is deliberately absent. A material is a FIBRE now -- Cotton,
+  // Polyester, Spandex -- and a fibre does not have a composition, it is one. The
+  // column stays on the table and is null on all 12; this modal simply stops offering
+  // it, and omitting the key means an edit here leaves whatever a row still holds
+  // alone rather than nulling it.
+  const [f,setF]=useState({ name:data?.name||'', material_type:data?.material_type||'', supplier_name:data?.supplier_name||'', color:data?.color||'', notes:data?.notes||'' });
   const [saving,setSaving]=useState(false);
   const set=k=>e=>setF(p=>({...p,[k]:e.target.value}));
   // Checked, not discarded -- the same shape LabModal uses, and for the reason its
@@ -909,7 +920,7 @@ function MaterialModal({ data, labs, onClose, onSaved }) {
     // Was a bare return, which made Save do nothing at all with no reason given.
     if(!name){ toast('A material name is required','err'); return; }
     setSaving(true);
-    const payload={ name, material_type:f.material_type||null, supplier_name:f.supplier_name||null, composition:f.composition||null, color:f.color||null, notes:f.notes||null };
+    const payload={ name, material_type:f.material_type||null, supplier_name:f.supplier_name||null, color:f.color||null, notes:f.notes||null };
     const { error } = data?.id
       ? await SB.from('materials').update(payload).eq('id',data.id)
       : await SB.from('materials').insert(payload);
@@ -933,7 +944,6 @@ function MaterialModal({ data, labs, onClose, onSaved }) {
           <div><label style={lbl}>Color</label><input style={inp} value={f.color} onChange={set('color')} placeholder="optional" /></div>
         </div>
         <div><label style={lbl}>Supplier</label><input style={inp} value={f.supplier_name} onChange={set('supplier_name')} placeholder="Factory / supplier name" /></div>
-        <div><label style={lbl}>Composition</label><input style={inp} value={f.composition} onChange={set('composition')} placeholder="e.g. 100% combed cotton" /></div>
         <div><label style={lbl}>Notes</label><textarea style={{...inp,minHeight:'60px',resize:'vertical'}} value={f.notes} onChange={set('notes')} /></div>
       </div>
       <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
@@ -1082,9 +1092,12 @@ function ReportModal({ preset, data, materials, products, labs, regs, onClose, o
       <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
           {/* Labelled through materialLabel, the same helper the Edit Product picker
-              and the Materials row use. The names here are near-identical composition
-              strings -- "100% Cotton", "Cotton", "80% Cotton 20% Polyester" -- and the
-              code is what tells two of them apart. One format, one place to change it. */}
+              and the Materials row use. One format, one place to change it.
+              The code earned its place when the names were near-identical composition
+              strings -- "100% Cotton" beside "Cotton" beside "80% Cotton 20% Polyester"
+              -- and only the code told two of them apart. Twelve fibre names are
+              distinguishable on sight, so it earns it differently now: MAT-0002 is what
+              you paste into a search, and a name is not. */}
           <div><label style={lbl}>Material</label><select style={inp} value={f.material_id} onChange={set('material_id')}><option value="">— select —</option>{materials.map(m=><option key={m.id} value={m.id}>{materialLabel(m)}</option>)}</select></div>
           <div><label style={lbl}>or Product (direct)</label><select style={inp} value={f.product_id} onChange={set('product_id')}><option value="">— none —</option>{products.map(p=><option key={p.id} value={p.id}>{p.sku||p.name}</option>)}</select></div>
         </div>
@@ -1275,8 +1288,10 @@ function LinkModal({ product, materials, existing, onClose, onSaved }) {
             <div style={{flex:1,minWidth:0}}>
               {/* materialLabel, so this reads the same as the Materials row, Edit
                   Product's block and ReportModal's dropdown. It was the last surface
-                  showing bare names, against fourteen near-identical composition
-                  strings -- which is the whole reason the code is on screen at all. */}
+                  showing bare names, back when those names were fourteen near-identical
+                  composition strings and the code was the only thing separating them.
+                  The names are twelve fibres now and tell themselves apart, so the code
+                  stays for the other reason: it is the handle you paste into a search. */}
               <div style={{fontSize:'13px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{materialLabel(m)}</div>
               <div style={{fontSize:'11.5px',color:'#8A8A8E',textTransform:'capitalize'}}>{m.material_type}</div>
             </div>

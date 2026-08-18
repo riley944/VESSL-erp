@@ -15,12 +15,17 @@ import { SB } from '@/lib/supabase';
 // LabModal's: check, say what happened, stay open.
 //
 // ── what gets written ────────────────────────────────────────────────────────
-// name and composition ONLY, both set to the same string.
+// name ONLY.
 //
-// That is not a shortcut, it is the decision the import was built on: a test report
-// certifies a composition, not a fibre, so the composition IS the material's name.
-// The Materials row renders one line when they match and both when they differ, so
-// a material added here reads exactly like the 14 that were imported.
+// It used to write name and composition to the same string, back when a material WAS a
+// composition -- "51% Cotton 49% Polyester" -- and a test report certified the blend.
+// Materials are FIBRES now: Cotton, Polyester, Spandex. A fibre does not have a
+// composition, it is one, and the composition of a product is expressed by
+// product_materials.percentage across several fibres instead.
+//
+// The composition column stays on the table and is null on all 12. Omitting the key
+// rather than sending null means nothing here can overwrite a value that arrives from
+// somewhere else later.
 //
 // material_code is NEVER sent. It defaults to 'MAT-' || lpad(nextval(...),4,'0')
 // server-side and is UNIQUE; generating one here would mean the client guessing at
@@ -57,8 +62,8 @@ export function AddMaterialModal({ seed = '', onClose, onSaved }) {
     // assigned -- the caller selects it immediately and must not have to refetch to
     // learn what it is called.
     const { data:row, error } = await SB.from('materials')
-      .insert({ name: value, composition: value })
-      .select('id,name,material_code,composition,status')
+      .insert({ name: value })
+      .select('id,name,material_code,status')
       .single();
     setSaving(false);
     if (error) {
@@ -93,12 +98,12 @@ export function AddMaterialModal({ seed = '', onClose, onSaved }) {
       <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>The unit that gets tested, and that products inherit compliance from.</div>
       <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>
         <div>
-          <label style={lbl}>Composition *</label>
+          <label style={lbl}>Fibre *</label>
           <input style={inp} value={name} onChange={e=>setName(e.target.value)}
             onKeyDown={e=>{ if(e.key==='Enter'){ e.preventDefault(); save(); } }}
-            placeholder="e.g. 80% Cotton 20% Polyester" autoFocus />
+            placeholder="e.g. Cotton" autoFocus />
           <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'5px'}}>
-            The full composition string, percentages included — it is both the material’s name and its composition. Its code is assigned automatically.
+            One fibre — Cotton, Polyester, Spandex. Not a blend: a product’s composition is built from several fibres with a percentage on each. Its code is assigned automatically.
           </div>
         </div>
       </div>
