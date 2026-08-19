@@ -172,7 +172,22 @@ export default function Testing() {
       // written by hand survives an edit here, and a column the modal neither reads nor
       // writes has no business in the select.
       SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
-      SB.from('materials').select('*,supplier:companies!supplier_id(name)').order('created_at',{ascending:false}),
+      // By MAT number, not by age. These twelve fibres are a reference library, not a
+      // feed -- there is no "latest" worth surfacing, and newest-first put MAT-0013
+      // (Tritan, added by hand after the import) above MAT-0001. A fixed order means a
+      // material stays where you last saw it.
+      //
+      // A TEXT sort is a numeric sort here, and that is a property of the column rather
+      // than luck: material_code defaults to 'MAT-' || lpad(nextval(...), 4, '0'), so
+      // every code the app can generate is zero-padded to exactly four digits. Neither
+      // writer sets the column, so the default always applies. It would stop holding at
+      // MAT-10000, ~9,987 fibres away; parsing the number client-side to guard a
+      // boundary that far off would cost more than it protects.
+      //
+      // nullsFirst:false, stated rather than inherited. The column is nullable, and a
+      // material with no code leading a list ordered BY code reads as position 0 rather
+      // than as missing data. All 13 have one today; this is about the fourteenth.
+      SB.from('materials').select('*,supplier:companies!supplier_id(name)').order('material_code',{ascending:true,nullsFirst:false}),
       SB.from('test_reports').select('*,lab:labs(name),material:materials(name),product:products(name,sku),test_results(*)').order('test_date',{ascending:false}),
       // Secondary sort on code, because sort_order does not identify a row: the column
       // defaults to 100, so every rule created through RegModal without an explicit
