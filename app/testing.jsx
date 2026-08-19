@@ -841,11 +841,30 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
           would otherwise land: only Product and Built from flex, and the Product cell is
           three lines truncating at its 200px floor.
 
-          Template comes from PROD_COLS, shared with the rows below. Header order, cell
-          order and the track widths have to move together -- they are three copies of the
-          same decision. */}
+          Template comes from PROD_COLS, shared with the rows below. Track widths and cell
+          order have to move together; the HEADERS no longer track them one-to-one -- see
+          below. */}
+      {/* Four labels over five tracks, on purpose.
+
+          STAGE spans tracks 3 and 4, covering both dropdowns, and COMPLIANCE sits over
+          track 5, the action buttons -- because Materials, Rules and eFiling ARE the
+          compliance tools, and grouping the label with them says what that cluster is
+          for. Chosen deliberately: it happens to resemble what dc3bff7 fixed, where the
+          same labels landed over the buttons through max-content drift rather than
+          intent. The difference is that the drift also made the tracks themselves
+          disagree between header and rows; this does not touch the tracks at all.
+
+          The consequence to know is that a label no longer names the control directly
+          under it -- reading down from STAGE reaches the Compliance dropdown first.
+
+          COMPLIANCE is centred rather than right-aligned, to sit over the button group
+          rather than over the track's edge. Only approximately: the buttons hug the
+          right of a 340px track and their width moves with the two counts, so the label
+          centres on the track, not on the group. */}
       <div style={{display:'grid',gridTemplateColumns:PROD_COLS,gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
-        {['Product','Built from','Compliance','Stage',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i===4?'right':'left'}}>{h}</div>)}
+        {[{label:'Product'},{label:'Built from'},{label:'Stage',span:2},{label:'Compliance',align:'center'}].map(({label,span,align},i)=>(
+          <div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:align||'left',...(span?{gridColumn:'span '+span}:null)}}>{label}</div>
+        ))}
       </div>
       {products.map((p,i)=>{
         const links = prodMats.filter(l=>l.product_id===p.id);
