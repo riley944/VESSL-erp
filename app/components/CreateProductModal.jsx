@@ -322,7 +322,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
                 ? <div style={{fontSize:'13px',color:'var(--muted)'}}>Not required</div>
                 : data.efiling_required === true
                 ? <div style={{fontSize:'13px',color:'var(--muted)'}}>Not eFiled</div>
-                : <div style={{fontSize:'13px',color:'var(--muted)'}}>Not decided</div>}
+                : <div style={{fontSize:'13px',color:'var(--muted)'}}>Not set</div>}
             </div>
           )}
           {/* Hidden on create: there is no product yet, so there can be no links, and a

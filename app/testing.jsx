@@ -39,13 +39,18 @@ const efilingKey = p =>
 // filter cannot drift apart. CreateProductModal repeats them rather than importing:
 // that module is imported BY this one, and importing back would close a cycle -- the
 // same reason fmtDay is duplicated there.
-const EFILING_LABEL = { filed:'eFiled', unfiled:'Not eFiled', notreq:'Not required', undecided:'Not decided' };
+// "Not set" is the word for the undecided state, everywhere. EfilingModal's dropdown
+// says "— Not set —" and that is where Jenn meets the concept, so it is the word she
+// will type into the search box and look for on a pill. page.jsx's active cell already
+// calls its undecided option the same thing, which makes this the app's word for the
+// state rather than this feature's word for it.
+const EFILING_LABEL = { filed:'eFiled', unfiled:'Not eFiled', notreq:'Not required', undecided:'Not set' };
 const efilingTitle = p => {
   const k = efilingKey(p);
   if (k==='filed')   return 'eFiled '+fmtDate(p.efiled_date);
   if (k==='notreq')  return 'Not required — this product does not need eFiling';
   if (k==='unfiled') return 'Not eFiled — this product needs filing and no date is recorded';
-  return 'Not decided — nobody has recorded whether this product needs eFiling';
+  return 'Not set — nobody has recorded whether this product needs eFiling';
 };
 const MAT_STATUS = {
   untested:   { label:'Untested',    color:'#8A8A8E', bg:'#F2F2F4', dot:'#C7C7CC' },
@@ -284,7 +289,7 @@ export default function Testing() {
       // the products missing one -- the gap the fallback exists to show.
       // eFiling joins through its DISPLAYED state, not its value, for the same reason
       // cpsc_type does: nobody searches for a date, they search for the gap. All four
-      // readings are indexed, so "Not decided" reaches the 269 nobody has ruled on and
+      // readings are indexed, so "Not set" reaches the 269 nobody has ruled on and
       // "Not required" reaches the exempt ones -- both new gaps, both otherwise
       // unfindable.
       // ships_to is joined explicitly rather than passed as an array. matches() would
@@ -316,7 +321,7 @@ export default function Testing() {
     // beats a full one made of products whose status nobody has established.
     if (prodFilter==='noefile')   list = list.filter(p=>p.efiling_required === true && !p.efiled_date);
     // The other half of the pill above, and a separate one because it is separate work.
-    // "Not eFiled" says file this thing; this says decide whether it needs filing at all.
+    // "Not eFiled" says file this thing; this says set whether it needs filing at all.
     // Those go to different people on different evidence, and folding them together
     // produces a 271-row list where 269 entries cannot be acted on -- which is how a
     // worklist stops being opened.
@@ -576,7 +581,7 @@ export default function Testing() {
             {/* The eFiling pill is qualified rather than bare. 'unset' four along already
                 shows "Not set" for compliance, and two identically labelled pills in one
                 row is a coin toss, not a filter. */}
-            {[['','All'],['compliant','Compliant'],['pending','Pending'],['issues','Issues'],['unset','Not set'],['nocpsc','No CPSC'],['noefile','Not eFiled'],['noefileset','eFiling not decided'],['notrade','No trade info']].map(([v,l])=>(
+            {[['','All'],['compliant','Compliant'],['pending','Pending'],['issues','Issues'],['unset','Not set'],['nocpsc','No CPSC'],['noefile','Not eFiled'],['noefileset','eFiling not set'],['notrade','No trade info']].map(([v,l])=>(
               <button key={v||'all'} onClick={()=>setProdFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:prodFilter===v?'#1D1D1F':'#fff',color:prodFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
             ))}
           </div>
