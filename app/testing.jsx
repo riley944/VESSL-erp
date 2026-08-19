@@ -1332,6 +1332,15 @@ function ReportModal({ preset, data, materials, products, labs, regs, onClose, o
           <div><label style={lbl}>Expiry (re-test due)</label><input type="date" style={inp} value={f.expiry_date} onChange={set('expiry_date')} /></div>
           <div><label style={lbl}>Place of manufacture</label><input style={inp} value={f.manufacture_place} onChange={set('manufacture_place')} placeholder="City, Country" /></div>
         </div>
+        {/* Was in the form state and in the payload but never rendered, so it round-tripped
+            correctly and could not be corrected. It is populated on all 84 imported
+            reports and 73 of those resolve to no material and no product, which means the
+            title chain falls through to it -- this string is the NAME of most rows in the
+            reports list, and until now the only way to fix a wrong one was SQL.
+
+            Above Composition because it says what the sample was and Composition says
+            what it was made of; the second reads as a qualifier on the first. */}
+        <div><label style={lbl}>Sample description</label><input style={inp} value={f.sample_description} onChange={set('sample_description')} placeholder="What was tested" /></div>
         {/* What the LAB measured, which is not what products.composition says. That one
             is the current spec; this one is a swatch on a date, and a report from January
             disagreeing with today's spec is the history, not an error. Do not reconcile
