@@ -361,6 +361,10 @@ export default function Testing() {
       // promoted to the visible identifier while the filter still looked past it.
       matches(q, r.report_number, r.lab?.name, r.material?.name, r.product?.sku, r.product?.name,
         r.style_ref, r.sample_description,
+        // composition joins them for the same reason, one step removed: it is not on the
+        // row at all, so searching "Spandex" or "PVC" is the ONLY way to reach the 48
+        // reports carrying one. The value itself is read in ReportModal.
+        r.composition,
         ...(r.test_results || []).map(t => t.regulation_code))
     );
     if (repFilter==='pass') list = list.filter(r=>r.overall_result==='pass');
@@ -1041,6 +1045,7 @@ function ReportModal({ preset, data, materials, products, labs, regs, onClose, o
     lab_id:(editing?data.lab_id:'')||'', report_number:(editing?data.report_number:'')||'',
     test_date:(editing?data.test_date:'')||'', expiry_date:(editing?data.expiry_date:'')||'',
     manufacture_place:(editing?data.manufacture_place:'')||'', sample_description:(editing?data.sample_description:'')||'',
+    composition:(editing?data.composition:'')||'',
     pdf_url:(editing?data.pdf_url:'')||'',
   });
   const [lines,setLines]=useState(()=>{
@@ -1087,6 +1092,10 @@ function ReportModal({ preset, data, materials, products, labs, regs, onClose, o
       material_id:f.material_id||null, product_id:f.product_id||null, lab_id:f.lab_id||null,
       report_number:f.report_number||null, test_date:f.test_date||null, expiry_date:f.expiry_date||null,
       manufacture_place:f.manufacture_place||null, sample_description:f.sample_description||null,
+      // Named here as well as bound to the input below. The two go together: an input
+      // whose column the payload omits looks like it saves and does not, which is the
+      // shape the products select had.
+      composition:f.composition||null,
       pdf_url:f.pdf_url||null,
     };
     if (scored.length) payload.overall_result = scored.some(l=>l.result==='fail') ? 'fail' : 'pass';
@@ -1142,6 +1151,19 @@ function ReportModal({ preset, data, materials, products, labs, regs, onClose, o
           <div><label style={lbl}>Expiry (re-test due)</label><input type="date" style={inp} value={f.expiry_date} onChange={set('expiry_date')} /></div>
           <div><label style={lbl}>Place of manufacture</label><input style={inp} value={f.manufacture_place} onChange={set('manufacture_place')} placeholder="City, Country" /></div>
         </div>
+        {/* What the LAB measured, which is not what products.composition says. That one
+            is the current spec; this one is a swatch on a date, and a report from January
+            disagreeing with today's spec is the history, not an error. Do not reconcile
+            them.
+
+            Full width because the longest imported value is 83 characters and they are
+            not all clean blends -- some carry a component label ("(A) Blue Body: ...")
+            and three carry a style number the register put in the wrong column. Half
+            width ellipsises those into something that reads as complete.
+
+            Editable, and off the reports row on purpose: 48 of 84 have one, so a row slot
+            would be empty on 36. Search reaches it instead. */}
+        <div><label style={lbl}>Composition</label><input style={inp} value={f.composition} onChange={set('composition')} placeholder="e.g. 51% Cotton 49% Polyester" /></div>
         <div><label style={lbl}>Report PDF URL</label><input style={inp} value={f.pdf_url} onChange={set('pdf_url')} placeholder="Paste a link to the uploaded report" /></div>
 
         {/* per-rule results */}

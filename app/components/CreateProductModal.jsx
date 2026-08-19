@@ -248,7 +248,11 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
               it -- percentage was dropped from product_materials this morning, so nothing
               currently decomposes this string, and the two can disagree. If that ever
               matters, parsing this into links is the direction, not the reverse. */}
-          <div className="form-row"><label>Composition</label><input className="form-input" value={form.composition} onChange={e=>f('composition')(e.target.value)} placeholder="51% Cotton 49% Polyester" /></div>
+          {/* "e.g." prefixed, as MaterialModal's placeholders are. Without it the
+              placeholder reads "51% Cotton 49% Polyester", which is exactly the shape of
+              a real value -- an empty field looks like a filled one, and the only tell is
+              the grey. */}
+          <div className="form-row"><label>Composition</label><input className="form-input" value={form.composition} onChange={e=>f('composition')(e.target.value)} placeholder="e.g. 51% Cotton 49% Polyester" /></div>
           {/* Its own full-width row rather than a third of a form-row-3. At ~170px the
               closed control ellipsised the selected code and its description away, so
               you could not read back what you had picked. Unit and Weight drop to a
