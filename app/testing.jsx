@@ -99,10 +99,27 @@ export default function Testing() {
   const load = async () => {
     setLoading(true);
     const [p, m, r, rg, lb, pm, pr, ord] = await Promise.all([
-      // brand_group is named explicitly like every other column here -- this select is
-      // not `*`, so a column left off it arrives undefined and the brand filter would
-      // quietly read every product as unclassified rather than erroring.
-      SB.from('products').select('id,sku,name,compliance_status,cpsc_type,efiled_date,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
+      // Every column CreateProductModal edits has to be named here. This select is not
+      // `*`, so anything left off arrives undefined -- the modal renders that field blank
+      // whatever the row holds, and Save writes null, or 0 for the numerics, back over it.
+      //
+      // Nine were missing: description, hts_code, unit_of_measure, weight_kg,
+      // units_per_carton, carton_weight_kg and the three carton dimensions. The live path
+      // is Testing -> Products -> click a row -> Save, and it needed no edit to fire:
+      // opening a product and pressing Save was enough.
+      //
+      // unit_of_measure is the one with something to lose, 'pcs' on all 271. The other
+      // eight are empty, so there the loss was potential rather than actual -- and
+      // updated_at still equals created_at on every row, so nothing has been saved
+      // through this modal yet and the bug has been live and unfired.
+      //
+      // brand_group and client_company_id are named for the same reason one step milder:
+      // absent, they read as unclassified and unassigned rather than erasing anything.
+      //
+      // cpsc_code stays out deliberately. The payload omits it so a certificate number
+      // written by hand survives an edit here, and a column the modal neither reads nor
+      // writes has no business in the select.
+      SB.from('products').select('id,sku,name,description,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,efiled_date,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
       SB.from('materials').select('*,supplier:companies!supplier_id(name)').order('created_at',{ascending:false}),
       SB.from('test_reports').select('*,lab:labs(name),material:materials(name),product:products(name,sku),test_results(*)').order('test_date',{ascending:false}),
       // Secondary sort on code, because sort_order does not identify a row: the column
