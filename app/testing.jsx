@@ -139,6 +139,7 @@ export default function Testing() {
   // brand values into it would make "Merlin" and "Not eFiled" mutually exclusive, when
   // "Merlin products that are not eFiled" is the actual question being asked.
   const [brandFilter, setBrandFilter] = useState(''); // '' | merlin | non_merlin | unclassified
+  const [stageFilter, setStageFilter] = useState(''); // '' | production | sample | notset
   // A third axis again, ANDed with both the others for the same reason brand is.
   const [dateFilter, setDateFilter] = useState('');   // '' | 30 | 60 | 90 | nolink
   // Fourth axis. A dropdown rather than a fourth pill row: 13 clients will not sit
@@ -405,6 +406,17 @@ export default function Testing() {
     if (brandFilter==='merlin')       list = list.filter(p=>p.brand_group === 'merlin');
     if (brandFilter==='non_merlin')   list = list.filter(p=>p.brand_group === 'non_merlin');
     if (brandFilter==='unclassified') list = list.filter(p=>p.brand_group == null);
+    // Fifth axis, same three-state shape as brand and the same rule: equality on every
+    // branch, never <> and never NOT. product_stage is null on all 271 today, so
+    // p.product_stage !== 'sample' would put every unrecorded product in the Production
+    // result and say nothing about the guess -- the failure brand_group's comment above
+    // describes, in a column where it currently applies to the entire table.
+    //
+    // == null on the third branch so a row fetched before the column existed lands under
+    // Not set rather than in a bucket claiming a stage was chosen.
+    if (stageFilter==='production') list = list.filter(p=>p.product_stage === 'production');
+    if (stageFilter==='sample')     list = list.filter(p=>p.product_stage === 'sample');
+    if (stageFilter==='notset')     list = list.filter(p=>p.product_stage == null);
     // Rolling from today, so the windows drain as time passes without new linked orders.
     // With the most recent linked order at 2026-07-21, "30 days" already returns 1 -- that
     // is the data being thin, not the filter being broken.
@@ -440,7 +452,7 @@ export default function Testing() {
       list = list.filter(p=>{ const o = ordersByProduct[p.id]; return !!o && !!o.last && o.last >= cutoff; });
     }
     return list;
-  }, [products, q, prodFilter, brandFilter, dateFilter, clientFilter, ordersByProduct]);
+  }, [products, q, prodFilter, brandFilter, stageFilter, dateFilter, clientFilter, ordersByProduct]);
   const shownMaterials = useMemo(() => {
     let list = !q ? materials : materials.filter(m =>
       // material_code is the identifier a person actually holds -- database-generated,
@@ -646,6 +658,27 @@ export default function Testing() {
             ))}
           </div>
         )}
+        {/* Its own captioned row directly under Brand, not a tenth pill on the compliance
+            row. Those nine share one state and are mutually exclusive BY DESIGN, which is
+            right for one question and wrong for two: on that row, picking Sample would
+            silently clear Not eFiled, and "samples that are not eFiled" is the question
+            somebody actually has. Stage is a different question about the same product,
+            so it gets its own state and ANDs with the rest -- the same argument that gave
+            brand, order date and client theirs.
+
+            Not appended to the Brand row either, for the reason the captions exist: two
+            axes sharing a line is what the caption is there to prevent.
+
+            Every option reads 0 except Not set until the backfill runs. That is the
+            column being empty, not the filter being broken. */}
+        {tab==='products' && (
+          <div style={{display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center',width:'100%'}}>
+            <span style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',marginRight:'2px'}}>Stage</span>
+            {[['','All'],['production','Production'],['sample','Sample'],['notset','Not set']].map(([v,l])=>(
+              <button key={v||'all'} onClick={()=>setStageFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:stageFilter===v?'#1D1D1F':'#fff',color:stageFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
+            ))}
+          </div>
+        )}
         {/* Fourth axis, and the one that could not be pills. 13 clients plus All plus
             Unassigned is 15 controls, which would not sit beside COMPLIANCE, BRAND and
             ORDERED without wrapping into a wall. FilterSelect is the dropdown the nav
@@ -709,7 +742,7 @@ export default function Testing() {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter || !!brandFilter || !!dateFilter || !!clientFilter} ordersByProduct={ordersByProduct} dateFilter={dateFilter} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter || !!brandFilter || !!stageFilter || !!dateFilter || !!clientFilter} ordersByProduct={ordersByProduct} dateFilter={dateFilter} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
