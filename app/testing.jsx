@@ -66,6 +66,13 @@ const MAT_STATUS = {
 // been made about that product yet.
 const PROD_STATUS = {
   not_set:     { label:'Not set',     color:'#8A8A8E', bg:'#F2F2F4' },
+  // Blue, and blue on purpose. The two states TBD is likeliest to be misread as are
+  // Pending (amber) and Not set (grey), and being neither of them is the entire reason
+  // the option exists -- it is a decision to defer, where Not set is no decision and
+  // Pending is work already under way. A fourth warm or neutral tone would have to be
+  // read rather than recognised. Blue is the only hue not already spoken for here:
+  // green passed, amber in-progress, red failed, grey absent.
+  tbd:         { label:'TBD',         color:'#1D4ED8', bg:'#DBEAFE', dot:'#3B82F6' },
   compliant:   { label:'Compliant',   color:'#15803D', bg:'#DCFCE7', dot:'#22C55E' },
   passed:      { label:'Pass',        color:'#15803D', bg:'#DCFCE7', dot:'#22C55E' },
   pending:     { label:'Pending',     color:'#B45309', bg:'#FEF3C7', dot:'#F59E0B' },
@@ -78,7 +85,16 @@ const PROD_STATUS = {
 // reads as unset rather than inheriting a verdict from its materials.
 const effectiveStatus = (product) => (product && product.compliance_status) || null;
 // Written to products.compliance_status. '' means clear it back to NULL.
-const COMPLIANCE_OPTS = [['','— Not set —'],['passed','Pass'],['pending','Pending'],['failed','Failed']];
+//
+// 'tbd' is lowercase like the other three because the column is plain nullable text
+// with no CHECK -- nothing normalises what is stored, so the casing convention is the
+// only thing keeping 'tbd' and 'TBD' from both existing and reading as one value.
+//
+// Placed next to — Not set — rather than in the pass/pending/failed run: both are the
+// absence of a verdict, and the distinction between them is the one worth putting
+// side by side. Not set means nobody has looked; TBD means someone looked and is
+// deferring. Pending, further down, means the work is already under way.
+const COMPLIANCE_OPTS = [['','— Not set —'],['tbd','TBD'],['passed','Pass'],['pending','Pending'],['failed','Failed']];
 // Unused on purpose. MaterialModal's Type field was opened up to free text so we can
 // see what people actually reach for; this is the list to put back as a <select> once
 // there is enough real data to say what the options should be.
@@ -296,7 +312,15 @@ export default function Testing() {
       // stringify it to "US,JP" via Array.prototype.toString and happen to work, but
       // relying on that means a search silently changes if the field ever holds
       // anything but strings. Spaces, so "JP" matches without the comma.
+      // Compliance joins the index through its DISPLAYED label, so "TBD" finds the
+      // deferred products. It was not searchable AT ALL before this -- the pill row
+      // covered four of the five states, and TBD is the first with no pill, so the
+      // omission stopped being harmless. Adding the map rather than just TBD means
+      // "Pass" and "Failed" become findable too, which they should always have been.
+      // Falls back to not_set's label so an unset product answers "Not set", the same
+      // shape cpsc_type's 'No CPSC' fallback uses.
       matches(q, p.name, p.sku, p.cpsc_type || 'No CPSC', EFILING_LABEL[efilingKey(p)],
+              (PROD_STATUS[effectiveStatus(p) || 'not_set'] || {}).label,
               (p.ships_to || []).join(' '), p.trade_direction, p.importer_of_record, p.testing_paid_by,
               // composition is searched but not rendered as text on the row -- the only
               // field here in that position. It runs to 57 characters on a real blend and
