@@ -301,9 +301,23 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
           {editing && (
             <div className="form-row">
               <label>eFiling <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(set with the eFiling button)</span></label>
+              {/* Four readings, matching the row's dot and tooltip. The strings are
+                  repeated here rather than imported for the same reason fmtDay is: this
+                  module is imported BY app/testing.jsx, so importing back closes a cycle.
+                  If a third caller ever needs them, lib/ is the answer, not a cycle.
+
+                  A date is shown as the date and nothing else -- it outranks the
+                  judgement, because a filing that happened is a fact. The other three are
+                  muted: each is the absence of something, and none of them is a value to
+                  read off. efiling_required arrives on `data` through testing.jsx's
+                  select; it needs no prop. */}
               {data.efiled_date
                 ? <div style={{fontSize:'13px',color:'var(--ink)'}}>{fmtDay(data.efiled_date)}</div>
-                : <div style={{fontSize:'13px',color:'var(--muted)'}}>Not eFiled</div>}
+                : data.efiling_required === false
+                ? <div style={{fontSize:'13px',color:'var(--muted)'}}>Not required</div>
+                : data.efiling_required === true
+                ? <div style={{fontSize:'13px',color:'var(--muted)'}}>Not eFiled</div>
+                : <div style={{fontSize:'13px',color:'var(--muted)'}}>Not decided</div>}
             </div>
           )}
           {/* Hidden on create: there is no product yet, so there can be no links, and a

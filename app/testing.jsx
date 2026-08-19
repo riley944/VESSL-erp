@@ -16,6 +16,37 @@ import { matches, normalizeTerm } from "@/lib/textFilter";
 // ── helpers ──────────────────────────────────────────────────────────────────
 const fmtDate = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
 const daysUntil = s => { if(!s) return null; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); if(isNaN(d)) return null; return Math.round((d.getTime()-Date.now())/86400000); };
+// eFiling has FOUR readings, not two, and the fourth is the one every product is in
+// today. efiling_required is nullable with no default and null on all 271 rows: nobody
+// has decided. That is not "not required" -- it is the absence of the decision -- and it
+// is not "not filed" either, which a null efiled_date already says on its own.
+//
+// Tested with === on both branches, never truthiness. false and null are both falsy, so
+// !p.efiling_required would read an undecided product as one Jenn had ruled exempt, and
+// nothing on screen would say the reading was invented. That is the products.active
+// mistake 0c41008 had to undo.
+//
+// A stored date outranks the judgement below it. A filing that happened is a fact;
+// required is somebody's reading of the rules, and where the two disagree the fact is
+// the one worth showing. Reachable today: 2 of 271 carry a date, both with required
+// still unset.
+const efilingKey = p =>
+    p.efiled_date              ? 'filed'
+  : p.efiling_required === false ? 'notreq'
+  : p.efiling_required === true  ? 'unfiled'
+  :                                'undecided';
+// One place the four strings are written, so the row tooltip, the search index and the
+// filter cannot drift apart. CreateProductModal repeats them rather than importing:
+// that module is imported BY this one, and importing back would close a cycle -- the
+// same reason fmtDay is duplicated there.
+const EFILING_LABEL = { filed:'eFiled', unfiled:'Not eFiled', notreq:'Not required', undecided:'Not decided' };
+const efilingTitle = p => {
+  const k = efilingKey(p);
+  if (k==='filed')   return 'eFiled '+fmtDate(p.efiled_date);
+  if (k==='notreq')  return 'Not required — this product does not need eFiling';
+  if (k==='unfiled') return 'Not eFiled — this product needs filing and no date is recorded';
+  return 'Not decided — nobody has recorded whether this product needs eFiling';
+};
 const MAT_STATUS = {
   untested:   { label:'Untested',    color:'#8A8A8E', bg:'#F2F2F4', dot:'#C7C7CC' },
   in_progress:{ label:'In Progress', color:'#B45309', bg:'#FEF3C7', dot:'#F59E0B' },
@@ -119,7 +150,7 @@ export default function Testing() {
       // cpsc_code stays out deliberately. The payload omits it so a certificate number
       // written by hand survives an edit here, and a column the modal neither reads nor
       // writes has no business in the select.
-      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,efiled_date,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
+      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
       SB.from('materials').select('*,supplier:companies!supplier_id(name)').order('created_at',{ascending:false}),
       SB.from('test_reports').select('*,lab:labs(name),material:materials(name),product:products(name,sku),test_results(*)').order('test_date',{ascending:false}),
       // Secondary sort on code, because sort_order does not identify a row: the column
@@ -251,13 +282,16 @@ export default function Testing() {
     let list = !q ? products : products.filter(p =>
       // cpsc_type is matched through its displayed fallback, so "no cpsc" finds exactly
       // the products missing one -- the gap the fallback exists to show.
-      // efiled_date joins through its DISPLAYED state, not its value, for the same
-      // reason cpsc_type does: nobody searches for a date, they search for the gap.
+      // eFiling joins through its DISPLAYED state, not its value, for the same reason
+      // cpsc_type does: nobody searches for a date, they search for the gap. All four
+      // readings are indexed, so "Not decided" reaches the 269 nobody has ruled on and
+      // "Not required" reaches the exempt ones -- both new gaps, both otherwise
+      // unfindable.
       // ships_to is joined explicitly rather than passed as an array. matches() would
       // stringify it to "US,JP" via Array.prototype.toString and happen to work, but
       // relying on that means a search silently changes if the field ever holds
       // anything but strings. Spaces, so "JP" matches without the comma.
-      matches(q, p.name, p.sku, p.cpsc_type || 'No CPSC', p.efiled_date ? 'eFiled' : 'Not eFiled',
+      matches(q, p.name, p.sku, p.cpsc_type || 'No CPSC', EFILING_LABEL[efilingKey(p)],
               (p.ships_to || []).join(' '), p.trade_direction, p.importer_of_record, p.testing_paid_by,
               // composition is searched but not rendered as text on the row -- the only
               // field here in that position. It runs to 57 characters on a real blend and
@@ -272,7 +306,15 @@ export default function Testing() {
     if (prodFilter==='issues')    list = list.filter(p=>['failed','expired'].includes(effectiveStatus(p)));
     if (prodFilter==='unset')     list = list.filter(p=>!effectiveStatus(p));
     if (prodFilter==='nocpsc')    list = list.filter(p=>!p.cpsc_type);
-    if (prodFilter==='noefile')   list = list.filter(p=>!p.efiled_date);
+    // Equality on the required test, never NOT. The pill used to mean "no date", which
+    // after this commit would collect every product nobody has assessed AND every one
+    // ruled exempt -- a worklist of 271 that mostly cannot be worked. It now means the
+    // one actionable gap: someone decided this needs filing and it has not been filed.
+    //
+    // That is 0 rows today, because required is null on all 271. The pill is empty until
+    // the decisions start being made, which is the honest reading -- an empty worklist
+    // beats a full one made of products whose status nobody has established.
+    if (prodFilter==='noefile')   list = list.filter(p=>p.efiling_required === true && !p.efiled_date);
     // The worklist for filling the Trade & Compliance block across 271 products: none
     // of the four set. Not "any missing" -- with nothing filled yet those are the same
     // list, and this one keeps shrinking as work is done rather than staying long
@@ -758,13 +800,24 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                   one material and five, which is the thing worth opening the cell for. */}
               <button onClick={e=>{e.stopPropagation();onLink(p);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Materials{links.length>0 && ' ('+links.length+')'}</button>
               <button onClick={e=>{e.stopPropagation();onLinkRules(p);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Rules{ruleCount>0 && ' ('+ruleCount+')'}</button>
-              {/* A dot rather than a count: filing is binary, so a number would say
-                  nothing. Filled means a date is stored, hollow means none — the gap is
-                  what is worth scanning down the column. The date itself is in the
-                  modal and on the tooltip; it is too wide for the row and rarely needed
-                  at a glance. */}
-              <button onClick={e=>{e.stopPropagation();onEfiling(p);}} title={p.efiled_date ? 'eFiled '+fmtDate(p.efiled_date) : 'Not eFiled'} style={{display:'inline-flex',alignItems:'center',gap:'6px',background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer',whiteSpace:'nowrap'}}>
-                <span style={{width:'7px',height:'7px',borderRadius:'50%',flexShrink:0,background:p.efiled_date?'#30D158':'transparent',border:p.efiled_date?'none':'1.5px solid #C7C7CC'}}/>
+              {/* Four states now, and a dot cannot carry four readings — so the dot keeps
+                  only the distinction worth scanning for and the tooltip carries the
+                  meaning, which is the split page.jsx's active cell already uses.
+
+                  GREEN FILLED, filed: a date is stored.
+                  HOLLOW RING, needs filing and has none: the actionable gap, and the one
+                    the "Not eFiled" pill collects.
+                  GREY FILLED, undecided: something is missing, but a decision, not a
+                    filing. Filled rather than hollow so it does not read as the gap above.
+                  EM DASH, not required: nothing to scan for. A dot of any colour would
+                    put it in the same visual class as the two that want work; the em dash
+                    is page.jsx's glyph for a cell with nothing to say. */}
+              <button onClick={e=>{e.stopPropagation();onEfiling(p);}} title={efilingTitle(p)} style={{display:'inline-flex',alignItems:'center',gap:'6px',background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer',whiteSpace:'nowrap'}}>
+                {efilingKey(p)==='notreq'
+                  ? <span style={{fontSize:'11px',color:'#C7C7CC',lineHeight:1,flexShrink:0}}>—</span>
+                  : <span style={{width:'7px',height:'7px',borderRadius:'50%',flexShrink:0,
+                      background: efilingKey(p)==='filed' ? '#30D158' : efilingKey(p)==='undecided' ? '#C7C7CC' : 'transparent',
+                      border: efilingKey(p)==='unfiled' ? '1.5px solid #C7C7CC' : 'none'}}/>}
                 eFiling
               </button>
               <button onClick={e=>{e.stopPropagation();onDelete(p);}} title={'Delete '+(p.name||p.sku||'product')} aria-label={'Delete '+(p.name||p.sku||'product')} style={{background:'none',border:'none',padding:'5px',borderRadius:'7px',color:'#C7C7CC',cursor:'pointer',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
@@ -1208,12 +1261,33 @@ function EfilingModal({ product, onClose, onSaved }) {
   // Date object is constructed anywhere on this path. Round-tripping through one
   // is how a filing date silently moves by a day, and nobody notices.
   const [date,setDate] = useState(product.efiled_date || '');
+  // Held as the <select>'s own string and converted once, on the way out. '' is the
+  // undecided option and maps to null, NOT to false: a select hands back '' for its
+  // empty option and Boolean('') is false, so the obvious conversion silently turns
+  // "nobody has decided" into "Jenn ruled this exempt" without anyone touching the
+  // control. Read back with === on both branches for the same reason.
+  const [required,setRequired] = useState(
+    product.efiling_required === true ? 'yes' : product.efiling_required === false ? 'no' : '');
+  const parsed = required === 'yes' ? true : required === 'no' ? false : null;
   const [saving,setSaving] = useState(false);
   const save = async () => {
+    // "Not required" and a recorded filing date cannot both stand, and it is the date
+    // that gets dropped -- so it is said out loud first. A filing date is a fact somebody
+    // entered from a document; losing it to a dropdown two rows above it is not a trade
+    // anyone agreed to. 2 of 271 have a date today, so this is reachable rather than
+    // theoretical.
+    if (parsed === false && date &&
+        !confirm('This product has an eFiling date of '+fmtDate(date)+'.\n\n'+
+                 'Saving it as not required will clear that date. Continue?')) return;
     setSaving(true);
     try {
-      const { error } = await SB.from('products').update({ efiled_date: date || null }).eq('id', product.id);
-      if (error) { toast('Could not save the eFiling date: '+error.message, 'err'); return; }
+      // Both columns in one write. efiled_date is nulled only on the not-required
+      // branch; on the other two it goes through the same `date || null` as before, so
+      // the undecided and needs-filing paths are untouched.
+      const { error } = await SB.from('products')
+        .update({ efiling_required: parsed, efiled_date: parsed === false ? null : (date || null) })
+        .eq('id', product.id);
+      if (error) { toast('Could not save the eFiling details: '+error.message, 'err'); return; }
       onSaved();
     } finally { setSaving(false); }
   };
@@ -1221,7 +1295,19 @@ function EfilingModal({ product, onClose, onSaved }) {
   return (
     <Overlay onClose={onClose}>
       <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'4px'}}>eFiling for {label}</div>
-      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>The date this product was eFiled with CPSC.</div>
+      <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>Whether this product needs eFiling with CPSC, and the date it was filed.</div>
+      {/* Above the date because it governs it. Each option reads as a whole answer to
+          "does this need eFiling" rather than as a bare word that only means something
+          next to the label -- "No" alone is the reading that gets mistaken for "not
+          filed yet", which is what a blank date already says. */}
+      <div style={{marginBottom:'14px'}}>
+        <label style={lbl}>eFiling required</label>
+        <select style={inp} value={required} onChange={e=>setRequired(e.target.value)}>
+          <option value="">— Not set —</option>
+          <option value="yes">Yes — needs eFiling</option>
+          <option value="no">No — not required</option>
+        </select>
+      </div>
       <div>
         <label style={lbl}>eFiled date</label>
         {/* A native date input offers no way to empty itself -- Chrome shows no clear
@@ -1233,15 +1319,26 @@ function EfilingModal({ product, onClose, onSaved }) {
             Glyph and colours copied from the search clear at page.jsx:1043 rather
             than the lucide <X> used in quotes.jsx and HtsField: this file imports no
             icon library, and it already uses × as its dismiss glyph twice. */}
-        <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
-          <input type="date" style={{...inp,flex:1,minWidth:0}} value={date} onChange={e=>setDate(e.target.value)} />
-          {date && (
+        {/* Both controls go dead under "not required", not just the input. Leaving the ×
+            live would let the date be edited to a different wrong value on a product
+            where no date can be correct, and a half-disabled field reads as an oversight
+            rather than a rule. The value is kept in local state rather than blanked, so
+            switching back to Yes or Not set restores what was there and nothing is lost
+            before Save. */}
+        <div style={{display:'flex',alignItems:'center',gap:'8px',opacity:parsed===false?0.5:1}}>
+          <input type="date" style={{...inp,flex:1,minWidth:0}} value={date} disabled={parsed===false}
+            onChange={e=>setDate(e.target.value)} />
+          {date && parsed!==false && (
             <button type="button" onClick={()=>setDate('')} title="Clear the date" aria-label="Clear the date"
               style={{flexShrink:0,width:'20px',height:'20px',borderRadius:'50%',border:'none',background:'#F0F0F2',color:'#8A8A8E',fontSize:'14px',lineHeight:1,cursor:'pointer'}}>×</button>
           )}
         </div>
         <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'6px'}}>
-          {date ? 'Clear it with the × beside the field, then save, to mark this product not filed.' : 'No date means not filed.'}
+          {parsed===false
+            ? (date ? 'Not required — saving will clear the date shown above.' : 'Not required — no filing date applies.')
+            : date ? 'Clear it with the × beside the field, then save, to mark this product not filed.'
+            : parsed===true ? 'No date means it needs filing and has not been filed.'
+            : 'No date means not filed. Set the field above to record whether filing is needed at all.'}
         </div>
       </div>
       <div style={{display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'22px'}}>
