@@ -95,6 +95,11 @@ const effectiveStatus = (product) => (product && product.compliance_status) || n
 // side by side. Not set means nobody has looked; TBD means someone looked and is
 // deferring. Pending, further down, means the work is already under way.
 const COMPLIANCE_OPTS = [['','— Not set —'],['tbd','TBD'],['passed','Pass'],['pending','Pending'],['failed','Failed']];
+// Written to products.product_stage. '' means clear it back to NULL, which
+// products_product_stage_check requires -- it accepts NULL, 'production' or 'sample'
+// and would reject an empty string. Values lowercase, labels capitalised, the same
+// split COMPLIANCE_OPTS uses.
+const STAGE_OPTS = [['','— Not set —'],['production','Production'],['sample','Sample']];
 // Unused on purpose. MaterialModal's Type field was opened up to free text so we can
 // see what people actually reach for; this is the list to put back as a <select> once
 // there is enough real data to say what the options should be.
@@ -523,6 +528,16 @@ export default function Testing() {
     if (error) { setStatusErr('Could not save compliance status — ' + error.message); return; }
     await load();
   };
+  // Deliberately the same shape as setCompliance rather than a shared helper: two
+  // columns, two error messages, and one write each. The '' -> null is what keeps
+  // products_product_stage_check happy, which accepts NULL, 'production' or 'sample'
+  // and nothing else -- an empty string would be rejected rather than stored.
+  const setStage = async (prodId, value) => {
+    setStatusErr('');
+    const { error } = await SB.from('products').update({ product_stage: value || null }).eq('id', prodId);
+    if (error) { setStatusErr('Could not save stage — ' + error.message); return; }
+    await load();
+  };
 
   // products cascades to test_reports, product_materials, compliance_tasks,
   // inventory_lots, inventory_balances and stock_movements — all six go with it.
@@ -742,7 +757,7 @@ export default function Testing() {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter || !!brandFilter || !!stageFilter || !!dateFilter || !!clientFilter} ordersByProduct={ordersByProduct} dateFilter={dateFilter} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter || !!brandFilter || !!stageFilter || !!dateFilter || !!clientFilter} ordersByProduct={ordersByProduct} dateFilter={dateFilter} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
@@ -781,7 +796,7 @@ export default function Testing() {
 }
 
 // ── PRODUCTS VIEW ────────────────────────────────────────────────────────────
-function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onEdit, onDelete, searching, term, filtered, ordersByProduct = {}, dateFilter = '' }) {
+function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onDelete, searching, term, filtered, ordersByProduct = {}, dateFilter = '' }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
   // well exist, it just does not match.
   // The order filters get their own empty copy. "Nothing in this filter" would be read as
@@ -798,8 +813,17 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
     : <Empty title="No products yet" sub="Products appear here once they exist. Open one to link the materials it is built from and set its compliance status." />;
   return (
     <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
-      <div style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 170px max-content',gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
-        {['Product','Built from','Compliance',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i===3?'right':'left'}}>{h}</div>)}
+      {/* Five columns now. Stage sits left of Compliance because it says what the thing
+          IS and compliance is the verdict on it, so the row reads identity then judgement
+          -- the same order the Product cell already uses within itself.
+
+          Its track is a fixed 130px, narrower than Compliance's 170px because its longest
+          option is "Production" against "— Not set —". Fixed rather than flexible so it
+          cannot take width from the two minmax tracks, which is where the cost of a fifth
+          column would otherwise land: only Product and Built from flex, and the Product
+          cell is three lines truncating at its 200px floor. */}
+      <div style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 130px 170px max-content',gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
+        {['Product','Built from','Stage','Compliance',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i===4?'right':'left'}}>{h}</div>)}
       </div>
       {products.map((p,i)=>{
         const links = prodMats.filter(l=>l.product_id===p.id);
@@ -811,7 +835,7 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
         const derived = productStatus(p.id);
         const dInfo = PROD_STATUS[derived] || PROD_STATUS.not_set;
         return (
-          <div key={p.id} onClick={()=>onEdit(p)} style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 170px max-content',gap:'16px',padding:'15px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          <div key={p.id} onClick={()=>onEdit(p)} style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 130px 170px max-content',gap:'16px',padding:'15px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
             {/* Composition rides on the title rather than the row. It is free text that
                 runs to 57 characters on a real blend -- "72% Cotton 18% Nylon 6%
                 Polyester 2% Spandex 2% Elastodiene" -- and this cell is already three
@@ -881,6 +905,27 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                   {links.length>2 && <span style={{fontSize:'11px',fontWeight:600,color:'#86868B'}}>+{links.length-2}</span>}
                 </div>
               ) : <span style={{fontSize:'12px',color:'#C7C7CC'}}>no materials linked</span>}
+            </div>
+            {/* Modelled on the compliance select beside it, down to the stopPropagation
+                that stops changing a value from also opening the modal.
+
+                No optimistic update, same as compliance: the select is controlled from
+                `products`, so a rejected write leaves the cell showing what the database
+                still holds rather than what was picked. products_product_stage_check is
+                a real constraint, so a rejected write is reachable here.
+
+                Uncoloured, unlike compliance. Production and Sample are not better and
+                worse, they are different things -- the same reason cpsc_type is rendered
+                in the muted colour rather than a judgement colour. */}
+            <div style={{minWidth:0}} onClick={e=>e.stopPropagation()}>
+              <select
+                value={p.product_stage||''}
+                onChange={e=>onSetStage(p.id,e.target.value)}
+                aria-label={'Stage for '+(p.sku||p.name||'product')}
+                style={{border:'1px solid rgba(0,0,0,.1)',borderRadius:'8px',padding:'5px 8px',fontSize:'12px',fontWeight:600,color:p.product_stage?'#1D1D1F':'#8A8A8E',background:'#fff',cursor:'pointer',fontFamily:'inherit',outline:'none',maxWidth:'100%'}}
+              >
+                {STAGE_OPTS.map(([v,l])=><option key={v||'none'} value={v}>{l}</option>)}
+              </select>
             </div>
             <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:'4px',minWidth:0}} onClick={e=>e.stopPropagation()}>
               {/* The pill is Jenn's stored call; the select writes it. The line under is

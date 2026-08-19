@@ -99,7 +99,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
     sku:s(data?.sku), name:s(data?.name), desc:s(data?.description), composition:s(data?.composition), hs:s(data?.hts_code),
     uom:s(data?.unit_of_measure), wt:s(data?.weight_kg), upc:s(data?.units_per_carton),
     cwt:s(data?.carton_weight_kg), cl:s(data?.carton_l_cm), cw:s(data?.carton_w_cm), ch:s(data?.carton_h_cm),
-    cpscType:s(data?.cpsc_type), stage:s(data?.product_stage),
+    cpscType:s(data?.cpsc_type),
     // Trade & compliance. ships_to is the only array -- PostgREST hands text[] back as
     // a real JS array, so it needs no parsing, just a guard for null and for a row
     // fetched before the column existed.
@@ -174,10 +174,11 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
       // whether it was never set or emptied out. products_cpsc_type_chk accepts only
       // NULL, 'GCC' or 'CPC', which is why '' must not reach it.
       cpsc_type:form.cpscType||null,
-      // Same shape, same reason: products_product_stage_check accepts NULL, 'production'
-      // or 'sample' only, so the empty option must arrive as null and not as ''. Lowercase
-      // is the stored form -- the labels are capitalised, the values are not.
-      product_stage:form.stage||null,
+      // product_stage is deliberately ABSENT, not sent as null. The row's Stage select is
+      // the only writer, and PostgREST writes only the keys it is given -- so a key here
+      // would make every save from this modal overwrite a stage set on the row, which is
+      // 88f0295 in miniature. cpsc_code is the precedent: neither read nor written here,
+      // so a value set elsewhere survives an edit.
       // NULL rather than an empty array when nothing is set. The column comment asks
       // for one spelling of "not recorded", and the CHECK rejects '{}' anyway.
       ships_to:form.shipsTo.length ? form.shipsTo : null,
@@ -295,21 +296,12 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
               <option value="GCC">GCC</option>
               <option value="CPC">CPC</option>
             </select></div>
-            {/* Stage fills the cell the removed CPSC Code input left behind, which is
-                why this costs no layout. It also belongs beside CPSC type: both say what
-                KIND of thing this is, as against the fields above that measure it.
-
-                Here rather than on the products row, where a second dropdown would grow
-                the max-content actions track and take that width straight out of the two
-                flexible columns -- and the Product cell is already three lines truncating
-                at its 200px floor. Stage is also set once and rarely revisited, unlike
-                compliance_status, which earns its row control by being the column Jenn
-                actually works. */}
-            <div><label>Stage</label><select className="form-select" value={form.stage} onChange={e=>f('stage')(e.target.value)}>
-              <option value="">— Not set —</option>
-              <option value="production">Production</option>
-              <option value="sample">Sample</option>
-            </select></div>
+            {/* The CPSC Code input stood here, then Stage did. Both are gone: Stage moved
+                to its own column on the products row, where it is edited beside
+                Compliance. This modal neither reads nor writes it now -- see the payload.
+                The empty cell keeps the select at half width, matching the rows above
+                and below it, rather than stretching it across the modal. */}
+            <div></div>
           </div>
           {/* Read-only, like the rules block below. EfilingModal on the product row is
               the only writer. Hidden on create for the same reason: no product, so no
