@@ -796,6 +796,23 @@ export default function Testing() {
 }
 
 // ── PRODUCTS VIEW ────────────────────────────────────────────────────────────
+// ONE template for the header and the rows, because they have to resolve identically and
+// two copies of a string cannot be relied on to.
+//
+// The last track is a fixed width and not max-content, which is what the misalignment
+// actually was. max-content is resolved per grid from that grid's own contents: the
+// header's last cell is '', so its track measured 0, while a row's last cell holds four
+// controls and measured ~320px. fr tracks divide what is LEFT after the fixed and
+// intrinsic ones, so the header had ~320px more to share out, both of its flexible
+// columns came out wider, and every label from column 2 rightward drifted right of the
+// cells it names -- Stage landing over the Materials button.
+//
+// Fixed on both sides removes the dependency on content entirely. 340px is the widest
+// realistic actions cell -- Materials, Rules, eFiling and delete, each nowrap, with the
+// two counts at their longest -- plus room to spare; the cell is right-aligned, so any
+// surplus is invisible rather than a gap.
+const PROD_COLS = 'minmax(200px,1.2fr) minmax(160px,1fr) 130px 170px 340px';
+
 function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onDelete, searching, term, filtered, ordersByProduct = {}, dateFilter = '' }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
   // well exist, it just does not match.
@@ -821,8 +838,10 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
           option is "Production" against "— Not set —". Fixed rather than flexible so it
           cannot take width from the two minmax tracks, which is where the cost of a fifth
           column would otherwise land: only Product and Built from flex, and the Product
-          cell is three lines truncating at its 200px floor. */}
-      <div style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 130px 170px max-content',gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
+          cell is three lines truncating at its 200px floor.
+
+          Template comes from PROD_COLS, shared with the rows below. */}
+      <div style={{display:'grid',gridTemplateColumns:PROD_COLS,gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
         {['Product','Built from','Stage','Compliance',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i===4?'right':'left'}}>{h}</div>)}
       </div>
       {products.map((p,i)=>{
@@ -835,7 +854,7 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
         const derived = productStatus(p.id);
         const dInfo = PROD_STATUS[derived] || PROD_STATUS.not_set;
         return (
-          <div key={p.id} onClick={()=>onEdit(p)} style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 130px 170px max-content',gap:'16px',padding:'15px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          <div key={p.id} onClick={()=>onEdit(p)} style={{display:'grid',gridTemplateColumns:PROD_COLS,gap:'16px',padding:'15px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
             {/* Composition rides on the title rather than the row. It is free text that
                 runs to 57 characters on a real blend -- "72% Cotton 18% Nylon 6%
                 Polyester 2% Spandex 2% Elastodiene" -- and this cell is already three
