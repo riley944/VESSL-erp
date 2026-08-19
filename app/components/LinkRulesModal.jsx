@@ -32,20 +32,27 @@ const Overlay = ({children,onClose}) => (
   </div>
 );
 
-// The same four CreateProductModal offers, because both write products.cpsc_type
-// and a value one accepts that the other does not would be invisible until someone
-// hit it. They are declared in both files rather than shared; unifying them is a
-// small change worth making, but it belongs with a pass over CreateProductModal.
+// The same three CreateProductModal offers, because both write products.cpsc_type and
+// a value one accepts that the other does not would be invisible until someone hit it.
+// They are declared in both files rather than shared; unifying them is a small change
+// worth making, but it belongs with a pass over CreateProductModal.
 //
-// BOTH is stored uppercase like the other two, not 'Both': the product row renders
-// cpsc_type raw, so a mixed-case value would read "· Both" beside "· GCC".
-const CPSC_TYPES = [['', '— N/A —'], ['GCC', 'GCC'], ['CPC', 'CPC'], ['BOTH', 'Both']];
+// Values are uppercase, not 'Gcc': the product row renders cpsc_type raw, so a
+// mixed-case value would read "· Gcc" beside "· GCC".
+//
+// BOTH was removed because it modelled a state CPSIA does not have. A general-use
+// product takes a GCC and a children's product takes a CPC; the two are mutually
+// exclusive, so no product needs both certificates and offering it invited a wrong
+// answer that looked considered. This was the last writer of the value -- with the
+// option gone, products_cpsc_type_chk can be narrowed to GCC | CPC | null.
+const CPSC_TYPES = [['', '— N/A —'], ['GCC', 'GCC'], ['CPC', 'CPC']];
 
 // ┌───────────────────────────────────────────────────────────────────────────┐
 // │ The two CPSC vocabularies do NOT share casing, and this is the only place  │
 // │ they meet.                                                                 │
 // │                                                                            │
-// │   products.cpsc_type          'GCC' | 'CPC' | 'BOTH' | null  (UPPERCASE)   │
+// │   products.cpsc_type          'GCC' | 'CPC' | null  (UPPERCASE)            │
+// │       ('BOTH' is legacy: no longer offered, no longer writable)            │
 // │   regulations.certificate_required                                         │
 // │       'gcc' | 'cpc' | 'depends_on_age_grade' | 'verify' | null (lowercase) │
 // │                                                                            │
@@ -114,6 +121,20 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
     const a=[], u=[], o=[], h=[];
     matching.forEach(r => {
       if (!want) { a.push(r); return; }   // no type chosen: one flat list, nothing filtered
+      // ── the four 'both' branches below are LEGACY, and stay on purpose ──
+      // Nothing can write 'both' any more: the option is gone from CPSC_TYPES above and
+      // from CreateProductModal, and products_cpsc_type_chk is being narrowed to
+      // GCC | CPC | null, which makes the value unreachable rather than merely unoffered.
+      // No product carries it today either -- 99 GCC, 13 CPC, 159 null.
+      //
+      // They are kept anyway because a branch that renders a legacy value harmlessly
+      // costs nothing, while removing them means touching four call sites, two of which
+      // (canHide, wantLabel) change how the OTHER types render if got wrong. If a row
+      // somehow still holds 'both' -- restored backup, a hand-run UPDATE before the
+      // constraint lands -- this displays it sensibly instead of falling through to a
+      // filter that matches nothing. Delete them in a pass of their own, after the
+      // constraint has been in place long enough to trust.
+      //
       // 'both' means every rule that names a certificate is in scope, so nothing can
       // land in `other` or `hidden` -- the product needs a GCC and a CPC, and each
       // rule belongs to one of them. The unknowns below are still separated: their
