@@ -862,21 +862,7 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                   It is last in the line and the line ellipsises, so on a long SKU or a
                   narrow window this is the segment that disappears. That is the right one
                   to lose, and it is 59 rows. */}
-              {/* Stage appears ONLY when it is a sample, and says nothing for production
-                  or unset -- the same surface-the-exception shape as 'No CPSC', inverted
-                  because here the common case is the unremarkable one. Most products are
-                  production, and a word on every row stops being read.
-
-                  SECOND, straight after the SKU, not appended. This line ellipsises and
-                  the last segment is the designated casualty; appended, "Sample" would be
-                  the first thing lost on precisely the rows that have something to say.
-                  From here it survives, and what gets pushed out is still the order
-                  segment that was already chosen to lose.
-
-                  Muted like everything else on the line. Colour would imply a judgement,
-                  and a sample is not worse than production -- the same reason cpsc_type
-                  is not coloured either. */}
-              <div style={{fontSize:'12px',color:'#86868B',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[p.sku, p.product_stage==='sample' ? 'Sample' : null, p.cpsc_type || 'No CPSC', ord && ord.last ? 'Last ordered '+fmtDate(ord.last)+' \u00b7 '+ord.count+' order'+(ord.count===1?'':'s') : null].filter(Boolean).join(' \u00b7 ')}</div>
+              <div style={{fontSize:'12px',color:'#86868B',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[p.sku, p.cpsc_type || 'No CPSC', ord && ord.last ? 'Last ordered '+fmtDate(ord.last)+' \u00b7 '+ord.count+' order'+(ord.count===1?'':'s') : null].filter(Boolean).join(' \u00b7 ')}</div>
               {/* Its own line rather than a fourth segment above. That line is already at
                   capacity and truncates; a client appended to it would be the piece that
                   disappears, on the rows where it matters.
