@@ -315,6 +315,20 @@ export default function Testing() {
     // the decisions start being made, which is the honest reading -- an empty worklist
     // beats a full one made of products whose status nobody has established.
     if (prodFilter==='noefile')   list = list.filter(p=>p.efiling_required === true && !p.efiled_date);
+    // The other half of the pill above, and a separate one because it is separate work.
+    // "Not eFiled" says file this thing; this says decide whether it needs filing at all.
+    // Those go to different people on different evidence, and folding them together
+    // produces a 271-row list where 269 entries cannot be acted on -- which is how a
+    // worklist stops being opened.
+    //
+    // == null, not === null, so a column missing from the select (undefined) lands here
+    // rather than in a bucket claiming a decision was made. Same idiom brand_group and
+    // client_company_id use.
+    //
+    // It starts FULL and shrinks: 269 today, the opposite trajectory to every other pill
+    // in this row. That is not a fault to correct -- it is a backlog with a visible
+    // bottom, which is the point of giving it a pill.
+    if (prodFilter==='noefileset') list = list.filter(p=>p.efiling_required == null);
     // The worklist for filling the Trade & Compliance block across 271 products: none
     // of the four set. Not "any missing" -- with nothing filled yet those are the same
     // list, and this one keeps shrinking as work is done rather than staying long
@@ -559,7 +573,10 @@ export default function Testing() {
                 thing -- that nothing has been entered. It earns a tile once the count
                 is meaningfully below the total, and this filter is what it would
                 point at. */}
-            {[['','All'],['compliant','Compliant'],['pending','Pending'],['issues','Issues'],['unset','Not set'],['nocpsc','No CPSC'],['noefile','Not eFiled'],['notrade','No trade info']].map(([v,l])=>(
+            {/* The eFiling pill is qualified rather than bare. 'unset' four along already
+                shows "Not set" for compliance, and two identically labelled pills in one
+                row is a coin toss, not a filter. */}
+            {[['','All'],['compliant','Compliant'],['pending','Pending'],['issues','Issues'],['unset','Not set'],['nocpsc','No CPSC'],['noefile','Not eFiled'],['noefileset','eFiling not decided'],['notrade','No trade info']].map(([v,l])=>(
               <button key={v||'all'} onClick={()=>setProdFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:prodFilter===v?'#1D1D1F':'#fff',color:prodFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
             ))}
           </div>
