@@ -171,7 +171,7 @@ export default function Testing() {
       // cpsc_code stays out deliberately. The payload omits it so a certificate number
       // written by hand survives an edit here, and a column the modal neither reads nor
       // writes has no business in the select.
-      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
+      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,product_stage,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
       // By MAT number, not by age. These twelve fibres are a reference library, not a
       // feed -- there is no "latest" worth surfacing, and newest-first put MAT-0013
       // (Tritan, added by hand after the import) above MAT-0001. A fixed order means a
@@ -336,6 +336,13 @@ export default function Testing() {
       // shape cpsc_type's 'No CPSC' fallback uses.
       matches(q, p.name, p.sku, p.cpsc_type || 'No CPSC', EFILING_LABEL[efilingKey(p)],
               (PROD_STATUS[effectiveStatus(p) || 'not_set'] || {}).label,
+              // Both words, though only Sample is ever rendered. "Which ones are
+              // production" is as real a question as the other, and the word is
+              // unambiguous -- searching for text the row does not show is the deliberate
+              // exception here, not the rule. Nothing is indexed for null: there is no
+              // label to find, and inventing one would make 271 rows answer a search for
+              // a state nobody has recorded.
+              p.product_stage === 'sample' ? 'Sample' : p.product_stage === 'production' ? 'Production' : null,
               (p.ships_to || []).join(' '), p.trade_direction, p.importer_of_record, p.testing_paid_by,
               // composition is searched but not rendered as text on the row -- the only
               // field here in that position. It runs to 57 characters on a real blend and
@@ -798,7 +805,21 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                   It is last in the line and the line ellipsises, so on a long SKU or a
                   narrow window this is the segment that disappears. That is the right one
                   to lose, and it is 59 rows. */}
-              <div style={{fontSize:'12px',color:'#86868B',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[p.sku, p.cpsc_type || 'No CPSC', ord && ord.last ? 'Last ordered '+fmtDate(ord.last)+' \u00b7 '+ord.count+' order'+(ord.count===1?'':'s') : null].filter(Boolean).join(' \u00b7 ')}</div>
+              {/* Stage appears ONLY when it is a sample, and says nothing for production
+                  or unset -- the same surface-the-exception shape as 'No CPSC', inverted
+                  because here the common case is the unremarkable one. Most products are
+                  production, and a word on every row stops being read.
+
+                  SECOND, straight after the SKU, not appended. This line ellipsises and
+                  the last segment is the designated casualty; appended, "Sample" would be
+                  the first thing lost on precisely the rows that have something to say.
+                  From here it survives, and what gets pushed out is still the order
+                  segment that was already chosen to lose.
+
+                  Muted like everything else on the line. Colour would imply a judgement,
+                  and a sample is not worse than production -- the same reason cpsc_type
+                  is not coloured either. */}
+              <div style={{fontSize:'12px',color:'#86868B',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[p.sku, p.product_stage==='sample' ? 'Sample' : null, p.cpsc_type || 'No CPSC', ord && ord.last ? 'Last ordered '+fmtDate(ord.last)+' \u00b7 '+ord.count+' order'+(ord.count===1?'':'s') : null].filter(Boolean).join(' \u00b7 ')}</div>
               {/* Its own line rather than a fourth segment above. That line is already at
                   capacity and truncates; a client appended to it would be the piece that
                   disappears, on the rows where it matters.
