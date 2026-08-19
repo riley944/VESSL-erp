@@ -811,7 +811,7 @@ export default function Testing() {
 // realistic actions cell -- Materials, Rules, eFiling and delete, each nowrap, with the
 // two counts at their longest -- plus room to spare; the cell is right-aligned, so any
 // surplus is invisible rather than a gap.
-const PROD_COLS = 'minmax(200px,1.2fr) minmax(160px,1fr) 130px 170px 340px';
+const PROD_COLS = 'minmax(200px,1.2fr) minmax(160px,1fr) 170px 130px 340px';
 
 function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onDelete, searching, term, filtered, ordersByProduct = {}, dateFilter = '' }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
@@ -830,19 +830,22 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
     : <Empty title="No products yet" sub="Products appear here once they exist. Open one to link the materials it is built from and set its compliance status." />;
   return (
     <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
-      {/* Five columns now. Stage sits left of Compliance because it says what the thing
-          IS and compliance is the verdict on it, so the row reads identity then judgement
-          -- the same order the Product cell already uses within itself.
+      {/* Five columns. Compliance keeps third, where it has always been, and Stage takes
+          fourth. Ordering here is about muscle memory rather than meaning: Compliance is
+          an existing control people already reach for by position, and moving it to make
+          room for a new one costs more than putting the new one alongside.
 
-          Its track is a fixed 130px, narrower than Compliance's 170px because its longest
-          option is "Production" against "— Not set —". Fixed rather than flexible so it
-          cannot take width from the two minmax tracks, which is where the cost of a fifth
-          column would otherwise land: only Product and Built from flex, and the Product
-          cell is three lines truncating at its 200px floor.
+          Stage's track is a fixed 130px against Compliance's 170px, its longest option
+          being "Production" versus "— Not set —". Fixed rather than flexible so it cannot
+          take width from the two minmax tracks, which is where the cost of a fifth column
+          would otherwise land: only Product and Built from flex, and the Product cell is
+          three lines truncating at its 200px floor.
 
-          Template comes from PROD_COLS, shared with the rows below. */}
+          Template comes from PROD_COLS, shared with the rows below. Header order, cell
+          order and the track widths have to move together -- they are three copies of the
+          same decision. */}
       <div style={{display:'grid',gridTemplateColumns:PROD_COLS,gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
-        {['Product','Built from','Stage','Compliance',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i===4?'right':'left'}}>{h}</div>)}
+        {['Product','Built from','Compliance','Stage',''].map((h,i)=><div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:i===4?'right':'left'}}>{h}</div>)}
       </div>
       {products.map((p,i)=>{
         const links = prodMats.filter(l=>l.product_id===p.id);
@@ -911,7 +914,26 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                 </div>
               ) : <span style={{fontSize:'12px',color:'#C7C7CC'}}>no materials linked</span>}
             </div>
-            {/* Modelled on the compliance select beside it, down to the stopPropagation
+            <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:'4px',minWidth:0}} onClick={e=>e.stopPropagation()}>
+              {/* The pill is Jenn's stored call; the select writes it. The line under is
+                  the material-derived signal — advisory context beside the decision,
+                  never a substitute for it. */}
+              <select
+                value={p.compliance_status||''}
+                onChange={e=>onSetStatus(p.id,e.target.value)}
+                aria-label={'Compliance status for '+(p.sku||p.name||'product')}
+                style={{border:'1px solid rgba(0,0,0,.1)',borderRadius:'8px',padding:'5px 8px',fontSize:'12px',fontWeight:600,color:(PROD_STATUS[st||'not_set']||{}).color,background:'#fff',cursor:'pointer',fontFamily:'inherit',outline:'none',maxWidth:'100%'}}
+              >
+                {COMPLIANCE_OPTS.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+              </select>
+              {links.length>0 && (
+                <span style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'10.5px',color:'#86868B'}}>
+                  <span style={{width:'5px',height:'5px',borderRadius:'50%',background:dInfo.dot||'#C7C7CC'}}/>
+                  materials: {dInfo.label.toLowerCase()}
+                </span>
+              )}
+            </div>
+            {/* Modelled on the compliance select to its left, down to the stopPropagation
                 that stops changing a value from also opening the modal.
 
                 No optimistic update, same as compliance: the select is controlled from
@@ -931,25 +953,6 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
               >
                 {STAGE_OPTS.map(([v,l])=><option key={v||'none'} value={v}>{l}</option>)}
               </select>
-            </div>
-            <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:'4px',minWidth:0}} onClick={e=>e.stopPropagation()}>
-              {/* The pill is Jenn's stored call; the select writes it. The line under is
-                  the material-derived signal — advisory context beside the decision,
-                  never a substitute for it. */}
-              <select
-                value={p.compliance_status||''}
-                onChange={e=>onSetStatus(p.id,e.target.value)}
-                aria-label={'Compliance status for '+(p.sku||p.name||'product')}
-                style={{border:'1px solid rgba(0,0,0,.1)',borderRadius:'8px',padding:'5px 8px',fontSize:'12px',fontWeight:600,color:(PROD_STATUS[st||'not_set']||{}).color,background:'#fff',cursor:'pointer',fontFamily:'inherit',outline:'none',maxWidth:'100%'}}
-              >
-                {COMPLIANCE_OPTS.map(([v,l])=><option key={v} value={v}>{l}</option>)}
-              </select>
-              {links.length>0 && (
-                <span style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'10.5px',color:'#86868B'}}>
-                  <span style={{width:'5px',height:'5px',borderRadius:'50%',background:dInfo.dot||'#C7C7CC'}}/>
-                  materials: {dInfo.label.toLowerCase()}
-                </span>
-              )}
             </div>
             {/* The row itself opens the editor, so anything clickable inside it has to
                 stop the event or it would do both. */}
