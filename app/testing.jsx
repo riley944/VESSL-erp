@@ -854,15 +854,20 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
           intent. The difference is that the drift also made the tracks themselves
           disagree between header and rows; this does not touch the tracks at all.
 
-          The consequence to know is that a label no longer names the control directly
-          under it -- reading down from STAGE reaches the Compliance dropdown first.
+          Both spanning labels are centred rather than left-aligned. Left-aligned, STAGE
+          sat at the start of track 3 -- directly over the Compliance dropdown, naming the
+          wrong control. Centred across its two tracks it reads as belonging to the pair
+          rather than to either one, which is what a spanning label is for.
+
+          The consequence to know is that neither label sits over a single control any
+          more. That is the trade this arrangement makes.
 
           COMPLIANCE is centred rather than right-aligned, to sit over the button group
           rather than over the track's edge. Only approximately: the buttons hug the
           right of a 340px track and their width moves with the two counts, so the label
           centres on the track, not on the group. */}
       <div style={{display:'grid',gridTemplateColumns:PROD_COLS,gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
-        {[{label:'Product'},{label:'Built from'},{label:'Stage',span:2},{label:'Compliance',align:'center'}].map(({label,span,align},i)=>(
+        {[{label:'Product'},{label:'Built from'},{label:'Stage',span:2,align:'center'},{label:'Compliance',align:'center'}].map(({label,span,align},i)=>(
           <div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:align||'left',...(span?{gridColumn:'span '+span}:null)}}>{label}</div>
         ))}
       </div>
