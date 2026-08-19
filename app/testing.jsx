@@ -834,7 +834,20 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                   EM DASH, not required: nothing to scan for. A dot of any colour would
                     put it in the same visual class as the two that want work; the em dash
                     is page.jsx's glyph for a cell with nothing to say. */}
-              <button onClick={e=>{e.stopPropagation();onEfiling(p);}} title={efilingTitle(p)} style={{display:'inline-flex',alignItems:'center',gap:'6px',background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer',whiteSpace:'nowrap'}}>
+              {/* Muted whole, not just the dot, when nothing is required. Swapping only
+                  the dot left a button identical in weight to the three that want
+                  something, which is not a difference you catch scanning a column of
+                  271. Faded TEXT rather than opacity or a paler background: page.jsx
+                  mutes an inert cell by colour (var(--faint) on its em-dash cell) and
+                  reserves opacity for controls that are actually disabled, which this
+                  one must never be.
+
+                  Still a live button, deliberately not `disabled`. EfilingModal is the
+                  only route from No back to Yes, so disabling it here would seal the
+                  value in with no way out -- the state would be unreachable from the one
+                  screen that can change it. The tooltip stays on for the same reason:
+                  it is what says WHY the button looks spent. */}
+              <button onClick={e=>{e.stopPropagation();onEfiling(p);}} title={efilingTitle(p)} style={{display:'inline-flex',alignItems:'center',gap:'6px',background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:efilingKey(p)==='notreq'?'#A0A0A4':'#1D1D1F',cursor:'pointer',whiteSpace:'nowrap'}}>
                 {efilingKey(p)==='notreq'
                   ? <span style={{fontSize:'11px',color:'#C7C7CC',lineHeight:1,flexShrink:0}}>—</span>
                   : <span style={{width:'7px',height:'7px',borderRadius:'50%',flexShrink:0,
