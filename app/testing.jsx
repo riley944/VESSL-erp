@@ -119,7 +119,7 @@ export default function Testing() {
       // cpsc_code stays out deliberately. The payload omits it so a certificate number
       // written by hand survives an edit here, and a column the modal neither reads nor
       // writes has no business in the select.
-      SB.from('products').select('id,sku,name,description,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,efiled_date,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
+      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,efiled_date,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
       SB.from('materials').select('*,supplier:companies!supplier_id(name)').order('created_at',{ascending:false}),
       SB.from('test_reports').select('*,lab:labs(name),material:materials(name),product:products(name,sku),test_results(*)').order('test_date',{ascending:false}),
       // Secondary sort on code, because sort_order does not identify a row: the column
@@ -258,7 +258,14 @@ export default function Testing() {
       // relying on that means a search silently changes if the field ever holds
       // anything but strings. Spaces, so "JP" matches without the comma.
       matches(q, p.name, p.sku, p.cpsc_type || 'No CPSC', p.efiled_date ? 'eFiled' : 'Not eFiled',
-              (p.ships_to || []).join(' '), p.trade_direction, p.importer_of_record, p.testing_paid_by)
+              (p.ships_to || []).join(' '), p.trade_direction, p.importer_of_record, p.testing_paid_by,
+              // composition is searched but not rendered as text on the row -- the only
+              // field here in that position. It runs to 57 characters on a real blend and
+              // the Product cell already carries three lines and truncates, so a fourth
+              // would ellipsise to "72% Cotton 18% Nyl...", which reads like a whole
+              // answer and is not. The cell title carries it in full on hover instead,
+              // which is what tells you why a search for "Spandex" matched.
+              p.composition)
     );
     if (prodFilter==='compliant') list = list.filter(p=>['compliant','passed'].includes(effectiveStatus(p)));
     if (prodFilter==='pending')   list = list.filter(p=>effectiveStatus(p)==='pending');
@@ -658,7 +665,15 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
         const dInfo = PROD_STATUS[derived] || PROD_STATUS.not_set;
         return (
           <div key={p.id} onClick={()=>onEdit(p)} style={{display:'grid',gridTemplateColumns:'minmax(200px,1.2fr) minmax(160px,1fr) 170px max-content',gap:'16px',padding:'15px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',alignItems:'center',cursor:'pointer',transition:'.12s'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-            <div style={{minWidth:0}}>
+            {/* Composition rides on the title rather than the row. It is free text that
+                runs to 57 characters on a real blend -- "72% Cotton 18% Nylon 6%
+                Polyester 2% Spandex 2% Elastodiene" -- and this cell is already three
+                lines that truncate at its 200px floor, so a fourth would ellipsise to
+                something that reads like a whole answer and is not.
+                It is searchable, though, so a hover has to be able to say why a search
+                for "Spandex" matched this row. Undefined when unrecorded, which renders
+                no tooltip at all rather than an empty one. */}
+            <div style={{minWidth:0}} title={p.composition || undefined}>
               <div style={{fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.name||'—'}</div>
               {/* Type only. The certificate number that used to sit beside it in the
                   modal was removed as unused, not moved here — its column has never

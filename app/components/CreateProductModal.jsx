@@ -96,7 +96,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
   // The DB hands numbers back as numbers; every box here is a string.
   const s = v => (v === null || v === undefined ? '' : String(v));
   const [form, setForm] = useState({
-    sku:s(data?.sku), name:s(data?.name), desc:s(data?.description), hs:s(data?.hts_code),
+    sku:s(data?.sku), name:s(data?.name), desc:s(data?.description), composition:s(data?.composition), hs:s(data?.hts_code),
     uom:s(data?.unit_of_measure), wt:s(data?.weight_kg), upc:s(data?.units_per_carton),
     cwt:s(data?.carton_weight_kg), cl:s(data?.carton_l_cm), cw:s(data?.carton_w_cm), ch:s(data?.carton_h_cm),
     cpscType:s(data?.cpsc_type),
@@ -166,6 +166,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
       // products_sku_key is UNIQUE and Postgres does not treat NULLs as equal, so any
       // number of SKU-less products can coexist -- but a second '' would collide.
       sku:sku||null, name:name, description:form.desc||null,
+      composition:form.composition.trim()||null,
       // unit_of_measure has a DB default of 'pcs', but a default only fires when the
       // key is absent -- sending null keeps the column empty until someone types a unit.
       hts_code:form.hs||null, unit_of_measure:form.uom||null, weight_kg:Number(form.wt)||null,
@@ -237,6 +238,17 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
           </div>
           <div className="form-row"><label>Product Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
           <div className="form-row"><label>Description</label><textarea className="form-textarea" value={form.desc} onChange={e=>f('desc')(e.target.value)} /></div>
+          {/* Free text, and deliberately so: it is what the label says, transcribed.
+              NULL means not recorded -- never "no composition", since everything is made
+              of something. Single line rather than a textarea because one line is what a
+              composition is, and a box invites paragraphs.
+
+              vessl.materials holds the twelve fibres separately and product_materials
+              links a product to them. This does not replace that and is not derived from
+              it -- percentage was dropped from product_materials this morning, so nothing
+              currently decomposes this string, and the two can disagree. If that ever
+              matters, parsing this into links is the direction, not the reverse. */}
+          <div className="form-row"><label>Composition</label><input className="form-input" value={form.composition} onChange={e=>f('composition')(e.target.value)} placeholder="51% Cotton 49% Polyester" /></div>
           {/* Its own full-width row rather than a third of a form-row-3. At ~170px the
               closed control ellipsised the selected code and its description away, so
               you could not read back what you had picked. Unit and Weight drop to a
