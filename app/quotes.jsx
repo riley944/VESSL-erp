@@ -17,6 +17,7 @@ import { CodeModal } from "@/app/components/CodeModal";
 // file it is in. useHtsCodes owns the active-only fetch for every host.
 import { HtsField, useHtsCodes } from "@/app/components/HtsField";
 import { HtsRuleHints, useHtsRuleMap } from "@/app/components/HtsRuleHints";
+import { ProductCpscRules, useProductCpscRules, matchSkuToProduct } from "@/app/components/ProductCpscRules";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 
 // ============================================================
@@ -2185,6 +2186,18 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   // quote_regulations table, which is the point: it proves the mapping on real data
   // before any linking is built on top of it.
   const { chapters: htsChapters, rules: htsChapterRules } = useHtsRuleMap();
+  // The product this quote's SKU names, and the CPSC rules linked to it. Display
+  // only as well -- it reads the product's links and writes nothing, which is the
+  // same reason the hint block above is display only.
+  //
+  // Loaded once, matched in memory. f.sku changes on every keystroke, so the memo
+  // is what stands between typing a SKU and a query per character; the hook itself
+  // never refetches.
+  //
+  // One match object drives BOTH the block and whether HtsRuleHints renders, so
+  // the two cannot disagree about whether a product answered.
+  const productRuleMap = useProductCpscRules();
+  const skuMatch = useMemo(() => matchSkuToProduct(f.sku, productRuleMap), [f.sku, productRuleMap]);
   // One rate, or the reason there isn't one. A code stopped determining a rate when
   // 4202320000 was split into five rows at 32.5 / 30.1 / 28.5 / 32.5 / 32.5, so this
   // fills only where the answer is unambiguous and says why when it is not. Several
@@ -2324,13 +2337,36 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
             <HtsField value={f.hts} onChange={pickHts} codes={htsCodes}
               onAdd={(seed) => setAddingCode({ code: seed || "" })}
               fieldStyle={S.field} labelStyle={S.fieldLabel} inputStyle={S.input} />
+            {/* ABOVE HtsRuleHints, and full-width for the same reason it is -- see the
+                comment on it below. Order is the argument: this block is what someone
+                LINKED to the product, the one below is what a tariff code SUGGESTS, and
+                an authored answer reads before a heuristic.
+
+                It keys off f.sku while the block below keys off f.hts, so the two are
+                driven by different fields and can appear independently. */}
+            <ProductCpscRules match={skuMatch} style={{ gridColumn: "1 / -1" }} />
             {/* Full-width inside the section grid. FormSection lays children out as
                 repeat(auto-fit, minmax(150px, 1fr)), so without gridColumn this would
                 become one ~150px cell beside Quote Date instead of a band under the
                 field it explains. It appears and disappears as a code is picked, which
-                reflows the form -- that is correct: the block is about the code. */}
-            <HtsRuleHints code={f.hts} chapters={htsChapters} rules={htsChapterRules}
-              style={{ gridColumn: "1 / -1" }} />
+                reflows the form -- that is correct: the block is about the code.
+
+                SUPPRESSED once a product answered. `answered` is true only for the one
+                state that settles the question -- exactly one product matched and it has
+                links -- so "several products" and "no rules linked" both leave the hint
+                in place, because neither of those told anyone anything. The reasoning for
+                suppressing at all is in ProductCpscRules.jsx: the three rules actually
+                linked are the same ones this block can only hedge about, so showing both
+                would put a hedge next to an answer.
+
+                While the product list is still loading nothing has matched yet, so the
+                hint renders and is then replaced. That flash is the same reflow the
+                paragraph above accepts, and it fails toward the heuristic rather than
+                toward silence. */}
+            {!skuMatch.answered && (
+              <HtsRuleHints code={f.hts} chapters={htsChapters} rules={htsChapterRules}
+                style={{ gridColumn: "1 / -1" }} />
+            )}
             <Field label="Quote Date" k="quoteDate" type="date" f={f} set={set} />
           </FormSection>
 
