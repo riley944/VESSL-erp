@@ -18,6 +18,10 @@ import { CodeModal } from "@/app/components/CodeModal";
 import { HtsField, useHtsCodes } from "@/app/components/HtsField";
 import { HtsRuleHints, useHtsRuleMap } from "@/app/components/HtsRuleHints";
 import { ProductCpscRules, useProductCpscRules, matchSkuToProduct } from "@/app/components/ProductCpscRules";
+// A backdrop click used to discard everything typed into these modals. The guard
+// closes silently when nothing has been touched and confirms when something has;
+// the ref goes on the CARD, because that is what holds the controls it watches.
+import { useDirtyGuard } from "@/app/components/ModalGuard";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 
 // ============================================================
@@ -1171,9 +1175,16 @@ function FreightBuilder({ tier, form, onClose, onApply }) {
 
   const cellIn = { width: "100%", border: "1px solid #e0e4ec", borderRadius: 8, padding: "8px 10px", fontSize: 12.5, outline: "none", fontFamily: "inherit", boxSizing: "border-box", background: "#fff" };
 
+  // Rendered INSIDE QuoteForm's card, so this card is a DOM descendant of that
+  // one even though it paints above it at zIndex 1300. The guard's card-ownership
+  // test is what keeps these six controls out of the quote's own snapshot; see
+  // ModalGuard.jsx. The backdrop click below cannot reach QuoteForm's overlay
+  // either, because its card already stops propagation.
+  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
+
   return (
-    <div onClick={(e) => e.target === e.currentTarget && onClose()} style={{ position: "fixed", inset: 0, background: "rgba(15,23,41,.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "36px 14px", zIndex: 1300, overflowY: "auto" }}>
-      <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 700, boxShadow: "0 16px 56px rgba(15,23,41,.25)" }} onClick={(e) => e.stopPropagation()}>
+    <div onClick={(e) => e.target === e.currentTarget && guardedClose()} style={{ position: "fixed", inset: 0, background: "rgba(15,23,41,.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "36px 14px", zIndex: 1300, overflowY: "auto" }}>
+      <div ref={cardRef} style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 700, boxShadow: "0 16px 56px rgba(15,23,41,.25)" }} onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: "20px 24px 0", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
           <div>
             <div style={{ fontSize: 17, fontWeight: 700, color: "#0f1729", letterSpacing: "-.01em" }}>Freight &amp; Duty build-up</div>
@@ -1518,6 +1529,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
 
 // ---------- tasks panel ----------
 function TasksPanel({ tasks, userEmail, onToggle, onDelete, onClose, onJump }) {
+  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   const [tab, setTab] = useState("mine");
   const mine = tasks.filter((t) => (t.assigned_to || "").toLowerCase() === userEmail.toLowerCase());
   const shown = (tab === "mine" ? mine : tasks);
@@ -1539,8 +1551,11 @@ function TasksPanel({ tasks, userEmail, onToggle, onDelete, onClose, onJump }) {
     </div>
   );
   return (
-    <div style={S.overlay} onClick={onClose}>
-      <div style={{ ...S.modal, maxWidth: 620 }} onClick={(e) => e.stopPropagation()}>
+    // Guarded like the rest of the file so nothing here is left on the old
+    // behaviour. It holds no controls, so its snapshot is "0" on both sides and
+    // it closes silently -- a viewer needs no opt-out.
+    <div style={S.overlay} onClick={guardedClose}>
+      <div ref={cardRef} style={{ ...S.modal, maxWidth: 620 }} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
           <h2 style={S.modalTitle}>Tasks</h2>
           <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
@@ -1755,6 +1770,7 @@ function printClientSheet(clientName, quotesArr, settings, vendor) {
 
 // ---------- Send to Client modal ----------
 function SendToClientModal({ clients, onClose }) {
+  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   const [step, setStep] = useState("client");
   const [chosenClient, setChosenClient] = useState(null);
   const [picked, setPicked] = useState({});
@@ -1790,8 +1806,10 @@ function SendToClientModal({ clients, onClose }) {
   };
 
   return (
-    <div style={S.overlay} onClick={onClose}>
-      <div style={{ ...S.modal, maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
+    // Same as TasksPanel: no controls, so it closes silently. Guarded anyway so
+    // every modal in this file goes through one path.
+    <div style={S.overlay} onClick={guardedClose}>
+      <div ref={cardRef} style={{ ...S.modal, maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
           <h2 style={S.modalTitle}>{step === "client" ? "Send Quote Sheet" : chosenClient}</h2>
           <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
@@ -1858,6 +1876,7 @@ function SendToClientModal({ clients, onClose }) {
 
 // ---------- Directory ----------
 function DirectoryPanel({ onClose, contacts, factories, clientRecords, quoteClients, onUpdateContact, onDeleteContact, onAddContact, onUpdateFactory, onDeleteFactory, onAddFactory, onSaveClientInfo }) {
+  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   const [tab, setTab] = useState("clients");
   const [openClient, setOpenClient] = useState(null);
 
@@ -1868,8 +1887,11 @@ function DirectoryPanel({ onClose, contacts, factories, clientRecords, quoteClie
   ])).sort((a, b) => a.localeCompare(b));
 
   return (
-    <div style={S.overlay} onClick={onClose}>
-      <div style={{ ...S.modal, maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
+    // Every control in here is a real contact/factory field -- name, email,
+    // phone, address, notes. There is no search box, so nothing wants
+    // data-noguard and a half-typed contact is now protected.
+    <div style={S.overlay} onClick={guardedClose}>
+      <div ref={cardRef} style={{ ...S.modal, maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
           <h2 style={S.modalTitle}>{openClient ? openClient : "Directory"}</h2>
           <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
@@ -2075,6 +2097,17 @@ function SelectField({ label, k, placeholder, options, hint, f, set }) {
 }
 
 function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [], contacts = [], onSaveFactory, onSaveContact, userEmail }) {
+  // The form this guard exists for. About eleven of its edits are click-driven --
+  // the saved-factory chips, the client suggestions, picking an HTS code, Add
+  // tier, Preset qtys, auto, the Air/Ocean toggles -- and not one of them fires
+  // an input event. The value snapshot is what catches them; nothing in this file
+  // calls markDirty.
+  //
+  // Nothing here is tagged data-noguard. Every box is bound to form state,
+  // including the client field, whose value IS f.client -- the suggestion list
+  // beneath it is a helper, not a search. The factory-preset name box is guarded
+  // on purpose: it is not quote data, but it is typed input that would vanish.
+  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   const [f, setF] = useState(() => ({ ...initial, tiers: (initial.tiers && initial.tiers.length ? initial.tiers.map((t) => ({ ...t })) : [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }]) }));
   const [fbTier, setFbTier] = useState(null); // index of tier whose freight builder is open
   const [showClientSug, setShowClientSug] = useState(false);
@@ -2286,15 +2319,20 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   };
 
   return (
-    <div style={S.overlay} onClick={onClose}>
+    <div style={S.overlay} onClick={guardedClose}>
       {/* Rendered inside the quote form, above it, and stopping its own clicks:
-          adding a code must never unmount the draft underneath. */}
+          adding a code must never unmount the draft underneath.
+
+          It sits OUTSIDE the card ref below, so its fields are not part of the
+          quote's snapshot -- CodeModal guards its own input once the components
+          pass lands. That stopPropagation is also what keeps its backdrop click
+          from reaching this overlay's guardedClose. */}
       {addingCode && (
         <div onClick={(e) => e.stopPropagation()}>
           <CodeModal data={addingCode} onClose={() => setAddingCode(null)} onSaved={onCodeAdded} />
         </div>
       )}
-      <div style={S.modal} onClick={(e) => e.stopPropagation()}>
+      <div ref={cardRef} style={S.modal} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
           <h2 style={S.modalTitle}>{initial.id ? "Edit Quote" : "New Quote"}</h2>
           <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
