@@ -150,7 +150,13 @@ export function HtsField({
 
       {open && (
         <div style={panelStyle}>
-          <input autoFocus value={typed} onChange={(e) => setTyped(e.target.value)}
+          {/* data-noguard: typing here is NAVIGATION, not input. It filters the
+              list and commits nothing -- only choosing a row sets the field, per
+              the structural rule above. Without the tag the modal dirty guard
+              counts this box as an edit, so hunting for a code and closing the
+              panel would ask to discard changes that were never made. That would
+              fire constantly, since this picker is how every code is chosen. */}
+          <input autoFocus data-noguard value={typed} onChange={(e) => setTyped(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Escape") { setOpen(false); setTyped(""); } if (e.key === "Enter") { e.preventDefault(); if (hits.length === 1) commit(hits[0].code); } }}
             placeholder="Filter by code or description…" style={filterStyle} />
           <div style={{ maxHeight: panelMaxHeight, overflowY: "auto" }}>
