@@ -2107,7 +2107,11 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   // including the client field, whose value IS f.client -- the suggestion list
   // beneath it is a helper, not a search. The factory-preset name box is guarded
   // on purpose: it is not quote data, but it is typed input that would vanish.
-  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
+  //
+  // Two of those click-driven edits turned out NOT to reach a control's value
+  // after all, so they call markDirty: the Air/Ocean toggles and picking an HTS
+  // code. See setTier and pickHts for why each one is invisible.
+  const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
   const [f, setF] = useState(() => ({ ...initial, tiers: (initial.tiers && initial.tiers.length ? initial.tiers.map((t) => ({ ...t })) : [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }]) }));
   const [fbTier, setFbTier] = useState(null); // index of tier whose freight builder is open
   const [showClientSug, setShowClientSug] = useState(false);
@@ -2256,6 +2260,15 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   // typed in, and only cleared when the HTS code changes -- an override attaches to a
   // rate, and picking a different code retires the rate it was attached to.
   const setTier = (i, key, val) => {
+    // The Air/Ocean toggles are the only caller that arrives here from a CLICK
+    // rather than from typing in a box, and `ship` renders as button highlighting
+    // -- never as a control's value. It does move the freight input, but only by
+    // swapping which key that one input reads: on a fresh tier both freightAir
+    // and freightOcean are empty, so the box shows "" before and after and the
+    // snapshot sees nothing. Flipping the shipping method on a quote is an edit,
+    // so say so. Keyed on the field rather than on the two buttons, so a third
+    // caller cannot reintroduce the hole.
+    if (key === "ship") markDirty();
     setF((p) => {
       const tiers = p.tiers.map((t, idx) => {
         if (idx !== i) return t;
@@ -2280,10 +2293,17 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   // in the same tick, so htsCodes has not re-rendered yet and the code just created
   // would look absent -- the duty would come out blank on the one path where the rate
   // is most certainly known. CodeModal hands the saved row back, so it is passed here.
-  const pickHts = (code, extra) => setF((p) => {
+  // Same hole, and a worse one. HtsField renders the committed code in a DIV, not
+  // an input -- its structural rule is that the control renders `value` directly
+  // -- so f.hts is never a control's value. Picking a code does recompute duty on
+  // every tier, but computeDuty returns nothing to show until a tier has an EXW
+  // typed in, so on a quote that is being filled in code-first the snapshot sees
+  // no change at all. Covers the picker's clear button too, since the × routes
+  // through commit("") to this same onChange.
+  const pickHts = (code, extra) => { markDirty(); return setF((p) => {
     const rate = rateFromRows((extra ? htsCodes.concat(extra) : htsCodes).filter((c) => c.code === code));
     return { ...p, hts: code || "", tiers: p.tiers.map((t) => ({ ...t, dutyManual: false, duty: computeDuty(t.landed, rate) })) };
-  });
+  }); };
   // "+ Add code" from inside the picker. The seeded value is whatever was typed
   // into the filter, so a code someone was hunting for is pre-filled.
   const [addingCode, setAddingCode] = useState(null);
