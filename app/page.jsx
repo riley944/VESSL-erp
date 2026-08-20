@@ -233,6 +233,33 @@ const ROLE_PAGES = { limited_qc: ['testing', 'products', 'shipments', 'codes'] }
 const allowedPagesFor = role =>
   (role && Object.prototype.hasOwnProperty.call(ROLE_PAGES, role)) ? ROLE_PAGES[role] : null;
 
+// ── Tab in the URL hash ───────────────────────────────────────────────────────
+// A refresh used to land back on Programs whatever you were looking at.
+//
+// The HASH and not a query param, deliberately: reading a query param in the App
+// Router means useSearchParams, which has to sit inside a Suspense boundary and
+// fails the build without one. The hash needs no routing at all -- it never
+// reaches the server, so a statically prerendered route can carry it.
+//
+// so-detail and order-detail are NOT here even though they are real pages. Both
+// render from params.id, which the hash does not carry, so restoring one would
+// mount a detail view with an undefined id. Landing on the list is the honest
+// fallback. settings IS here: it takes no params and is reached from the gear.
+const HASH_PAGES = [
+  'programs', 'dashboard', 'sales-orders', 'orders', 'companies', 'products',
+  'testing', 'pricing', 'shipments', 'inventory', 'quotes', 'codes',
+  'client-relations', 'settings',
+];
+
+// null for anything unrecognised -- empty, garbage, or one of the two detail
+// pages -- so the caller falls back to its own default rather than to a blank
+// screen. Also null during prerender, where there is no window.
+const pageFromHash = () => {
+  if (typeof window === 'undefined') return null;
+  const h = decodeURIComponent(window.location.hash.replace(/^#/, '')).trim();
+  return HASH_PAGES.includes(h) ? h : null;
+};
+
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null }) {
   const links = [
@@ -6366,16 +6393,46 @@ export default function App() {
     return ()=>subscription.unsubscribe();
   },[]);
 
+  // null = unrestricted. When limited, never render a page outside the allow
+  // list, whatever rawPage holds — fall back to the role's first allowed page.
+  //
+  // Hoisted above the early returns below because the hash effect depends on
+  // `page`, and a hook cannot sit after a conditional return. Both lines are
+  // pure, so computing them before the guards changes nothing.
+  const allowedPages = allowedPagesFor(role);
+  const page = (allowedPages && !allowedPages.includes(rawPage)) ? allowedPages[0] : rawPage;
+
+  // Adopt the hash on mount, once. An effect rather than a useState initializer
+  // because this route is statically prerendered: the server has no window, so a
+  // lazy initializer would produce 'programs' there and the hash value here, and
+  // that is a hydration mismatch. A recovery link lands as #access_token=…&
+  // type=recovery, which is not a page id, so it falls through to the default
+  // and the auth effect above still gets to read it.
+  useEffect(() => {
+    const h = pageFromHash();
+    if (h) setRawPage(h);
+  }, []);
+
+  // replaceState, not pushState: tab switches must not fill the back stack.
+  // Back/forward through tabs is not wired, and would need a popstate listener.
+  //
+  // Writes the EFFECTIVE page rather than rawPage, so a limited role bounced off
+  // a page it cannot see ends up with a hash naming what it is actually looking
+  // at instead of what it asked for.
+  //
+  // Held off until signed in and out of recovery, so neither the login screen
+  // nor a password-reset link gets its hash overwritten.
+  useEffect(() => {
+    if (!user || recovery || typeof window === 'undefined') return;
+    const want = '#' + page;
+    if (window.location.hash !== want) window.history.replaceState(null, '', want);
+  }, [page, user, recovery]);
+
   if (loading) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
   if (recovery) return <ResetPassword onDone={()=>setRecovery(false)} />;
   if (!user)   return <Login />;
   if (!isStaffEmail(user.email)) return <NotStaff user={user} />;
   if (!roleReady) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
-
-  // null = unrestricted. When limited, never render a page outside the allow
-  // list, whatever rawPage holds — fall back to the role's first allowed page.
-  const allowedPages = allowedPagesFor(role);
-  const page = (allowedPages && !allowedPages.includes(rawPage)) ? allowedPages[0] : rawPage;
 
   const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations'};
   const badges = {'client-relations': crUnread};
