@@ -150,7 +150,9 @@ export default function Testing() {
   // Fourth axis. A dropdown rather than a fourth pill row: 13 clients will not sit
   // beside COMPLIANCE, BRAND and ORDERED without wrapping into a wall of pills.
   const [clientFilter, setClientFilter] = useState(''); // '' | <company uuid> | unassigned
-  const [prodFilter, setProdFilter] = useState('');   // '' | compliant | pending | issues | nocpsc | unset
+  // '' | compliant | pending | issues | unset | nocpsc | notrade
+  //    | filed | unfiled | notreq | undecided   -- efilingKey's four returns, verbatim
+  const [prodFilter, setProdFilter] = useState('');
   const [matFilter, setMatFilter] = useState('');     // '' | passed | untested | attention
   const [repFilter, setRepFilter] = useState('');     // '' | pass | fail | expiring
 
@@ -363,29 +365,40 @@ export default function Testing() {
     if (prodFilter==='issues')    list = list.filter(p=>['failed','expired'].includes(effectiveStatus(p)));
     if (prodFilter==='unset')     list = list.filter(p=>!effectiveStatus(p));
     if (prodFilter==='nocpsc')    list = list.filter(p=>!p.cpsc_type);
-    // Equality on the required test, never NOT. The pill used to mean "no date", which
-    // after this commit would collect every product nobody has assessed AND every one
-    // ruled exempt -- a worklist of 271 that mostly cannot be worked. It now means the
-    // one actionable gap: someone decided this needs filing and it has not been filed.
+    // ┌──────────────────────────────────────────────────────────────────────────┐
+    // │ FOUR PILLS, FOUR STATES, ONE PREDICATE SHAPE: efilingKey(p) === '...'    │
+    // │                                                                          │
+    // │ Not four fresh tests. efilingKey already decides the precedence, and the │
+    // │ row dot, the tooltip and the search index all read it -- so a filter     │
+    // │ written any other way is a fifth opinion waiting to disagree with them.  │
+    // │                                                                          │
+    // │ The precedence is load-bearing, not decoration. Both JON-106 rows carry  │
+    // │ an eFiled date AND efiling_required = true, so a naive "required and no  │
+    // │ date" test would list them under Not eFiled while the dot beside them    │
+    // │ reads eFiled. efilingKey settles it once: a stored date outranks the     │
+    // │ judgement, so they appear under eFiled only and Not eFiled is 125, not   │
+    // │ 127.                                                                     │
+    // └──────────────────────────────────────────────────────────────────────────┘
     //
-    // That is 0 rows today, because required is null on all 271. The pill is empty until
-    // the decisions start being made, which is the honest reading -- an empty worklist
-    // beats a full one made of products whose status nobody has established.
-    if (prodFilter==='noefile')   list = list.filter(p=>p.efiling_required === true && !p.efiled_date);
-    // The other half of the pill above, and a separate one because it is separate work.
-    // "Not eFiled" says file this thing; this says set whether it needs filing at all.
-    // Those go to different people on different evidence, and folding them together
-    // produces a 271-row list where 269 entries cannot be acted on -- which is how a
-    // worklist stops being opened.
+    // Counts today: filed 2, unfiled 125, notreq 144, undecided 0 -- 271 exactly.
     //
-    // == null, not === null, so a column missing from the select (undefined) lands here
-    // rather than in a bucket claiming a decision was made. Same idiom brand_group and
-    // client_company_id use.
-    //
-    // It starts FULL and shrinks: 269 today, the opposite trajectory to every other pill
-    // in this row. That is not a fault to correct -- it is a backlog with a visible
-    // bottom, which is the point of giving it a pill.
-    if (prodFilter==='noefileset') list = list.filter(p=>p.efiling_required == null);
+    // These four replaced two pills whose comments described a table where
+    // efiling_required was null on all 271 rows. It is null on none of them now:
+    // Jenn has assessed the catalogue, 127 YES and 144 NO. "Not eFiled" was
+    // deliberately built to match nothing, on the argument that an empty worklist
+    // beats a full one of products whose status nobody had established. That
+    // argument is spent -- the 125 it now returns are assessed, actionable, and
+    // the reason the pill exists.
+    if (prodFilter==='filed')     list = list.filter(p=>efilingKey(p)==='filed');
+    if (prodFilter==='unfiled')   list = list.filter(p=>efilingKey(p)==='unfiled');
+    if (prodFilter==='notreq')    list = list.filter(p=>efilingKey(p)==='notreq');
+    // Reads 0 today and is kept anyway: four pills for four states says the state
+    // exists. It fills the moment anyone clears a decision back to Not set, which
+    // is the one route by which a product silently stops being anybody's job.
+    // efilingKey's final branch catches undefined as well as null, so a column
+    // missing from the select lands here rather than in a bucket claiming a
+    // decision was made.
+    if (prodFilter==='undecided') list = list.filter(p=>efilingKey(p)==='undecided');
     // The worklist for filling the Trade & Compliance block across 271 products: none
     // of the four set. Not "any missing" -- with nothing filled yet those are the same
     // list, and this one keeps shrinking as work is done rather than staying long
@@ -651,10 +664,13 @@ export default function Testing() {
                 thing -- that nothing has been entered. It earns a tile once the count
                 is meaningfully below the total, and this filter is what it would
                 point at. */}
-            {/* The eFiling pill is qualified rather than bare. 'unset' four along already
-                shows "Not set" for compliance, and two identically labelled pills in one
-                row is a coin toss, not a filter. */}
-            {[['','All'],['compliant','Compliant'],['pending','Pending'],['issues','Issues'],['unset','Not set'],['nocpsc','No CPSC'],['noefile','Not eFiled'],['noefileset','eFiling not set'],['notrade','No trade info']].map(([v,l])=>(
+            {/* The eFiling pills are qualified rather than bare. 'unset' four along
+                already shows "Not set" for compliance, and two identically labelled
+                pills in one row is a coin toss, not a filter -- which is why three of
+                the four carry the word eFiling even though "eFiled" alone would fit.
+                The values match efilingKey's four returns exactly so the pill and the
+                predicate cannot be changed apart. */}
+            {[['','All'],['compliant','Compliant'],['pending','Pending'],['issues','Issues'],['unset','Not set'],['nocpsc','No CPSC'],['filed','eFiled'],['unfiled','Not eFiled'],['notreq','eFiling not required'],['undecided','eFiling not set'],['notrade','No trade info']].map(([v,l])=>(
               <button key={v||'all'} onClick={()=>setProdFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:prodFilter===v?'#1D1D1F':'#fff',color:prodFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
             ))}
           </div>
