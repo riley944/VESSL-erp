@@ -864,7 +864,27 @@ export default function Testing() {
 // realistic actions cell -- Materials, Rules, eFiling and delete, each nowrap, with the
 // two counts at their longest -- plus room to spare; the cell is right-aligned, so any
 // surplus is invisible rather than a gap.
-const PROD_COLS = 'minmax(200px,1.2fr) 170px 130px 140px 340px';
+// ┌───────────────────────────────────────────────────────────────────────────┐
+// │ TRACK 1 IS CAPPED, AND THE CAP IS TIED TO WINDOW WIDTH.                   │
+// │                                                                           │
+// │ Track 1 is the only flexible one, so on a wide window every spare pixel   │
+// │ collected inside the Product cell as empty space and the four fixed       │
+// │ tracks sat far right. Capping it makes the slack collect at the table's   │
+// │ RIGHT EDGE instead, moving Stage, Testing Date and the buttons left.      │
+// │                                                                           │
+// │ shift = (viewport - 1164) - 660, where 1164 is the sidebar (220), the     │
+// │ page padding (56), the row padding (44), the four fixed tracks (780) and  │
+// │ the four 16px gaps. So 660 gives ~96px at a 1920 viewport, NOTHING at     │
+// │ 1824 or below, and 736px of dead space at 2560. If the window this is     │
+// │ tuned for changes, this number is the only thing to change.               │
+// │                                                                           │
+// │ 660 rather than tighter, so nothing truncates sooner than it did: the     │
+// │ 90th-percentile product name is 51 characters (~413px) and the longest    │
+// │ subtitle -- SKU, CPSC type, last-ordered date and count -- is ~396px.     │
+// │ Only the three LL1-380 names beyond 82 characters lose anything, by       │
+// │ about 20px, and those already read as truncated.                          │
+// └───────────────────────────────────────────────────────────────────────────┘
+const PROD_COLS = 'minmax(200px,660px) 170px 130px 140px 340px';
 
 function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false, testedByProduct = {} }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
