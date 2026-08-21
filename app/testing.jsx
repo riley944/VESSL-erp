@@ -84,6 +84,46 @@ const PROD_STATUS = {
 // 'pending' behind Jenn's back — compliance is her call, and an unset product simply
 // reads as unset rather than inheriting a verdict from its materials.
 const effectiveStatus = (product) => (product && product.compliance_status) || null;
+// The compliance-side mirror of efilingKey: one product, one bucket, one place the
+// mapping lives. Written because the Compliance filter became a membership test and
+// four bespoke predicates cannot be one.
+//
+// ┌───────────────────────────────────────────────────────────────────────────┐
+// │ TBD IS WHY THIS HAS TO BE A TOTAL FUNCTION.                               │
+// │                                                                           │
+// │ The old filters were four independent tests -- two `includes`, one `===`, │
+// │ one `!`. 'tbd' satisfied none of them, so 88 products (a third of the     │
+// │ catalogue) matched no Compliance filter at all and were reachable only    │
+// │ under All. Nothing reported it; the pill simply never returned them.      │
+// │                                                                           │
+// │ Every product lands in exactly one bucket now, so a value nobody has      │
+// │ taught this map cannot go missing -- it falls to 'unset'. That is not     │
+// │ strictly true of an unrecognised value, and it is the deliberate trade:   │
+// │ visible in an approximate bucket beats invisible in none, which is the    │
+// │ failure this exists to prevent recurring.                                 │
+// └───────────────────────────────────────────────────────────────────────────┘
+const complianceKey = p => {
+  const s = effectiveStatus(p);
+  return s === 'compliant' || s === 'passed' ? 'compliant'
+       : s === 'pending'                     ? 'pending'
+       : s === 'failed' || s === 'expired'   ? 'issues'
+       : s === 'tbd'                         ? 'tbd'
+       :                                       'unset';
+};
+// ┌───────────────────────────────────────────────────────────────────────────┐
+// │ EVERY FILTER SELECTION IS AN ARRAY, AND [] MEANS ALL.                     │
+// │                                                                           │
+// │ Route every "is anything narrowing" test through this. `[]` is TRUTHY in  │
+// │ JavaScript, so `if (sel)` and `!!sel` are true for an empty selection --  │
+// │ the same shape of trap as Boolean('') being false, inverted. Left to      │
+// │ themselves, `filtered={!!prodFilter}` would claim a filter was active on  │
+// │ a fresh page and the empty state would read "Nothing in this filter"      │
+// │ instead of "No products yet".                                             │
+// └───────────────────────────────────────────────────────────────────────────┘
+const isAll = sel => !Array.isArray(sel) || sel.length === 0;
+// Membership, never exclusion: All short-circuits to everything, otherwise the
+// product's own bucket must be in the chosen set. No <> and no NOT anywhere.
+const inSel = (sel, key) => isAll(sel) || sel.includes(key);
 // Written to products.compliance_status. '' means clear it back to NULL.
 //
 // 'tbd' is lowercase like the other three because the column is plain nullable text
@@ -137,22 +177,24 @@ export default function Testing() {
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // {type:'material'|'report'|'link', data}
   const [search, setSearch] = useState('');
-  // One filter slot per tab, driven by the pulse tiles and the pill rows. Kept
-  // separate so switching tabs doesn't drag a products filter onto materials.
-  // Brand is a SEPARATE axis from compliance, so it gets its own state and is ANDed with
-  // prodFilter rather than sharing it. prodFilter holds one value at a time; folding the
-  // brand values into it would make "Merlin" and "Not eFiled" mutually exclusive, when
-  // "Merlin products that are not eFiled" is the actual question being asked.
-  const [brandFilter, setBrandFilter] = useState(''); // '' | merlin | non_merlin | unclassified
-  const [stageFilter, setStageFilter] = useState(''); // '' | production | sample | notset
-  // A third axis again, ANDed with both the others for the same reason brand is.
-  const [dateFilter, setDateFilter] = useState('');   // '' | 30 | 60 | 90 | nolink
-  // Fourth axis. A dropdown rather than a fourth pill row: 13 clients will not sit
-  // beside COMPLIANCE, BRAND and ORDERED without wrapping into a wall of pills.
+  // ── Products filters: five multi-select axes plus Client ───────────────────
+  // Each is an ARRAY and [] is All -- see isAll. They are separate states rather
+  // than one because they are separate axes ANDed together: "Merlin products that
+  // are not eFiled" is the actual question, and a single slot would make those two
+  // mutually exclusive.
+  //
+  // Multi-select is what lets each one stay a membership test. "Pending or TBD" is
+  // now expressible as a set, where a single slot could only have offered a
+  // NOT-something pill to approximate it -- and a NOT over a nullable column is the
+  // thing this file refuses to write.
+  const [compSel,  setCompSel]  = useState([]);   // complianceKey's five returns
+  const [efSel,    setEfSel]    = useState([]);   // efilingKey's four returns, verbatim
+  const [brandSel, setBrandSel] = useState([]);   // merlin | non_merlin | unclassified
+  const [stageSel, setStageSel] = useState([]);   // production | sample | notset
+  const [dateSel,  setDateSel]  = useState([]);   // 30 | 60 | 90 | over90 | nolink
+  // Client stays SINGLE-select: it is an identity, not a bucket, and 13 of them
+  // behave differently from a five-item state list. FilterSelect serves both.
   const [clientFilter, setClientFilter] = useState(''); // '' | <company uuid> | unassigned
-  // '' | compliant | pending | issues | unset | nocpsc | notrade
-  //    | filed | unfiled | notreq | undecided   -- efilingKey's four returns, verbatim
-  const [prodFilter, setProdFilter] = useState('');
   const [matFilter, setMatFilter] = useState('');     // '' | passed | untested | attention
   const [repFilter, setRepFilter] = useState('');     // '' | pass | fail | expiring
 
@@ -291,6 +333,70 @@ export default function Testing() {
   //
   // Keyed on company id rather than name: two clients could share a name across types,
   // and the id is what the column stores.
+  // ── Option lists for the five multi-selects ────────────────────────────────
+  // Counts are over ALL products, not over what the other filters have already
+  // narrowed. Two reasons: a live cross-filtered count changes under your hand as
+  // you tick things, and a zero would then mean "not in the current result" rather
+  // than "none exist" -- which is the one thing a count on a filter must not be
+  // ambiguous about.
+  //
+  // Every list starts with an All row whose value is '' and whose count is the whole
+  // catalogue. FilterSelect reads '' as "clear the set", so All is never a member.
+  const countBy = useMemo(()=>{
+    const c = {};
+    const bump = k => { c[k] = (c[k]||0) + 1; };
+    products.forEach(p=>{
+      bump('c:'+complianceKey(p));
+      bump('e:'+efilingKey(p));
+      bump('b:'+(p.brand_group == null ? 'unclassified' : p.brand_group));
+      bump('s:'+(p.product_stage == null ? 'notset' : p.product_stage));
+    });
+    return c;
+  },[products]);
+  const n = k => countBy[k] || 0;
+  // PROD_STATUS carries the colour for each compliance bucket, so the dropdown rows
+  // tint the same way the row pills do rather than inventing a second palette.
+  const compOptions = useMemo(()=>[
+    { value:'',          label:'All compliance', count:products.length },
+    { value:'compliant', label:'Compliant',      count:n('c:compliant'), color:PROD_STATUS.compliant.dot },
+    { value:'pending',   label:'Pending',        count:n('c:pending'),   color:PROD_STATUS.pending.dot },
+    { value:'issues',    label:'Issues',         count:n('c:issues'),    color:PROD_STATUS.failed.dot },
+    { value:'tbd',       label:'TBD',            count:n('c:tbd'),       color:PROD_STATUS.tbd.dot },
+    { value:'unset',     label:'Not set',        count:n('c:unset'),     color:PROD_STATUS.not_set.dot },
+  ],[countBy, products.length]);
+  // Labels from EFILING_LABEL where it has one, so the dropdown, the row button and
+  // the tooltip all say the same words. The two that would collide with a compliance
+  // label are qualified: "Not set" already means compliance four rows up.
+  const efOptions = useMemo(()=>[
+    { value:'',          label:'All eFiling',           count:products.length },
+    { value:'filed',     label:EFILING_LABEL.filed,     count:n('e:filed') },
+    { value:'unfiled',   label:EFILING_LABEL.unfiled,   count:n('e:unfiled') },
+    { value:'notreq',    label:'eFiling not required',  count:n('e:notreq') },
+    { value:'undecided', label:'eFiling not set',       count:n('e:undecided') },
+  ],[countBy, products.length]);
+  const brandOptions = useMemo(()=>[
+    { value:'',             label:'All brands',   count:products.length },
+    { value:'merlin',       label:'Merlin',       count:n('b:merlin') },
+    { value:'non_merlin',   label:'Non-Merlin',   count:n('b:non_merlin') },
+    { value:'unclassified', label:'Unclassified', count:n('b:unclassified') },
+  ],[countBy, products.length]);
+  const stageOptions = useMemo(()=>[
+    { value:'',           label:'All stages', count:products.length },
+    { value:'production', label:'Production', count:n('s:production') },
+    { value:'sample',     label:'Sample',     count:n('s:sample') },
+    { value:'notset',     label:'Not set',    count:n('s:notset') },
+  ],[countBy, products.length]);
+  // No counts on the windows. They overlap -- 30 ⊂ 60 ⊂ 90 -- so a column of numbers
+  // that do not sum to the total reads as an error rather than as nesting, and the
+  // caption under the row already carries the coverage figure that matters.
+  const dateOptions = useMemo(()=>[
+    { value:'',       label:'Ordered · any' },
+    { value:'30',     label:'Within 30 days' },
+    { value:'60',     label:'Within 60 days' },
+    { value:'90',     label:'Within 90 days' },
+    { value:'over90', label:'Over 90 days' },
+    { value:'nolink', label:'No linked order' },
+  ],[]);
   const clientOptions = useMemo(()=>{
     const byId = new Map();
     products.forEach(p=>{
@@ -360,117 +466,57 @@ export default function Testing() {
               // which is what tells you why a search for "Spandex" matched.
               p.composition)
     );
-    if (prodFilter==='compliant') list = list.filter(p=>['compliant','passed'].includes(effectiveStatus(p)));
-    if (prodFilter==='pending')   list = list.filter(p=>effectiveStatus(p)==='pending');
-    if (prodFilter==='issues')    list = list.filter(p=>['failed','expired'].includes(effectiveStatus(p)));
-    if (prodFilter==='unset')     list = list.filter(p=>!effectiveStatus(p));
-    if (prodFilter==='nocpsc')    list = list.filter(p=>!p.cpsc_type);
-    // ┌──────────────────────────────────────────────────────────────────────────┐
-    // │ FOUR PILLS, FOUR STATES, ONE PREDICATE SHAPE: efilingKey(p) === '...'    │
-    // │                                                                          │
-    // │ Not four fresh tests. efilingKey already decides the precedence, and the │
-    // │ row dot, the tooltip and the search index all read it -- so a filter     │
-    // │ written any other way is a fifth opinion waiting to disagree with them.  │
-    // │                                                                          │
-    // │ The precedence is load-bearing, not decoration. Both JON-106 rows carry  │
-    // │ an eFiled date AND efiling_required = true, so a naive "required and no  │
-    // │ date" test would list them under Not eFiled while the dot beside them    │
-    // │ reads eFiled. efilingKey settles it once: a stored date outranks the     │
-    // │ judgement, so they appear under eFiled only and Not eFiled is 125, not   │
-    // │ 127.                                                                     │
-    // └──────────────────────────────────────────────────────────────────────────┘
+    // ── Six axes, ANDed. Each is a membership test; none is an exclusion. ──────
     //
-    // Counts today: filed 2, unfiled 125, notreq 144, undecided 0 -- 271 exactly.
-    //
-    // These four replaced two pills whose comments described a table where
-    // efiling_required was null on all 271 rows. It is null on none of them now:
-    // Jenn has assessed the catalogue, 127 YES and 144 NO. "Not eFiled" was
-    // deliberately built to match nothing, on the argument that an empty worklist
-    // beats a full one of products whose status nobody had established. That
-    // argument is spent -- the 125 it now returns are assessed, actionable, and
-    // the reason the pill exists.
-    if (prodFilter==='filed')     list = list.filter(p=>efilingKey(p)==='filed');
-    if (prodFilter==='unfiled')   list = list.filter(p=>efilingKey(p)==='unfiled');
-    if (prodFilter==='notreq')    list = list.filter(p=>efilingKey(p)==='notreq');
-    // Reads 0 today and is kept anyway: four pills for four states says the state
-    // exists. It fills the moment anyone clears a decision back to Not set, which
-    // is the one route by which a product silently stops being anybody's job.
-    // efilingKey's final branch catches undefined as well as null, so a column
-    // missing from the select lands here rather than in a bucket claiming a
-    // decision was made.
-    if (prodFilter==='undecided') list = list.filter(p=>efilingKey(p)==='undecided');
-    // The worklist for filling the Trade & Compliance block across 271 products: none
-    // of the four set. Not "any missing" -- with nothing filled yet those are the same
-    // list, and this one keeps shrinking as work is done rather than staying long
-    // because one field of four is blank.
-    if (prodFilter==='notrade')   list = list.filter(p=>!(p.ships_to && p.ships_to.length) && !p.trade_direction && !p.importer_of_record && !p.testing_paid_by);
-    // ┌──────────────────────────────────────────────────────────────────────────┐
-    // │ Each brand filter tests EQUALITY. Never <> and never NOT.                │
-    // │                                                                          │
-    // │ brand_group has three states and the third is the point: 'merlin',       │
-    // │ 'non_merlin', and NULL meaning nobody could tell from the SKU prefix.    │
-    // │ Six products are NULL today -- the five SL-117 sizes and the row whose   │
-    // │ SKU and name are swapped -- and SL is a Sea Life ref that may well turn  │
-    // │ out to BE Merlin once Jenn answers it.                                   │
-    // │                                                                          │
-    // │ p.brand_group !== 'merlin' would sweep all six into the non-Merlin       │
-    // │ result. Jenn filters to non-Merlin, is shown a Merlin product, and       │
-    // │ nothing on screen says the row was a guess. That is the exact failure    │
-    // │ the third state exists to prevent, and it is one character away.         │
-    // │                                                                          │
-    // │ An unclassified product therefore appears under 'Unclassified' and       │
-    // │ under 'All', and nowhere else.                                           │
-    // └──────────────────────────────────────────────────────────────────────────┘
-    if (brandFilter==='merlin')       list = list.filter(p=>p.brand_group === 'merlin');
-    if (brandFilter==='non_merlin')   list = list.filter(p=>p.brand_group === 'non_merlin');
-    if (brandFilter==='unclassified') list = list.filter(p=>p.brand_group == null);
-    // Fifth axis, same three-state shape as brand and the same rule: equality on every
-    // branch, never <> and never NOT. product_stage is null on all 271 today, so
-    // p.product_stage !== 'sample' would put every unrecorded product in the Production
-    // result and say nothing about the guess -- the failure brand_group's comment above
-    // describes, in a column where it currently applies to the entire table.
-    //
-    // == null on the third branch so a row fetched before the column existed lands under
-    // Not set rather than in a bucket claiming a stage was chosen.
-    if (stageFilter==='production') list = list.filter(p=>p.product_stage === 'production');
-    if (stageFilter==='sample')     list = list.filter(p=>p.product_stage === 'sample');
-    if (stageFilter==='notset')     list = list.filter(p=>p.product_stage == null);
-    // Rolling from today, so the windows drain as time passes without new linked orders.
-    // With the most recent linked order at 2026-07-21, "30 days" already returns 1 -- that
-    // is the data being thin, not the filter being broken.
-    //
-    // 'nolink' is the absence of a linked line, which today is the same set as "no order
-    // date" because a linked line always has one. Its label says linked for the reason in
-    // the box above.
-    //
-    // The five windows partition the catalogue: 30 ⊂ 60 ⊂ 90 are nested, 'over90' is the
-    // rest of the linked set, and 'nolink' is everything else. Without over90 the 8
-    // products whose most recent linked order predates the 90-day cutoff matched no pill
-    // at all -- too old for the windows, but not unlinked -- and were reachable only
-    // under All.
-    //
-    // One hole, documented rather than papered over: a product whose linked PO carries a
-    // NULL order_date would fall outside all five, since every branch requires o.last.
-    // purchase_orders.order_date is nullable but defaults to CURRENT_DATE and is set on
-    // all 54 rows, so this cannot happen today. Bucketing it would mean guessing whether
-    // an undated order is recent.
+    // Compliance and eFiling both read a KEY FUNCTION -- complianceKey / efilingKey --
+    // so the bucket a product is in is decided in one place and the filter, the row
+    // dot, the tooltip and the search index cannot drift apart. That is also what
+    // stops a value like 'tbd' from falling through every branch and vanishing, which
+    // is exactly what the old four-independent-tests shape did to 88 products.
+    if (!isAll(compSel))  list = list.filter(p => inSel(compSel,  complianceKey(p)));
+    if (!isAll(efSel))    list = list.filter(p => inSel(efSel,    efilingKey(p)));
+    // brand_group and product_stage are already key-shaped in the column. NULL is a
+    // named bucket rather than a NOT, so an unclassified product appears under
+    // Unclassified and under All, nowhere else.
+    if (!isAll(brandSel)) list = list.filter(p => inSel(brandSel, p.brand_group == null ? 'unclassified' : p.brand_group));
+    if (!isAll(stageSel)) list = list.filter(p => inSel(stageSel, p.product_stage == null ? 'notset' : p.product_stage));
     // Equality on both branches, never <> and never NOT -- the same rule brand_group
-    // follows and for the same reason. client_company_id is NULL on the six products
-    // whose SKU names no guide prefix; those are unresolved, not "some other client".
+    // follows. client_company_id is NULL on the six products whose SKU names no guide
+    // prefix; those are unresolved, not "some other client", and
     // p.client_company_id !== id would sweep all six into every named client's result.
     if (clientFilter==='unassigned') list = list.filter(p=>p.client_company_id == null);
     else if (clientFilter)           list = list.filter(p=>p.client_company_id === clientFilter);
-    if (dateFilter==='nolink') list = list.filter(p=>!ordersByProduct[p.id]);
-    else if (dateFilter==='over90') {
-      const cutoff = isoDaysAgo(90);
-      list = list.filter(p=>{ const o = ordersByProduct[p.id]; return !!o && !!o.last && o.last < cutoff; });
-    }
-    else if (dateFilter) {
-      const cutoff = isoDaysAgo(Number(dateFilter));
-      list = list.filter(p=>{ const o = ordersByProduct[p.id]; return !!o && !!o.last && o.last >= cutoff; });
+    // ORDERED IS THE ONE THAT IS NOT A KEY FUNCTION, because its buckets are not a
+    // partition: 30 ⊂ 60 ⊂ 90 are nested, so a product can be in three of them at
+    // once. It is a UNION of the chosen windows instead -- ticking 30 and 60 means
+    // "within 60", which is the honest reading of picking both. Still comparison per
+    // window and still no NOT; just ORed rather than looked up.
+    //
+    // Rolling from today, so the windows drain as time passes without new linked
+    // orders. 'nolink' is the absence of a linked line. 'over90' is the rest of the
+    // linked set -- without it the 8 products whose most recent linked order predates
+    // the cutoff matched nothing at all.
+    //
+    // One hole, documented rather than papered over: a product whose linked PO carries
+    // a NULL order_date falls outside every window, since each needs o.last.
+    // purchase_orders.order_date is nullable but defaults to CURRENT_DATE and is set
+    // on all 54 rows, so this cannot happen today.
+    if (!isAll(dateSel)) {
+      const within = dateSel.filter(v => v==='30'||v==='60'||v==='90').map(Number);
+      const cutoffs = within.map(isoDaysAgo);
+      const over90 = isoDaysAgo(90);
+      list = list.filter(p => {
+        const o = ordersByProduct[p.id];
+        if (dateSel.includes('nolink') && !o) return true;
+        if (!o || !o.last) return false;
+        if (dateSel.includes('over90') && o.last < over90) return true;
+        return cutoffs.some(c => o.last >= c);
+      });
     }
     return list;
-  }, [products, q, prodFilter, brandFilter, stageFilter, dateFilter, clientFilter, ordersByProduct]);
+    // Joined rather than passed raw: each selection is a fresh array identity on every
+    // render, which would defeat the memo entirely.
+  }, [products, q, compSel.join(), efSel.join(), brandSel.join(), stageSel.join(), dateSel.join(), clientFilter, ordersByProduct]);
   const shownMaterials = useMemo(() => {
     let list = !q ? materials : materials.filter(m =>
       // material_code is the identifier a person actually holds -- database-generated,
@@ -528,7 +574,6 @@ export default function Testing() {
     // not here on purpose — it is a pill, for the reason the products pills are.
     matIssues: materials.filter(m=>['failed','expired'].includes(m.status)).length,
     expiring:  expiringReports.length,
-    noCpsc:    products.filter(p=>!p.cpsc_type).length,
   };
 
   // No optimistic update on purpose: the select is controlled from `products`, so a
@@ -601,13 +646,36 @@ export default function Testing() {
   // Pulse tiles: each is a live count and a shortcut. Tapping switches to the tab
   // that answers it and toggles the matching filter; tapping again clears it.
   const goto = (t, setter, current, val) => () => { setTab(t); setSearch(''); setter(current===val?'':val); };
+  // The multi-select version: a tile sets its axis to EXACTLY its own bucket, and
+  // tapping it again goes back to All. It replaces the whole selection rather than
+  // adding to it -- a tile is a shortcut to one answer, not a way to build a set.
+  const gotoSel = (t, setter, current, val) => () =>
+    { setTab(t); setSearch(''); setter(current.length===1 && current[0]===val ? [] : [val]); };
+  const only = (sel, val) => sel.length===1 && sel[0]===val;
+  // Follows the eFiling dropdown, over all products rather than over what is on
+  // screen -- so Brand, Stage, Client and the search box do not move it. All reads
+  // the full catalogue; Not eFiled reads 125.
+  //
+  // DISPLAY ONLY, and the only inert tile in the row. Its number mirrors a control,
+  // so letting it also drive that control would be a loop: you could not tell
+  // whether the tile was reporting the dropdown or setting it.
+  //
+  // It is also the only tile that is not a count of things needing attention. The
+  // label carries that -- it names the selection rather than a problem -- but it is
+  // a different kind of number sitting in a row that was homogeneous, which is worth
+  // knowing before reading 271 as 271 problems.
+  const efTileCount = isAll(efSel) ? products.length
+                    : products.filter(p => efSel.includes(efilingKey(p))).length;
+  const efTileLabel = isAll(efSel) ? 'eFiling \u00b7 all'
+                    : efSel.length === 1 ? (EFILING_LABEL[efSel[0]] || 'eFiling')
+                    : 'eFiling \u00b7 ' + efSel.length + ' selected';
   const pulse = [
-    { k:'Compliant',        v:counts.compliant, c:'#30D158', go:goto('products',setProdFilter,prodFilter,'compliant'), on:tab==='products'&&prodFilter==='compliant' },
-    { k:'Pending decision', v:counts.pending,   c:'#FF9F0A', go:goto('products',setProdFilter,prodFilter,'pending'),   on:tab==='products'&&prodFilter==='pending' },
-    { k:'Issues',           v:counts.issues,    c:'#FF375F', go:goto('products',setProdFilter,prodFilter,'issues'),    on:tab==='products'&&prodFilter==='issues' },
+    { k:'Compliant',        v:counts.compliant, c:'#30D158', go:gotoSel('products',setCompSel,compSel,'compliant'), on:tab==='products'&&only(compSel,'compliant') },
+    { k:'Pending decision', v:counts.pending,   c:'#FF9F0A', go:gotoSel('products',setCompSel,compSel,'pending'),   on:tab==='products'&&only(compSel,'pending') },
+    { k:'Issues',           v:counts.issues,    c:'#FF375F', go:gotoSel('products',setCompSel,compSel,'issues'),    on:tab==='products'&&only(compSel,'issues') },
     { k:'Material issues',  v:counts.matIssues, c:'#FF9F0A', go:goto('materials',setMatFilter,matFilter,'attention'), on:tab==='materials'&&matFilter==='attention' },
     { k:'Expiring \u2264'+EXPIRY_WINDOW_DAYS+'d', v:counts.expiring, c:'#FF375F', go:goto('reports',setRepFilter,repFilter,'expiring'), on:tab==='reports'&&repFilter==='expiring' },
-    { k:'No CPSC type',     v:counts.noCpsc,    c:'#0A84FF', go:goto('products',setProdFilter,prodFilter,'nocpsc'),    on:tab==='products'&&prodFilter==='nocpsc' },
+    { k:efTileLabel,        v:efTileCount,      c:'#0A84FF', go:null, on:false },
   ];
 
   return (
@@ -631,7 +699,10 @@ export default function Testing() {
       {/* ── Pulse strip ── */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:'12px',marginBottom:'22px'}}>
         {pulse.map(m=>(
-          <button key={m.k} onClick={m.go} style={{background:m.on?'#1D1D1F':'#fff',borderRadius:'16px',padding:'14px 16px',border:'none',boxShadow:'0 1px 3px rgba(0,0,0,.04)',cursor:'pointer',textAlign:'left',transition:'.15s'}}>
+          // A div when there is nowhere to go: the eFiling tile reports a control it
+          // must not drive, and a <button> that does nothing on click is worse than
+          // something that never looked clickable.
+          <button key={m.k} onClick={m.go || undefined} disabled={!m.go} style={{background:m.on?'#1D1D1F':'#fff',borderRadius:'16px',padding:'14px 16px',border:'none',boxShadow:'0 1px 3px rgba(0,0,0,.04)',cursor:m.go?'pointer':'default',textAlign:'left',transition:'.15s'}}>
             <div style={{fontSize:'24px',fontWeight:600,letterSpacing:'-.02em',lineHeight:1,color:m.on?'#fff':(m.v>0?m.c:'#1D1D1F'),fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
             <div style={{fontSize:'11.5px',color:m.on?'rgba(255,255,255,.65)':'#86868B',marginTop:'5px',letterSpacing:'-.006em'}}>{m.k}</div>
           </button>
@@ -657,91 +728,39 @@ export default function Testing() {
         {/* The tiles above stay at totals while the list is filtered. This count makes
             that read as deliberate rather than as the tiles being wrong. */}
         {searching && <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{shownCount} of {totalCount}</span>}
-        {tab==='products' && (
-          <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
-            {/* A pill rather than a seventh pulse tile: with nothing filed yet the tile
-                would read 271 beside "No CPSC type" 271, two tiles saying the same
-                thing -- that nothing has been entered. It earns a tile once the count
-                is meaningfully below the total, and this filter is what it would
-                point at. */}
-            {/* The eFiling pills are qualified rather than bare. 'unset' four along
-                already shows "Not set" for compliance, and two identically labelled
-                pills in one row is a coin toss, not a filter -- which is why three of
-                the four carry the word eFiling even though "eFiled" alone would fit.
-                The values match efilingKey's four returns exactly so the pill and the
-                predicate cannot be changed apart. */}
-            {[['','All'],['compliant','Compliant'],['pending','Pending'],['issues','Issues'],['unset','Not set'],['nocpsc','No CPSC'],['filed','eFiled'],['unfiled','Not eFiled'],['notreq','eFiling not required'],['undecided','eFiling not set'],['notrade','No trade info']].map(([v,l])=>(
-              <button key={v||'all'} onClick={()=>setProdFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:prodFilter===v?'#1D1D1F':'#fff',color:prodFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
-            ))}
-          </div>
-        )}
-        {/* Its own row, captioned, rather than four more pills on the end of the one
-            above. Those are all one question -- where has this product got to -- and
-            share a single state, so they are mutually exclusive by design. Brand is a
-            different question about the same product, and the two have to combine:
-            "Merlin products that are not eFiled" is the thing worth filtering to. On the
-            same row and the same state, picking Merlin would silently clear Not eFiled. */}
-        {tab==='products' && (
-          <div style={{display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center',width:'100%'}}>
-            <span style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',marginRight:'2px'}}>Brand</span>
-            {[['','All'],['merlin','Merlin'],['non_merlin','Non-Merlin'],['unclassified','Unclassified']].map(([v,l])=>(
-              <button key={v||'all'} onClick={()=>setBrandFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:brandFilter===v?'#1D1D1F':'#fff',color:brandFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
-            ))}
-          </div>
-        )}
-        {/* Its own captioned row directly under Brand, not a tenth pill on the compliance
-            row. Those nine share one state and are mutually exclusive BY DESIGN, which is
-            right for one question and wrong for two: on that row, picking Sample would
-            silently clear Not eFiled, and "samples that are not eFiled" is the question
-            somebody actually has. Stage is a different question about the same product,
-            so it gets its own state and ANDs with the rest -- the same argument that gave
-            brand, order date and client theirs.
+        {/* ── Six filters, one row of dropdowns ────────────────────────────────
+            Four pill rows became four multi-selects. The rows had grown to eleven
+            pills on one line plus three captioned rows beneath, and every axis
+            still only answered one value at a time.
 
-            Not appended to the Brand row either, for the reason the captions exist: two
-            axes sharing a line is what the caption is there to prevent.
+            MULTI-SELECT IS THE POINT, not the space it saves. Each control is a
+            membership test against a chosen set, so "Pending or TBD" is a thing you
+            can ask. A single-value control could only have approximated that with a
+            NOT-something option, and a NOT over a nullable column is what sweeps the
+            unclassified rows into every answer -- the mistake brand_group and
+            client_company_id both carry comments against.
 
-            Every option reads 0 except Not set until the backfill runs. That is the
-            column being empty, not the filter being broken. */}
-        {tab==='products' && (
-          <div style={{display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center',width:'100%'}}>
-            <span style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',marginRight:'2px'}}>Stage</span>
-            {[['','All'],['production','Production'],['sample','Sample'],['notset','Not set']].map(([v,l])=>(
-              <button key={v||'all'} onClick={()=>setStageFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:stageFilter===v?'#1D1D1F':'#fff',color:stageFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
-            ))}
-          </div>
-        )}
-        {/* Fourth axis, and the one that could not be pills. 13 clients plus All plus
-            Unassigned is 15 controls, which would not sit beside COMPLIANCE, BRAND and
-            ORDERED without wrapping into a wall. FilterSelect is the dropdown the nav
-            pages already use for exactly this, counts included.
+            Each dropdown carries its own live counts, which eleven pills on one line
+            could not have done.
 
-            The nav Products page has a client filter too, and that is not a duplicate:
-            it filters QUOTES by their own free-text client, this filters PRODUCTS by the
-            client their SKU prefix names. Different objects, different questions. They
-            can disagree -- a quote can name a client whose prefix is not in the SKU --
-            and that disagreement is information rather than drift. */}
+            GONE: the No CPSC and No trade info pills. Both were worklists and
+            nothing else finds those products now; that is accepted, not overlooked. */}
         {tab==='products' && (
           <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',width:'100%'}}>
-            <span style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',marginRight:'2px'}}>Client</span>
+            <FilterSelect multiple label="All compliance" value={compSel}  onChange={setCompSel}  options={compOptions} />
+            <FilterSelect multiple label="All eFiling"    value={efSel}    onChange={setEfSel}    options={efOptions} />
+            <FilterSelect multiple label="All brands"     value={brandSel} onChange={setBrandSel} options={brandOptions} />
+            <FilterSelect multiple label="All stages"     value={stageSel} onChange={setStageSel} options={stageOptions} />
+            <FilterSelect multiple label="Ordered · any"  value={dateSel}  onChange={setDateSel}  options={dateOptions} />
+            {/* Single-select: a client is an identity, not a bucket, and the 13 of
+                them behave nothing like a five-item state list. */}
             <FilterSelect label="All Clients" value={clientFilter} onChange={setClientFilter} options={clientOptions} />
-          </div>
-        )}
-        {/* Third axis, third row, ANDed with the other two.
-
-            The caption is not decoration. Only 59 of 271 products have a reachable order
-            date, so someone pressing "90 days" sees 51 and can read that as "only 51 were
-            ordered in 90 days" -- when the truth is the other 220 were never checked,
-            because their PO line could not be matched to a product. The negative pill is
-            the one that looks dangerous and the positive ones are the ones that actually
-            mislead, so the caption sits under all five and states the coverage rather than
-            wording any single pill around it. It stops being needed when coverage
-            improves, and the numbers are live so it will say so. */}
-        {tab==='products' && (
-          <div style={{display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center',width:'100%'}}>
-            <span style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',marginRight:'2px'}}>Ordered</span>
-            {[['','All'],['30','30 days'],['60','60 days'],['90','90 days'],['over90','Over 90 days'],['nolink','No linked order']].map(([v,l])=>(
-              <button key={v||'all'} onClick={()=>setDateFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:dateFilter===v?'#1D1D1F':'#fff',color:dateFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
-            ))}
+            {/* The caption is not decoration. Only a fraction of products have a
+                reachable order date, so picking "90 days" and seeing a small number
+                reads as "only this many were ordered in 90 days" -- when the truth is
+                the rest were never checked, because their PO line could not be matched
+                to a product. It stops being needed when coverage improves, and the
+                numbers are live so it will say so. */}
             <span style={{flexBasis:'100%',height:0}} />
             <span style={{fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5}}>
               {'Order dates cover '+orderCoverage.withOrder+' of '+orderCoverage.total+' products — the rest have no linked PO line, which is not the same as never ordered.'}
@@ -773,7 +792,7 @@ export default function Testing() {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!!prodFilter || !!brandFilter || !!stageFilter || !!dateFilter || !!clientFilter} ordersByProduct={ordersByProduct} dateFilter={dateFilter} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!(isAll(compSel) && isAll(efSel) && isAll(brandSel) && isAll(stageSel) && isAll(dateSel) && !clientFilter)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(dateSel)} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
@@ -829,7 +848,7 @@ export default function Testing() {
 // surplus is invisible rather than a gap.
 const PROD_COLS = 'minmax(200px,1.2fr) minmax(160px,1fr) 170px 130px 340px';
 
-function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onDelete, searching, term, filtered, ordersByProduct = {}, dateFilter = '' }) {
+function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
   // well exist, it just does not match.
   // The order filters get their own empty copy. "Nothing in this filter" would be read as
@@ -838,7 +857,7 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
   // products, not the order.
   if(!products.length) return searching
     ? <Empty title={'No products match \u201C'+term+'\u201D'} sub="Try a different term, or clear the search / filter." />
-    : dateFilter
+    : orderFiltered
     ? <Empty title="No products with a linked order in this window"
              sub="These filters read purchase order lines that resolved to a product. Most products have no linked line, which is not the same as never ordered." />
     : filtered

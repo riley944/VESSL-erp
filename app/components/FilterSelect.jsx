@@ -10,7 +10,20 @@ let fsSeq = 0;
 // Panel is content-sized in CSS (width:max-content). This cap must stay in sync with
 // the max-width on .fs-panel in globals.css — it is what the viewport clamp measures against.
 const PANEL_MAX = 380;
-export function FilterSelect({ label, value, onChange, options = [] }){
+// `multiple` turns the same control into a membership picker. It is a prop rather
+// than a second component because everything expensive here -- place(), the portal,
+// the capture-phase scroll/resize re-placement, outside-click, arrow/Home/End, the
+// scrollIntoView -- is identical either way, and a sibling would be a second copy of
+// the clamp-and-flip logic to keep in sync. That is the five-Overlay mistake.
+//
+// MULTI CONTRACT. `value` is an array and onChange hands back an array. An EMPTY
+// array is All: no narrowing, and what the control falls back to when the last
+// option is unticked. The All row is an ordinary option with value '' -- picking it
+// clears to []. So "All" is never a member of the selection, only the absence of one.
+//
+// Single-select is untouched by all of it: multiple defaults false, and the Client
+// filter still passes a string and gets a string back.
+export function FilterSelect({ label, value, onChange, options = [], multiple = false }){
   const [open,   setOpen]   = useState(false);
   const [active, setActive] = useState(-1);
   const [pos,    setPos]    = useState(null);
@@ -20,9 +33,20 @@ export function FilterSelect({ label, value, onChange, options = [] }){
   if (idRef.current === null) idRef.current = 'fs-' + (++fsSeq);
   const listId = idRef.current;
 
-  const selected = options.find(o => o.value === value) || null;
-  // options carrying `bg` render as tinted status pills; the selected one inverts to a solid fill
+  const sel = multiple ? (Array.isArray(value) ? value : []) : null;
+  // The All row reads as chosen exactly when nothing else is.
+  const isSel = o => multiple ? (o.value === '' ? sel.length === 0 : sel.includes(o.value))
+                              : o.value === value;
+  const selected = multiple ? null : (options.find(o => o.value === value) || null);
+  // options carrying `bg` render as tinted status pills; the selected one inverts to a solid fill.
+  // Never in multi: a button cannot take the colour of four different options at once.
   const selTinted = !!(selected && selected.bg);
+  const chosen = multiple ? options.filter(o => o.value !== '' && sel.includes(o.value)) : [];
+  // One selection names itself; several would not fit, so they count instead.
+  const btnLabel = !multiple ? (selected ? selected.label : label)
+                 : chosen.length === 0 ? label
+                 : chosen.length === 1 ? chosen[0].label
+                 : chosen.length + ' selected';
 
   const place = useCallback(()=>{
     const el = btnRef.current; if (!el) return;
@@ -81,8 +105,14 @@ export function FilterSelect({ label, value, onChange, options = [] }){
     if (row) row.scrollIntoView({ block:'nearest' });
   },[open, active]);
 
-  const openPanel = ()=>{ setActive(options.findIndex(o=>o.value===value)); setOpen(true); };
-  const pick = v=>{ onChange(v); setOpen(false); if (btnRef.current) btnRef.current.focus(); };
+  const openPanel = ()=>{ setActive(options.findIndex(isSel)); setOpen(true); };
+  // Multi does NOT close on pick: the whole point is choosing several, and closing
+  // after each one would make a three-option selection three round trips.
+  const pick = v=>{
+    if (!multiple){ onChange(v); setOpen(false); if (btnRef.current) btnRef.current.focus(); return; }
+    if (v === ''){ onChange([]); return; }                       // All clears the set
+    onChange(sel.includes(v) ? sel.filter(x=>x!==v) : sel.concat(v));
+  };
 
   const onKeyDown = e=>{
     if (e.key === 'Escape'){ if (open){ e.preventDefault(); setOpen(false); } return; }
@@ -106,11 +136,12 @@ export function FilterSelect({ label, value, onChange, options = [] }){
       <button ref={btnRef} type="button" className={'fs-btn' + (open ? ' open' : '') + (selTinted ? ' tint' : '')}
         style={selTinted ? { background:selected.color, borderColor:selected.color, color:'#fff' } : undefined}
         aria-haspopup="listbox" aria-expanded={open}
+        aria-multiselectable={multiple ? true : undefined}
         aria-controls={open ? listId : undefined}
         aria-activedescendant={open && active >= 0 ? listId + '-' + active : undefined}
         onClick={()=>open ? setOpen(false) : openPanel()} onKeyDown={onKeyDown}>
         {!selTinted && selected && selected.color && <span className="chip-dot" style={{background:selected.color}} />}
-        <span className="fs-btn-label">{selected ? selected.label : label}</span>
+        <span className="fs-btn-label">{btnLabel}</span>
         <svg className="fs-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       {open && pos && createPortal(
@@ -118,16 +149,16 @@ export function FilterSelect({ label, value, onChange, options = [] }){
           style={{ left:pos.left+'px', minWidth:pos.minW+'px', maxHeight:pos.maxH+'px',
                    ...(pos.top != null ? { top:pos.top+'px' } : { bottom:pos.bottom+'px' }) }}>
           {options.map((o,i)=>(
-            <div key={o.value} id={listId+'-'+i} data-idx={i} role="option" aria-selected={o.value === value}
-              className={'fs-opt' + (o.value === value ? ' sel' : '') + (i === active ? ' active' : '') + (o.bg ? ' tint' : '')}
-              style={o.bg ? (o.value === value ? { background:o.color, color:'#fff' } : { background:o.bg, color:o.color }) : undefined}
+            <div key={o.value} id={listId+'-'+i} data-idx={i} role="option" aria-selected={isSel(o)}
+              className={'fs-opt' + (isSel(o) ? ' sel' : '') + (i === active ? ' active' : '') + (o.bg ? ' tint' : '')}
+              style={o.bg ? (isSel(o) ? { background:o.color, color:'#fff' } : { background:o.bg, color:o.color }) : undefined}
               onMouseDown={e=>e.preventDefault()}
               onMouseEnter={()=>setActive(i)}
               onClick={()=>pick(o.value)}>
               {!o.bg && (o.color ? <span className="chip-dot" style={{background:o.color}} /> : <span className="fs-nodot" />)}
               <span className="fs-opt-label">{o.label}</span>
               {o.count != null && <span className="chip-count">{o.count}</span>}
-              {o.value === value && <svg className="fs-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+              {isSel(o) && <svg className="fs-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
             </div>
           ))}
         </div>, document.body)}
