@@ -107,117 +107,151 @@ export function sizesForSelection(scales) {
 export const skuToken = entry =>
   entry.label === entry.size ? entry.size : (entry.scaleLabel + '-' + entry.size).toUpperCase();
 
+// Turns a stored key back into something readable, for the orphan hint. A key
+// written before scales were composite has no '|' and is shown as it stands.
+export const describeKey = k => {
+  const i = String(k).indexOf('|');
+  if (i < 0) return String(k);
+  const sc = SIZE_SCALES.find(s => s.key === String(k).slice(0, i));
+  return (sc ? sc.short + ' ' : '') + String(k).slice(i + 1);
+};
+
 // '' and null both mean "not filled in". 0 is a real value the user typed.
 const isEntered = v => v !== '' && v !== null && v !== undefined;
 
-export function SizeGrid({ scale = null, onScaleChange, quantities, onQuantityChange, prices, onPriceChange, fallbackPrice = '' }) {
+// `scales` is a list now, and quantities/prices are keyed by sizeKey(scale,size)
+// rather than by the bare label -- the same addressing the quote form uses, and
+// for the same reason: Adult and Youth both have an L.
+export function SizeGrid({ scales = null, onScalesChange, quantities, onQuantityChange, prices, onPriceChange, fallbackPrice = '' }) {
   const qty = quantities || {};
   const price = prices || {};
-  const active = SIZE_SCALES.find(s => s.key === scale) || null;
-  const [pendingClear, setPendingClear] = useState(false);
+  const selected = toScaleList(scales);
+  const entries = sizesForSelection(selected);
+  // Holds the pending selection while its confirmation is up, not just a flag --
+  // the question is now "remove which scale", so the answer has to travel with it.
+  const [pendingClear, setPendingClear] = useState(null);
 
-  // Drop a stale warning if the scale is changed from outside while it is up.
-  useEffect(() => { setPendingClear(false); }, [scale]);
+  // Drop a stale warning if the selection changes from outside while it is up.
+  const selKey = selected.join(',');
+  useEffect(() => { setPendingClear(null); }, [selKey]);
 
-  // Only sizes in the active scale count toward the total, so a quantity left
-  // over from a scale the user has since moved away from can never inflate it.
-  const sizes = active ? active.sizes : [];
-  // A size with no price of its own is charged at the line price -- the same rule the
-  // order save path applies, so this footer can never disagree with the line's Amount.
-  const priceOf = s => (isEntered(price[s]) ? Number(price[s]) || 0 : Number(fallbackPrice) || 0);
-  const totalUnits = sizes.reduce((a, s) => a + (Number(qty[s]) || 0), 0);
-  const totalAmount = sizes.reduce((a, s) => a + (Number(qty[s]) || 0) * priceOf(s), 0);
-  const orphans = Object.keys(qty).filter(s => isEntered(qty[s]) && !sizes.includes(s));
+  // Only sizes in the current selection count toward the totals, so a quantity
+  // left over from a scale since removed can never inflate them.
+  const priceOf = k => (isEntered(price[k]) ? Number(price[k]) || 0 : Number(fallbackPrice) || 0);
+  const totalUnits = entries.reduce((a, e) => a + (Number(qty[e.key]) || 0), 0);
+  const totalAmount = entries.reduce((a, e) => a + (Number(qty[e.key]) || 0) * priceOf(e.key), 0);
+  const liveKeys = new Set(entries.map(e => e.key));
+  const orphans = Object.keys(qty).filter(k => isEntered(qty[k]) && !liveKeys.has(k));
 
-  // Clear every entered quantity that has no home in the scale we are moving to,
-  // then hand the new scale up. Sizes common to both are left alone.
-  const changeScale = nextKey => {
-    const nextSizes = nextKey ? sizesForScale(nextKey) : [];
-    Object.keys(qty).forEach(size => {
-      if (isEntered(qty[size]) && !nextSizes.includes(size)) onQuantityChange(size, '');
-    });
-    Object.keys(price).forEach(size => {
-      if (isEntered(price[size]) && !nextSizes.includes(size)) onPriceChange(size, '');
-    });
-    onScaleChange(nextKey || null);
+  // Clear every entry with no home in the selection we are moving to, then hand
+  // the selection up. Entries that survive are left untouched -- which is now
+  // exact rather than approximate: removing Adult from Adult+Youth drops
+  // 'adult|L' and keeps 'youth|L', where a bare-label key could not tell them
+  // apart at all.
+  const applySelection = next => {
+    const keep = new Set(sizesForSelection(next).map(e => e.key));
+    Object.keys(qty).forEach(k => { if (isEntered(qty[k]) && !keep.has(k)) onQuantityChange(k, ''); });
+    Object.keys(price).forEach(k => { if (isEntered(price[k]) && !keep.has(k)) onPriceChange(k, ''); });
+    onScalesChange(next);
   };
 
-  const entered = Object.keys(qty).filter(s => isEntered(qty[s]));
-  const onSelect = e => {
-    const next = e.target.value || null;
-    // Going back to "no sizes" throws away every quantity — confirm first.
-    if (!next && entered.length > 0) { setPendingClear(true); return; }
-    changeScale(next);
+  const nextFor = key => toScaleList(selected.includes(key) ? selected.filter(k => k !== key) : selected.concat(key));
+  const lostBy = next => {
+    const keep = new Set(sizesForSelection(next).map(e => e.key));
+    return Object.keys(qty).filter(k => isEntered(qty[k]) && !keep.has(k)).length;
+  };
+
+  // Confirm whenever a change would discard entered quantities, not only when
+  // clearing to none -- unticking one of two scales throws away just as much.
+  const onToggle = key => {
+    const next = nextFor(key);
+    const n = lostBy(next);
+    if (n > 0) { setPendingClear({ next, n }); return; }
+    applySelection(next);
   };
 
   // Quantities are whole units. Strip anything else rather than relying on
   // type="number", which still admits 'e' and '-' and mutates on scroll.
-  const onQty = (size, raw) => {
+  const onQty = (key, raw) => {
     const digits = String(raw).replace(/[^0-9]/g, '');
-    onQuantityChange(size, digits === '' ? '' : Number(digits));
+    onQuantityChange(key, digits === '' ? '' : Number(digits));
   };
 
   // Prices are decimal, so keep the first '.' and drop any later ones. Held as a
   // string rather than a Number: coercing on each keystroke makes "12.50" untypeable,
   // because Number('12.5') renders back as '12.5' and swallows the trailing zero.
-  const onPrice = (size, raw) => {
+  const onPrice = (key, raw) => {
     let s = String(raw).replace(/[^0-9.]/g, '');
     const dot = s.indexOf('.');
     if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, '');
-    onPriceChange(size, s);
+    onPriceChange(key, s);
   };
 
   return (
     <div className="sg">
       <div className="sg-head">
-        <label className="sg-field sg-field-scale">
+        {/* Checkboxes, not a <select multiple>: five fixed options fit at once,
+            ctrl-clicking a multi-select is a trap, and a real checkbox fires a
+            native change event so the modal dirty guard sees it for free.
+
+            `short` labels, because the row lives in a line-item sub-row: "Adult"
+            wraps to two lines at the narrow end where "Adult apparel" would take
+            five. .sg-scales is full-width inside .sg-head, which holds nothing
+            else, so no other field is squeezed by it. */}
+        <div className="sg-scales">
           <span className="sg-cap">Sizes</span>
-          <select className="sg-select" value={active ? active.key : ''} onChange={onSelect}>
-            <option value="">— no sizes —</option>
-            {SIZE_SCALES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
-          </select>
-        </label>
+          <div className="sg-scale-opts">
+            {SIZE_SCALES.map(s => (
+              <label key={s.key} className="sg-scale-opt">
+                <input type="checkbox" checked={selected.includes(s.key)} onChange={() => onToggle(s.key)} />
+                {s.short}
+              </label>
+            ))}
+          </div>
+        </div>
       </div>
 
       {pendingClear && (
         <div className="sg-warn" role="alert">
           <span>
-            Clearing the size scale removes {entered.length} quantit{entered.length === 1 ? 'y' : 'ies'} you have entered.
+            That change clears {pendingClear.n} quantit{pendingClear.n === 1 ? 'y' : 'ies'} you have entered.
           </span>
           <span className="sg-warn-actions">
-            <button type="button" className="sg-warn-btn danger" onClick={() => { setPendingClear(false); changeScale(null); }}>Clear sizes</button>
-            <button type="button" className="sg-warn-btn" onClick={() => setPendingClear(false)}>Keep sizes</button>
+            <button type="button" className="sg-warn-btn danger" onClick={() => { const p = pendingClear; setPendingClear(null); applySelection(p.next); }}>Clear them</button>
+            <button type="button" className="sg-warn-btn" onClick={() => setPendingClear(null)}>Keep sizes</button>
           </span>
         </div>
       )}
 
-      {active && (
+      {entries.length > 0 && (
         <>
           <div className="sg-grid">
-            {sizes.map(size => {
-              const amt = (Number(qty[size]) || 0) * priceOf(size);
+            {entries.map(e => {
+              const amt = (Number(qty[e.key]) || 0) * priceOf(e.key);
               return (
                 // a div, not a label: two inputs share this caption, so each carries its own aria-label
-                <div key={size} className="sg-field sg-size">
-                  <span className="sg-cap">{size}</span>
+                <div key={e.key} className="sg-field sg-size">
+                  {/* e.label, so an Adult+Youth line reads "Adult L" and "Youth L"
+                      rather than two boxes both captioned "L". */}
+                  <span className="sg-cap">{e.label}</span>
                   <div className="sg-pair">
                     <input
                       className="sg-input"
                       type="text"
                       inputMode="numeric"
                       placeholder="Qty"
-                      aria-label={active.label + ' — size ' + size + ' quantity'}
-                      value={isEntered(qty[size]) ? String(qty[size]) : ''}
-                      onChange={e => onQty(size, e.target.value)}
+                      aria-label={e.scaleLabel + ' — size ' + e.size + ' quantity'}
+                      value={isEntered(qty[e.key]) ? String(qty[e.key]) : ''}
+                      onChange={ev => onQty(e.key, ev.target.value)}
                     />
                     <input
                       className="sg-input"
                       type="text"
                       inputMode="decimal"
                       placeholder="0.00"
-                      aria-label={active.label + ' — size ' + size + ' unit price'}
-                      value={isEntered(price[size]) ? String(price[size]) : ''}
-                      onChange={e => onPrice(size, e.target.value)}
+                      aria-label={e.scaleLabel + ' — size ' + e.size + ' unit price'}
+                      value={isEntered(price[e.key]) ? String(price[e.key]) : ''}
+                      onChange={ev => onPrice(e.key, ev.target.value)}
                     />
                   </div>
                   <span className="sg-amt">{amt > 0 ? amt.toFixed(2) : ''}</span>
@@ -236,8 +270,9 @@ export function SizeGrid({ scale = null, onScaleChange, quantities, onQuantityCh
             </div>
           </div>
           {orphans.length > 0 && (
+            // describeKey, not the raw key: 'adult|L' is storage, "Adult L" is English.
             <div className="sg-hint">
-              Not in this scale, so not counted: {orphans.join(', ')}.
+              Not in this selection, so not counted: {orphans.map(describeKey).join(', ')}.
             </div>
           )}
         </>

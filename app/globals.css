@@ -737,6 +737,15 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 .sg-head{display:flex;flex-wrap:wrap;gap:10px;}
 .sg-field{display:flex;flex-direction:column;gap:3px;flex:0 0 78px;}
 .sg-field-scale{flex:0 0 168px;}
+/* The scale picker is a row of checkboxes now, not a 168px dropdown. Full width
+   inside .sg-head, which holds nothing else, so it squeezes no other field and
+   changes no table column -- SizeGrid lives in a colSpan sub-row. */
+.sg-scales{display:flex;flex-direction:column;gap:3px;flex:1 1 100%;}
+.sg-scale-opts{display:flex;flex-wrap:wrap;gap:4px 14px;}
+/* Resets the app-wide bare `label` rule (mono, uppercase, .14em) which the text
+   inside would otherwise inherit. */
+.sg-scale-opt{display:inline-flex;align-items:center;gap:5px;margin:0;font-family:var(--sans);font-size:12.5px;letter-spacing:0;text-transform:none;color:var(--ink);cursor:pointer;}
+.sg-scale-opt input{margin:0;cursor:pointer;}
 .sg-cap{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;}
 .sg-select,.sg-input{border:1px solid var(--line);background:#fff;border-radius:8px;
   padding:7px 9px;font-size:13px;font-family:var(--sans);color:var(--ink);width:100%;}

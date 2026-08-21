@@ -9,7 +9,7 @@ import Testing from '@/app/testing';
 import Pricing from '@/app/pricing';
 import Programs from '@/app/programs';
 import { FilterSelect } from '@/app/components/FilterSelect';
-import { SizeGrid, sizesForScale } from '@/app/components/SizeGrid';
+import { SizeGrid, sizesForSelection, toScaleList, skuToken } from '@/app/components/SizeGrid';
 // A backdrop click used to discard everything typed into these modals. Same
 // treatment quotes.jsx got: card ref, onClose becomes guardedClose. All sixteen
 // modals in this file are wired, so none is left behind on the old behaviour.
@@ -1448,7 +1448,7 @@ function QuotePickerModal({ onPick, onClose, priceField='client' }){
       // Size info for callers that support it; the PO-side handlers ignore these.
       // clientPrice is carried separately from price because priceOf() falls back to
       // landed, and per-size deltas are only meaningful against the client price.
-      sizeScale:q.size_scale||null, sizeDeltas:q.size_price_deltas||[],
+      sizeScales:toScaleList(q.size_scale), sizeDeltas:q.size_price_deltas||[],
       clientPrice:t.client!=null?String(t.client):''
     });
     onClose();
@@ -1512,23 +1512,29 @@ function CreateSOModal({onClose,onCreated}){
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const [items,setItems]=useState([]);
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
-  const addItem=()=>setItems(prev=>[...prev,{desc:'',sku:'',qty:'',price:'',quoteId:null,tierIdx:0,noPrice:false,sizeScale:null,sizeQty:{},sizePrice:{}}]);
+  const addItem=()=>setItems(prev=>[...prev,{desc:'',sku:'',qty:'',price:'',quoteId:null,tierIdx:0,noPrice:false,sizeScales:[],sizeQty:{},sizePrice:{}}]);
   const rmItem=i=>setItems(prev=>prev.filter((_,idx)=>idx!==i));
   // The first time a scale is picked, seed every size at the line's current client
   // price: a flat-priced product then needs no typing and only an upcharge is edited.
-  const setSizeScale=(i,key)=>setItems(prev=>prev.map((it,idx)=>{
+  // Seeds only the sizes a NEWLY ticked scale brings in, so adding Toddler to a
+  // line that already has Youth prices typed leaves those alone.
+  const setSizeScales=(i,next)=>setItems(prev=>prev.map((it,idx)=>{
     if(idx!==i) return it;
-    const seed=(!it.sizeScale&&key&&it.price!==''&&it.price!=null)?sizesForScale(key).reduce((a,s)=>({...a,[s]:String(it.price)}),{}):(it.sizePrice||{});
-    return {...it,sizeScale:key,sizePrice:seed};
+    const had=new Set(sizesForSelection(it.sizeScales).map(e=>e.key));
+    const seed={...(it.sizePrice||{})};
+    if(it.price!==''&&it.price!=null){
+      sizesForSelection(next).forEach(e=>{ if(!had.has(e.key)&&seed[e.key]==null) seed[e.key]=String(it.price); });
+    }
+    return {...it,sizeScales:next,sizePrice:seed};
   }));
-  const setSizeQty=(i,size,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,sizeQty:{...(it.sizeQty||{}),[size]:v}}:it));
-  const setSizePrice=(i,size,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,sizePrice:{...(it.sizePrice||{}),[size]:v}}:it));
+  const setSizeQty=(i,key,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,sizeQty:{...(it.sizeQty||{}),[key]:v}}:it));
+  const setSizePrice=(i,key,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,sizePrice:{...(it.sizePrice||{}),[key]:v}}:it));
   // A sized line takes its quantity from the grid; an unsized line keeps its own box.
-  const lineQty=it=>it.sizeScale?sizesForScale(it.sizeScale).reduce((a,s)=>a+(Number((it.sizeQty||{})[s])||0),0):(Number(it.qty)||0);
+  const lineQty=it=>sizesForSelection(it.sizeScales).length?sizesForSelection(it.sizeScales).reduce((a,e)=>a+(Number((it.sizeQty||{})[e.key])||0),0):(Number(it.qty)||0);
   // A size with no price of its own falls back to the line price -- the same rule the
   // save path uses, so the Amount column can never disagree with what gets written.
-  const sizePriceOf=(it,s)=>{const v=(it.sizePrice||{})[s];return v===''||v==null?(Number(it.price)||0):(Number(v)||0);};
-  const lineAmt=it=>it.sizeScale?sizesForScale(it.sizeScale).reduce((a,s)=>a+(Number((it.sizeQty||{})[s])||0)*sizePriceOf(it,s),0):(Number(it.qty)||0)*(Number(it.price)||0);
+  const sizePriceOf=(it,k)=>{const v=(it.sizePrice||{})[k];return v===''||v==null?(Number(it.price)||0):(Number(v)||0);};
+  const lineAmt=it=>sizesForSelection(it.sizeScales).length?sizesForSelection(it.sizeScales).reduce((a,e)=>a+(Number((it.sizeQty||{})[e.key])||0)*sizePriceOf(it,e.key),0):(Number(it.qty)||0)*(Number(it.price)||0);
   const lineUnit=it=>{const q=lineQty(it);return q>0?lineAmt(it)/q:0;};
   // Quote picker state
   const [picked,setPicked]=useState(null);
@@ -1565,10 +1571,21 @@ function CreateSOModal({onClose,onCreated}){
     })();
   },[]);
   const addNC=async()=>{ const n=ncName.trim(); if(!n) return; const {data:co}=await SB.from('companies').upsert({name:n,type:'client'},{onConflict:'name,type'}).select('id,name').single(); if(co){setClients(prev=>[...prev.filter(c=>c.id!==co.id),co]);f('clientId')(co.id);} setShowNC(false);setNcName(''); };
-  // size_price_deltas is stored as [{size,delta}], non-zero entries only.
-  const deltaMap=v=>{
+  // size_price_deltas is [{scale,size,delta}], non-zero entries only, keyed here by
+  // sizeKey so an Adult L and a Youth L stay two different upcharges. Entries
+  // written before scales were recorded carry no scale and are attributed to the
+  // quote's single one -- deterministic, since a legacy row has exactly one. Same
+  // rule as deltasToMap in quotes.jsx; the two must not drift.
+  const deltaMap=(v,scales)=>{
     let a=[]; try{ a=Array.isArray(v)?v:(v?JSON.parse(v):[]); }catch{ a=[]; }
-    const m={}; (Array.isArray(a)?a:[]).forEach(d=>{ if(!d||d.size==null) return; const n=Number(d.delta); if(isFinite(n)&&n!==0) m[String(d.size)]=n; });
+    const list=toScaleList(scales); const m={};
+    (Array.isArray(a)?a:[]).forEach(d=>{
+      if(!d||d.size==null) return;
+      const n=Number(d.delta); if(!isFinite(n)||n===0) return;
+      const sc=d.scale!=null?String(d.scale):(list.length===1?list[0]:null);
+      if(!sc) return;
+      m[sc+'|'+String(d.size)]=n;
+    });
     return m;
   };
   // Mirror of CreatePOModal's seedPrices, with two differences: the SO base is the
@@ -1577,11 +1594,12 @@ function CreateSOModal({onClose,onCreated}){
   // save path and SizeGrid both work in absolutes, so nothing downstream needs to
   // know a delta was involved. No client price means nothing to seed from: leave the
   // boxes blank and let SizeGrid's fallbackPrice carry the arithmetic.
-  const seedSizePrices=(scaleKey,basePrice,deltas)=>{
+  const seedSizePrices=(scales,basePrice,deltas)=>{
     const base=Number(basePrice);
-    if(!scaleKey||basePrice===''||basePrice==null||!(base>0)) return {};
-    const dm=deltaMap(deltas);
-    return sizesForScale(scaleKey).reduce((a,s)=>{
+    if(basePrice===''||basePrice==null||!(base>0)) return {};
+    const dm=deltaMap(deltas,scales);
+    return sizesForSelection(scales).reduce((a,e)=>{
+      const s=e.key;
       const p=base+(dm[s]||0);
       // A discount steeper than the price itself is not a price -- leave it blank
       // and fall back, the same way quotes.jsx refuses to show such a size.
@@ -1592,9 +1610,9 @@ function CreateSOModal({onClose,onCreated}){
     setPicked(q); setTierIdx(tIdx);
     const ts=tOf(q); const tier=ts[tIdx]||ts[0]||{};
     const noPrice=!tier.client||Number(tier.client)===0;
-    const scale=q.size_scale||null;
+    const scale=toScaleList(q.size_scale);
     const price=tier.client?String(tier.client):'';
-    setItems([{desc:q.product||'',sku:q.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:q.id,tierIdx:tIdx,noPrice,sizeScale:scale,sizeQty:{},sizePrice:seedSizePrices(scale,price,q.size_price_deltas)}]);
+    setItems([{desc:q.product||'',sku:q.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:q.id,tierIdx:tIdx,noPrice,sizeScales:scale,sizeQty:{},sizePrice:seedSizePrices(scale,price,q.size_price_deltas)}]);
     if(q.client&&!form.clientId){const m=clients.find(c=>(c.name||'').toLowerCase()===q.client.toLowerCase());if(m)setForm(prev=>({...prev,clientId:m.id,shipTo:(m.shipping_address&&!prev.shipTo)?m.shipping_address:prev.shipTo}));}
   };
   const pickTier=i=>{
@@ -1602,19 +1620,19 @@ function CreateSOModal({onClose,onCreated}){
     if(picked){
       const ts=tOf(picked); const tier=ts[i]||{};
       const noPrice=!tier.client||Number(tier.client)===0;
-      const scale=picked.size_scale||null;
+      const scale=toScaleList(picked.size_scale);
       const price=tier.client?String(tier.client):'';
       // Switching tier re-seeds prices at the new tier, but quantities the user has
       // already typed are theirs -- carry them across the wholesale item replacement.
       setItems(prev=>{
-        const keptQty=(prev[0]&&prev[0].sizeScale===scale)?(prev[0].sizeQty||{}):{};
-        return [{desc:picked.product||'',sku:picked.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:picked.id,tierIdx:i,noPrice,sizeScale:scale,sizeQty:keptQty,sizePrice:seedSizePrices(scale,price,picked.size_price_deltas)}];
+        const keptQty=(prev[0]&&(prev[0].sizeScales||[]).join(',')===scale.join(','))?(prev[0].sizeQty||{}):{};
+        return [{desc:picked.product||'',sku:picked.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:picked.id,tierIdx:i,noPrice,sizeScales:scale,sizeQty:keptQty,sizePrice:seedSizePrices(scale,price,picked.size_price_deltas)}];
       });
     }
   };
   const addExtraItem=()=>setShowPicker(true);
   const [showPicker,setShowPicker]=useState(false);
-  const onPickItem=(li)=>setItems(prev=>[...prev,{desc:li.desc,sku:li.sku,qty:li.qty,price:li.price,quoteId:li.quoteId,tierIdx:0,noPrice:!li.price,sizeScale:li.sizeScale||null,sizeQty:{},sizePrice:seedSizePrices(li.sizeScale||null,li.clientPrice,li.sizeDeltas)}]);
+  const onPickItem=(li)=>setItems(prev=>[...prev,{desc:li.desc,sku:li.sku,qty:li.qty,price:li.price,quoteId:li.quoteId,tierIdx:0,noPrice:!li.price,sizeScales:toScaleList(li.sizeScales),sizeQty:{},sizePrice:seedSizePrices(toScaleList(li.sizeScales),li.clientPrice,li.sizeDeltas)}]);
   // markDirty: the linked-PO tick is a styled div, not a checkbox, so toggling it
   // changes no control value and the snapshot cannot see it.
   const togglePO=pid=>{ markDirty(); setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]); };
@@ -1627,7 +1645,7 @@ function CreateSOModal({onClose,onCreated}){
     if(!items.filter(it=>it.desc.trim()).length){window._toast?.('Add at least one line item','err');return;}
     // A sized line expands to one row per size, so with every size at zero it would
     // contribute nothing and the order could be saved with no line items at all.
-    const noSizeQty=items.filter(it=>it.desc.trim()&&it.sizeScale).find(it=>lineQty(it)<=0);
+    const noSizeQty=items.filter(it=>it.desc.trim()&&sizesForSelection(it.sizeScales).length).find(it=>lineQty(it)<=0);
     if(noSizeQty){window._toast?.('Enter a quantity for at least one size on "'+noSizeQty.desc.trim()+'"','err');return;}
     setLoading(true);
     // auto-generate so_number from client PO if not set
@@ -1640,9 +1658,19 @@ function CreateSOModal({onClose,onCreated}){
     const expand=it=>{
       const base={sales_order_id:so.id,description:it.desc.trim(),client_price:Number(it.price)||null,currency:form.currency,_quoteId:it.quoteId,_tierIdx:it.tierIdx||0};
       const sku=(it.sku||'').trim()||null;   // quote SKUs carry stray whitespace; never build "SKU -S"
-      if(!it.sizeScale) return [{...base,client_sku:sku,quantity:Number(it.qty)||null,size:null}];
-      return sizesForScale(it.sizeScale).map(s=>({s,q:Number((it.sizeQty||{})[s])||0})).filter(x=>x.q>0)
-        .map(x=>({...base,client_sku:sku?sku+'-'+x.s:null,quantity:x.q,size:x.s,client_price:sizePriceOf(it,x.s)||null}));
+      const entries=sizesForSelection(it.sizeScales);
+      if(!entries.length) return [{...base,client_sku:sku,quantity:Number(it.qty)||null,size:null}];
+      // THE ONE THAT ESCAPES THE QUOTE. sales_order_items.size is a bare text
+      // label that prints straight onto the order confirmation as "Size L", and an
+      // Adult+Youth line has two Ls -- so without qualifying here it writes two
+      // rows reading identically, with identical SKUs, and the ambiguity the
+      // composite key removed inside the quote reappears in front of the client.
+      //
+      // e.label and skuToken are computed from THIS LINE's own selection, so a
+      // line that does not collide writes exactly what it always did: bare "L",
+      // SKU-L, and the collar scale's S/M unscrubbed.
+      return entries.map(e=>({e,q:Number((it.sizeQty||{})[e.key])||0})).filter(x=>x.q>0)
+        .map(x=>({...base,client_sku:sku?sku+'-'+skuToken(x.e):null,quantity:x.q,size:x.e.label,client_price:sizePriceOf(it,x.e.key)||null}));
     };
     const toIns=items.filter(it=>it.desc.trim()).flatMap(expand);
     if(toIns.length) await SB.from('sales_order_items').insert(toIns.map(({_quoteId,_tierIdx,...rest})=>({...rest,quote_id:_quoteId||null})));
@@ -1762,10 +1790,10 @@ function CreateSOModal({onClose,onCreated}){
                 <React.Fragment key={i}>
                   <tr>
                     <td><input value={it.desc} onChange={e=>si(i,'desc',e.target.value)} placeholder="Description…" /></td>
-                    <td>{it.sizeScale
+                    <td>{sizesForSelection(it.sizeScales).length
                       ? <div className="qty-from-sizes" title="Quantity comes from the size breakdown below"><span className="qfs-v">{lineQty(it).toLocaleString()}</span><span className="qfs-k">from sizes</span></div>
                       : <input type="number" value={it.qty} onChange={e=>si(i,'qty',e.target.value)} placeholder="0" />}</td>
-                    <td>{it.sizeScale
+                    <td>{sizesForSelection(it.sizeScales).length
                       ? <div className="qty-from-sizes" title="Blended unit price from the size breakdown below"><span className="qfs-v">{lineUnit(it).toFixed(2)}</span><span className="qfs-k">from sizes</span></div>
                       : <>
                           <input type="number" step="0.01" value={it.price} onChange={e=>si(i,'price',e.target.value)} placeholder="0.00" style={{borderColor:it.noPrice&&!it.price?'#f59e0b':''}} />
@@ -1781,7 +1809,7 @@ function CreateSOModal({onClose,onCreated}){
                       <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 8px'}}>
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 130px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Client SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.sku||''} onChange={e=>si(i,'sku',e.target.value)} placeholder="Client SKU" /></div>
                         <div style={{flex:'1 1 280px',minWidth:0}}>
-                          <SizeGrid scale={it.sizeScale||null} onScaleChange={k=>setSizeScale(i,k)} quantities={it.sizeQty||{}} onQuantityChange={(s,v)=>setSizeQty(i,s,v)} prices={it.sizePrice||{}} onPriceChange={(s,v)=>setSizePrice(i,s,v)} fallbackPrice={it.price} />
+                          <SizeGrid scales={it.sizeScales||[]} onScalesChange={ks=>setSizeScales(i,ks)} quantities={it.sizeQty||{}} onQuantityChange={(k,v)=>setSizeQty(i,k,v)} prices={it.sizePrice||{}} onPriceChange={(k,v)=>setSizePrice(i,k,v)} fallbackPrice={it.price} />
                         </div>
                       </div>
                     </td>
@@ -4438,7 +4466,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [srchHits, setSrchHits] = useState([]);
   const [srchRect, setSrchRect] = useState(null);
   const [showPicker, setShowPicker] = useState(false);
-  const onPickPOItem = (li) => setItems(prev=>[...prev,{prodId:'',desc:li.desc,qty:li.qty,price:li.price,ci:'',carton:'',vpn:'',masterSku:'',packSku:'',babySku:'',retailPrice:'',sizeScale:null,sizeQty:{},sizePrice:{}}]);
+  const onPickPOItem = (li) => setItems(prev=>[...prev,{prodId:'',desc:li.desc,qty:li.qty,price:li.price,ci:'',carton:'',vpn:'',masterSku:'',packSku:'',babySku:'',retailPrice:'',sizeScales:[],sizeQty:{},sizePrice:{}}]);
   const [recentDescs, setRecentDescs] = useState([]);
   const [form, setForm]  = useState({ factoryId:'', clientId:'', num:'', date:nowDate(), ship:'', cancel:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'', needs_samples:false, sample_type:'', sample_qty:'', sample_date:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -4479,7 +4507,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     });
   },[]);
 
-  const addItem = () => setItems(prev=>[...prev,{prodId:'',desc:'',qty:'',price:'',ci:'',carton:'',sizeScale:null,sizeQty:{},sizePrice:{}}]);
+  const addItem = () => setItems(prev=>[...prev,{prodId:'',desc:'',qty:'',price:'',ci:'',carton:'',sizeScales:[],sizeQty:{},sizePrice:{}}]);
   const [showNewClient, setShowNewClient] = useState(false);
   const [newClientName, setNewClientName] = useState('');
   const addNewClient = async () => {
@@ -4542,20 +4570,27 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const rmItem  = i => setItems(prev=>prev.filter((_,idx)=>idx!==i));
   // Seed every size at the line's unit price, so a flat-priced product needs no
   // typing and only an upcharge gets edited. Blank price leaves the boxes blank.
-  const seedPrices = (scaleKey, price) => (scaleKey && price !== '' && price != null)
-    ? sizesForScale(scaleKey).reduce((a,s)=>({...a,[s]:String(price)}),{}) : {};
-  const setSizeScale = (i,key) => setItems(prev=>prev.map((it,idx)=>{
+  const seedPrices = (scales, price) => (price !== '' && price != null)
+    ? sizesForSelection(scales).reduce((a,e)=>({...a,[e.key]:String(price)}),{}) : {};
+  // Seeds only what a newly ticked scale brings in, leaving prices already typed
+  // for a scale that stays selected exactly where they are.
+  const setSizeScales = (i,next) => setItems(prev=>prev.map((it,idx)=>{
     if(idx!==i) return it;
-    return {...it, sizeScale:key, sizePrice: !it.sizeScale&&key ? seedPrices(key,it.price) : (it.sizePrice||{})};
+    const had=new Set(sizesForSelection(it.sizeScales).map(e=>e.key));
+    const seed={...(it.sizePrice||{})};
+    if(it.price!==''&&it.price!=null){
+      sizesForSelection(next).forEach(e=>{ if(!had.has(e.key)&&seed[e.key]==null) seed[e.key]=String(it.price); });
+    }
+    return {...it, sizeScales:next, sizePrice:seed};
   }));
-  const setSizeQty   = (i,size,v) => setItems(prev=>prev.map((it,idx)=>idx===i?{...it,sizeQty:{...(it.sizeQty||{}),[size]:v}}:it));
-  const setSizePrice = (i,size,v) => setItems(prev=>prev.map((it,idx)=>idx===i?{...it,sizePrice:{...(it.sizePrice||{}),[size]:v}}:it));
+  const setSizeQty   = (i,key,v) => setItems(prev=>prev.map((it,idx)=>idx===i?{...it,sizeQty:{...(it.sizeQty||{}),[key]:v}}:it));
+  const setSizePrice = (i,key,v) => setItems(prev=>prev.map((it,idx)=>idx===i?{...it,sizePrice:{...(it.sizePrice||{}),[key]:v}}:it));
   // A sized line takes its quantity from the grid; an unsized line keeps its own box.
-  const lineQty = it => it.sizeScale?sizesForScale(it.sizeScale).reduce((a,s)=>a+(Number((it.sizeQty||{})[s])||0),0):(Number(it.qty)||0);
+  const lineQty = it => sizesForSelection(it.sizeScales).length?sizesForSelection(it.sizeScales).reduce((a,e)=>a+(Number((it.sizeQty||{})[e.key])||0),0):(Number(it.qty)||0);
   // A size with no price of its own falls back to the line's unit price -- the same
   // rule the save path uses, so the Amount column cannot disagree with what is written.
-  const sizePriceOf = (it,s) => { const v=(it.sizePrice||{})[s]; return v===''||v==null?(Number(it.price)||0):(Number(v)||0); };
-  const lineAmt = it => it.sizeScale?sizesForScale(it.sizeScale).reduce((a,s)=>a+(Number((it.sizeQty||{})[s])||0)*sizePriceOf(it,s),0):(Number(it.qty)||0)*(Number(it.price)||0);
+  const sizePriceOf = (it,k) => { const v=(it.sizePrice||{})[k]; return v===''||v==null?(Number(it.price)||0):(Number(v)||0); };
+  const lineAmt = it => sizesForSelection(it.sizeScales).length?sizesForSelection(it.sizeScales).reduce((a,e)=>a+(Number((it.sizeQty||{})[e.key])||0)*sizePriceOf(it,e.key),0):(Number(it.qty)||0)*(Number(it.price)||0);
   const lineUnit = it => { const q=lineQty(it); return q>0?lineAmt(it)/q:0; };
 
   // tiers stored as jsonb on each quote row
@@ -4633,20 +4668,20 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       sample: q.sample_fee!=null?String(q.sample_fee):prev.sample,
       notes: prev.notes || (q.notes||''),
     }));
-    const qScale = q.size_scale || null;
+    const qScale = toScaleList(q.size_scale);
     const qPrice = t.landed!=null?String(t.landed):'';
-    setItems([{ prodId: productIdForQuote(q), desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: qPrice, ci:'', carton:'', sizeScale: qScale, sizeQty:{}, sizePrice: seedPrices(qScale,qPrice) }]);
+    setItems([{ prodId: productIdForQuote(q), desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: qPrice, ci:'', carton:'', sizeScales: qScale, sizeQty:{}, sizePrice: seedPrices(qScale,qPrice) }]);
   };
   const pickTier = ti => { if(picked) applyQuote(picked, ti); };
   const addExtraFromQuote = async (q, ti) => {
     const tiers = tiersOf(q);
     const t = tiers[ti] ?? tiers[0];
     if (!t) { alert('Could not read tier data — try re-selecting the quote.'); return; }
-    const xScale = q.size_scale || null;
+    const xScale = toScaleList(q.size_scale);
     const xPrice = t.landed!=null?String(t.landed):'';
     // Matched too. This line comes from a quote just as items[0] does; leaving it
     // blank was why a multi-line PO could only ever carry one resolved product.
-    const newItem = { prodId:productIdForQuote(q), desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:xPrice, ci:'', carton:'', sizeScale:xScale, sizeQty:{}, sizePrice:seedPrices(xScale,xPrice) };
+    const newItem = { prodId:productIdForQuote(q), desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:xPrice, ci:'', carton:'', sizeScales:xScale, sizeQty:{}, sizePrice:seedPrices(xScale,xPrice) };
     setItems(prev=>[...prev, newItem]);
     // If no client set yet on this PO, pull it from this quote's client
     if (!form.clientId && q.client) {
@@ -4709,8 +4744,11 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     // size alone and no SKU field is rewritten.
     const rowsFor = it => {
       const base={ purchase_order_id:po.id, product_id:it.prodId||null, quantity:Number(it.qty), unit_price:Number(it.price)||0, currency:form.currency, ci_value:Number(it.ci)||null, carton_info:it.carton||null, vpn:it.vpn||null, master_sku:it.masterSku||null, pack_sku:it.packSku||null, baby_sku:it.babySku||null, retail_price:it.retailPrice?Number(it.retailPrice):null };
-      if (!it.sizeScale) return [{ ...base, size:null }];
-      return sizesForScale(it.sizeScale).map(s=>({s,q:Number((it.sizeQty||{})[s])||0})).filter(x=>x.q>0)
+      const entries=sizesForSelection(it.sizeScales);
+      if (!entries.length) return [{ ...base, size:null }];
+      // Qualified for the same reason as the SO path: two Ls on one PO would print
+      // identically on the document the factory works from.
+      return entries.map(e=>({e,q:Number((it.sizeQty||{})[e.key])||0})).filter(x=>x.q>0)
         .map(x=>({ ...base, quantity:x.q, unit_price:sizePriceOf(it,x.s), size:x.s }));
     };
     for (const it of valid) {
@@ -4909,10 +4947,10 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
                     <td>
                       <input value={it.desc} onChange={e=>handleProdInput(i,e.target.value,e.target)} onBlur={()=>setTimeout(()=>{setSrchIdx(-1);setSrchHits([]);setSrchRect(null);},200)} placeholder="Type to search products…" />
                     </td>
-                    <td>{it.sizeScale
+                    <td>{sizesForSelection(it.sizeScales).length
                       ? <div className="qty-from-sizes" title="Quantity comes from the size breakdown below"><span className="qfs-v">{lineQty(it).toLocaleString()}</span><span className="qfs-k">from sizes</span></div>
                       : <input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" />}</td>
-                    <td>{it.sizeScale
+                    <td>{sizesForSelection(it.sizeScales).length
                       ? <div className="qty-from-sizes" title="Blended unit price from the size breakdown below"><span className="qfs-v">{lineUnit(it).toFixed(2)}</span><span className="qfs-k">from sizes</span></div>
                       : <input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" />}</td>
                     <td className="mono" style={{textAlign:'right',whiteSpace:'nowrap',fontSize:'12.5px'}}>{money(lineAmt(it),form.currency)}</td>
@@ -4932,7 +4970,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Retail Price</span><input type="number" step="0.01" className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.retailPrice||''} onChange={e=>setItem(i,'retailPrice',e.target.value)} placeholder="0.00" /></div>
                       </div>
                       <div style={{padding:'0 0 8px'}}>
-                        <SizeGrid scale={it.sizeScale||null} onScaleChange={k=>setSizeScale(i,k)} quantities={it.sizeQty||{}} onQuantityChange={(s,v)=>setSizeQty(i,s,v)} prices={it.sizePrice||{}} onPriceChange={(s,v)=>setSizePrice(i,s,v)} fallbackPrice={it.price} />
+                        <SizeGrid scales={it.sizeScales||[]} onScalesChange={ks=>setSizeScales(i,ks)} quantities={it.sizeQty||{}} onQuantityChange={(k,v)=>setSizeQty(i,k,v)} prices={it.sizePrice||{}} onPriceChange={(k,v)=>setSizePrice(i,k,v)} fallbackPrice={it.price} />
                       </div>
                     </td>
                   </tr>
