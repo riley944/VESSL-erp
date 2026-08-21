@@ -319,6 +319,24 @@ export default function Testing() {
     });
     return map;
   },[prodOrders]);
+  // product_id -> the LATEST test_date among that product's reports.
+  //
+  // Computed as a running max rather than read off the fetch order. That query sorts
+  // test_date DESC, and Postgres sorts NULLS FIRST on DESC, so the first row for a
+  // product could be the one report with no date -- taking [0] would show nothing on a
+  // product that has four dated reports and one undated.
+  //
+  // Reaches 4 of 271 products today. 73 of the 84 reports are orphans carrying neither
+  // a product nor a material, which is the style_ref resolution problem rather than
+  // anything this map can fix.
+  const testedByProduct = useMemo(()=>{
+    const map = {};
+    reports.forEach(r=>{
+      if(!r.product_id || !r.test_date) return;
+      if(!map[r.product_id] || r.test_date > map[r.product_id]) map[r.product_id] = r.test_date;
+    });
+    return map;
+  },[reports]);
   // Local date, not toISOString(): that returns UTC and would move the window boundary by
   // a day for anyone west of it.
   const isoDaysAgo = (n) => {
@@ -792,7 +810,7 @@ export default function Testing() {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!(isAll(compSel) && isAll(efSel) && isAll(brandSel) && isAll(stageSel) && isAll(dateSel) && !clientFilter)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(dateSel)} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!(isAll(compSel) && isAll(efSel) && isAll(brandSel) && isAll(stageSel) && isAll(dateSel) && !clientFilter)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(dateSel)} testedByProduct={testedByProduct} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
@@ -846,9 +864,9 @@ export default function Testing() {
 // realistic actions cell -- Materials, Rules, eFiling and delete, each nowrap, with the
 // two counts at their longest -- plus room to spare; the cell is right-aligned, so any
 // surplus is invisible rather than a gap.
-const PROD_COLS = 'minmax(200px,1.2fr) minmax(160px,1fr) 170px 130px 340px';
+const PROD_COLS = 'minmax(200px,1.2fr) 170px 130px 110px 340px';
 
-function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false }) {
+function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false, testedByProduct = {} }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
   // well exist, it just does not match.
   // The order filters get their own empty copy. "Nothing in this filter" would be read as
@@ -902,7 +920,7 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
           right of a 340px track and their width moves with the two counts, so the label
           centres on the track, not on the group. */}
       <div style={{display:'grid',gridTemplateColumns:PROD_COLS,gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
-        {[{label:'Product'},{label:'Built from'},{label:'Stage',span:2,align:'center'},{label:'Compliance',align:'center'}].map(({label,span,align},i)=>(
+        {[{label:'Product'},{label:'Stage',span:2,align:'center'},{label:'Tested'},{label:'Compliance',align:'center'}].map(({label,span,align},i)=>(
           <div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:align||'left',...(span?{gridColumn:'span '+span}:null)}}>{label}</div>
         ))}
       </div>
@@ -955,24 +973,15 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                   exception it is. */}
               {p.client?.name && <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.client.name}</div>}
             </div>
-            {/* The materials cell shows what the product is actually built from, with
-                each material's status as a dot — and opens the link modal directly. */}
-            <div onClick={e=>{e.stopPropagation();onLink(p);}} style={{minWidth:0,cursor:'pointer'}} title="Edit linked materials">
-              {links.length ? (
-                <div style={{display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}}>
-                  {links.slice(0,2).map(l=>{
-                    const ms = MAT_STATUS[l.material?.status] || MAT_STATUS.untested;
-                    return (
-                      <span key={l.id} style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'11.5px',fontWeight:500,color:'#4A4A4E',background:'#F5F5F7',borderRadius:'980px',padding:'3px 9px',maxWidth:'150px'}}>
-                        <span style={{width:'6px',height:'6px',borderRadius:'50%',background:ms.dot,flexShrink:0}}/>
-                        <span style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{l.material?.name||'—'}</span>
-                      </span>
-                    );
-                  })}
-                  {links.length>2 && <span style={{fontSize:'11px',fontWeight:600,color:'#86868B'}}>+{links.length-2}</span>}
-                </div>
-              ) : <span style={{fontSize:'12px',color:'#C7C7CC'}}>no materials linked</span>}
-            </div>
+            {/* The 'Built from' cell was here. It rendered up to two material pills and
+                otherwise the words "no materials linked" -- which was 268 of 271 rows,
+                because only 3 products have a material linked at all. A column empty on
+                99% of its rows costs a grid track and returns a sentence.
+
+                Nothing is lost with it. The same links array still feeds the Materials (N) pill in
+                the actions cell, which carries the same count and opens the same modal,
+                so the data and the only way to edit it both survive. What went is the
+                material NAMES and their status dots at a glance, on three rows. */}
             <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:'4px',minWidth:0}} onClick={e=>e.stopPropagation()}>
               {/* The pill is Jenn's stored call; the select writes it. The line under is
                   the material-derived signal — advisory context beside the decision,
@@ -1012,6 +1021,30 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
               >
                 {STAGE_OPTS.map(([v,l])=><option key={v||'none'} value={v}>{l}</option>)}
               </select>
+            </div>
+            {/* Fourth track: the latest test date, or N/A. Reaches 4 of 271 products
+                today -- LLW-1544, LLW-1545, JON-106, LLW-1388 -- because only 11 of the
+                84 reports carry a product_id and 73 are orphans whose style_ref never
+                resolved. The N/A on the other 267 is the honest reading of that, not a
+                gap to word around: the report exists in most cases, the LINK does not.
+
+                N/A rather than an em dash. The dash elsewhere on this row means "not
+                recorded"; this means "no report is linked to this product", which is a
+                different statement and the one a person needs to act on.
+
+                A FIXED 110px track, not flexible. "May 17, 2026" is twelve characters
+                and never grows. Fixed is also what keeps this column out of the failure
+                dc3bff7 diagnosed: an intrinsic track resolves from each grid's OWN
+                contents, so a header cell holding a short label and a row cell holding a
+                date would size differently and every label from here rightward would
+                drift off its column.
+
+                Plain text, and for a data reason rather than a cost one: pdf_url is null
+                on all 11 product-linked reports, so there is nothing to link to. The
+                Reports tab is where a report gets opened. */}
+            <div style={{minWidth:0,fontSize:'12px',color:testedByProduct[p.id]?'#4A4A4E':'#C7C7CC',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}
+                 title={testedByProduct[p.id] ? 'Latest linked test report' : 'No test report is linked to this product'}>
+              {testedByProduct[p.id] ? fmtDate(testedByProduct[p.id]) : 'N/A'}
             </div>
             {/* The row itself opens the editor, so anything clickable inside it has to
                 stop the event or it would do both. */}
