@@ -17,7 +17,7 @@ import { useEffect, useState } from 'react';
 export const SIZE_SCALES = [
   { key:'adult',   label:'Adult apparel', short:'Adult',   sizes:['S','M','L','XL','2XL','3XL'] },
   { key:'youth',   label:'Youth apparel', short:'Youth',   sizes:['XS','S','M','L','XL'] },
-  { key:'toddler', label:'Toddler',       short:'Toddler', sizes:['2T','3T'] },
+  { key:'toddler', label:'Toddler',       short:'Toddler', sizes:['2T','3T','4T'] },
   { key:'bag',     label:'Bag',           short:'Bag',     sizes:['S','M','L','XL','Mega'] },
   { key:'collar',  label:'Collar',        short:'Collar',  sizes:['S/M','L/XL'] },
 ];
