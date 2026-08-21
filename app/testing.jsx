@@ -940,7 +940,7 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
           right of a 340px track and their width moves with the two counts, so the label
           centres on the track, not on the group. */}
       <div style={{display:'grid',gridTemplateColumns:PROD_COLS,gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
-        {[{label:'Product'},{label:'Stage',span:2,align:'center'},{label:'Testing Date'},{label:'Compliance',align:'center'}].map(({label,span,align},i)=>(
+        {[{label:'Product'},{label:'Stage',span:2,align:'center'},{label:'Testing Date',align:'center'},{label:'Compliance',align:'center'}].map(({label,span,align},i)=>(
           <div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:align||'left',...(span?{gridColumn:'span '+span}:null)}}>{label}</div>
         ))}
       </div>
@@ -1066,7 +1066,7 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                 Plain text, and for a data reason rather than a cost one: pdf_url is null
                 on all 11 product-linked reports, so there is nothing to link to. The
                 Reports tab is where a report gets opened. */}
-            <div style={{minWidth:0,fontSize:'12px',color:testedByProduct[p.id]?'#4A4A4E':'#C7C7CC',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}
+            <div style={{minWidth:0,fontSize:'12px',color:testedByProduct[p.id]?'#4A4A4E':'#C7C7CC',textAlign:'center',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}
                  title={testedByProduct[p.id] ? 'Latest linked test report' : 'No test report is linked to this product'}>
               {testedByProduct[p.id] ? fmtDate(testedByProduct[p.id]) : 'N/A'}
             </div>
