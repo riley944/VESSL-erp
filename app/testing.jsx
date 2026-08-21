@@ -864,7 +864,7 @@ export default function Testing() {
 // realistic actions cell -- Materials, Rules, eFiling and delete, each nowrap, with the
 // two counts at their longest -- plus room to spare; the cell is right-aligned, so any
 // surplus is invisible rather than a gap.
-const PROD_COLS = 'minmax(200px,1.2fr) 170px 130px 110px 340px';
+const PROD_COLS = 'minmax(200px,1.2fr) 170px 130px 140px 340px';
 
 function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false, testedByProduct = {} }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
@@ -920,7 +920,7 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
           right of a 340px track and their width moves with the two counts, so the label
           centres on the track, not on the group. */}
       <div style={{display:'grid',gridTemplateColumns:PROD_COLS,gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
-        {[{label:'Product'},{label:'Stage',span:2,align:'center'},{label:'Tested'},{label:'Compliance',align:'center'}].map(({label,span,align},i)=>(
+        {[{label:'Product'},{label:'Stage',span:2,align:'center'},{label:'Testing Date'},{label:'Compliance',align:'center'}].map(({label,span,align},i)=>(
           <div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:align||'left',...(span?{gridColumn:'span '+span}:null)}}>{label}</div>
         ))}
       </div>
@@ -1032,12 +1032,16 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                 recorded"; this means "no report is linked to this product", which is a
                 different statement and the one a person needs to act on.
 
-                A FIXED 110px track, not flexible. "May 17, 2026" is twelve characters
-                and never grows. Fixed is also what keeps this column out of the failure
-                dc3bff7 diagnosed: an intrinsic track resolves from each grid's OWN
-                contents, so a header cell holding a short label and a row cell holding a
-                date would size differently and every label from here rightward would
-                drift off its column.
+                A FIXED 140px track, not flexible. The header label "TESTING DATE" is
+                the widest thing in this column at roughly 84px -- wider than the date
+                itself, "May 17, 2026", at roughly 76px -- and neither grows. Fixed is
+                also what keeps this column out of the failure dc3bff7 diagnosed: an
+                intrinsic track resolves from each grid's OWN contents, so a header cell
+                holding a label and a row cell holding a date would size differently and
+                every label from here rightward would drift off its column.
+
+                The width comes out of track 1, the only flexible one, so widening this
+                column narrows the Product cell rather than moving anything to its right.
 
                 Plain text, and for a data reason rather than a cost one: pdf_url is null
                 on all 11 product-linked reports, so there is nothing to link to. The
