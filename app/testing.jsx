@@ -357,7 +357,7 @@ export default function Testing() {
   // PROD_STATUS carries the colour for each compliance bucket, so the dropdown rows
   // tint the same way the row pills do rather than inventing a second palette.
   const compOptions = useMemo(()=>[
-    { value:'',          label:'All compliance', count:products.length },
+    { value:'',          label:'All Compliance', count:products.length },
     { value:'compliant', label:'Compliant',      count:n('c:compliant'), color:PROD_STATUS.compliant.dot },
     { value:'pending',   label:'Pending',        count:n('c:pending'),   color:PROD_STATUS.pending.dot },
     { value:'issues',    label:'Issues',         count:n('c:issues'),    color:PROD_STATUS.failed.dot },
@@ -375,13 +375,13 @@ export default function Testing() {
     { value:'undecided', label:'eFiling not set',       count:n('e:undecided') },
   ],[countBy, products.length]);
   const brandOptions = useMemo(()=>[
-    { value:'',             label:'All brands',   count:products.length },
+    { value:'',             label:'All Brands',   count:products.length },
     { value:'merlin',       label:'Merlin',       count:n('b:merlin') },
     { value:'non_merlin',   label:'Non-Merlin',   count:n('b:non_merlin') },
     { value:'unclassified', label:'Unclassified', count:n('b:unclassified') },
   ],[countBy, products.length]);
   const stageOptions = useMemo(()=>[
-    { value:'',           label:'All stages', count:products.length },
+    { value:'',           label:'All Stages', count:products.length },
     { value:'production', label:'Production', count:n('s:production') },
     { value:'sample',     label:'Sample',     count:n('s:sample') },
     { value:'notset',     label:'Not set',    count:n('s:notset') },
@@ -390,7 +390,7 @@ export default function Testing() {
   // that do not sum to the total reads as an error rather than as nesting, and the
   // caption under the row already carries the coverage figure that matters.
   const dateOptions = useMemo(()=>[
-    { value:'',       label:'Ordered · any' },
+    { value:'',       label:'Ordered · Any' },
     { value:'30',     label:'Within 30 days' },
     { value:'60',     label:'Within 60 days' },
     { value:'90',     label:'Within 90 days' },
@@ -666,7 +666,7 @@ export default function Testing() {
   // knowing before reading 271 as 271 problems.
   const efTileCount = isAll(efSel) ? products.length
                     : products.filter(p => efSel.includes(efilingKey(p))).length;
-  const efTileLabel = isAll(efSel) ? 'eFiling \u00b7 all'
+  const efTileLabel = isAll(efSel) ? 'eFiling \u00b7 All'
                     : efSel.length === 1 ? (EFILING_LABEL[efSel[0]] || 'eFiling')
                     : 'eFiling \u00b7 ' + efSel.length + ' selected';
   const pulse = [
@@ -747,11 +747,11 @@ export default function Testing() {
             nothing else finds those products now; that is accepted, not overlooked. */}
         {tab==='products' && (
           <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',width:'100%'}}>
-            <FilterSelect multiple label="All compliance" value={compSel}  onChange={setCompSel}  options={compOptions} />
+            <FilterSelect multiple label="All Compliance" value={compSel}  onChange={setCompSel}  options={compOptions} />
             <FilterSelect multiple label="All eFiling"    value={efSel}    onChange={setEfSel}    options={efOptions} />
-            <FilterSelect multiple label="All brands"     value={brandSel} onChange={setBrandSel} options={brandOptions} />
-            <FilterSelect multiple label="All stages"     value={stageSel} onChange={setStageSel} options={stageOptions} />
-            <FilterSelect multiple label="Ordered · any"  value={dateSel}  onChange={setDateSel}  options={dateOptions} />
+            <FilterSelect multiple label="All Brands"     value={brandSel} onChange={setBrandSel} options={brandOptions} />
+            <FilterSelect multiple label="All Stages"     value={stageSel} onChange={setStageSel} options={stageOptions} />
+            <FilterSelect multiple label="Ordered · Any"  value={dateSel}  onChange={setDateSel}  options={dateOptions} />
             {/* Single-select: a client is an identity, not a bucket, and the 13 of
                 them behave nothing like a five-item state list. */}
             <FilterSelect label="All Clients" value={clientFilter} onChange={setClientFilter} options={clientOptions} />
