@@ -9,7 +9,9 @@ import {
 // lib/supabaseQuotes still exists; page.jsx and pricing.jsx both import it.
 import { SB } from "@/lib/supabase";
 import { FilterSelect } from "@/app/components/FilterSelect";
-import { SIZE_SCALES, sizesForScale } from "@/app/components/SizeGrid";
+// sizesForScale is gone from this file: a quote can now carry several scales, and
+// every size here is addressed by the composite key sizesForSelection hands out.
+import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey } from "@/app/components/SizeGrid";
 import { CodeModal } from "@/app/components/CodeModal";
 // HtsField used to live in this file. It moved to app/components so the Edit
 // Product modal could use the same control rather than a second copy -- the
@@ -167,12 +169,12 @@ function tierMargin(t, client, moldFee) {
 // null whenever the tier should render exactly as it does without deltas: no size
 // scale, or every size sitting at the base price (which covers a tier with no deltas
 // at all, base or no base).
-function marginRangeFor(t, moldFee, deltaMap, scaleKey) {
+function marginRangeFor(t, moldFee, deltaMap, scales) {
   const base = Number(t.client) || 0;
-  const sizes = scaleKey ? sizesForScale(scaleKey) : [];
-  if (!sizes.length) return null;
-  const priced = sizes.map((s) => {
-    const d = Number((deltaMap || {})[s]);
+  const entries = sizesForSelection(scales);
+  if (!entries.length) return null;
+  const priced = entries.map((e) => {
+    const d = Number((deltaMap || {})[e.key]);
     return base + (isFinite(d) ? d : 0);
   });
   if (!priced.some((p) => p !== base)) return null;
@@ -187,14 +189,15 @@ function marginRangeFor(t, moldFee, deltaMap, scaleKey) {
 // whose client price is not settled yet still needs a quantity. A missing base is
 // zero, so a +10 with no base is simply a price of 10; price is null only when the
 // arithmetic lands at or below zero, and margin follows the price.
-function sizeRowsFor(t, moldFee, deltaMap, scaleKey) {
+function sizeRowsFor(t, moldFee, deltaMap, scales) {
   const base = Number(t.client) || 0;
-  const sizes = scaleKey ? sizesForScale(scaleKey) : [];
-  return sizes.map((s) => {
-    const d = Number((deltaMap || {})[s]);
+  // key is what the quantity is stored under, label is what the row prints. They
+  // differ only when the selection collides -- "Adult L" over key 'adult|L'.
+  return sizesForSelection(scales).map((e) => {
+    const d = Number((deltaMap || {})[e.key]);
     const delta = isFinite(d) ? d : 0;
     const price = base + delta > 0 ? base + delta : null;
-    return { size: s, delta, price, margin: price == null ? null : tierMargin(t, price, moldFee) };
+    return { key: e.key, size: e.size, label: e.label, scale: e.scale, delta, price, margin: price == null ? null : tierMargin(t, price, moldFee) };
   });
 }
 // What the size mix on a tier is actually worth: the amount it bills to, and the
@@ -202,14 +205,13 @@ function sizeRowsFor(t, moldFee, deltaMap, scaleKey) {
 // price above zero — with no base that means the deltas alone, the same reading
 // sizeRowsFor takes, so this can never disagree with the rows printed beneath the
 // tier. Null when no size qualifies.
-function sizeMixFor(t, deltaMap, scaleKey) {
+function sizeMixFor(t, deltaMap, scales) {
   const base = Number(t.client) || 0;
-  const sizes = scaleKey ? sizesForScale(scaleKey) : [];
   let units = 0, total = 0;
-  sizes.forEach((s) => {
-    const q = Number((t.sizeQty || {})[s]) || 0;
+  sizesForSelection(scales).forEach((e) => {
+    const q = Number((t.sizeQty || {})[e.key]) || 0;
     if (q <= 0) return;
-    const d = Number((deltaMap || {})[s]);
+    const d = Number((deltaMap || {})[e.key]);
     const price = base + (isFinite(d) ? d : 0);
     if (price <= 0) return;
     units += q;
@@ -221,11 +223,10 @@ function sizeMixFor(t, deltaMap, scaleKey) {
 // Null when no size on this tier carries a quantity, which is what keeps the tier's
 // own Quantity box an ordinary input. An entered 0 still counts as entered, so the
 // box cannot flip back to an input halfway through someone clearing a size.
-function sizeQtyTotal(t, scaleKey) {
-  const sizes = scaleKey ? sizesForScale(scaleKey) : [];
+function sizeQtyTotal(t, scales) {
   let any = false, total = 0;
-  sizes.forEach((s) => {
-    const v = (t.sizeQty || {})[s];
+  sizesForSelection(scales).forEach((e) => {
+    const v = (t.sizeQty || {})[e.key];
     if (v === "" || v == null) return;
     any = true;
     total += Number(v) || 0;
@@ -267,39 +268,77 @@ const KU_LOGO_PRINT = "/logo.png";
 // tier. Stored as an array of records, non-zero entries only ([{size,delta}]); held
 // in form state as a keyed map of STRINGS ({"2XL":"1.5"}) because coercing to Number
 // on each keystroke makes "1.50" untypeable, the same reason SizeGrid holds strings.
-function deltasToMap(v) {
+// ┌───────────────────────────────────────────────────────────────────────────┐
+// │ THESE FOUR FUNCTIONS ARE TWO PAIRS, AND EACH PAIR MUST AGREE EXACTLY.     │
+// │                                                                           │
+// │ formToRow's whitelist is destructive -- anything it does not name is      │
+// │ dropped on every save, silently. So if a reader and its writer disagree   │
+// │ about a key by so much as a character, quantities compute on screen, look │
+// │ right, and vanish when the quote is saved. Nothing reports it.            │
+// │                                                                           │
+// │ deltasToMap  <-> mapToDeltas   both speak [{scale,size,delta}]            │
+// │ qtyMapFrom   <-> qtyMapToRow   both speak [{scale,size,qty}]              │
+// │                                                                           │
+// │ In form state both are ONE flat map keyed by sizeKey(scale,size), so the  │
+// │ helpers above index them the same way whatever is selected.               │
+// └───────────────────────────────────────────────────────────────────────────┘
+//
+// Stored entries carry their scale. Entries written BEFORE that -- 2 quotes, both
+// 'bag' -- carry only a size, and are attributed to the row's single scale. That
+// is deterministic rather than a guess precisely because a legacy row has exactly
+// one: the migration turned every scalar into a one-element array. A row that
+// somehow held several scales and scale-less entries is unresolvable, so those
+// entries are DROPPED rather than assigned to the first scale, which would invent
+// a fact. No such row exists today.
+function deltasToMap(v, scales) {
   let arr = [];
   try { arr = Array.isArray(v) ? v : (v ? JSON.parse(v) : []); } catch { arr = []; }
+  const list = toScaleList(scales);
   const map = {};
   (Array.isArray(arr) ? arr : []).forEach((d) => {
     if (!d || d.size == null) return;
     const n = Number(d.delta);
     if (!isFinite(n) || n === 0) return;
-    map[String(d.size)] = String(n);
+    const scale = d.scale != null ? String(d.scale) : (list.length === 1 ? list[0] : null);
+    if (!scale) return;
+    map[sizeKey(scale, String(d.size))] = String(n);
   });
   return map;
 }
-// Sizes outside the current scale are dropped here as well as on scale change, so a
-// stale delta can never reach the column. No scale (a flat product) stores [].
-function mapToDeltas(map, scaleKey) {
-  if (!scaleKey) return [];
-  return sizesForScale(scaleKey)
-    .map((s) => ({ size: s, delta: Number((map || {})[s]) }))
+// Sizes outside the current selection are dropped here as well as on scale change,
+// so a stale delta can never reach the column. No scale (a flat product) stores [].
+function mapToDeltas(map, scales) {
+  return sizesForSelection(scales)
+    .map((e) => ({ scale: e.scale, size: e.size, delta: Number((map || {})[e.key]) }))
     .filter((d) => isFinite(d.delta) && d.delta !== 0);
 }
 // Per-size quantities ride on the TIER, not the quote — 500 units split S/M/L is a
 // different split at 5,000. Stored as an object keyed by size, held in form state as
 // STRINGS for the same reason the deltas are. Absent on every tier written before
 // this existed, which reads back as {}.
-function qtyMapFrom(v) {
+// Two stored shapes, told apart by Array.isArray rather than by a version flag: the
+// new one is a list of records, the legacy one an object keyed by bare size. Same
+// attribution rule as deltasToMap, and the same refusal to guess.
+function qtyMapFrom(v, scales) {
   let obj = v;
   try { if (typeof v === "string") obj = v ? JSON.parse(v) : {}; } catch { obj = {}; }
-  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return {};
   const map = {};
+  if (Array.isArray(obj)) {
+    obj.forEach((e) => {
+      if (!e || e.size == null || e.scale == null) return;
+      const n = Number(e.qty);
+      if (!isFinite(n)) return;
+      map[sizeKey(String(e.scale), String(e.size))] = String(n);
+    });
+    return map;
+  }
+  if (!obj || typeof obj !== "object") return {};
+  const list = toScaleList(scales);
+  if (list.length !== 1) return {};
   Object.keys(obj).forEach((s) => {
     const n = Number(obj[s]);
     if (!isFinite(n)) return;
-    map[String(s)] = String(n);
+    map[sizeKey(list[0], String(s))] = String(n);
   });
   return map;
 }
@@ -307,18 +346,22 @@ function qtyMapFrom(v) {
 // off entirely and a tier nobody has touched keeps writing exactly the six keys it
 // always has. Sizes outside the current scale are dropped here as well as on scale
 // change, the same belt-and-braces mapToDeltas uses.
-function qtyMapToRow(map, scaleKey) {
-  if (!scaleKey) return null;
-  const out = {};
-  sizesForScale(scaleKey).forEach((s) => {
-    const v = (map || {})[s];
+function qtyMapToRow(map, scales) {
+  const out = [];
+  sizesForSelection(scales).forEach((e) => {
+    const v = (map || {})[e.key];
+    // An entered 0 is a real answer and survives; "" and null are "not filled in".
     if (v === "" || v == null) return;
     const n = Number(v);
-    if (isFinite(n)) out[s] = n;
+    if (!isFinite(n)) return;
+    out.push({ scale: e.scale, size: e.size, qty: n });
   });
-  return Object.keys(out).length ? out : null;
+  return out.length ? out : null;
 }
 function rowToForm(r) {
+  // Read FIRST: both the deltas and every tier's quantities need it to attribute
+  // legacy scale-less entries, so it cannot be computed at the return.
+  const scales = toScaleList(r.size_scale);
   let tiers = [];
   try { tiers = Array.isArray(r.tiers) ? r.tiers : (r.tiers ? JSON.parse(r.tiers) : []); } catch { tiers = []; }
   if ((!tiers || tiers.length === 0) && (r.landed != null || r.qty != null)) {
@@ -351,12 +394,12 @@ function rowToForm(r) {
     // tiers, and duty_only is already sitting in that jsonb as a dead key nobody
     // reads; a second one would outlive its purpose the same way.
     const legacyFreight = (t.duty == null || t.duty === "") && (air !== "" || ocean !== "");
-    return { qty: t.qty ?? "", landed: t.landed ?? "", ship, freightAir: air, freightOcean: ocean, client: t.client ?? "", fb: Array.isArray(t.fb) ? t.fb : null, duty_only: t.duty_only || false, duty: t.duty ?? "", dutyManual: !!t.dutyManual, dutyLegacy: legacyFreight, sizeQty: qtyMapFrom(t.sizeQty) };
+    return { qty: t.qty ?? "", landed: t.landed ?? "", ship, freightAir: air, freightOcean: ocean, client: t.client ?? "", fb: Array.isArray(t.fb) ? t.fb : null, duty_only: t.duty_only || false, duty: t.duty ?? "", dutyManual: !!t.dutyManual, dutyLegacy: legacyFreight, sizeQty: qtyMapFrom(t.sizeQty, scales) };
   });
   return {
     id: r.id,
     quoteDate: r.quote_date || "", product: r.product || "",
-    sku: r.sku || "", sizeScale: r.size_scale || "", sizeDeltas: deltasToMap(r.size_price_deltas), notes: r.notes || "",
+    sku: r.sku || "", sizeScales: scales, sizeDeltas: deltasToMap(r.size_price_deltas, scales), notes: r.notes || "",
     client: r.client || "", clientContact: r.client_contact || "", clientEmail: r.client_email || "",
     clientPhone: r.client_phone || "", clientAddress: r.client_address || "",
     factory: r.factory || "", factoryContact: r.factory_contact || "", factoryEmail: r.factory_email || "",
@@ -393,14 +436,20 @@ function formToRow(f) {
       duty: t.duty === "" || t.duty == null ? null : Number(t.duty),
       dutyManual: !!t.dutyManual,
     };
-    const sizeQty = qtyMapToRow(t.sizeQty, f.sizeScale);
+    // Named 'sizeQty' still, and read back by qtyMapFrom under that same name. The
+    // SHAPE changed from {size:qty} to [{scale,size,qty}]; the key did not, so a
+    // tier written before this reads back through the legacy branch rather than
+    // being dropped by the whitelist.
+    const sizeQty = qtyMapToRow(t.sizeQty, f.sizeScales);
     if (sizeQty) out.sizeQty = sizeQty;
     return out;
   });
   const first = f.tiers && f.tiers[0] ? f.tiers[0] : {};
   return {
     quote_date: f.quoteDate || null, product: f.product || null,
-    sku: f.sku || null, size_scale: f.sizeScale || null, size_price_deltas: mapToDeltas(f.sizeDeltas, f.sizeScale), qty: num(first.qty), notes: f.notes || null,
+    // text[] since the migration. An empty selection writes NULL, not '{}': NULL is
+    // "this quote has no sizes", which is what every unsized quote has always said.
+    sku: f.sku || null, size_scale: (f.sizeScales || []).length ? f.sizeScales : null, size_price_deltas: mapToDeltas(f.sizeDeltas, f.sizeScales), qty: num(first.qty), notes: f.notes || null,
     client: f.client || null, client_contact: f.clientContact || null, client_email: f.clientEmail || null,
     client_phone: f.clientPhone || null, client_address: f.clientAddress || null,
     factory: f.factory || null, factory_contact: f.factoryContact || null, factory_email: f.factoryEmail || null,
@@ -423,7 +472,7 @@ const SKU_SIZE_SUFFIX = /[-_\/ ]\s*(?:[0-9]?X{0,3}(?:S|M|L|XS|SM|MED|LG|XL|XXL|S
 const skuLooksSized = (sku) => SKU_SIZE_SUFFIX.test((sku || "").trim());
 
 const BLANK = {
-  id: null, quoteDate: "", product: "", sku: "", sizeScale: "", sizeDeltas: {}, notes: "",
+  id: null, quoteDate: "", product: "", sku: "", sizeScales: [], sizeDeltas: {}, notes: "",
   updatedAt: "", updatedBy: "",
   client: "", clientContact: "", clientEmail: "", clientPhone: "", clientAddress: "",
   factory: "", factoryContact: "", factoryEmail: "", factoryPhone: "", country: "", leadTime: "", hts: "",
@@ -2123,41 +2172,52 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
     setF((p) => ({ ...p, [k]: v }));
   };
   // Warn only -- the user may be part-way through stripping the suffix off the SKU.
-  const sizeClash = !!f.sizeScale && skuLooksSized(f.sku);
+  const sizeClash = (f.sizeScales || []).length > 0 && skuLooksSized(f.sku);
+  // Computed once per render: the control, the delta row and every tier's size rows
+  // all have to agree about what is selected and how each size is labelled.
+  const sizeEntries = sizesForSelection(f.sizeScales);
 
-  // Deltas and per-tier quantities are both keyed by size, so a scale change must drop
-  // any with no home in the new scale — the same rule SizeGrid.changeScale applies to
-  // quantities. Clearing the scale clears them all. SelectField calls set(k) for its
-  // onChange, so this is handed in as a set-shaped function for that one field.
-  const setSizeScale = (e) => {
-    const key = (e && e.target ? e.target.value : e) || "";
+  // Deltas and per-tier quantities are keyed by sizeKey(scale,size), so removing a
+  // scale drops exactly that scale's entries and nothing else.
+  //
+  // THIS IS THE CASE THE OLD CODE COULD NOT EXPRESS. Keyed on the bare label,
+  // dropping Adult from an Adult+Youth quote would have had to decide what to do
+  // with "L" -- which belongs to both -- and either answer loses data or keeps the
+  // wrong one. Keyed by scale, 'adult|L' goes and 'youth|L' stays, with no rule
+  // needed for the collision at all.
+  //
+  // No markDirty: these are real checkboxes, so ticking one fires a native change
+  // event and the modal guard sees it.
+  const toggleSizeScale = (key) => {
     setF((p) => {
-      const nextSizes = key ? sizesForScale(key) : [];
+      const cur = toScaleList(p.sizeScales);
+      const next = toScaleList(cur.includes(key) ? cur.filter((k) => k !== key) : cur.concat(key));
+      const live = new Set(sizesForSelection(next).map((e) => e.key));
       const keep = (m) => {
         const kept = {};
-        Object.keys(m || {}).forEach((s) => { if (nextSizes.includes(s)) kept[s] = m[s]; });
+        Object.keys(m || {}).forEach((k) => { if (live.has(k)) kept[k] = m[k]; });
         return kept;
       };
-      return { ...p, sizeScale: key, sizeDeltas: keep(p.sizeDeltas), tiers: p.tiers.map((t) => ({ ...t, sizeQty: keep(t.sizeQty) })) };
+      return { ...p, sizeScales: next, sizeDeltas: keep(p.sizeDeltas), tiers: p.tiers.map((t) => ({ ...t, sizeQty: keep(t.sizeQty) })) };
     });
   };
   // Deltas can be negative, so SizeGrid's digit-only strip is wrong here. Keep one
   // leading '-' and one '.', reject everything else. Blank means zero.
-  const setSizeDelta = (size, raw) => {
+  const setSizeDelta = (key, raw) => {
     let s = String(raw).replace(/[^0-9.-]/g, "");
     const neg = s.startsWith("-");
     s = s.replace(/-/g, "");
     const dot = s.indexOf(".");
     if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, "");
     if (neg) s = "-" + s;
-    setF((p) => ({ ...p, sizeDeltas: { ...(p.sizeDeltas || {}), [size]: s } }));
+    setF((p) => ({ ...p, sizeDeltas: { ...(p.sizeDeltas || {}), [key]: s } }));
   };
   // Quantities are whole units, so here SizeGrid's digit-only strip is exactly right —
   // type="number" would still admit 'e' and '-'. Blank means none. Unlike the deltas,
   // which are one set per quote, these belong to a single tier.
-  const setSizeQty = (i, size, raw) => {
+  const setSizeQty = (i, key, raw) => {
     const digits = String(raw).replace(/[^0-9]/g, "");
-    setF((p) => ({ ...p, tiers: p.tiers.map((t, idx) => idx === i ? { ...t, sizeQty: { ...(t.sizeQty || {}), [size]: digits } } : t) }));
+    setF((p) => ({ ...p, tiers: p.tiers.map((t, idx) => idx === i ? { ...t, sizeQty: { ...(t.sizeQty || {}), [key]: digits } } : t) }));
   };
 
   const clientMatches = (() => {
@@ -2360,28 +2420,53 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
         <div style={S.modalBody}>
           <FormSection icon={<Box size={15} />} title="Product">
             <Field label="SKU" k="sku" placeholder="Internal SKU" f={f} set={set} />
-            <SelectField label="Size Scale" k="sizeScale" placeholder="— no sizes —"
-              options={SIZE_SCALES.map((s) => ({ value: s.key, label: s.label }))}
-              hint={sizeClash ? "SKU already ends in a size — with a scale set too, order lines would double it (…-Large-S)." : null}
-              f={f} set={() => setSizeScale} />
+            {/* Checkboxes rather than a multi-select or chips. Five fixed options
+                is small enough to show at once, ctrl-clicking a <select multiple>
+                is a trap, and a real checkbox fires a native change event -- so the
+                modal dirty guard sees a scale being ticked without a markDirty call,
+                which chip buttons would have needed.
+
+                Spans the row for the same reason the delta strip below does. */}
+            <div style={{ ...S.field, gridColumn: "1 / -1" }}>
+              <span style={S.fieldLabel}>Size scales</span>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", paddingTop: 2 }}>
+                {SIZE_SCALES.map((s) => (
+                  // globals.css:241 styles bare `label` mono/uppercase/.14em app-wide,
+                  // and every one of those is inherited by the text inside. Reset here
+                  // rather than fought later -- the same explicit override
+                  // CreateProductModal uses on its inline captions.
+                  <label key={s.key} style={{ display: "inline-flex", alignItems: "center", gap: 6, margin: 0, fontFamily: "inherit", fontSize: 13, letterSpacing: 0, textTransform: "none", color: "#0f1729", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={(f.sizeScales || []).includes(s.key)}
+                      onChange={() => toggleSizeScale(s.key)}
+                    />
+                    {s.label}
+                  </label>
+                ))}
+              </div>
+              {sizeClash && <span style={S.tierHint}>SKU already ends in a size — with a scale set too, order lines would double it (…-Large-S).</span>}
+            </div>
             {/* Spans the whole form row: S.formGrid is auto-fit minmax(150px,1fr),
-                which otherwise crushes six size inputs into one narrow column. */}
-            {f.sizeScale && (
+                which otherwise crushes the size inputs into one narrow column. */}
+            {sizeEntries.length > 0 && (
               <label style={{ ...S.field, gridColumn: "1 / -1" }}>
                 <span style={S.fieldLabel}>Per-size price adjustment</span>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {sizesForScale(f.sizeScale).map((s) => (
+                  {sizeEntries.map((e) => (
                     // a div, not a label: the caption sits above its own input already
-                    <div key={s} style={{ display: "flex", flexDirection: "column", gap: 3, width: 74 }}>
-                      <span style={{ fontSize: 11, color: "#6a7488", fontWeight: 600, textAlign: "center" }}>{s}</span>
+                    <div key={e.key} style={{ display: "flex", flexDirection: "column", gap: 3, width: 74 }}>
+                      {/* e.label, not e.size: on Adult+Youth this reads "Adult L" so
+                          the two L boxes are not two identical captions. */}
+                      <span style={{ fontSize: 11, color: "#6a7488", fontWeight: 600, textAlign: "center" }}>{e.label}</span>
                       <input
                         style={{ ...S.tierInput, textAlign: "right" }}
                         type="text"
                         inputMode="decimal"
                         placeholder="0.00"
-                        aria-label={"Price adjustment for size " + s}
-                        value={(f.sizeDeltas || {})[s] ?? ""}
-                        onChange={(e) => setSizeDelta(s, e.target.value)}
+                        aria-label={"Price adjustment for size " + e.label}
+                        value={(f.sizeDeltas || {})[e.key] ?? ""}
+                        onChange={(ev) => setSizeDelta(e.key, ev.target.value)}
                       />
                     </div>
                   ))}
@@ -2539,16 +2624,16 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                 const m = tierMargin(t, t.client, f.moldFee);
                 // null unless per-size deltas actually widen this tier, in which case
                 // the cell falls through to exactly the single value it shows today.
-                const mr = marginRangeFor(t, f.moldFee, f.sizeDeltas, f.sizeScale);
+                const mr = marginRangeFor(t, f.moldFee, f.sizeDeltas, f.sizeScales);
                 // One row per size. Price and margin are display only — deltas are
                 // stored once per quote and apply to every tier, so editing one here
                 // would silently move the others; that stays in the Product section.
                 // The quantity box is the exception: it belongs to this tier alone.
-                const sizeRows = sizeRowsFor(t, f.moldFee, f.sizeDeltas, f.sizeScale);
-                const sizeTotal = sizeQtyTotal(t, f.sizeScale);
+                const sizeRows = sizeRowsFor(t, f.moldFee, f.sizeDeltas, f.sizeScales);
+                const sizeTotal = sizeQtyTotal(t, f.sizeScales);
                 // With a mix entered the tier has one real margin rather than a band,
                 // so the blended price supersedes the delta range in the Margin cell.
-                const mix = sizeMixFor(t, f.sizeDeltas, f.sizeScale);
+                const mix = sizeMixFor(t, f.sizeDeltas, f.sizeScales);
                 const mixMargin = mix ? tierMargin(t, mix.blended, f.moldFee) : null;
                 // Decides only whether a size row shows what it was adjusted BY, not
                 // whether it has a price — with no base the delta is the price itself.
@@ -2630,18 +2715,22 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                   </div>
                   {/* Cost columns are identical to the parent, so they stay empty rather
                       than repeating themselves. Flex widths mirror the row above. */}
+                  {/* Keyed and read by r.key, captioned by r.label. On an Adult+Youth
+                      tier that is two distinct rows reading "Adult L" and "Youth L"
+                      over keys 'adult|L' and 'youth|L' -- which is the whole point,
+                      since keying on "L" would have merged them into one box. */}
                   {sizeRows.map((r) => (
-                    <div key={r.size} style={S.tierSizeRow}>
+                    <div key={r.key} style={S.tierSizeRow}>
                       <div style={{ flex: 1.0, display: "flex", alignItems: "center", gap: 6, paddingLeft: 12 }}>
-                        <span style={{ ...S.tierSizeCell, color: "#8a93a5", fontWeight: 600, minWidth: 24 }}>{r.size}</span>
+                        <span style={{ ...S.tierSizeCell, color: "#8a93a5", fontWeight: 600, minWidth: 24 }}>{r.label}</span>
                         <input
                           style={{ ...S.tierInput, padding: "5px 7px", fontSize: 12.5, textAlign: "right" }}
                           type="text"
                           inputMode="numeric"
                           placeholder="0"
-                          aria-label={"Quantity for size " + r.size}
-                          value={(t.sizeQty || {})[r.size] ?? ""}
-                          onChange={(e) => setSizeQty(i, r.size, e.target.value)}
+                          aria-label={"Quantity for size " + r.label}
+                          value={(t.sizeQty || {})[r.key] ?? ""}
+                          onChange={(e) => setSizeQty(i, r.key, e.target.value)}
                         />
                       </div>
                       <div style={{ flex: 1.0 }} />
