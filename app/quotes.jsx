@@ -2480,6 +2480,17 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
             <HtsField value={f.hts} onChange={pickHts} codes={htsCodes}
               onAdd={(seed) => setAddingCode({ code: seed || "" })}
               fieldStyle={S.field} labelStyle={S.fieldLabel} inputStyle={S.input} />
+            {/* BEFORE the two spanning blocks below, and that position is the whole
+                point of it being here rather than at the end of the section.
+
+                Auto-placement fills the row with ordinary cells until something
+                spanning 1/-1 needs a fresh row. Rendered after those blocks, Quote
+                Date sat on the top row only while both of them returned null, and
+                dropped to a row of its own the moment a tariff code was picked --
+                so the field moved under you as a side effect of a block appearing
+                somewhere else entirely. Ahead of them it shares the row with
+                Product and the HTS field and stays there whatever they do. */}
+            <Field label="Quote Date" k="quoteDate" type="date" f={f} set={set} />
             {/* ABOVE HtsRuleHints, and full-width for the same reason it is -- see the
                 comment on it below. Order is the argument: this block is what someone
                 LINKED to the product, the one below is what a tariff code SUGGESTS, and
@@ -2510,7 +2521,6 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
               <HtsRuleHints code={f.hts} chapters={htsChapters} rules={htsChapterRules}
                 style={{ gridColumn: "1 / -1" }} />
             )}
-            <Field label="Quote Date" k="quoteDate" type="date" f={f} set={set} />
           </FormSection>
 
           <FormSection icon={<Building2 size={15} />} title="Client / Vendor Info">
