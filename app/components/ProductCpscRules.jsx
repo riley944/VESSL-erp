@@ -57,7 +57,11 @@ export function useProductCpscRules() {
   useEffect(() => {
     let alive = true;
     Promise.all([
-      SB.from('products').select('id,sku,name'),
+      // active rides along for isSelectableProduct. Named explicitly rather than
+      // switching to *: a column missing from a named select arrives undefined,
+      // and a filter reading undefined as a decision is the failure 88f0295 had
+      // to fix from the other direction.
+      SB.from('products').select('id,sku,name,active'),
       SB.from('product_regulations').select('product_id,regulation_id'),
       SB.from('regulations').select('id,code,name').eq('active', true).order('sort_order').order('code'),
     ]).then(([p, l, r]) => {
@@ -77,6 +81,29 @@ export function useProductCpscRules() {
   return map;
 }
 
+// ┌───────────────────────────────────────────────────────────────────────────┐
+// │ THE ONE PLACE "IS THIS PRODUCT STILL CHOOSABLE" IS DECIDED.               │
+// │                                                                           │
+// │ Kristy retires the older row of each duplicate-SKU pair by setting        │
+// │ products.active = false. A retired product must populate nothing on the   │
+// │ quote form and must not be offered for new work on Testing -- but it must │
+// │ stay visible and reversible everywhere it already appears.                │
+// │                                                                           │
+// │ STRICTLY === false. NOT !p.active, and not p.active !== true.             │
+// │                                                                           │
+// │ The column is boolean, nullable, no default, and NULL on all 271 rows     │
+// │ today: nobody has made the call yet. NULL means "not decided" and has to  │
+// │ behave exactly like Active, so the truthiness test would exclude the      │
+// │ entire catalogue on the day this shipped. That is not hypothetical -- it  │
+// │ is the products.active mistake 0c41008 had to undo, where Boolean('')     │
+// │ turned an undecided value into a decided one. undefined lands here too,   │
+// │ which matters because a select that omits the column hands back undefined │
+// │ rather than null, and a filter must not read a missing column as a        │
+// │ decision. Both selects that feed this were widened to fetch `active` in   │
+// │ the same commit; this test is what makes forgetting one harmless.         │
+// └───────────────────────────────────────────────────────────────────────────┘
+export const isSelectableProduct = p => !(p && p.active === false);
+
 // lower(btrim(sku)) exactly, spaces only, because that is the normalisation the
 // 211 / 60 / 20 counts above were measured with and those numbers should stay
 // reproducible from this line. String.prototype.trim() would also strip tabs and
@@ -92,7 +119,14 @@ export function matchSkuToProduct(sku, map) {
   const key = normSku(sku);
   if (!key) return { kind: 'none', answered: false };
 
-  const hits = (map.products || []).filter(p => normSku(p.sku) === key);
+  // Retired rows are dropped BEFORE the hits are counted, which is the whole
+  // point of filtering here rather than at the render. 29 SKUs currently carry
+  // more than one product row, and every one of them lands in the 'several'
+  // branch that names them all and picks nothing. Deactivating the older row
+  // leaves one hit, so the SKU resolves cleanly and the quote finally gets its
+  // answer -- filtering after the count would have left it reading "matches 2
+  // products" while showing one.
+  const hits = (map.products || []).filter(p => normSku(p.sku) === key && isSelectableProduct(p));
   if (hits.length === 0) return { kind: 'none', answered: false };
   // Every SKU in products today resolves to at most three rows, so the list is
   // rendered whole rather than truncated.

@@ -10,6 +10,11 @@ import { RegModal } from "@/app/components/RegModal";
 import { LinkRulesModal } from "@/app/components/LinkRulesModal";
 import { AddMaterialModal } from "@/app/components/AddMaterialModal";
 import { FilterSelect } from "@/app/components/FilterSelect";
+// One definition of "still choosable", shared with the quote form's SKU matcher.
+// It lives there rather than here because that module already owns product-shaped
+// logic and importing it back would close a cycle -- the same reason
+// CreateProductModal repeats the eFiling strings instead of importing them.
+import { isSelectableProduct } from "@/app/components/ProductCpscRules";
 import { materialLabel } from "@/lib/materialLabel";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 
@@ -221,7 +226,7 @@ export default function Testing() {
       // cpsc_code stays out deliberately. The payload omits it so a certificate number
       // written by hand survives an edit here, and a column the modal neither reads nor
       // writes has no business in the select.
-      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,product_stage,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
+      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,product_stage,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,active,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
       // By MAT number, not by age. These twelve fibres are a reference library, not a
       // feed -- there is no "latest" worth surfacing, and newest-first put MAT-0013
       // (Tritan, added by hand after the import) above MAT-0001. A fixed order means a
@@ -1398,6 +1403,26 @@ function ReportModal({ preset, data, materials, products, labs, regs, onClose, o
     composition:(editing?data.composition:'')||'',
     pdf_url:(editing?data.pdf_url:'')||'',
   });
+  // ┌─────────────────────────────────────────────────────────────────────────┐
+  // │ THE PICKER IS FOR CHOOSING, NOT FOR DISPLAY.                            │
+  // │                                                                         │
+  // │ A retired product must never be offered for NEW work, but dropping it   │
+  // │ from the options outright would blank the dropdown on every report      │
+  // │ already linked to it -- a controlled <select> whose value matches no    │
+  // │ <option> renders empty, so a real link reads as absent. The id stays in │
+  // │ form state, so an untouched save still writes it, but one click on the  │
+  // │ dropdown would make the apparent unlink real.                           │
+  // │                                                                         │
+  // │ So the currently-selected product is kept whatever its state, marked    │
+  // │ "(inactive)" -- the same rule HtsField carries for a code that is not   │
+  // │ in the library: the list constrains what you can pick, never what the   │
+  // │ field is allowed to hold.                                               │
+  // │                                                                         │
+  // │ Live exposure: 4 products carry the 11 product-linked reports, and      │
+  // │ JON-106 among them is a duplicate-SKU pair, so this is reachable as     │
+  // │ soon as the retiring starts.                                            │
+  // └─────────────────────────────────────────────────────────────────────────┘
+  const productOptions = (products || []).filter(p => isSelectableProduct(p) || p.id === f.product_id);
   const [lines,setLines]=useState(()=>{
     const existing = editing && Array.isArray(data.test_results) ? data.test_results : [];
     if(!existing.length) return [{ regulation_id:'', measured_value:'', limit_value:'', result:'pass' }];
@@ -1490,7 +1515,7 @@ function ReportModal({ preset, data, materials, products, labs, regs, onClose, o
               distinguishable on sight, so it earns it differently now: MAT-0002 is what
               you paste into a search, and a name is not. */}
           <div><label style={lbl}>Material</label><select style={inp} value={f.material_id} onChange={set('material_id')}><option value="">— select —</option>{materials.map(m=><option key={m.id} value={m.id}>{materialLabel(m)}</option>)}</select></div>
-          <div><label style={lbl}>or Product (direct)</label><select style={inp} value={f.product_id} onChange={set('product_id')}><option value="">— none —</option>{products.map(p=><option key={p.id} value={p.id}>{p.sku||p.name}</option>)}</select></div>
+          <div><label style={lbl}>or Product (direct)</label><select style={inp} value={f.product_id} onChange={set('product_id')}><option value="">— none —</option>{productOptions.map(p=><option key={p.id} value={p.id}>{(p.sku||p.name)+(isSelectableProduct(p)?'':' (inactive)')}</option>)}</select></div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'12px'}}>
           <div><label style={lbl}>Lab</label><select style={inp} value={f.lab_id} onChange={set('lab_id')}><option value="">— select —</option>{labs.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></div>
