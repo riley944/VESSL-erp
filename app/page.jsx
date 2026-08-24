@@ -3884,27 +3884,91 @@ function bidEffective(b, containerType) {
 }
 
 function ForwarderRFQModal({ quote, onClose, onSent }) {
-  // markDirty on the recipient chips: `sel` renders as chip styling and a text
-  // summary, never as a control, so picking three forwarders is invisible to the
-  // snapshot. The manual-email box beside them is a real input and is not.
+  // markDirty on the recipient radios: the chosen contact renders as row styling
+  // and a text summary, never as a control's value, so picking one is invisible to
+  // the dirty guard's snapshot. The manual-email box beside them is a real input
+  // and needs no help.
   const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
-  const [companies, setCompanies] = useState([]);
-  const [sel, setSel] = useState([]);
+  const [groups, setGroups] = useState([]);
+  // ┌─────────────────────────────────────────────────────────────────────────┐
+  // │ THE SELECTION IS AN OBJECT, NOT AN EMAIL STRING.                        │
+  // │                                                                         │
+  // │ {contactId, email, companyId, name, company}. mailto only needs `email`, │
+  // │ but the send API that replaces it will need the contact and company ids  │
+  // │ to record what it did -- and this modal already needs companyId to write │
+  // │ forwarder_company_id. Carrying the whole row means swapping the          │
+  // │ transport later touches the transport only, not the picking.            │
+  // │                                                                         │
+  // │ A typed address has no ids, so it carries nulls and the post-send update │
+  // │ writes no forwarder. That is correct: nobody can say which company an    │
+  // │ arbitrary address belongs to, and guessing would attach a bid to the     │
+  // │ wrong forwarder.                                                        │
+  // └─────────────────────────────────────────────────────────────────────────┘
+  const [pick, setPick] = useState(null);
   const [extra, setExtra] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(()=>{ SB.from('companies').select('id,name,type,email').order('name').then(({data})=>setCompanies(data||[])); },[]);
+  // CONTACTS, not companies. companies.email is null on all four forwarders, so
+  // the old filter -- which tested email BEFORE type -- dropped every one of them
+  // and rendered the client and factory list instead. The addresses have always
+  // lived in vessl.contacts: six of them across three forwarders.
+  //
+  // The type test is the one the rest of this tab already uses. The old substring
+  // match on 'forward'/'carrier'/'freight' was scanning for values the enum does
+  // not have loose spellings of.
+  useEffect(()=>{
+    let alive = true;
+    Promise.all([
+      SB.from('companies').select('id,name,type').in('type',['carrier','freight_forwarder']).order('name'),
+      SB.from('contacts').select('id,company_id,full_name,email,is_primary'),
+    ]).then(([c,ct])=>{
+      if (!alive) return;
+      const cos = (!c.error && c.data) || [];
+      const all = (!ct.error && ct.data) || [];
+      setGroups(cos.map(co=>({
+        ...co,
+        // Primary first, then by name. A forwarder with no contact still gets a
+        // group -- rendering it empty says "nobody has recorded an address here",
+        // which is a fixable gap, where omitting it silently says nothing at all.
+        // TQL is that case today.
+        contacts: all.filter(x=>x.company_id===co.id && x.email)
+                     .sort((a,b)=>(b.is_primary?1:0)-(a.is_primary?1:0) || String(a.full_name||'').localeCompare(String(b.full_name||''))),
+      })));
+    });
+    return ()=>{ alive = false; };
+  },[]);
 
-  const withEmail = companies.filter(c=>c.email);
-  const fwd = withEmail.filter(c=>{ const t=(c.type||'').toLowerCase(); return t.includes('forward')||t.includes('carrier')||t.includes('freight'); });
-  const rest = withEmail.filter(c=>!fwd.includes(c));
-  // markDirty: the selected recipients render as chip styling and a text summary,
-  // never as a control, so choosing three forwarders is invisible to the snapshot.
-  const toggle = em => { markDirty(); setSel(p=>p.includes(em)?p.filter(x=>x!==em):[...p,em]); };
-  const addExtra = () => { const e=extra.trim(); if(e && e.includes('@') && !sel.includes(e)) setSel(p=>[...p,e]); setExtra(''); };
+  const choose = (co, ct) => { markDirty(); setPick({ contactId:ct.id, email:String(ct.email), companyId:co.id, name:ct.full_name||String(ct.email), company:co.name }); };
+  // A typed address is a valid recipient with no identity -- see the box above.
+  const useTyped = () => {
+    const e = extra.trim();
+    if (!e || !e.includes('@')) return;
+    markDirty();
+    setPick({ contactId:null, email:e, companyId:null, name:e, company:null });
+  };
 
   const generate = async () => {
-    const emails = sel.slice();
-    if (!emails.length) { alert('Select at least one forwarder or add an email.'); return; }
+    if (!pick) { alert('Pick a contact to send this RFQ to.'); return; }
+    // ┌───────────────────────────────────────────────────────────────────────┐
+    // │ ONE COLUMN, ONE FORWARDER -- so overwriting it has to be deliberate.  │
+    // │                                                                       │
+    // │ shipment_quotes.forwarder_company_id is a single uuid. A quote sent to │
+    // │ two forwarders cannot be represented, which is exactly what Duplicate  │
+    // │ exists for: it copies the cargo and deliberately clears the forwarder, │
+    // │ so one shipment becomes one row per bidder.                           │
+    // │                                                                       │
+    // │ Only a DIFFERENT company prompts. Re-sending to the same one -- a      │
+    // │ chased reply, a corrected sheet, a second contact at the same firm --  │
+    // │ overwrites nothing and asking would train her to click through it.     │
+    // └───────────────────────────────────────────────────────────────────────┘
+    const prior = quote.forwarder_company_id || null;
+    if (pick.companyId && prior && prior !== pick.companyId) {
+      const priorName = (groups.find(g=>g.id===prior)||{}).name || 'another forwarder';
+      if (!window.confirm(
+        'This quote is recorded as sent to '+priorName+'.\n\n'+
+        'Sending to '+pick.company+' will replace that — a quote records one forwarder.\n\n'+
+        'The Duplicate button on the quote card makes a copy per forwarder.'
+      )) return;
+    }
     setBusy(true);
     try {
       const ExcelJS = await loadExcelJS();
@@ -3978,8 +4042,39 @@ function ForwarderRFQModal({ quote, onClose, onSent }) {
         + 'Incoterm: '+(quote.incoterm||'FOB')+'\n'
         + 'Cargo ready: '+(quote.ready_date? String(quote.ready_date).slice(0,10) : 'TBA')+'\n\n'
         + 'Please itemize destination charges, list any if-needed accessorial fees separately, and include carrier, transit time, and rate validity.\n\nThank you,\nKing Universal Inc.';
-      await SB.from('shipment_quotes').update({ status:'sent' }).eq('id', quote.id);
-      setTimeout(function(){ window.location.href = 'mailto:'+emails.join(',')+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body); }, 400);
+      // ┌─────────────────────────────────────────────────────────────────────┐
+      // │ THE MAILTO FIRES FIRST. The update used to run BEFORE it and        │
+      // │ unconditionally, so a quote read as "sent" the instant Generate was │
+      // │ pressed -- before the mail client opened, whether or not anything   │
+      // │ was ever sent, and even if the user closed the draft. Six of seven  │
+      // │ rows carry status 'sent' while forwarder_bids holds nothing.        │
+      // │                                                                     │
+      // │ Ordering it after is an honest improvement, not a guarantee: a      │
+      // │ mailto: navigation cannot report back, so the flag now means "her   │
+      // │ mail client was opened with this draft", not "it arrived". The      │
+      // │ guarantee needs the send API this picker was shaped for.            │
+      // │                                                                     │
+      // │ ONE recipient, never a comma-joined To:. These forwarders are       │
+      // │ competitors bidding the same freight, and the old join put every    │
+      // │ one of them in a header the others could read.                      │
+      // └─────────────────────────────────────────────────────────────────────┘
+      window.location.href = 'mailto:'+encodeURIComponent(pick.email)+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+
+      // sent_at travels with the status. ShipmentQuoteModal has always written
+      // both together; this path wrote only status, so a quote sent from here
+      // claimed 'sent' with sent_at still null and the two disagreed about
+      // whether it had gone.
+      //
+      // forwarder_company_id is written only when the recipient HAS one -- a
+      // typed address carries no company, and inventing one would attach a
+      // future bid to the wrong forwarder.
+      const upd = { status:'sent', sent_at: new Date().toISOString() };
+      if (pick.companyId) upd.forwarder_company_id = pick.companyId;
+      const { error: updErr } = await SB.from('shipment_quotes').update(upd).eq('id', quote.id);
+      // Said out loud rather than swallowed: the draft is already open, so a
+      // failed write means the card will still read Draft after an email went
+      // out, and only a message explains why.
+      if (updErr) { alert('The email draft opened, but recording the send failed: '+updErr.message+'\n\nThe quote still reads as a draft.'); }
       onSent && onSent();
     } catch (e) {
       alert('Could not generate the RFQ: '+(e&&e.message?e.message:e));
@@ -3987,37 +4082,66 @@ function ForwarderRFQModal({ quote, onClose, onSent }) {
     setBusy(false);
   };
 
-  const chip = (label, em) => (
-    <button key={em} onClick={()=>toggle(em)} style={{fontSize:'12px',fontWeight:600,border:'1px solid '+(sel.includes(em)?'#0071E3':'#E5E7EB'),background:sel.includes(em)?'#EAF3FE':'#fff',color:sel.includes(em)?'#0071E3':'#4A4A4E',borderRadius:'20px',padding:'6px 13px',cursor:'pointer'}}>{label}</button>
-  );
-
   return (
     <div onClick={e=>e.target===e.currentTarget&&guardedClose()} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.42)',display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'36px 16px',zIndex:1100,overflowY:'auto'}}>
       <div ref={cardRef} style={{background:'#fff',borderRadius:'18px',width:'100%',maxWidth:'560px',boxShadow:'0 12px 48px rgba(0,0,0,.2)'}} onClick={e=>e.stopPropagation()}>
         <div style={{padding:'20px 24px 0'}}>
           <div style={{fontSize:'17px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.015em'}}>Request forwarder quotes</div>
           <div style={{fontSize:'13px',color:'#8A8A8E',marginTop:'4px',lineHeight:1.5}}>
-            {(quote.quote_number||'')+' \u00b7 '+(quote.origin||'?')+' \u2192 '+(quote.destination||'?')+' \u00b7 '+String(quote.containers_needed||'?')+' \u00d7 '+(quote.container_type||"40'HQ")}. Generates the fillable RFQ sheet — rates per container size, itemized destination charges, and if-needed fees — then opens the email. Attach the downloaded file and send.
+            {(quote.quote_number||'')+' · '+(quote.origin||'?')+' → '+(quote.destination||'?')+' · '+String(quote.containers_needed||'?')+' × '+(quote.container_type||"40'HQ")}. Generates the fillable RFQ sheet — rates per container size, itemized destination charges, and if-needed fees — then opens the email to ONE contact. Attach the downloaded file and send.
           </div>
         </div>
         <div style={{padding:'18px 24px'}}>
-          {fwd.length>0 && <>
-            <div style={{fontSize:'10px',fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'8px'}}>Forwarders</div>
-            <div style={{display:'flex',gap:'7px',flexWrap:'wrap',marginBottom:'14px'}}>{fwd.map(c=>chip(c.name, c.email))}</div>
-          </>}
-          {rest.length>0 && <>
-            <div style={{fontSize:'10px',fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'8px'}}>Other companies</div>
-            <div style={{display:'flex',gap:'7px',flexWrap:'wrap',marginBottom:'14px'}}>{rest.slice(0,14).map(c=>chip(c.name, c.email))}</div>
-          </>}
-          <div style={{display:'flex',gap:'6px'}}>
-            <input value={extra} onChange={e=>setExtra(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addExtra()} placeholder="Add email manually…" style={{flex:1,border:'1px solid #E5E7EB',borderRadius:'9px',padding:'9px 12px',fontSize:'13px',outline:'none',boxSizing:'border-box'}} />
-            <button onClick={addExtra} style={{background:'#F2F2F6',border:'none',borderRadius:'9px',padding:'9px 15px',fontSize:'13px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>Add</button>
+          {/* ONE recipient, chosen by radio rather than toggled as chips. These
+              forwarders compete for the same freight, so the multi-select this
+              replaces was not a convenience -- it built a comma-joined To: that
+              showed each bidder who else had been asked. Send to one, then use
+              Duplicate on the card and send the copy to the next. */}
+          <div style={{fontSize:'10px',fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'8px'}}>Send to</div>
+          {groups.length === 0 && (
+            <div style={{fontSize:'13px',color:'#8A8A8E',marginBottom:'14px'}}>No forwarders on file. Add one under Companies, then add a contact with an email address.</div>
+          )}
+          {groups.map(co=>(
+            <div key={co.id} style={{marginBottom:'12px'}}>
+              <div style={{fontSize:'12.5px',fontWeight:700,color:'#1A1A1C',marginBottom:'5px'}}>{co.name}</div>
+              {/* A forwarder with no contact still gets its heading. Silence would
+                  read as "this company does not exist"; the empty line reads as
+                  "nobody has recorded an address", which is a thing to go and fix.
+                  TQL is that case today. */}
+              {co.contacts.length === 0 ? (
+                <div style={{fontSize:'12px',color:'#B0B0B4',paddingLeft:'2px'}}>No contact on file — add one under Companies to send here.</div>
+              ) : co.contacts.map(ct=>{
+                const on = !!pick && pick.contactId === ct.id;
+                return (
+                  <label key={ct.id} style={{display:'flex',alignItems:'center',gap:'9px',padding:'7px 9px',borderRadius:'9px',cursor:'pointer',background:on?'#EAF3FE':'transparent',border:'1px solid '+(on?'#0071E3':'transparent'),margin:0,fontFamily:'inherit',fontSize:'13px',letterSpacing:0,textTransform:'none',color:'#1A1A1C'}}>
+                    <input type="radio" name="rfq-contact" checked={on} onChange={()=>choose(co, ct)} style={{margin:0,cursor:'pointer'}} />
+                    <span style={{minWidth:0,flex:1}}>
+                      <span style={{fontWeight:600}}>{ct.full_name || String(ct.email)}</span>
+                      {ct.is_primary && <span style={{fontSize:'10px',fontWeight:700,color:'#0071E3',background:'#DBEAFE',borderRadius:'5px',padding:'1px 6px',marginLeft:'7px'}}>PRIMARY</span>}
+                      <span style={{display:'block',fontSize:'11.5px',color:'#8A8A8E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{String(ct.email)}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          ))}
+          {/* Kept, because a one-off broker who is not in the directory is a real
+              case. It carries no ids, so nothing is recorded against a company --
+              see the note on `pick`. */}
+          <div style={{display:'flex',gap:'6px',marginTop:'4px'}}>
+            <input value={extra} onChange={e=>setExtra(e.target.value)} onKeyDown={e=>e.key==='Enter'&&useTyped()} placeholder="Or type an address…" style={{flex:1,border:'1px solid #E5E7EB',borderRadius:'9px',padding:'9px 12px',fontSize:'13px',outline:'none',boxSizing:'border-box'}} />
+            <button onClick={useTyped} style={{background:'#F2F2F6',border:'none',borderRadius:'9px',padding:'9px 15px',fontSize:'13px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>Use</button>
           </div>
-          {sel.length>0 && <div style={{fontSize:'12px',color:'#4A4A4E',marginTop:'12px',lineHeight:1.6}}><b>{sel.length}</b> recipient{sel.length===1?'':'s'}: {sel.join(', ')}</div>}
+          {pick && (
+            <div style={{fontSize:'12px',color:'#4A4A4E',marginTop:'12px',lineHeight:1.6}}>
+              Sending to <b>{pick.name}</b>{pick.company ? ' at '+pick.company : ''} — {pick.email}
+              {!pick.companyId && <span style={{color:'#B45309'}}> · not a directory contact, so no forwarder will be recorded on the quote</span>}
+            </div>
+          )}
         </div>
         <div style={{padding:'0 24px 20px',display:'flex',justifyContent:'flex-end',gap:'8px'}}>
           <button onClick={onClose} style={{background:'#F2F2F6',border:'none',borderRadius:'10px',padding:'9px 17px',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>Cancel</button>
-          <button onClick={generate} disabled={busy||!sel.length} style={{background:sel.length?'#0071E3':'#C7C7CC',color:'#fff',border:'none',borderRadius:'10px',padding:'9px 18px',fontSize:'13.5px',fontWeight:600,cursor:sel.length?'pointer':'not-allowed'}}>{busy?'Generating\u2026':'Generate sheet & email'}</button>
+          <button onClick={generate} disabled={busy||!pick} style={{background:pick?'#0071E3':'#C7C7CC',color:'#fff',border:'none',borderRadius:'10px',padding:'9px 18px',fontSize:'13.5px',fontWeight:600,cursor:pick?'pointer':'not-allowed'}}>{busy?'Generating\u2026':'Generate sheet & email'}</button>
         </div>
       </div>
     </div>
