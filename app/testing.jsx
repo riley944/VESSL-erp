@@ -226,7 +226,7 @@ export default function Testing() {
       // cpsc_code stays out deliberately. The payload omits it so a certificate number
       // written by hand survives an edit here, and a column the modal neither reads nor
       // writes has no business in the select.
-      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,product_stage,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,active,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
+      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,product_stage,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,active,manual_test_date,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
       // By MAT number, not by age. These twelve fibres are a reference library, not a
       // feed -- there is no "latest" worth surfacing, and newest-first put MAT-0013
       // (Tritan, added by hand after the import) above MAT-0001. A fixed order means a
@@ -1071,9 +1071,41 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                 Plain text, and for a data reason rather than a cost one: pdf_url is null
                 on all 11 product-linked reports, so there is nothing to link to. The
                 Reports tab is where a report gets opened. */}
-            <div style={{minWidth:0,fontSize:'12px',color:testedByProduct[p.id]?'#4A4A4E':'#C7C7CC',textAlign:'center',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}
-                 title={testedByProduct[p.id] ? 'Latest linked test report' : 'No test report is linked to this product'}>
-              {testedByProduct[p.id] ? fmtDate(testedByProduct[p.id]) : 'N/A'}
+            {/* ┌─────────────────────────────────────────────────────────────────┐
+                │ A LINKED REPORT ALWAYS WINS. Non-negotiable, and the order of   │
+                │ these two branches IS the rule -- there is nothing else         │
+                │ enforcing it, in the schema or anywhere else.                   │
+                │                                                                 │
+                │ manual_test_date is a fallback for the 273 of 277 products that │
+                │ can show no report date, because 73 of the 84 reports are       │
+                │ orphans. It displays only when no report is linked, and always  │
+                │ marked. Link a report later and this switches to the report     │
+                │ date on its own; the typed value stays stored and stops         │
+                │ showing, which is the behaviour that keeps it a fallback rather │
+                │ than a competing answer.                                        │
+                │                                                                 │
+                │ The marker is a SECOND LINE, not " (manual)" appended. The      │
+                │ track is a fixed 140px and the date alone is ~76px; the suffix   │
+                │ would run to ~130px and read as cramped, or ellipsise into      │
+                │ "May 17, 2026 (man…" -- which is worse than no marker at all,   │
+                │ since a truncated qualifier reads as a whole answer. The extra  │
+                │ line costs no row height: the Product cell beside it is already │
+                │ two or three lines tall.                                        │
+                └─────────────────────────────────────────────────────────────────┘ */}
+            <div style={{minWidth:0,fontSize:'12px',textAlign:'center',overflow:'hidden'}}
+                 title={testedByProduct[p.id] ? 'Latest linked test report'
+                      : p.manual_test_date ? 'Entered by hand — no lab report is linked to this product'
+                      : 'No test report is linked to this product'}>
+              {testedByProduct[p.id] ? (
+                <span style={{color:'#4A4A4E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',display:'block'}}>{fmtDate(testedByProduct[p.id])}</span>
+              ) : p.manual_test_date ? (
+                <>
+                  <span style={{color:'#4A4A4E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',display:'block'}}>{fmtDate(p.manual_test_date)}</span>
+                  <span style={{display:'block',fontSize:'10px',color:'#B45309',letterSpacing:'.04em',marginTop:'1px'}}>manual</span>
+                </>
+              ) : (
+                <span style={{color:'#C7C7CC'}}>N/A</span>
+              )}
             </div>
             {/* The row itself opens the editor, so anything clickable inside it has to
                 stop the event or it would do both. */}

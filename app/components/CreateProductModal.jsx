@@ -106,6 +106,10 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
     shipsTo:Array.isArray(data?.ships_to) ? data.ships_to : [],
     tradeDirection:s(data?.trade_direction), importerOfRecord:s(data?.importer_of_record),
     testingPaidBy:s(data?.testing_paid_by),
+    // A `date` column arrives as 'YYYY-MM-DD', which is exactly what <input
+    // type="date"> wants; slicing guards a row that ever holds a timestamp. Same
+    // handling ShipmentQuoteModal gives ready_date.
+    manualTestDate: data?.manual_test_date ? String(data.manual_test_date).slice(0,10) : '',
   });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   // Chip input state. countryDraft is what is being typed; countryErr is cleared on the
@@ -198,7 +202,15 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
       // is certified against; cpsc_code was the number off the issued GCC or CPC
       // document. Different things -- this was removed as unused, not replaced.
       units_per_carton:Number(form.upc)||null, carton_weight_kg:Number(form.cwt)||null,
-      carton_l_cm:Number(form.cl)||null, carton_w_cm:Number(form.cw)||null, carton_h_cm:Number(form.ch)||null
+      carton_l_cm:Number(form.cl)||null, carton_w_cm:Number(form.cw)||null, carton_h_cm:Number(form.ch)||null,
+      // '' clears the column back to NULL, so an emptied box records "no manual date"
+      // rather than an empty string a date column would reject anyway.
+      //
+      // PRESENT in the payload and NAMED in Testing's load() select, together. That
+      // pairing is the whole lesson of 88f0295: a column the modal writes but the
+      // select omits arrives undefined, renders blank whatever the row holds, and is
+      // nulled on the next Save. Either half alone is the bug.
+      manual_test_date:form.manualTestDate||null
     };
     // category_id is written explicitly on create so every new row carries the same
     // key set (product_categories has no rows to pick from). On edit it is left out
@@ -332,6 +344,50 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
                 : <div style={{fontSize:'13px',color:'var(--muted)'}}>Not set</div>}
             </div>
           )}
+          {/* ┌───────────────────────────────────────────────────────────────────┐
+              │ A FALLBACK, NOT A SECOND SOURCE OF TRUTH.                        │
+              │                                                                   │
+              │ 73 of the 84 test reports are orphans whose style_ref never       │
+              │ resolved, so only 4 of 277 products can show a report-backed      │
+              │ date. This lets Jenn record that a product passed without waiting │
+              │ for that to be fixed.                                            │
+              │                                                                   │
+              │ A LINKED REPORT ALWAYS WINS. The Testing Date column prefers the  │
+              │ report date and falls back to this one, marked "manual", so the   │
+              │ two can never be read as the same kind of fact. Link a report     │
+              │ later and the column switches on its own -- this value stays      │
+              │ stored but stops displaying, which is why the hint says "until",  │
+              │ not "unless".                                                     │
+              │                                                                   │
+              │ Not gated on compliance status. Jenn asked for PASS to reveal it, │
+              │ but nothing else in this file couples a status to a date, and the │
+              │ derivation that once did was deliberately removed -- a field that │
+              │ appears and disappears is harder to find than one that is always  │
+              │ there.                                                            │
+              └───────────────────────────────────────────────────────────────────┘ */}
+          <div className="form-row">
+            <label>Test date <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(manual — shown until a lab report is linked)</span></label>
+            {/* A date input has no discoverable way back to empty. Keyboard editing
+                leaves partial states -- 00/01/0001 and similar -- that are neither a
+                date nor blank, and the native picker offers no reset, so a value typed
+                by mistake could not be taken back.
+
+                '' is what the payload already turns into NULL, so clearing here needs
+                no other change: the same emptied box that means "no manual date" on a
+                fresh product means it on an edited one.
+
+                Shown only when there is something to clear, so it does not sit there
+                inviting a press on an empty field. Same control EfilingModal puts
+                beside its date for the same reason; the 16px round × is this modal's
+                own, matching the ships_to chips. */}
+            <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+              <input type="date" className="form-input" style={{flex:1,minWidth:0}} value={form.manualTestDate} onChange={e=>f('manualTestDate')(e.target.value)} />
+              {form.manualTestDate && (
+                <button type="button" onClick={()=>f('manualTestDate')('')} title="Clear the test date" aria-label="Clear the test date"
+                  style={{flexShrink:0,width:'16px',height:'16px',borderRadius:'50%',border:'none',background:'#DCDCE0',color:'#5A5A5E',fontSize:'12px',lineHeight:1,cursor:'pointer',padding:0}}>×</button>
+              )}
+            </div>
+          </div>
           {/* Hidden on create: there is no product yet, so there can be no links, and a
               placeholder would describe a flow that cannot happen from here — Testing
               has no create path.
