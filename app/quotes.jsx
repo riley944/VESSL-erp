@@ -727,7 +727,20 @@ function Platform({ session }) {
     } else {
       flash("That quote couldn't be found — it may have been deleted.");
     }
-    window.history.replaceState({}, "", window.location.pathname);
+    // Strips ?quote=... now the deep link is handled, but KEEPS the tab fragment.
+    // Dropping it left the URL hashless, and page.jsx's hash writer only re-fires
+    // when the tab changes -- so the fragment stayed gone and the next refresh
+    // landed on Programs. Tapping a quote link from an email is exactly how this
+    // happened on a phone.
+    //
+    // The pattern is deliberately narrow instead of carrying window.location.hash
+    // across as-is: an auth fragment (#access_token=...&type=recovery) contains
+    // '=' and '&' and cannot match, so no credential is ever re-persisted here.
+    // It restates the shape of page.jsx's page ids rather than importing them,
+    // because page.jsx imports THIS module and the import would be circular --
+    // the same trade the route makes with isStaffEmail.
+    const frag = window.location.hash;
+    window.history.replaceState({}, "", window.location.pathname + (/^#[a-z-]+$/.test(frag) ? frag : ""));
     deepLinkHandledRef.current = true;
   }, [quotes, loading]);
 

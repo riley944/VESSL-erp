@@ -247,21 +247,78 @@ const allowedPagesFor = role =>
 //
 // so-detail and order-detail are NOT here even though they are real pages. Both
 // render from params.id, which the hash does not carry, so restoring one would
-// mount a detail view with an undefined id. Landing on the list is the honest
-// fallback. settings IS here: it takes no params and is reached from the gear.
+// mount a detail view with an undefined id. settings IS here: it takes no params
+// and is reached from the gear.
 const HASH_PAGES = [
   'programs', 'dashboard', 'sales-orders', 'orders', 'companies', 'products',
   'testing', 'pricing', 'shipments', 'inventory', 'quotes', 'codes',
   'client-relations', 'settings',
 ];
 
-// null for anything unrecognised -- empty, garbage, or one of the two detail
-// pages -- so the caller falls back to its own default rather than to a blank
-// screen. Also null during prerender, where there is no window.
+// "Landing on the list is the honest fallback" is what the note above used to
+// promise, and it was never true: a detail page resolved to null and the caller
+// fell through to its own default, which is Programs. So a refresh on a purchase
+// order dropped you two levels, not one. These are the same pairings the sidebar
+// already uses to decide which nav link looks active.
+const DETAIL_PARENT = { 'so-detail': 'sales-orders', 'order-detail': 'orders' };
+
+// The one place a stored page id is turned into something renderable. Everything
+// -- hash, localStorage, old URLs still in someone's history -- goes through it,
+// so a value that is empty, garbage, or from a build that named pages
+// differently degrades the same way: null, and the caller keeps its default.
+//
+// hasOwnProperty rather than a bare lookup: these ids come from a URL and from
+// disk, so a value like 'constructor' must not pick up an inherited
+// Object.prototype member and resolve to a page. Same guard as allowedPagesFor.
+const normalizePage = raw => {
+  if (typeof raw !== 'string') return null;
+  const v = raw.trim();
+  if (HASH_PAGES.includes(v)) return v;
+  if (Object.prototype.hasOwnProperty.call(DETAIL_PARENT, v)) return DETAIL_PARENT[v];
+  return null;
+};
+
+// Null during prerender, where there is no window.
+//
+// decodeURIComponent throws a URIError on a malformed escape -- a bare '%' in
+// the fragment is enough. Unguarded that would kill the restore effect on mount
+// and take the whole page down with it, so a bad fragment is treated as no
+// fragment.
 const pageFromHash = () => {
   if (typeof window === 'undefined') return null;
-  const h = decodeURIComponent(window.location.hash.replace(/^#/, '')).trim();
-  return HASH_PAGES.includes(h) ? h : null;
+  let h;
+  try { h = decodeURIComponent(window.location.hash.replace(/^#/, '')); }
+  catch (e) { return null; }
+  return normalizePage(h);
+};
+
+// ── The localStorage fallback ────────────────────────────────────────────────
+// The hash alone was not enough on mobile. It survives a Safari refresh, but not
+// the ways a phone actually re-opens this app:
+//
+//   - A home-screen icon is a plain bookmark pinned to the URL captured when it
+//     was added. There is no manifest and no apple-mobile-web-app-capable, so
+//     iOS re-launches that exact URL every time -- hashless, if it was saved
+//     from the login screen or from before the hash existed.
+//   - iOS evicts these from memory aggressively, so returning to the app is a
+//     fresh load from that same stored URL rather than a resume.
+//
+// localStorage and NOT sessionStorage for exactly that reason: a re-launch is a
+// new session, so sessionStorage would be empty precisely when it is needed.
+const TAB_KEY = 'vessl.tab';
+
+// Reads and writes are both wrapped: localStorage throws, not returns null, when
+// storage is unavailable -- iOS private browsing, or a blocked-cookies setting.
+// A phone that cannot store a tab should still render the app.
+const pageFromStore = () => {
+  if (typeof window === 'undefined') return null;
+  try { return normalizePage(window.localStorage.getItem(TAB_KEY)); }
+  catch (e) { return null; }
+};
+
+const storeTab = p => {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(TAB_KEY, p); } catch (e) {}
 };
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
@@ -516,7 +573,16 @@ function ResetPassword({ onDone }) {
     const { error } = await SB.auth.updateUser({ password: p1 });
     setBusy(false);
     if (error) return setErr(error.message);
-    try { window.history.replaceState({}, '', window.location.pathname); } catch(e){}
+    // Clears the recovery tokens from the URL. The fragment is REBUILT from
+    // pageFromHash rather than carried across verbatim: at this moment it still
+    // reads #access_token=...&type=recovery, and preserving that would put a live
+    // credential back into the address bar and the history entry. pageFromHash
+    // can only ever return an allow-listed page id, so nothing token-shaped can
+    // survive this line -- while a real tab fragment still does.
+    try {
+      const keep = pageFromHash();
+      window.history.replaceState({}, '', window.location.pathname + (keep ? '#'+keep : ''));
+    } catch(e){}
     onDone();
   };
   return (
@@ -6543,9 +6609,14 @@ export default function App() {
   // that is a hydration mismatch. A recovery link lands as #access_token=…&
   // type=recovery, which is not a page id, so it falls through to the default
   // and the auth effect above still gets to read it.
+  //
+  // THE HASH WINS. It describes the URL actually being opened -- a shared link,
+  // a bookmark, a back-navigation -- while the store only remembers where this
+  // browser was last. When they disagree the URL is the newer intent, so the
+  // store is consulted only once the hash has come back with nothing.
   useEffect(() => {
-    const h = pageFromHash();
-    if (h) setRawPage(h);
+    const p = pageFromHash() || pageFromStore();
+    if (p) setRawPage(p);
   }, []);
 
   // replaceState, not pushState: tab switches must not fill the back stack.
@@ -6557,10 +6628,18 @@ export default function App() {
   //
   // Held off until signed in and out of recovery, so neither the login screen
   // nor a password-reset link gets its hash overwritten.
+  //
+  // Detail pages write NOTHING -- not the hash, not the store. The old code
+  // stamped '#so-detail', which nothing could read back, so the URL claimed a
+  // location the app would refuse to restore. Writing nothing leaves the parent
+  // list's own entry in place, which is what a refresh from a detail view should
+  // land on and now does.
   useEffect(() => {
     if (!user || recovery || typeof window === 'undefined') return;
+    if (!HASH_PAGES.includes(page)) return;
     const want = '#' + page;
     if (window.location.hash !== want) window.history.replaceState(null, '', want);
+    storeTab(page);
   }, [page, user, recovery]);
 
   if (loading) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
