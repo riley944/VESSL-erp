@@ -125,6 +125,13 @@ by the serverless bundle, filled as a forwarder would across **all three tables*
 forwarder rig — were removed afterwards, so nothing test-shaped reaches Kristy's
 picker.
 
+**The overwrite guard was witnessed** the same day, on the dev server against
+this same database: a cross-forwarder re-send raised the confirm naming the prior
+forwarder (ZZTEST Forwarder A), Cancel left the quote untouched and sent nothing,
+and the accept path sent. Worth recording separately because the production round
+trip above used the typed-address path, which carries no `companyId` and so
+deliberately skips the confirm — that run could not have exercised it.
+
 Two things were fixed in the course of it:
 
 - **The `forwarder_bids` RLS lockout**, above. Found on the first real Save bid.
