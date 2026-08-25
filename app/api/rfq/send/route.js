@@ -136,7 +136,11 @@ export async function POST(req) {
       to: [to],
       replyTo: replyTo,
       subject: rfqSubject(quote),
-      text: rfqBody(quote),
+      // The RESOLVED replyTo, not DEFAULT_REPLY_TO: the body names the address a
+      // Reply actually reaches, so the two cannot drift. With no override in the
+      // request these are the same value; with one, the sentence follows the
+      // header instead of contradicting it.
+      text: rfqBody(quote, replyTo),
       attachments: [{ filename: rfqFileName(quote), content: Buffer.from(buffer) }],
     });
     // Resend reports failures in `error` rather than by throwing, so this branch
