@@ -21,7 +21,12 @@ export const dynamic = 'force-dynamic';
 const FROM = 'King Universal Freight <rfq@vessl.io>';
 // vessl.io is verified for SENDING only -- receiving is off -- so a forwarder
 // hitting Reply must be pointed somewhere that actually accepts mail.
-const DEFAULT_REPLY_TO = 'mattdillon@kinguniversal.com';
+//
+// Kristy, per Riley: she runs the RFQ round and imports the replies, so the
+// filled sheets should land in her mailbox rather than being forwarded on. This
+// is the address a FORWARDER sees, not an internal one -- changing it changes
+// who receives every bid.
+const DEFAULT_REPLY_TO = 'kristy@kinguniversal.com';
 
 // The same test page.jsx applies at the UI, mirroring portal.is_kui_staff() in
 // Postgres: auth.jwt()->>'email' ilike '%@kinguniversal.com'. Three copies of one
