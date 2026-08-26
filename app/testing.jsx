@@ -64,13 +64,27 @@ const MAT_STATUS = {
   failed:     { label:'Failed',      color:'#B91C1C', bg:'#FEE2E2', dot:'#EF4444' },
   expired:    { label:'Expired',     color:'#B91C1C', bg:'#FEE2E2', dot:'#EF4444' },
 };
-// 'passed', 'pending' and 'failed' are the three a human can set. The rest are only
-// reachable on a row whose status was written before the derivation was dropped, or
-// straight from the database — kept so such a row still renders with a real label.
+// What a human can set is COMPLIANCE_OPTS: not set, 'not_required', 'tbd', 'passed',
+// 'pending', 'failed'. 'compliant', 'expired' and 'no_materials' are NOT offered —
+// they are only reachable on a row whose status was written before the derivation was
+// dropped, or straight from the database, and are kept so such a row still renders
+// with a real label instead of falling back to Not set.
 // 'not_set' is the null case: grey and unlabelled by colour, because no judgement has
 // been made about that product yet.
 const PROD_STATUS = {
   not_set:     { label:'Not set',     color:'#8A8A8E', bg:'#F2F2F4' },
+  // Jenn's "No": this product does not need testing at all. The app already owned a
+  // word for that state — eFiling's notreq renders as 'Not required' — so this is the
+  // app's word for it rather than this column's, the same argument EFILING_LABEL makes
+  // above. "No" alone, sitting beside Pass and Failed, reads as a verdict.
+  //
+  // Slate, and deliberately desaturated. Two precedents pull opposite ways and this
+  // threads both. Stage carries no colour at all, because production-vs-sample is not
+  // good-vs-bad and a colour would imply it. TBD below IS coloured, precisely because
+  // the states it is confusable with sit next to it. Not required is in TBD's position,
+  // not Stage's: it sits beside Not set and means something entirely different, so grey
+  // would let the two read as one. Slate separates them without claiming a verdict.
+  not_required:{ label:'Not required',color:'#475569', bg:'#F1F5F9', dot:'#94A3B8' },
   // Blue, and blue on purpose. The two states TBD is likeliest to be misread as are
   // Pending (amber) and Not set (grey), and being neither of them is the entire reason
   // the option exists -- it is a decision to defer, where Not set is no decision and
@@ -107,12 +121,20 @@ const effectiveStatus = (product) => (product && product.compliance_status) || n
 // │ visible in an approximate bucket beats invisible in none, which is the    │
 // │ failure this exists to prevent recurring.                                 │
 // └───────────────────────────────────────────────────────────────────────────┘
+//
+// 'not_required' gets its OWN branch for the reason the box above exists. Left to fall
+// through, it would land on 'unset' — which is not merely approximate here, it is
+// wrong twice over: Jenn's deliberately-exempt products would be indistinguishable
+// from products nobody has looked at, and they would inflate the Not set count while
+// being unreachable under any filter of their own. That is the TBD failure with a
+// label on it.
 const complianceKey = p => {
   const s = effectiveStatus(p);
   return s === 'compliant' || s === 'passed' ? 'compliant'
        : s === 'pending'                     ? 'pending'
        : s === 'failed' || s === 'expired'   ? 'issues'
        : s === 'tbd'                         ? 'tbd'
+       : s === 'not_required'                ? 'not_required'
        :                                       'unset';
 };
 // ┌───────────────────────────────────────────────────────────────────────────┐
@@ -131,15 +153,20 @@ const isAll = sel => !Array.isArray(sel) || sel.length === 0;
 const inSel = (sel, key) => isAll(sel) || sel.includes(key);
 // Written to products.compliance_status. '' means clear it back to NULL.
 //
-// 'tbd' is lowercase like the other three because the column is plain nullable text
-// with no CHECK -- nothing normalises what is stored, so the casing convention is the
-// only thing keeping 'tbd' and 'TBD' from both existing and reading as one value.
+// 'tbd' and 'not_required' are lowercase like the rest because the column is plain
+// nullable text with no CHECK -- nothing normalises what is stored, so the casing
+// convention is the only thing keeping 'tbd' and 'TBD' from both existing and reading
+// as one value. 'not_required' is spelled out rather than borrowing eFiling's 'notreq'
+// abbreviation: that one is a derived key that never lands in a column, where this is
+// written to the database and read by eye in SQL.
 //
-// Placed next to — Not set — rather than in the pass/pending/failed run: both are the
-// absence of a verdict, and the distinction between them is the one worth putting
-// side by side. Not set means nobody has looked; TBD means someone looked and is
-// deferring. Pending, further down, means the work is already under way.
-const COMPLIANCE_OPTS = [['','— Not set —'],['tbd','TBD'],['passed','Pass'],['pending','Pending'],['failed','Failed']];
+// THE FIRST THREE ARE THE NON-VERDICTS, in order of how much has been decided. Nobody
+// has looked (Not set); someone looked and it does not apply at all (Not required);
+// someone looked and is deferring (TBD). Only then the run that is an actual judgement
+// about the product -- Pass, Pending, Failed -- where Pending means the work is already
+// under way. Keeping the three together is what stops Not required being read as a
+// fourth verdict.
+const COMPLIANCE_OPTS = [['','— Not set —'],['not_required','Not required'],['tbd','TBD'],['passed','Pass'],['pending','Pending'],['failed','Failed']];
 // Written to products.product_stage. '' means clear it back to NULL, which
 // products_product_stage_check requires -- it accepts NULL, 'production' or 'sample'
 // and would reject an empty string. Values lowercase, labels capitalised, the same
@@ -192,7 +219,7 @@ export default function Testing() {
   // now expressible as a set, where a single slot could only have offered a
   // NOT-something pill to approximate it -- and a NOT over a nullable column is the
   // thing this file refuses to write.
-  const [compSel,  setCompSel]  = useState([]);   // complianceKey's five returns
+  const [compSel,  setCompSel]  = useState([]);   // complianceKey's six returns
   const [efSel,    setEfSel]    = useState([]);   // efilingKey's four returns, verbatim
   const [brandSel, setBrandSel] = useState([]);   // merlin | non_merlin | unclassified
   const [stageSel, setStageSel] = useState([]);   // production | sample | notset
@@ -385,6 +412,10 @@ export default function Testing() {
     { value:'pending',   label:'Pending',        count:n('c:pending'),   color:PROD_STATUS.pending.dot },
     { value:'issues',    label:'Issues',         count:n('c:issues'),    color:PROD_STATUS.failed.dot },
     { value:'tbd',       label:'TBD',            count:n('c:tbd'),       color:PROD_STATUS.tbd.dot },
+    // Its own option, not folded into Not set. A bucket that complianceKey can return
+    // but no pill can select is the TBD bug rebuilt: the products exist, the filter
+    // simply never offers them.
+    { value:'not_required', label:'Not required', count:n('c:not_required'), color:PROD_STATUS.not_required.dot },
     { value:'unset',     label:'Not set',        count:n('c:unset'),     color:PROD_STATUS.not_set.dot },
   ],[countBy, products.length]);
   // Labels from EFILING_LABEL where it has one, so the dropdown, the row button and
