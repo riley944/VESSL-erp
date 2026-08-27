@@ -6274,20 +6274,11 @@ function ClientRelations() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  // real-time: any new portal message → refresh thread list + live conversation
-  useEffect(() => {
-    let ch;
-    try {
-      ch = SB.channel('cr-rt')
-        .on('postgres_changes', { event:'INSERT', schema:'portal', table:'messages' }, payload => {
-          loadAll();
-          if (payload.new?.thread_id === selThreadId) loadMsgs(selThreadId, false);
-        }).subscribe();
-    } catch(e){}
-    return () => { if(ch) SB.removeChannel(ch); };
-  }, [selThreadId, loadAll]);
-
   // ── load messages for a thread ─────────────────────────────────────────────
+  // Declared ABOVE the realtime effect, not below it. The effect lists this in
+  // its dependency array, and a dep array is evaluated during render -- so with
+  // the old ordering that reference sat in the temporal dead zone of a `const`
+  // declared further down, which is a ReferenceError, not a warning.
   const loadMsgs = useCallback(async (threadId, markRead=true) => {
     if (!threadId) return;
     setMsgsLoading(true);
@@ -6296,16 +6287,79 @@ function ClientRelations() {
     setMsgs(data||[]);
     setMsgsLoading(false);
     if (markRead) {
-      await SP('messages').update({ read_by_kui: true }).eq('thread_id', threadId).eq('author_type', 'client');
-      setUnreadMap(prev => {
+      // ┌─────────────────────────────────────────────────────────────────────┐
+      // │ THE UPDATE REPORTS WHAT IT ACTUALLY CLEARED.                        │
+      // │                                                                     │
+      // │ `.eq('read_by_kui', false)` narrows the write to rows that were     │
+      // │ genuinely unread, and `.select('id')` returns them -- so the count   │
+      // │ below is what this call changed, not an estimate. Re-opening a       │
+      // │ thread now writes nothing and decrements nothing, where before it    │
+      // │ rewrote every client message in the thread every time.              │
+      // └─────────────────────────────────────────────────────────────────────┘
+      const { data: cleared } = await SP('messages')
+        .update({ read_by_kui: true })
+        .eq('thread_id', threadId).eq('author_type', 'client').eq('read_by_kui', false)
+        .select('id');
+      const n = (cleared||[]).length;
+      if (n > 0) {
         const thread = allThreads.find(t => t.id === threadId);
-        if (!thread) return prev;
-        const next = { ...prev };
-        delete next[thread.company_id];
-        return next;
-      });
+        // SUBTRACT THIS THREAD'S SHARE, do not clear the company. unreadMap is
+        // keyed by company, and the old code deleted the whole key -- so a
+        // client with two unread threads dropped to zero the moment either one
+        // was opened, and only the next loadAll() put the other one back.
+        if (thread) setUnreadMap(prev => {
+          const left = (prev[thread.company_id]||0) - n;
+          const next = { ...prev };
+          if (left > 0) next[thread.company_id] = left; else delete next[thread.company_id];
+          return next;
+        });
+      }
     }
   }, [allThreads]);
+
+  // real-time: any new portal message → refresh thread list + live conversation
+  useEffect(() => {
+    let ch;
+    try {
+      ch = SB.channel('cr-rt')
+        .on('postgres_changes', { event:'INSERT', schema:'portal', table:'messages' }, payload => {
+          loadAll();
+          if (payload.new?.thread_id === selThreadId) {
+            // MARK IT READ. This passed `false`, so a message arriving while its
+            // thread was already open rendered but stayed unread forever -- the
+            // badge kept counting it until you navigated away and came back,
+            // which is the one moment you have most certainly seen it.
+            //
+            // Gated on visibility: a background tab is not somebody reading. A
+            // message landing in a thread left open on another desktop should
+            // still be waiting when they come back to it.
+            const looking = typeof document === 'undefined' || document.visibilityState === 'visible';
+            loadMsgs(selThreadId, looking);
+          }
+        }).subscribe();
+    } catch(e){}
+    return () => { if(ch) SB.removeChannel(ch); };
+  }, [selThreadId, loadAll, loadMsgs]);
+
+  // ── coming back to the tab counts as reading ───────────────────────────────
+  // The realtime handler above deliberately does NOT mark read while the tab is
+  // hidden, which is right at the time -- but it leaves a badge that is stale
+  // the instant the user looks at the thread again. Without this, the only way
+  // to clear it is to re-click a thread that is already open, which reads as the
+  // badge being stuck rather than as a rule about visibility.
+  //
+  // Re-runs loadMsgs rather than just the update, so anything that arrived while
+  // the tab was backgrounded is fetched too -- a dropped realtime event heals
+  // here instead of leaving the pane silently behind the database.
+  //
+  // Cheap to fire on every focus: the update is narrowed to rows that are
+  // actually unread, so returning to a thread with nothing new writes nothing.
+  useEffect(() => {
+    if (!selThreadId) return;
+    const onVis = () => { if (document.visibilityState === 'visible') loadMsgs(selThreadId, true); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [selThreadId, loadMsgs]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs]);
 
@@ -6351,8 +6405,22 @@ function ClientRelations() {
         read_by_client: false,
       });
       if (error) throw new Error(error.message);
-      const { error: te } = await SP('threads').update({ last_message_body: body, last_message_at: new Date().toISOString() }).eq('id', selThreadId);
-      if (te) throw new Error('Thread update failed: '+te.message);
+      // ┌─────────────────────────────────────────────────────────────────────┐
+      // │ THE THREAD PREVIEW IS THE TRIGGER'S JOB NOW.                        │
+      // │                                                                     │
+      // │ portal.trg_touch_thread_on_message updates last_message_body and    │
+      // │ last_message_at inside the inserting transaction. Writing them again │
+      // │ from here would be worse than redundant: this line used a browser    │
+      // │ clock (new Date()) where the trigger uses the row's own server-side  │
+      // │ created_at, so it reintroduced exactly the skew the trigger removes. │
+      // │                                                                     │
+      // │ It also closed a real gap. The portal did the same insert-then-      │
+      // │ update as two statements, and realtime announces the INSERT the      │
+      // │ moment it commits -- so every reader that arrived in between saw the │
+      // │ PREVIOUS message in the list panes while the conversation pane, which│
+      // │ reads messages directly, already showed the new one. Measured at 1.7 │
+      // │ seconds on a live client send.                                       │
+      // └─────────────────────────────────────────────────────────────────────┘
       setDraft('');
       await Promise.all([ loadMsgs(selThreadId, false), loadAll() ]);
       toast('Sent', 'ok');
