@@ -226,37 +226,6 @@ const Ic = {
 const isStaffEmail = email =>
   typeof email === 'string' && email.trim().toLowerCase().endsWith('@kinguniversal.com');
 
-// ── Who sent a staff message ─────────────────────────────────────────────────
-// portal.messages.author_email holds the address; this turns it into the label
-// Client Relations shows. Returns null -- never a placeholder -- when there is
-// nothing to build a name from, so the CALLER decides the fallback. That keeps
-// 'KUI Team' in exactly one place: the render, where historical rows whose
-// author_email is null already read it from author_name.
-//
-// TOTAL BY CONSTRUCTION. This runs against a column that is null on every row
-// written before today, and on everything the portal writes. Non-string input, a
-// value with no '@', and an empty local part all resolve to null rather than
-// throwing or rendering "undefined KUI" at somebody.
-//
-// ROSTER FIRST, EMAIL SECOND, AND THE ORDER MATTERS. vessl.staff_profiles gives
-// 'Matt Dillon' -> "Matt KUI". The local-part fallback would give
-// "Mattdillon KUI" -- which is only avoided because that roster row exists. It
-// is a safety net for someone deliberately off the roster (Loren, whose local
-// part happens to be a bare first name), not an equivalent source.
-//
-// Resolved at RENDER, not stored at send: fixing a name in staff_profiles then
-// corrects every message that person ever sent.
-const staffLabel = (email, roster) => {
-  if (typeof email !== 'string') return null;
-  const key = email.trim().toLowerCase();
-  if (!key.includes('@')) return null;
-  const first = String((roster && roster[key]) || '').trim().split(/\s+/)[0];
-  if (first) return first + ' KUI';
-  const local = key.split('@')[0];
-  if (!local) return null;
-  return local.charAt(0).toUpperCase() + local.slice(1) + ' KUI';
-};
-
 // ── Role-based page access ───────────────────────────────────────────────────
 // Only roles listed here are limited, to exactly the page ids they map to.
 // Any other role — including no staff_profiles row, or a lookup error — is
@@ -6275,11 +6244,6 @@ function ClientRelations({ user }) {
 
   const [allThreads, setAllThreads] = useState([]);
   const [companies,  setCompanies]  = useState({});        // id → name
-  // The WHOLE roster, lowercased email → full_name, not just this user's name:
-  // the pane renders messages from every staff member, so resolving only the
-  // viewer would leave a colleague's reply reading as "KUI Team" to everyone but
-  // themselves. Seven rows, loaded with the rest.
-  const [staff,      setStaff]      = useState({});        // email → full_name
   const [unreadMap,  setUnreadMap]  = useState({});        // companyId → count
   const [loading,    setLoading]    = useState(true);
 
@@ -6296,24 +6260,18 @@ function ClientRelations({ user }) {
 
   // ── load everything ────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
-    const [{ data: threads }, { data: cos }, { data: unread }, { data: roster }] = await Promise.all([
+    const [{ data: threads }, { data: cos }, { data: unread }] = await Promise.all([
       SP('threads').select('*').order('last_message_at', { ascending: false }),
       SB.from('companies').select('id,name').order('name'),
       SP('messages').select('thread_id,company_id').eq('author_type', 'client').eq('read_by_kui', false),
-      SB.from('staff_profiles').select('email,full_name'),
     ]);
     const coMap = {};
     (cos||[]).forEach(c => { coMap[c.id] = c.name; });
     const uMap = {};
     (unread||[]).forEach(m => { uMap[m.company_id] = (uMap[m.company_id]||0) + 1; });
-    // Lowercased key: addresses arrive from a JWT and from a hand-maintained
-    // roster, and those two will not agree on case forever.
-    const sMap = {};
-    (roster||[]).forEach(s => { if (s.email) sMap[String(s.email).trim().toLowerCase()] = s.full_name; });
     setAllThreads(threads||[]);
     setCompanies(coMap);
     setUnreadMap(uMap);
-    setStaff(sMap);
     setLoading(false);
   }, []);
 
@@ -6445,12 +6403,22 @@ function ClientRelations({ user }) {
         company_id:   selThread?.company_id,
         thread_id:    selThreadId,
         author_type:  'kui_staff',
-        // author_name STAYS 'KUI Team'. It is shared with the client portal,
-        // which we cannot see, test or roll back independently -- so writing a
-        // personal name here would change what the client reads as a side effect
-        // of a staff-side feature. Who sent it goes in author_email instead, and
-        // showing that to clients stays a separate, deliberate decision.
         author_name:  'KUI Team',
+        // ┌─────────────────────────────────────────────────────────────────────┐
+        // │ WRITTEN, BUT NOT DISPLAYED ANYWHERE. ON PURPOSE.                    │
+        // │                                                                     │
+        // │ Riley's call is one shared team voice: Client Relations shows        │
+        // │ 'KUI Team' for every staff message, and nothing renders this column. │
+        // │                                                                     │
+        // │ It keeps being written because the alternative is a permanent gap.   │
+        // │ Authorship cannot be reconstructed later -- nothing else records who │
+        // │ typed a reply -- so switching the display back on a year from now    │
+        // │ would show real names on new messages and 'KUI Team' on every        │
+        // │ message sent in between. Recording it costs one column that no       │
+        // │ client and no screen ever sees.                                      │
+        // │                                                                     │
+        // │ Do not "clean this up" as an unused write. See PORTAL.md.            │
+        // └─────────────────────────────────────────────────────────────────────┘
         author_email: user?.email || null,
         body,
         read_by_client: false,
@@ -6625,12 +6593,12 @@ function ClientRelations({ user }) {
                     const nextSame = i<msgs.length-1 && msgs[i+1].author_type===m.author_type;
                     return (
                       <div key={m.id} className={'cr-msg'+(isClient?' from-client':' from-staff')} style={{marginTop:prevSame?3:12}}>
-                        {/* author_email -> roster -> local part -> author_name -> 'KUI Team'.
-                            staffLabel returns null rather than a placeholder, so a row
-                            written before this shipped falls through to its stored
-                            author_name and still reads 'KUI Team' -- unchanged, not
-                            back-filled with a guess about who sent it. */}
-                        {!prevSame && <div className="cr-msg-who">{isClient?(m.author_name||companies[m.company_id]||'Client'):(staffLabel(m.author_email, staff)||m.author_name||'KUI Team')}</div>}
+                        {/* Staff messages read 'KUI Team', per Riley: one shared team
+                            voice, no per-person labels. author_email is still written
+                            on every send -- see the note at the insert -- so this is a
+                            DISPLAY choice, and reversing it needs only this expression,
+                            with the history intact. See PORTAL.md. */}
+                        {!prevSame && <div className="cr-msg-who">{isClient?(m.author_name||companies[m.company_id]||'Client'):(m.author_name||'KUI Team')}</div>}
                         <div className={'cr-msg-bubble'+(prevSame&&!nextSame?' cr-bubble-last':'')+(prevSame?' cr-bubble-mid':'')+(nextSame&&!prevSame?' cr-bubble-first':'')}>{m.body}</div>
                         {!nextSame && <div className="cr-msg-time">{fmtDateTime(m.created_at)}</div>}
                       </div>

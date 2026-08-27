@@ -71,6 +71,59 @@ key. If mail stops, check the vault before the code — every one of them return
 early and silently when the secret is missing, which is how delivery-request
 emails were dead for months without anyone noticing.
 
+## Staff messages display as "KUI Team" — but authorship is recorded
+
+Riley's call: **everyone sees every thread, red dots stay shared, and staff
+messages show one team voice.** No per-person labels.
+
+`portal.messages.author_email` is still written on every staff send, and nothing
+renders it. That is deliberate, not an oversight:
+
+- **Authorship cannot be reconstructed later.** Nothing else records who typed a
+  reply. If the display is switched back on in a year, real names would appear on
+  new messages and "KUI Team" on everything sent in between — a permanent hole in
+  the record, for the sake of not writing one nullable column nobody sees.
+- **Re-enabling is a display change only.** The resolution helper (`staffLabel`:
+  `author_email` → `vessl.staff_profiles.full_name` first word → email local-part
+  → `'KUI Team'`) was removed rather than left as dead code. It rendered
+  "Matt KUI" / "Kristy KUI". Restoring it means that expression plus loading the
+  roster in `ClientRelations`' `loadAll` — see the commit that added it for the
+  version that was tested against all seven staff addresses.
+- **`author_name` stays `'KUI Team'`** on every staff row regardless. That column
+  is shared with the portal, which we cannot see or test, so it is not a safe
+  place to express a staff-side display preference.
+
+Do not remove the `author_email` write as an unused column.
+
+## Parked: per-user thread ownership (#2)
+
+Designed, approved, then **parked** — shared visibility and shared badges are the
+product for now. Recorded so the design is not re-derived from scratch:
+
+- **DDL:** `alter table portal.threads add column owner_email text;` — nullable,
+  no FK, no CHECK. **NULL means unassigned**, which is every row today, so
+  behaviour would be unchanged until someone claims a thread. That is what makes
+  ownership opt-in rather than a migration.
+- **Email, not uuid** — matches `thread_reads.user_email`, the `thread_reads_own`
+  policy's `auth.jwt()->>'email'`, and `is_kui_staff()`. A uuid would be a fifth
+  identity scheme for the same thing.
+- **No FK to `staff_profiles`** — that roster is incomplete by decision (Loren is
+  off it), and an FK would make claiming impossible for anyone unrostered,
+  rebuilding the `forwarder_bids` lockout in a new place.
+- **Claim mechanics:** self-serve claim and release, owner shown on the thread, no
+  auto-claim on reply. **Anyone can release** — a thread stranded on someone who
+  is away is worse than a contested claim.
+- **Scoping:** unread = threads where `owner_email = me OR owner_email is null`,
+  containing a client message newer than my `thread_reads.last_read_at`.
+  Membership, never exclusion: a thread owned by someone else leaves *my* count
+  but stays visible and openable. The sidebar badge would have to be scoped the
+  same way or it disagrees with the panel.
+- **`portal.thread_reads` is the per-user read mechanism** and is still unused —
+  0 rows. It exists precisely for this. Today's red dot is
+  `portal.messages.read_by_kui`, a single global boolean: one staff member opening
+  a thread marks it read for everyone. That is fine while visibility is shared and
+  is the first thing that breaks if ownership is revived.
+
 ## `portal.notifications` is write-only
 
 154 rows as of 27 Aug, **none ever marked read**, and the string "notifications"
