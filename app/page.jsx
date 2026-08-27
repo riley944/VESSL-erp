@@ -3038,6 +3038,38 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
 }
 
 // ── Companies ────────────────────────────────────────────────────────────────
+// ── Company type: stored value → display label ───────────────────────────────
+// ┌───────────────────────────────────────────────────────────────────────────┐
+// │ THE LABEL IS THE ONLY THING THAT CHANGES. THE STORED VALUE MUST NOT.       │
+// │                                                                           │
+// │ companies.type is matched as a literal lowercase string all over this      │
+// │ codebase -- the RFQ picker's                                              │
+// │ .in('type',['carrier','freight_forwarder']), the shipment carrier lists,   │
+// │ every .eq('type','client') and .eq('type','factory') lookup, and the       │
+// │ onConflict:'name,type' upserts that create companies from a quote. It is   │
+// │ also half of a UNIQUE constraint.                                          │
+// │                                                                           │
+// │ Capitalising what is STORED would silently empty every one of those --     │
+// │ no error, just filters that stop matching and pickers that render blank.   │
+// │ So the pairs below are [value, label]: the left side is written to the     │
+// │ database and compared against, the right side is only ever rendered.       │
+// └───────────────────────────────────────────────────────────────────────────┘
+//
+// One list, used by both company modals. They previously held identical copies
+// of the value array and each did its own `.replace(/_/g,' ')` at render, which
+// is how "freight forwarder" reached the dropdown in lowercase in two places at
+// once. Order preserved from those arrays, so no dropdown reorders.
+//
+// Not merged with Companies' own TYPE_LABELS: that one is plural and titles a
+// tab ("Freight Forwarders"), where these are singular and name one company's
+// type. Same words, different grammatical job.
+const COMPANY_TYPES = [
+  ['client',            'Client'],
+  ['factory',           'Factory'],
+  ['carrier',           'Carrier'],
+  ['freight_forwarder', 'Freight Forwarder'],
+];
+
 function Companies() {
   const TYPE_LABELS = { client:'Clients', factory:'Factories', carrier:'Carriers', freight_forwarder:'Freight Forwarders' };
   const TYPE_KEYS = Object.keys(TYPE_LABELS);
@@ -3148,7 +3180,6 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
   const [contacts, setContacts] = useState([]);
   const [edit, setEdit] = useState(false);
   const [form, setForm] = useState(null);
-  const types = ['client','factory','carrier','freight_forwarder'];
   useEffect(()=>{
     (async()=>{
       const { data:c } = await SB.from('companies').select('*').eq('id',id).single();
@@ -3214,7 +3245,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
             <>
               <div className="form-row-2">
                 <div><label>Company Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
-                <div><label>Type</label><select className="form-select" value={form.type} onChange={e=>f('type')(e.target.value)}>{types.map(t=><option key={t} value={t}>{t.replace(/_/g,' ')}</option>)}</select></div>
+                <div><label>Type</label><select className="form-select" value={form.type} onChange={e=>f('type')(e.target.value)}>{COMPANY_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></div>
               </div>
               <div className="form-row-2">
                 <div><label>Email</label><input className="form-input" value={form.email} onChange={e=>f('email')(e.target.value)} /></div>
@@ -5255,7 +5286,6 @@ function CreateCompanyModal({ onClose, onCreated }) {
     } catch(e) {}
     onCreated();
   };
-  const types = ['client','factory','carrier','freight_forwarder'];
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box">
@@ -5263,7 +5293,7 @@ function CreateCompanyModal({ onClose, onCreated }) {
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>Company Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
-            <div><label>Type</label><select className="form-select" value={form.type} onChange={e=>f('type')(e.target.value)}>{types.map(t=><option key={t} value={t}>{t.replace(/_/g,' ')}</option>)}</select></div>
+            <div><label>Type</label><select className="form-select" value={form.type} onChange={e=>f('type')(e.target.value)}>{COMPANY_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></div>
           </div>
           <div className="form-row-2">
             <div><label>Email</label><input type="email" className="form-input" value={form.email} onChange={e=>f('email')(e.target.value)} /></div>
