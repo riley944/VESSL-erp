@@ -6234,6 +6234,75 @@ function ConfirmModal({ title, message, confirmLabel='Delete', danger=true, onCo
 }
 
 // ── App Root ──────────────────────────────────────────────────────────────────
+// ── New conversation ─────────────────────────────────────────────────────────
+// Nothing in this app could create a thread until now. RLS was never the
+// obstacle -- threads_rw already grants portal.is_kui_staff() ALL -- it was
+// simply a missing screen, so a conversation could only ever begin with the
+// client writing first.
+//
+// ONLY COMPANIES WITH AN APPROVED PORTAL USER. A thread with a company that has
+// no login is a message nobody can ever read: it renders perfectly in here and
+// reaches no one. The list is short on purpose and grows as users are approved.
+function NewThreadModal({ options, initialCompanyId, onClose, onCreated }) {
+  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
+  const [companyId, setCompanyId] = useState(initialCompanyId || '');
+  const [name, setName]           = useState('');
+  const [busy, setBusy]           = useState(false);
+  const [err,  setErr]            = useState('');
+
+  const create = async () => {
+    if (!companyId || busy) return;
+    setErr(''); setBusy(true);
+    try {
+      // company_id is the only column without a default. name falls back to the
+      // column's own 'New Conversation' rather than being sent empty, so the
+      // default is expressed in one place -- the schema -- not two.
+      const { data, error } = await SB.schema('portal').from('threads')
+        .insert({ company_id: companyId, name: name.trim() || 'New Conversation' })
+        .select().single();
+      if (error) throw new Error(error.message);
+      onCreated(data);
+    } catch (e) {
+      setErr('Could not create the conversation: ' + (e.message || 'unknown error'));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
+      <div ref={cardRef} className="modal-box" style={{maxWidth:'440px'}}>
+        <div className="modal-head"><h3>New Conversation</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-body">
+          <div className="form-row">
+            <label>Client *</label>
+            <select className="form-select" value={companyId} onChange={e=>setCompanyId(e.target.value)}>
+              <option value="">Select a client…</option>
+              {options.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          </div>
+          <div className="form-row">
+            <label>Subject <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(optional)</span></label>
+            <input className="form-input" value={name} onChange={e=>setName(e.target.value)} placeholder="New Conversation" />
+          </div>
+          {/* Says plainly that creating is not telling. No trigger fires on a
+              thread insert -- all five portal triggers are on messages,
+              order_notes and delivery_requests -- so the client learns of this
+              only when the first message is sent, which is what lands them an
+              email. */}
+          <div style={{fontSize:'12px',color:'var(--muted)',lineHeight:1.5,marginTop:'2px'}}>
+            Only clients with an approved portal login are listed. Creating a conversation does not notify them — your first message does.
+          </div>
+          {err && <div style={{fontSize:'12.5px',color:'var(--hot)',marginTop:'10px'}}>{err}</div>}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-dark" onClick={create} disabled={!companyId||busy}>{busy?'Creating…':'Create'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Client Relations ──────────────────────────────────────────────────────────
 // `user` is a prop, not a fetch. The signed-in user is already loaded at the
 // render site; re-reading the session here would be a second source of truth for
@@ -6255,20 +6324,36 @@ function ClientRelations({ user }) {
   const [sending,     setSending]     = useState(false);
   const [sendErr,     setSendErr]     = useState('');
   const [clientSearch, setClientSearch] = useState('');
+  // Companies with at least one APPROVED portal user -- "clients you can talk
+  // to". Panel 1 is seeded from this rather than derived purely from threads, so
+  // a client who has never written still appears and can be started with.
+  const [portalCos, setPortalCos] = useState([]);   // [{id,name}]
+  // null = closed. Otherwise { companyId } -- '' for the global entry point,
+  // a real id when opened from a company's own panel.
+  const [newThread, setNewThread] = useState(null);
   const endRef = useRef(null);
   const draftRef = useRef(null);
 
   // ── load everything ────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
-    const [{ data: threads }, { data: cos }, { data: unread }] = await Promise.all([
+    const [{ data: threads }, { data: cos }, { data: unread }, { data: approved }] = await Promise.all([
       SP('threads').select('*').order('last_message_at', { ascending: false }),
       SB.from('companies').select('id,name').order('name'),
       SP('messages').select('thread_id,company_id').eq('author_type', 'client').eq('read_by_kui', false),
+      // Membership, not a join: PostgREST cannot join portal.users to
+      // vessl.companies across schemas, and the company names are already being
+      // fetched above. Distinct company_ids of approved users is the whole test.
+      SP('users').select('company_id').eq('status', 'approved'),
     ]);
     const coMap = {};
     (cos||[]).forEach(c => { coMap[c.id] = c.name; });
     const uMap = {};
     (unread||[]).forEach(m => { uMap[m.company_id] = (uMap[m.company_id]||0) + 1; });
+    // Deduplicated: a company with two approved users must not appear twice.
+    // Sorted by name so the picker and Panel 1 agree on order.
+    const pIds = [...new Set((approved||[]).map(u => u.company_id).filter(Boolean))];
+    setPortalCos(pIds.map(id => ({ id, name: coMap[id] || 'Unknown' }))
+                     .sort((a,b) => a.name.localeCompare(b.name)));
     setAllThreads(threads||[]);
     setCompanies(coMap);
     setUnreadMap(uMap);
@@ -6375,6 +6460,27 @@ function ClientRelations({ user }) {
     loadMsgs(t.id, true);
   };
 
+  // ── created a thread ───────────────────────────────────────────────────────
+  // Lands in the compose box rather than back on the list. A thread with no
+  // messages notifies nobody -- no trigger fires on a thread insert -- so
+  // creating one and walking away achieves nothing at all. Selecting it puts the
+  // cursor where the useful next action is; the focus effect keyed on
+  // selThreadId does the rest.
+  //
+  // loadAll() first and awaited: selectThread's own path reads allThreads, and
+  // the new row has to be in state before anything looks for it.
+  const onThreadCreated = useCallback(async (t) => {
+    setNewThread(null);
+    if (!t) return;
+    await loadAll();
+    setSelCoId(t.company_id);
+    setSelThreadId(t.id);
+    setMsgs([]);          // known empty; skip the round trip
+    setDraft('');
+    setSendErr('');
+    toast('Conversation created', 'ok');
+  }, [loadAll, toast]);
+
   // ── delete thread ──────────────────────────────────────────────────────────
   const [confirmDelId, setConfirmDelId] = useState(null);
   const deleteThread = async (threadId) => {
@@ -6452,7 +6558,23 @@ function ClientRelations({ user }) {
   };
 
   // ── derived data ───────────────────────────────────────────────────────────
-  const clientIds = [...new Set(allThreads.map(t=>t.company_id).filter(Boolean))];
+  // ┌───────────────────────────────────────────────────────────────────────────┐
+  // │ THE UNION, NOT JUST THE APPROVED LIST.                                    │
+  // │                                                                           │
+  // │ Panel 1 is "clients you can talk to", seeded from the approved-portal      │
+  // │ companies -- that is what lets a client who has never written appear at    │
+  // │ all, which is the whole point of being able to start a thread.             │
+  // │                                                                           │
+  // │ But companies with EXISTING THREADS are unioned in rather than replaced.   │
+  // │ If an account is ever un-approved, seeding from the approved list alone    │
+  // │ would make their conversation history vanish from this screen -- hiding    │
+  // │ data as a side effect of an access change, with nothing on screen saying   │
+  // │ so. Threads outlive logins.                                                │
+  // └───────────────────────────────────────────────────────────────────────────┘
+  const clientIds = [...new Set([
+    ...portalCos.map(c => c.id),
+    ...allThreads.map(t => t.company_id).filter(Boolean),
+  ])];
   // sort clients: most recent message first, unread bump to top
   const sortedClientIds = [...clientIds].sort((a,b) => {
     if (unreadMap[b] && !unreadMap[a]) return 1;
@@ -6478,15 +6600,34 @@ function ClientRelations({ user }) {
   return (
     <div className="cr-shell">
 
+      {newThread && (
+        <NewThreadModal
+          options={portalCos}
+          initialCompanyId={newThread.companyId}
+          onClose={()=>setNewThread(null)}
+          onCreated={onThreadCreated}
+        />
+      )}
+
       {/* ── Panel 1: Clients ───────────────────────────────────────────────── */}
       <div className="cr-panel cr-clients">
         <div className="cr-search-wrap">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           <input className="cr-search" placeholder="Search clients…" value={clientSearch} onChange={e=>setClientSearch(e.target.value)} />
           {totalUnread>0 && <span className="cr-panel-badge">{totalUnread}</span>}
+          {/* The GLOBAL entry point. Lives here rather than in the page header
+              because the modal's state belongs to this component -- putting the
+              button in pageActions would mean lifting it into the shell so the
+              shell could open a dialog it knows nothing about. */}
+          <button onClick={()=>setNewThread({ companyId:'' })} title="New conversation"
+            style={{background:'none',border:'none',cursor:'pointer',color:'var(--muted)',display:'flex',alignItems:'center',padding:'5px',borderRadius:'7px',marginLeft:'4px'}}
+            onMouseEnter={e=>{e.currentTarget.style.background='var(--line-2)';e.currentTarget.style.color='var(--ink)';}}
+            onMouseLeave={e=>{e.currentTarget.style.background='none';e.currentTarget.style.color='var(--muted)';}}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
         </div>
         <div className="cr-panel-body">
-          {filteredClients.length===0 && <div className="cr-empty" style={{paddingTop:40}}><p>{clientSearch?'No clients match':'No client threads yet'}</p></div>}
+          {filteredClients.length===0 && <div className="cr-empty" style={{paddingTop:40}}><p>{clientSearch?'No clients match':'No clients with portal access yet'}</p></div>}
           {filteredClients.map(cid => {
             const name = companies[cid]||'Unknown';
             const threads = threadsByCompany[cid]||[];
@@ -6498,7 +6639,15 @@ function ClientRelations({ user }) {
                 <div className="cr-client-av" style={{background:companyColor(name),color:'#0b1120'}}>{initials(name)}</div>
                 <div className="cr-client-meta">
                   <div className="cr-client-name">{name}</div>
-                  <div className="cr-client-sub">{count>0 ? <b style={{color:'var(--ink)'}}>{last?.last_message_body?.slice(0,36)||'New message'}</b> : (last?.last_message_body?.slice(0,36)||threads.length+' thread'+(threads.length!==1?'s':''))}</div>
+                  {/* The bare thread count used to be the fallback here, which
+                      reads like lost data the moment a thread exists with no
+                      messages yet: a client whose row said "Sounds good, thanks"
+                      would suddenly say "2 threads". Falls through the newest
+                      thread's body, then its NAME -- which is what actually
+                      distinguishes a new conversation -- then a plain statement
+                      of the empty case. Only a company with no threads at all
+                      reaches the last one. */}
+                  <div className="cr-client-sub">{count>0 ? <b style={{color:'var(--ink)'}}>{last?.last_message_body?.slice(0,36)||'New message'}</b> : (last?.last_message_body?.slice(0,36)||last?.name||'No conversations yet')}</div>
                 </div>
                 {count>0 && <span className="cr-badge">{count>99?'99+':count}</span>}
               </div>
@@ -6521,10 +6670,18 @@ function ClientRelations({ user }) {
                 <div style={{width:22,height:22,borderRadius:6,background:companyColor(companies[selCoId]||''),display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'#0b1120'}}>{initials(companies[selCoId]||'')}</div>
                 <span style={{fontWeight:700,color:'var(--ink)',textTransform:'none',fontSize:13}}>{companies[selCoId]||'Client'}</span>
               </div>
-              <span style={{fontSize:11,color:'var(--muted)',fontWeight:500,letterSpacing:0}}>{companyThreads.length} thread{companyThreads.length!==1?'s':''}</span>
+              <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+                <span style={{fontSize:11,color:'var(--muted)',fontWeight:500,letterSpacing:0}}>{companyThreads.length} thread{companyThreads.length!==1?'s':''}</span>
+                {/* Contextual entry point: the company is already selected, so it
+                    arrives pre-picked and the modal is one field shorter. */}
+                <button onClick={()=>setNewThread({ companyId:selCoId })} title={'New conversation with '+(companies[selCoId]||'this client')}
+                  style={{background:'none',border:'1px solid var(--line)',cursor:'pointer',color:'var(--ink-2)',borderRadius:'7px',padding:'3px 9px',fontSize:'11.5px',fontWeight:600,letterSpacing:0}}>
+                  + New
+                </button>
+              </div>
             </div>
             <div className="cr-panel-body">
-              {companyThreads.length===0 && <div className="cr-empty" style={{paddingTop:40}}><p style={{fontSize:13}}>No threads yet</p></div>}
+              {companyThreads.length===0 && <div className="cr-empty" style={{paddingTop:40}}><p style={{fontSize:13}}>No conversations yet — start one with + New</p></div>}
               {companyThreads.map(t => {
                 const active = selThreadId===t.id;
                 return (
