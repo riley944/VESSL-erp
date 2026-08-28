@@ -3650,6 +3650,10 @@ function Shipments({ onNewShipment, userEmail }) {
   // nobody, and until 04 gave staff an RLS policy it was not even readable here.
   const [dreqs, setDreqs] = useState([]);
   const [coNames, setCoNames] = useState({});   // company id → name
+  // For resolving delivery_requests.shipment_ref. See the matcher below.
+  const [salesOrders, setSalesOrders] = useState([]);
+  const [soPos, setSoPos] = useState([]);       // sales_order_id ↔ purchase_order_id
+  const [shipPos, setShipPos] = useState([]);   // shipment_id   ↔ purchase_order_id
   const [respondId, setRespondId] = useState(null);
   const [respNote, setRespNote] = useState('');
   const [respDate, setRespDate] = useState('');
@@ -3735,12 +3739,23 @@ function Shipments({ onNewShipment, userEmail }) {
   // PostgREST cannot reach vessl.companies from it. The names are fetched
   // alongside and matched in JS, the same shape Client Relations uses.
   const reloadDreqs = async () => {
-    const [{ data: d }, { data: cos }] = await Promise.all([
+    const [{ data: d }, { data: cos }, { data: sos }, { data: sop }, { data: shp }] = await Promise.all([
       SB.schema('portal').from('delivery_requests').select('*').order('created_at',{ascending:false}),
       SB.from('companies').select('id,name'),
+      // The portal writes the SALES ORDER number into shipment_ref -- proven by
+      // the first live request on 28 Aug. So sales orders have to be loaded to
+      // resolve one at all.
+      SB.from('sales_orders').select('id,so_number,order_number,status,order_date,client_company_id'),
+      // The two link tables that carry a sales order to its shipments. Tiny --
+      // 66 and 26 rows -- and they are the same chain portal.order_logistics
+      // walks, so a request matched here is matched the way the portal thinks
+      // about it.
+      SB.from('sales_order_pos').select('sales_order_id,purchase_order_id'),
+      SB.from('shipment_pos').select('shipment_id,purchase_order_id'),
     ]);
     const m = {}; (cos||[]).forEach(c => { m[c.id] = c.name; });
     setDreqs(d||[]); setCoNames(m);
+    setSalesOrders(sos||[]); setSoPos(sop||[]); setShipPos(shp||[]);
   };
 
   // ┌───────────────────────────────────────────────────────────────────────────┐
@@ -3778,16 +3793,70 @@ function Shipments({ onNewShipment, userEmail }) {
   useEffect(()=>{ reload(); reloadQuotes(); reloadBids(); reloadDreqs(); },[]);
 
   // ── derived ──
-  // shipment_ref is FREE TEXT, not a foreign key. The portal writes it and we
-  // cannot read the portal's code, so this resolves by shipment_number and is
-  // allowed to miss. A request whose ref matches nothing is still shown, marked
-  // unmatched -- hiding it would lose a client's request because our join failed.
+  // ┌───────────────────────────────────────────────────────────────────────────┐
+  // │ shipment_ref IS FREE TEXT, AND THE PORTAL PUTS A SALES ORDER IN IT.       │
+  // │                                                                           │
+  // │ Despite the column's name. Proven by the first live request on 28 Aug: it  │
+  // │ arrived carrying ZZTEST-SO-001, a sales_orders.so_number. The portal is    │
+  // │ code we cannot read, and portal.orders exposes so_number as               │
+  // │ COALESCE(so_number, order_number), so BOTH are indexed here.               │
+  // │                                                                           │
+  // │ BOTH, NEVER INSTEAD. Sales order first because that is the behaviour we    │
+  // │ have evidence for; shipment number second because the column is named for  │
+  // │ it and an unreachable writer may yet produce one. Switching to so_number   │
+  // │ alone would rebuild this same bug facing the other way.                    │
+  // │                                                                           │
+  // │ Still allowed to miss. A ref matching neither keeps the unmatched chip:    │
+  // │ a client asked us for something, and dropping the row because our join     │
+  // │ failed loses the request, not the mismatch.                                │
+  // └───────────────────────────────────────────────────────────────────────────┘
   const shipByNumber = useMemo(() => {
     const m = {};
     (rows||[]).forEach(s => { if (s.shipment_number) m[String(s.shipment_number).trim()] = s; });
     return m;
   }, [rows]);
-  const matchShip = ref => (ref ? shipByNumber[String(ref).trim()] : undefined) || null;
+
+  // so_number AND order_number, because portal.orders coalesces them and we do
+  // not know which one a given order actually carries.
+  const soByNumber = useMemo(() => {
+    const m = {};
+    (salesOrders||[]).forEach(so => {
+      [so.so_number, so.order_number].forEach(n => { if (n) m[String(n).trim()] = so; });
+    });
+    return m;
+  }, [salesOrders]);
+
+  // sales_order_id → the shipments carrying it, walked SO → PO → shipment.
+  const shipsForSo = useMemo(() => {
+    const poByShip = {};
+    (shipPos||[]).forEach(x => {
+      if (!x.purchase_order_id) return;
+      (poByShip[x.purchase_order_id] = poByShip[x.purchase_order_id] || []).push(x.shipment_id);
+    });
+    const byId = {};
+    (rows||[]).forEach(s => { byId[s.id] = s; });
+    const out = {};
+    (soPos||[]).forEach(x => {
+      (poByShip[x.purchase_order_id] || []).forEach(sid => {
+        const s = byId[sid];
+        if (!s) return;
+        const list = out[x.sales_order_id] = out[x.sales_order_id] || [];
+        if (!list.some(e => e.id === s.id)) list.push(s);
+      });
+    });
+    return out;
+  }, [soPos, shipPos, rows]);
+
+  // Returns what the ref resolved to and HOW, so the card can say which.
+  const matchRef = (ref) => {
+    if (!ref) return null;
+    const key = String(ref).trim();
+    const so = soByNumber[key];
+    if (so) return { via:'so', so, ships: shipsForSo[so.id] || [] };
+    const ship = shipByNumber[key];
+    if (ship) return { via:'shipment', ship, ships:[ship] };
+    return null;
+  };
   // 'requested' is the only state needing action -- everything else has been
   // answered or withdrawn. This is the number on the toggle pill and the nav badge.
   const openDreqs = dreqs.filter(d => (d.status||'requested') === 'requested');
@@ -3997,7 +4066,12 @@ function Shipments({ onNewShipment, userEmail }) {
           <div style={{display:'flex',flexDirection:'column',gap:'10px'}}>
             {dreqs.map(d => {
               const st = d.status || 'requested';
-              const ship = matchShip(d.shipment_ref);
+              const hit = matchRef(d.shipment_ref);
+              // The shipment to describe: the one the ref named, or the first one
+              // carrying the sales order it named. A sales order with no shipment
+              // yet still MATCHES -- the client can ask for a delivery date before
+              // anything has sailed, and that is not an unmatched reference.
+              const ship = hit ? (hit.ships[0] || null) : null;
               const open = st === 'requested';
               const responding = respondId === d.id;
               const tone = st==='confirmed' ? ['#15803D','#DCFCE7']
@@ -4012,11 +4086,21 @@ function Shipments({ onNewShipment, userEmail }) {
                       <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
                         <span style={{fontSize:'14px',fontWeight:700,color:'#1A1A1C'}}>{d.shipment_ref}</span>
                         {/* SAYS SO RATHER THAN HIDING IT. shipment_ref is free text
-                            written by the portal; if it matches no shipment_number
-                            the request is still real and still needs answering. */}
-                        {ship
-                          ? <span style={{fontSize:'11.5px',color:'#8A8A8E'}}>{(ship.status||'').replace(/_/g,' ')}{ship.container_no?' · '+ship.container_no:''}</span>
-                          : <span title="No shipment matches this reference" style={{fontSize:'11px',fontWeight:600,borderRadius:'20px',padding:'2px 8px',background:'#F2F2F4',color:'#8A8A8E'}}>unmatched ref</span>}
+                            written by the portal; if it matches neither a sales
+                            order nor a shipment the request is still real and
+                            still needs answering.
+                            Naming HOW it matched is deliberate -- "sales order"
+                            vs a bare shipment status is the difference between
+                            reading this card and trusting it. */}
+                        {hit
+                          ? <span style={{fontSize:'11.5px',color:'#8A8A8E'}}>
+                              {hit.via==='so' ? 'sales order' : 'shipment'}
+                              {ship ? ' · '+(ship.status||'').replace(/_/g,' ') : ''}
+                              {ship && ship.container_no ? ' · '+ship.container_no : ''}
+                              {hit.via==='so' && !ship ? ' · no shipment yet' : ''}
+                              {hit.via==='so' && hit.ships.length>1 ? ' · +'+(hit.ships.length-1)+' more' : ''}
+                            </span>
+                          : <span title="Matches no sales order number and no shipment number" style={{fontSize:'11px',fontWeight:600,borderRadius:'20px',padding:'2px 8px',background:'#F2F2F4',color:'#8A8A8E'}}>unmatched ref</span>}
                         <span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'2px 9px',textTransform:'uppercase',letterSpacing:'.03em',color:tone[0],background:tone[1]}}>{st}</span>
                       </div>
                       <div style={{fontSize:'12.5px',color:'#5A5A5E',marginTop:'5px',lineHeight:1.6}}>
