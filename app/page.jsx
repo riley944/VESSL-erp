@@ -6324,6 +6324,11 @@ function ClientRelations({ user }) {
   const [sending,     setSending]     = useState(false);
   const [sendErr,     setSendErr]     = useState('');
   const [clientSearch, setClientSearch] = useState('');
+  // Archived threads are hidden from Panel 2 by default and revealed by this.
+  // Staff RLS still returns them -- threads_rw's archived filter applies to the
+  // CLIENT branch only -- so this is presentation, and nothing here can make an
+  // archived conversation unreachable.
+  const [showArchived, setShowArchived] = useState(false);
   // Companies with at least one APPROVED portal user -- "clients you can talk
   // to". Panel 1 is seeded from this rather than derived purely from threads, so
   // a client who has never written still appears and can be started with.
@@ -6347,8 +6352,25 @@ function ClientRelations({ user }) {
     ]);
     const coMap = {};
     (cos||[]).forEach(c => { coMap[c.id] = c.name; });
+    // ┌─────────────────────────────────────────────────────────────────────────┐
+    // │ UNREAD EXCLUDES ARCHIVED THREADS.                                       │
+    // │                                                                         │
+    // │ The unread query cannot express this itself -- it selects from          │
+    // │ portal.messages, and PostgREST will not join to portal.threads -- so the │
+    // │ filter happens here, against the thread rows this same load just         │
+    // │ fetched. An archived conversation that keeps badging is a dot nobody can │
+    // │ clear without un-archiving first.                                        │
+    // │                                                                         │
+    // │ A message with a NULL thread_id is NOT in an archived thread and still   │
+    // │ counts: Set.has(null) is false, which is the behaviour we want rather    │
+    // │ than an accident of it.                                                  │
+    // └─────────────────────────────────────────────────────────────────────────┘
+    const archivedIds = new Set((threads||[]).filter(t => t.archived_at).map(t => t.id));
     const uMap = {};
-    (unread||[]).forEach(m => { uMap[m.company_id] = (uMap[m.company_id]||0) + 1; });
+    (unread||[]).forEach(m => {
+      if (archivedIds.has(m.thread_id)) return;
+      uMap[m.company_id] = (uMap[m.company_id]||0) + 1;
+    });
     // Deduplicated: a company with two approved users must not appear twice.
     // Sorted by name so the picker and Panel 1 agree on order.
     const pIds = [...new Set((approved||[]).map(u => u.company_id).filter(Boolean))];
@@ -6481,6 +6503,30 @@ function ClientRelations({ user }) {
     toast('Conversation created', 'ok');
   }, [loadAll, toast]);
 
+  // ── archive / unarchive ────────────────────────────────────────────────────
+  // A timestamp, not a flag: NULL is active, a value is both "archived" and
+  // "when". Toggling reads the CURRENT row rather than a local guess, so two
+  // people archiving at once converge instead of fighting.
+  //
+  // Deliberately not confirmed. Delete asks because it destroys; archiving is
+  // reversible from the same button, and a confirm on a reversible action just
+  // trains people to click through confirms.
+  const [archBusy, setArchBusy] = useState(false);
+  const toggleArchive = async (t) => {
+    if (!t || archBusy) return;
+    setArchBusy(true);
+    const next = t.archived_at ? null : new Date().toISOString();
+    const { error } = await SP('threads').update({ archived_at: next }).eq('id', t.id);
+    if (error) { toast('Could not '+(next?'archive':'restore')+': '+error.message, 'err'); setArchBusy(false); return; }
+    await loadAll();
+    // Archiving the open thread closes it: it has just left the default list, so
+    // leaving it selected would show a conversation the panel beside it no longer
+    // offers. Restoring keeps it open, because it is back where it belongs.
+    if (next) { setSelThreadId(null); setMsgs([]); }
+    toast(next ? 'Conversation archived' : 'Conversation restored', 'ok');
+    setArchBusy(false);
+  };
+
   // ── delete thread ──────────────────────────────────────────────────────────
   const [confirmDelId, setConfirmDelId] = useState(null);
   const deleteThread = async (threadId) => {
@@ -6589,7 +6635,11 @@ function ClientRelations({ user }) {
   // focus compose when thread selected
   useEffect(() => { if (selThreadId && draftRef.current) draftRef.current.focus(); }, [selThreadId]);
 
-  const companyThreads = selCoId ? (threadsByCompany[selCoId]||[]) : [];
+  const allCompanyThreads = selCoId ? (threadsByCompany[selCoId]||[]) : [];
+  const archivedCount = allCompanyThreads.filter(t => t.archived_at).length;
+  // Membership on a positive condition, not an exclusion: show everything when
+  // the toggle is on, otherwise only the active ones.
+  const companyThreads = showArchived ? allCompanyThreads : allCompanyThreads.filter(t => !t.archived_at);
   const totalUnread = Object.values(unreadMap).reduce((a,b)=>a+b,0);
   const filteredClients = clientSearch.trim()
     ? sortedClientIds.filter(id => (companies[id]||'').toLowerCase().includes(clientSearch.toLowerCase()))
@@ -6672,6 +6722,16 @@ function ClientRelations({ user }) {
               </div>
               <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
                 <span style={{fontSize:11,color:'var(--muted)',fontWeight:500,letterSpacing:0}}>{companyThreads.length} thread{companyThreads.length!==1?'s':''}</span>
+                {/* Only offered when there is something to reveal, so the control
+                    never implies an archive that does not exist. Names the count
+                    because "Show archived" alone gives no reason to press it. */}
+                {archivedCount>0 && (
+                  <button onClick={()=>setShowArchived(v=>!v)}
+                    title={showArchived?'Hide archived conversations':'Show archived conversations'}
+                    style={{background:showArchived?'var(--line-2)':'none',border:'1px solid var(--line)',cursor:'pointer',color:'var(--ink-2)',borderRadius:'7px',padding:'3px 9px',fontSize:'11.5px',fontWeight:600,letterSpacing:0}}>
+                    {showArchived?'Hide archived':'Archived ('+archivedCount+')'}
+                  </button>
+                )}
                 {/* Contextual entry point: the company is already selected, so it
                     arrives pre-picked and the modal is one field shorter. */}
                 <button onClick={()=>setNewThread({ companyId:selCoId })} title={'New conversation with '+(companies[selCoId]||'this client')}
@@ -6721,6 +6781,14 @@ function ClientRelations({ user }) {
               </div>
               <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
                 {selThread?.sales_order_id && <span className="badge b-confirmed" style={{fontSize:'11px'}}>Order</span>}
+                {/* Says the state, not just the action -- an archived thread staff
+                    can still open needs to announce that the client cannot. */}
+                {selThread?.archived_at && <span className="badge" style={{fontSize:'11px',background:'var(--line-2)',color:'var(--ink-2)'}}>Archived · hidden from client</span>}
+                <button onClick={()=>toggleArchive(selThread)} disabled={archBusy}
+                  title={selThread?.archived_at?'Restore this conversation for the client':'Archive — hides it from the client, keeps it here'}
+                  style={{background:'none',border:'1px solid var(--line)',cursor:archBusy?'default':'pointer',color:'var(--ink-2)',borderRadius:'7px',padding:'4px 10px',fontSize:'11.5px',fontWeight:600,letterSpacing:0,opacity:archBusy?.5:1}}>
+                  {selThread?.archived_at?'Restore':'Archive'}
+                </button>
                 {confirmDelId===selThreadId ? (
                   <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
                     <span style={{fontSize:'12px',color:'var(--muted)'}}>Delete this conversation?</span>
@@ -6849,10 +6917,27 @@ export default function App() {
 
   // poll unread client messages every 30s
   useEffect(() => {
+    // ┌─────────────────────────────────────────────────────────────────────────┐
+    // │ FILTERED THE SAME WAY THE PANEL IS, OR THE TWO DISAGREE FOREVER.        │
+    // │                                                                         │
+    // │ This was a head:true count with no thread awareness at all. Left alone,  │
+    // │ archiving a thread with unread messages would clear it from Client       │
+    // │ Relations while this nav badge kept counting it -- a number pointing at  │
+    // │ a conversation the screen it links to does not show. Two sources of      │
+    // │ truth for one dot.                                                       │
+    // │                                                                         │
+    // │ Costs the exact count: PostgREST cannot join messages to threads, so the │
+    // │ rows come back and are filtered here, mirroring loadAll. The volume is   │
+    // │ unread client messages only -- tens, not thousands.                      │
+    // └─────────────────────────────────────────────────────────────────────────┘
     const fetchUnread = async () => {
       try {
-        const { count } = await SB.schema('portal').from('messages').select('id',{count:'exact',head:true}).eq('author_type','client').eq('read_by_kui',false);
-        setCrUnread(count||0);
+        const [{ data: arch }, { data: rows }] = await Promise.all([
+          SB.schema('portal').from('threads').select('id').not('archived_at','is',null),
+          SB.schema('portal').from('messages').select('thread_id').eq('author_type','client').eq('read_by_kui',false),
+        ]);
+        const archived = new Set((arch||[]).map(t=>t.id));
+        setCrUnread((rows||[]).filter(m => !archived.has(m.thread_id)).length);
       } catch(e){}
     };
     fetchUnread();
