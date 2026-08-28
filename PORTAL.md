@@ -204,6 +204,83 @@ This is the lead item for the portal-repo access request, ahead of the badge bug
 It is entirely in code we cannot read or fix, and unlike the badge — which shows
 a wrong number — this one takes the page down.
 
+## Deploying KUI-portal, and how to actually verify it
+
+The portal is a separate repo — `riley944/KUI-portal`, Vercel project
+`prj_PftVIw825ab46PzCj0ZvwvjMvDiW`, serving `kui.vessl.io`. It is NOT the
+`vessl-erp` project, and the Vercel connector used from this workspace is pinned
+to `vessl-erp`: `get_deployment` on a KUI-portal id returns 404, `get_project`
+takes no arguments, and `list_deployments` silently IGNORES `projectId` — passing
+a nonsense id returns vessl-erp's list rather than erroring. Treat any Vercel API
+result as being about vessl-erp unless proven otherwise.
+
+### THE COMMIT AUTHOR MUST BE LINKED TO A VERCEL ACCOUNT
+
+On 28 Aug two pushes to KUI-portal were **BLOCKED** — not failed, not queued.
+Vercel resolves the commit author's email to a GitHub account and refuses to build
+if that account is not connected to a Vercel account. Nothing in git, GitHub or
+the repo shows this; the push succeeds normally and the deployment simply never
+runs.
+
+Meanwhile the production alias stayed on the previous build for two days. Every
+check against the live domain was reading old code, which made a correct commit
+look like it was missing its changes.
+
+The trap: **the same author email builds fine on VESSL-erp.** Authorship alone
+never explains a difference between the two projects, because the requirement is
+per-Vercel-account linkage, not per-commit. Do not conclude "the author is fine
+because the other repo deploys".
+
+### Verify the DOMAIN, never the deployment
+
+Two holes made this take far longer than it should have. Both are about
+mistaking a proxy for the thing itself:
+
+1. **`readyState: READY` does not mean the domain serves it.** A deployment can be
+   READY and hold no production alias — preview builds are READY too. READY plus
+   an `alias` array in the API response is still not proof the alias is *assigned*
+   to that deployment rather than merely configured on the project. A dashboard
+   can show a build as READY while `kui.vessl.io` serves something two days older.
+
+2. **Inspecting the deployment's build output proves nothing about what users
+   get.** A local `npm run build` passing at exit 0, or reading a deployment's
+   assets, says the code compiles — not that it is being served. During this
+   incident a clean local build coexisted with a blocked deployment and a
+   two-day-old live bundle.
+
+**The check that worked, and the one to use:** fetch the public domain and look
+for a string that exists ONLY in the new code.
+
+    CH=$(curl -s https://kui.vessl.io | grep -oE '/_next/static/chunks/app/page-[^"]+\.js' | head -1)
+    curl -s "https://kui.vessl.io$CH" | grep -c 'SOME_NEW_STRING_LITERAL'
+
+Zero means the fix is not live, whatever any dashboard says. This is the only
+check in the whole incident that never gave a wrong answer.
+
+Two supporting signals on the same response:
+
+- **`Age` never resetting.** A new production deployment invalidates the alias
+  cache and `Age` returns to 0. An `Age` that climbs monotonically across hours —
+  187,000 seconds here — means no new deployment has taken the alias, regardless
+  of build status.
+- **`ETag` unchanged.** Same object, same bytes. Compare it before and after a
+  push; if it is identical, nothing shipped.
+
+Neither cache-busting query params nor `Cache-Control: no-cache` will move a
+statically prerendered page off its cache key — four request variants returned the
+identical ETag here. A stale-looking response is not evidence of a CDN problem;
+check whether a new deployment exists at all first.
+
+### Do not push what cannot be verified
+
+The deeper mistake was pushing to KUI-portal at all while knowing the deployment
+state could not be read. Three pushes produced zero deployments and several rounds
+of inference from cache headers, where one API call would have answered it.
+
+Either get a Vercel connector scoped to the TEAM rather than a single project, or
+treat KUI-portal pushes as unverified until a human confirms the deployment in the
+dashboard AND the domain-content check above returns non-zero.
+
 ## `portal.notifications` is write-only
 
 154 rows as of 27 Aug, **none ever marked read**, and the string "notifications"
