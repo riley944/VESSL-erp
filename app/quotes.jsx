@@ -77,6 +77,31 @@ function fmt(n) {
   if (!isFinite(v)) return "—";
   return v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+// ── Unit prices on printed documents ─────────────────────────────────────────
+// Tier prices are PER UNIT -- "$X at Y units" -- and quotes.tiers is jsonb, so
+// they have never had a storage limit at all. fmt() is fixed at 2dp, which means
+// a quote priced at $0.1778 a bag prints as $0.18 on the document the client
+// keeps: a 1.2% overstatement on a line that may run to six figures of units.
+//
+// Minimum 2, maximum 5, trailing zeros trimmed, mirroring unitPrice() in
+// page.jsx. $1.50 still prints "$1.50", so nothing on an existing quote moves.
+//
+// THE WHOLE TIER ROW IS ON ONE CONVENTION. All five figures in it are per-unit
+// -- EXW, freight, total cost per unit, the mold amortised into that total, and
+// the client price -- so all five use fmtUnit, on screen and in both print
+// documents. A row where two columns tell the truth and three round is harder to
+// read than either convention applied throughout.
+//
+// fmt() stays for genuine totals and for whole-quote fees (mold fee, sample fee
+// as line items), which are amounts, not rates. It also still renders the
+// size-scale tier editor further down -- a different screen, not this row.
+function fmtUnit(n) {
+  const v = Number(n);
+  if (!isFinite(v)) return "—";
+  const trimmed = v.toFixed(5).replace(/0+$/, "");
+  const decimals = Math.max(2, Math.min(5, (trimmed.split(".")[1] || "").length));
+  return v.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
 function stamp() { return new Date().toISOString(); }
 function fmtStamp(iso) {
   if (!iso) return "—";
@@ -986,8 +1011,10 @@ function Platform({ session }) {
             const sum = quoteSummary(q);
             const open = expanded === q.id;
             const priceRange = sum.minClient == null ? "—"
-              : sum.minClient === sum.maxClient ? `$${fmt(sum.minClient)}`
-              : `$${fmt(sum.maxClient)} – $${fmt(sum.minClient)}`;
+              // Client PRICE range across tiers -- per-unit on both ends, so it
+              // has to read the same as the tier rows and the printed quote.
+              : sum.minClient === sum.maxClient ? `$${fmtUnit(sum.minClient)}`
+              : `$${fmtUnit(sum.maxClient)} – $${fmtUnit(sum.minClient)}`;
             return (
               <div key={q.id} style={S.rowGroup}>
                 <div id={`quote-row-${q.id}`} style={{ ...S.row, ...(open ? S.rowOpen : {}) }} onClick={() => setExpanded(open ? null : q.id)}>
@@ -1492,16 +1519,16 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
             return (
               <div key={i} style={S.tierBodyRow}>
                 <div style={{ flex: 1, fontWeight: 600, color: "#0f1729" }}>{t.qty ? Number(t.qty).toLocaleString() : "—"}</div>
-                <div style={{ flex: 1, textAlign: "right", ...S.num }}>{t.landed ? `$${fmt(t.landed)}` : "—"}</div>
+                <div style={{ flex: 1, textAlign: "right", ...S.num }}>{t.landed ? `$${fmtUnit(t.landed)}` : "—"}</div>
                 <div style={{ flex: 0.8, textAlign: "center", ...S.num }}>
                   <span style={S.methodTag}>{(t.ship || "ocean") === "air" ? "Air" : "Ocean"}</span>
                 </div>
-                <div style={{ flex: 1, textAlign: "right", ...S.num }}>{activeFreight(t) ? `$${fmt(activeFreight(t))}` : "—"}</div>
+                <div style={{ flex: 1, textAlign: "right", ...S.num }}>{activeFreight(t) ? `$${fmtUnit(activeFreight(t))}` : "—"}</div>
                 <div style={{ flex: 1, textAlign: "right", ...S.num, fontWeight: 600, color: "#0f1729" }}>
-                  {total ? `$${fmt(total)}` : "—"}
-                  {mpu > 0 && <div style={{ fontSize: 10.5, color: "#6a7488", fontWeight: 500 }}>incl. ${fmt(mpu)} mold</div>}
+                  {total ? `$${fmtUnit(total)}` : "—"}
+                  {mpu > 0 && <div style={{ fontSize: 10.5, color: "#6a7488", fontWeight: 500 }}>incl. ${fmtUnit(mpu)} mold</div>}
                 </div>
-                <div style={{ flex: 1, textAlign: "right", ...S.num, fontWeight: 600, color: "#0f1729" }}>{t.client ? `$${fmt(t.client)}` : "—"}</div>
+                <div style={{ flex: 1, textAlign: "right", ...S.num, fontWeight: 600, color: "#0f1729" }}>{t.client ? `$${fmtUnit(t.client)}` : "—"}</div>
                 <div style={{ flex: 0.8, textAlign: "right", ...S.num }}>
                   <span style={{ color: m && m < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{m ? m.toFixed(0) + "%" : "—"}</span>
                 </div>
@@ -1648,11 +1675,11 @@ function printQuote(q) {
     const mpu = moldPerUnit(q.moldFee, t.qty);
     return `<tr${idx % 2 ? ' class="alt"' : ''}>
       <td class="qty">${t.qty ? Number(t.qty).toLocaleString() : "—"}</td>
-      <td class="r">${t.landed ? "$" + fmt(t.landed) : "—"}</td>
+      <td class="r">${t.landed ? "$" + fmtUnit(t.landed) : "—"}</td>
       <td class="c"><span class="method">${(t.ship || "ocean") === "air" ? "Air" : "Ocean"}</span></td>
-      <td class="r">${af ? "$" + fmt(af) : "—"}</td>
-      <td class="r">${total ? "$" + fmt(total) : "—"}${mpu > 0 ? `<div style="font-size:9px;color:#6a7488;font-weight:500">incl. $${fmt(mpu)} mold</div>` : ""}</td>
-      <td class="r price">${t.client ? "$" + fmt(t.client) : "—"}</td>
+      <td class="r">${af ? "$" + fmtUnit(af) : "—"}</td>
+      <td class="r">${total ? "$" + fmtUnit(total) : "—"}${mpu > 0 ? `<div style="font-size:9px;color:#6a7488;font-weight:500">incl. $${fmtUnit(mpu)} mold</div>` : ""}</td>
+      <td class="r price">${t.client ? "$" + fmtUnit(t.client) : "—"}</td>
       <td class="r">${m ? m.toFixed(0) + "%" : "—"}</td>
     </tr>`;
   }).join("");
@@ -1758,7 +1785,7 @@ function printClientSheet(clientName, quotesArr, settings, vendor) {
       .filter((t) => t.qty && t.client)
       .map((t) => `<tr>
         <td class="qty">${Number(t.qty).toLocaleString()}</td>
-        <td class="r price">$${fmt(t.client)}</td>
+        <td class="r price">$${fmtUnit(t.client)}</td>
       </tr>`).join("");
     if (!rows) return "";
     return `

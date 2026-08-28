@@ -32,7 +32,41 @@ function companyColor(name){
 function initials(name){ return (name||'?').replace(/[^A-Za-z0-9 ]/g,'').split(/\s+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('')||'?'; }
 
 // ── Utils ────────────────────────────────────────────────────────────────────
+// TOTALS. Always two decimals, because a total is an amount of money somebody
+// pays. Line amounts, subtotals, invoice values and every KPI use this.
 const money = (n, c='USD') => n == null ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:c}).format(n);
+
+// ── UNIT prices, which are not the same thing ────────────────────────────────
+// ┌───────────────────────────────────────────────────────────────────────────┐
+// │ A UNIT PRICE IS A RATE, NOT AN AMOUNT.                                    │
+// │                                                                           │
+// │ vessl.sales_order_items.client_price and the purchase-order price columns  │
+// │ hold numeric(18,5) since 13 -- a bag can genuinely cost $0.17780 each, and │
+// │ 24 live rows already carry 3-4 decimals. Rendering those through money()   │
+// │ shows $0.18 and quietly claims a precision the business does not have.     │
+// │                                                                           │
+// │ MINIMUM 2, MAXIMUM 5, trailing zeros trimmed. $1.50 stays "$1.50" rather   │
+// │ than becoming "$1.5" or "$1.50000"; $0.17780 shows as "$0.1778". So a      │
+// │ price with nothing past cents is indistinguishable from what money()       │
+// │ printed before, and nothing on screen changes until somebody enters a      │
+// │ finer price -- which is the entire point.                                  │
+// │                                                                           │
+// │ Do NOT use this for a total. quantity x unit_price is money owed and       │
+// │ rounds to cents; showing $1,234.56780 on an invoice line would be wrong.   │
+// └───────────────────────────────────────────────────────────────────────────┘
+const unitPrice = (n, c='USD') => {
+  if (n == null || n === '' || isNaN(Number(n))) return '—';
+  const v = Number(n);
+  // Count the decimals the value actually has, capped at 5. toFixed(5) then
+  // stripping zeros is what trims: 1.5 -> "1.50000" -> "1.5" -> 1 decimal, so
+  // the max() floors it back to 2 and $1.50 renders as $1.50.
+  const trimmed = v.toFixed(5).replace(/0+$/, '');
+  const decimals = Math.max(2, Math.min(5, (trimmed.split('.')[1] || '').length));
+  return new Intl.NumberFormat('en-US', {
+    style:'currency', currency:c,
+    minimumFractionDigits: decimals, maximumFractionDigits: decimals,
+  }).format(v);
+};
 const moneyCompact = (n) => {
   if (n == null) return '—';
   const a = Math.abs(n);
@@ -1390,7 +1424,10 @@ function SalesOrderDetail({id,navigate}){
                     </td>
                     <td style={{padding:'12px 16px',fontFamily:'var(--mono)',fontSize:'12px',color:'var(--muted)'}}>{it.client_sku||'—'}</td>
                     <td style={{padding:'12px 16px',textAlign:'right',fontFamily:'var(--mono)'}}>{new Intl.NumberFormat('en-US').format(it.quantity||0)}</td>
-                    <td style={{padding:'12px 16px',textAlign:'right',fontFamily:'var(--mono)'}}>{money(it.client_price,so.currency)}</td>
+                    {/* unitPrice, not money: this is the per-unit rate. The line
+                        amount two cells along stays money() -- that is an amount
+                        owed and rounds to cents. */}
+                    <td style={{padding:'12px 16px',textAlign:'right',fontFamily:'var(--mono)'}}>{unitPrice(it.client_price,so.currency)}</td>
                     <td style={{padding:'12px 16px',textAlign:'right',fontFamily:'var(--mono)',fontWeight:600}}>{money(amt,so.currency)}</td>
                   </tr>
                 ); })}
@@ -1866,7 +1903,7 @@ function CreateSOModal({onClose,onCreated}){
                     <td>{sizesForSelection(it.sizeScales).length
                       ? <div className="qty-from-sizes" title="Blended unit price from the size breakdown below"><span className="qfs-v">{lineUnit(it).toFixed(2)}</span><span className="qfs-k">from sizes</span></div>
                       : <>
-                          <input type="number" step="0.01" value={it.price} onChange={e=>si(i,'price',e.target.value)} placeholder="0.00" style={{borderColor:it.noPrice&&!it.price?'#f59e0b':''}} />
+                          <input type="number" step="0.00001" value={it.price} onChange={e=>si(i,'price',e.target.value)} placeholder="0.00" style={{borderColor:it.noPrice&&!it.price?'#f59e0b':''}} />
                           {it.noPrice&&!it.price&&<div style={{fontSize:'10px',color:'#d97706',marginTop:'2px'}}>Enter client price</div>}
                           {it.noPrice&&it.price&&<div style={{fontSize:'10px',color:'#059669',marginTop:'2px'}}>Will save to catalog</div>}
                         </>}
@@ -2621,7 +2658,7 @@ function OrderDetail({ id, navigate }) {
                     </td>
                     <td className="mono num">{fmtNum(it.quantity)}</td>
                     <td className="mono num">{it.ci_value!=null?money(it.ci_value,po.currency):'—'}</td>
-                    <td className="mono num">{money(it.unit_price,po.currency)}</td>
+                    <td className="mono num">{unitPrice(it.unit_price,po.currency)}</td>
                     <td className="mono num" style={{fontWeight:600}}>{money((Number(it.quantity)||0)*(Number(it.unit_price)||0),po.currency)}</td>
                   </tr>
                 );
@@ -2913,13 +2950,13 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
                       </div>
                     </td>
                     <td><input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" /></td>
-                    <td><input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" /></td>
+                    <td><input type="number" step="0.00001" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" /></td>
                     <td><button className="rm" onClick={()=>rmItem(i)}>×</button></td>
                   </tr>
                   <tr className="item-sub-row">
                     <td colSpan={4}>
                       <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 4px'}}>
-                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>CI Value ($)</span><input type="number" step="0.01" className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.ci||''} onChange={e=>setItem(i,'ci',e.target.value)} placeholder="0.00" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>CI Value ($)</span><input type="number" step="0.00001" className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.ci||''} onChange={e=>setItem(i,'ci',e.target.value)} placeholder="0.00" /></div>
                         <div style={{display:'flex',flexDirection:'column',flex:'1 1 180px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Carton info</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.carton||''} onChange={e=>setItem(i,'carton',e.target.value)} placeholder="e.g. 12 pcs/ctn, 60×40×30 cm, 11 kg" /></div>
                       </div>
                       <div style={{display:'flex',gap:'8px',flexWrap:'wrap',padding:'0 0 8px'}}>
@@ -2927,7 +2964,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Master SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.masterSku||''} onChange={e=>setItem(i,'masterSku',e.target.value)} placeholder="Master" /></div>
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Pack SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.packSku||''} onChange={e=>setItem(i,'packSku',e.target.value)} placeholder="Pack" /></div>
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Baby SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.babySku||''} onChange={e=>setItem(i,'babySku',e.target.value)} placeholder="Baby" /></div>
-                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Retail Price</span><input type="number" step="0.01" className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.retailPrice||''} onChange={e=>setItem(i,'retailPrice',e.target.value)} placeholder="0.00" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Retail Price</span><input type="number" step="0.00001" className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.retailPrice||''} onChange={e=>setItem(i,'retailPrice',e.target.value)} placeholder="0.00" /></div>
                       </div>
                     </td>
                   </tr>
@@ -5302,14 +5339,14 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
                       : <input type="number" value={it.qty} onChange={e=>setItem(i,'qty',e.target.value)} placeholder="0" />}</td>
                     <td>{sizesForSelection(it.sizeScales).length
                       ? <div className="qty-from-sizes" title="Blended unit price from the size breakdown below"><span className="qfs-v">{lineUnit(it).toFixed(2)}</span><span className="qfs-k">from sizes</span></div>
-                      : <input type="number" step="0.01" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" />}</td>
+                      : <input type="number" step="0.00001" value={it.price} onChange={e=>setItem(i,'price',e.target.value)} placeholder="0.00" />}</td>
                     <td className="mono" style={{textAlign:'right',whiteSpace:'nowrap',fontSize:'12.5px'}}>{money(lineAmt(it),form.currency)}</td>
                     <td><button className="rm" onClick={()=>rmItem(i)}>×</button></td>
                   </tr>
                   <tr className="item-sub-row">
                     <td colSpan={5}>
                       <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 4px'}}>
-                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>CI Value ($)</span><input type="number" step="0.01" className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.ci||''} onChange={e=>setItem(i,'ci',e.target.value)} placeholder="0.00" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>CI Value ($)</span><input type="number" step="0.00001" className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.ci||''} onChange={e=>setItem(i,'ci',e.target.value)} placeholder="0.00" /></div>
                         <div style={{display:'flex',flexDirection:'column',flex:'1 1 180px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Carton info</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.carton||''} onChange={e=>setItem(i,'carton',e.target.value)} placeholder="e.g. 12 pcs/ctn, 60×40×30 cm, 11 kg" /></div>
                       </div>
                       <div style={{display:'flex',gap:'8px',flexWrap:'wrap',padding:'0 0 8px'}}>
@@ -5317,7 +5354,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Master SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.masterSku||''} onChange={e=>setItem(i,'masterSku',e.target.value)} placeholder="Master" /></div>
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Pack SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.packSku||''} onChange={e=>setItem(i,'packSku',e.target.value)} placeholder="Pack" /></div>
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Baby SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.babySku||''} onChange={e=>setItem(i,'babySku',e.target.value)} placeholder="Baby" /></div>
-                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Retail Price</span><input type="number" step="0.01" className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.retailPrice||''} onChange={e=>setItem(i,'retailPrice',e.target.value)} placeholder="0.00" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>Retail Price</span><input type="number" step="0.00001" className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.retailPrice||''} onChange={e=>setItem(i,'retailPrice',e.target.value)} placeholder="0.00" /></div>
                       </div>
                       <div style={{padding:'0 0 8px'}}>
                         <SizeGrid scales={it.sizeScales||[]} onScalesChange={ks=>setSizeScales(i,ks)} quantities={it.sizeQty||{}} onQuantityChange={(k,v)=>setSizeQty(i,k,v)} prices={it.sizePrice||{}} onPriceChange={(k,v)=>setSizePrice(i,k,v)} fallbackPrice={it.price} />
@@ -6285,7 +6322,11 @@ function buildSODoc(d) {
         +(l.sku?'<div style="font-size:11.5px;color:#6b7280;font-family:monospace;margin-top:4px;"><span style="color:#9ca3af;">SKU</span> '+l.sku+'</div>':'')
       +'</td>'
       +'<td style="padding:15px 14px;text-align:center;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:16px;font-weight:700;color:#0f172a;font-family:monospace;">'+fn(l.quantity)+'</td>'
-      +'<td style="padding:15px 14px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;font-family:monospace;">'+m(l.client_price)+'</td>'
+      // THE UNIT PRICE CELL ON A DOCUMENT THE CLIENT RECEIVES. unitPrice, not
+      // the local m(): m() is fixed at 2dp and would print $0.18 for a bag that
+      // costs $0.1778, understating the price on the customer's own order
+      // confirmation. The line-amount cell below keeps m() -- that is money owed.
+      +'<td style="padding:15px 14px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;font-family:monospace;">'+unitPrice(l.client_price,cur)+'</td>'
       +'<td style="padding:15px 18px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:15px;font-weight:700;color:#0f172a;font-family:monospace;">'+m(l.line_amount)+'</td>'
       +'</tr>';
   }).join('');
