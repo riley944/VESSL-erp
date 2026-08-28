@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { SB } from '@/lib/supabase';
 import { SBQ } from '@/lib/supabaseQuotes';
@@ -3603,9 +3603,20 @@ function ProductDetailModal({quote:initQ, onClose, onCreatePO}){
 // nothing at any layer to catch it.
 const newQuoteNumber = () => 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase();
 
-function Shipments({ onNewShipment }) {
+// userEmail follows Programs' precedent rather than re-reading the session: the
+// shell already has it, and responded_by must record who actually answered.
+function Shipments({ onNewShipment, userEmail }) {
   const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
+  // Delivery requests the client filed from the portal. Nothing in this app has
+  // ever displayed them -- the table was written to by the portal and read by
+  // nobody, and until 04 gave staff an RLS policy it was not even readable here.
+  const [dreqs, setDreqs] = useState([]);
+  const [coNames, setCoNames] = useState({});   // company id → name
+  const [respondId, setRespondId] = useState(null);
+  const [respNote, setRespNote] = useState('');
+  const [respDate, setRespDate] = useState('');
+  const [respBusy, setRespBusy] = useState(false);
   const [openId, setOpenId] = useState(null);
   const [view, setView] = useState('quotes');            // 'quotes' | 'shipments'
   const [tab, setTab] = useState('active');              // shipments sub-tab
@@ -3683,9 +3694,67 @@ function Shipments({ onNewShipment }) {
     await reloadQuotes();
     window._toast?.('Quote duplicated', 'ok');
   };
-  useEffect(()=>{ reload(); reloadQuotes(); reloadBids(); },[]);
+  // Two queries, not a join: portal.delivery_requests lives in another schema, so
+  // PostgREST cannot reach vessl.companies from it. The names are fetched
+  // alongside and matched in JS, the same shape Client Relations uses.
+  const reloadDreqs = async () => {
+    const [{ data: d }, { data: cos }] = await Promise.all([
+      SB.schema('portal').from('delivery_requests').select('*').order('created_at',{ascending:false}),
+      SB.from('companies').select('id,name'),
+    ]);
+    const m = {}; (cos||[]).forEach(c => { m[c.id] = c.name; });
+    setDreqs(d||[]); setCoNames(m);
+  };
+
+  // ┌───────────────────────────────────────────────────────────────────────────┐
+  // │ RESPONDING WRITES FOUR COLUMNS TOGETHER, OR NONE.                         │
+  // │                                                                           │
+  // │ status, kui_response_note, responded_at and responded_by move in one       │
+  // │ update. Before this table had responded_at/responded_by a request could    │
+  // │ change state with no record of who did it or when -- and TWO people are    │
+  // │ emailed about every request, so both could reasonably think the other      │
+  // │ handled it.                                                                │
+  // │                                                                           │
+  // │ requested_date is never touched. 'adjusted' means we countered, and the    │
+  // │ counter goes in proposed_date: overwriting what the client asked for       │
+  // │ destroys the thing being negotiated.                                       │
+  // └───────────────────────────────────────────────────────────────────────────┘
+  const respond = async (req, status) => {
+    if (respBusy) return;
+    if (status === 'adjusted' && !respDate) return;   // guarded in the UI too
+    setRespBusy(true);
+    const patch = {
+      status,
+      kui_response_note: respNote.trim() || null,
+      responded_at: new Date().toISOString(),
+      responded_by: userEmail || null,
+    };
+    if (status === 'adjusted') patch.proposed_date = respDate;
+    const { error } = await SB.schema('portal').from('delivery_requests').update(patch).eq('id', req.id);
+    if (error) { window._toast?.('Could not save: '+error.message, 'err'); setRespBusy(false); return; }
+    await reloadDreqs();
+    setRespondId(null); setRespNote(''); setRespDate('');
+    window._toast?.('Delivery request '+status, 'ok');
+    setRespBusy(false);
+  };
+
+  useEffect(()=>{ reload(); reloadQuotes(); reloadBids(); reloadDreqs(); },[]);
 
   // ── derived ──
+  // shipment_ref is FREE TEXT, not a foreign key. The portal writes it and we
+  // cannot read the portal's code, so this resolves by shipment_number and is
+  // allowed to miss. A request whose ref matches nothing is still shown, marked
+  // unmatched -- hiding it would lose a client's request because our join failed.
+  const shipByNumber = useMemo(() => {
+    const m = {};
+    (rows||[]).forEach(s => { if (s.shipment_number) m[String(s.shipment_number).trim()] = s; });
+    return m;
+  }, [rows]);
+  const matchShip = ref => (ref ? shipByNumber[String(ref).trim()] : undefined) || null;
+  // 'requested' is the only state needing action -- everything else has been
+  // answered or withdrawn. This is the number on the toggle pill and the nav badge.
+  const openDreqs = dreqs.filter(d => (d.status||'requested') === 'requested');
+
   const bidCount = id => bids.filter(b=>b.shipment_quote_id===id).length;
   const winnerOf = id => bids.find(b=>b.shipment_quote_id===id && b.selected);
   const TERMINAL = ['delivered','cancelled'];
@@ -3773,7 +3842,10 @@ function Shipments({ onNewShipment }) {
       {/* ── Controls row: segmented + search ── */}
       <div style={{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap',marginBottom:'18px'}}>
         <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',boxShadow:'inset 0 1px 2px rgba(0,0,0,.05)'}}>
-          {[['quotes','Freight Quotes',quotes.length],['shipments','Shipments',rows.length]].map(([v,l,ct])=>(
+          {/* The pill counts OPEN requests, not all of them -- consistent with
+              the other two counting what is live rather than what exists, and it
+              is the number that should make somebody click. */}
+          {[['quotes','Freight Quotes',quotes.length],['shipments','Shipments',rows.length],['delivery','Delivery Requests',openDreqs.length]].map(([v,l,ct])=>(
             <button key={v} onClick={()=>{setView(v); setSearch('');}} style={{display:'inline-flex',alignItems:'center',gap:'8px',padding:'9px 18px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:view===v?'#1D1D1F':'transparent',color:view===v?'#fff':'#5A5A5E',boxShadow:view===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
               {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 8px',background:view===v?'rgba(255,255,255,.22)':'#DCDCE0',color:view===v?'#fff':'#6A6A6E'}}>{ct}</span>
             </button>
@@ -3873,6 +3945,90 @@ function Shipments({ onNewShipment }) {
             );
           })}
         </div>
+        )
+      )}
+
+      {/* ══ DELIVERY REQUESTS — what the client asked for, and our answer ══ */}
+      {view==='delivery' && (
+        dreqs.length===0 ? (
+          <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>
+            <div style={{fontSize:32,marginBottom:12,opacity:.2}}>📅</div>
+            <div style={{fontWeight:600,color:'#5A5A5E',marginBottom:6,fontSize:15}}>No delivery requests</div>
+            <div style={{fontSize:13}}>Clients file these from the portal against a shipment on one of their orders.</div>
+          </div>
+        ) : (
+          <div style={{display:'flex',flexDirection:'column',gap:'10px'}}>
+            {dreqs.map(d => {
+              const st = d.status || 'requested';
+              const ship = matchShip(d.shipment_ref);
+              const open = st === 'requested';
+              const responding = respondId === d.id;
+              const tone = st==='confirmed' ? ['#15803D','#DCFCE7']
+                         : st==='adjusted'  ? ['#B45309','#FEF3C7']
+                         : st==='declined'  ? ['#B91C1C','#FEE2E2']
+                         : st==='cancelled' ? ['#5A5A5E','#F2F2F4']
+                         :                    ['#1D4ED8','#DBEAFE'];
+              return (
+                <div key={d.id} style={{background:'#fff',borderRadius:'14px',padding:'16px 18px',boxShadow:'0 1px 3px rgba(0,0,0,.06)'}}>
+                  <div style={{display:'flex',alignItems:'flex-start',gap:'12px',flexWrap:'wrap'}}>
+                    <div style={{flex:'1 1 260px',minWidth:0}}>
+                      <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
+                        <span style={{fontSize:'14px',fontWeight:700,color:'#1A1A1C'}}>{d.shipment_ref}</span>
+                        {/* SAYS SO RATHER THAN HIDING IT. shipment_ref is free text
+                            written by the portal; if it matches no shipment_number
+                            the request is still real and still needs answering. */}
+                        {ship
+                          ? <span style={{fontSize:'11.5px',color:'#8A8A8E'}}>{(ship.status||'').replace(/_/g,' ')}{ship.container_no?' · '+ship.container_no:''}</span>
+                          : <span title="No shipment matches this reference" style={{fontSize:'11px',fontWeight:600,borderRadius:'20px',padding:'2px 8px',background:'#F2F2F4',color:'#8A8A8E'}}>unmatched ref</span>}
+                        <span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'2px 9px',textTransform:'uppercase',letterSpacing:'.03em',color:tone[0],background:tone[1]}}>{st}</span>
+                      </div>
+                      <div style={{fontSize:'12.5px',color:'#5A5A5E',marginTop:'5px',lineHeight:1.6}}>
+                        {coNames[d.client_company_id]||'Unknown client'}
+                        {d.container_no ? ' · container '+d.container_no : ''}
+                        <br/>
+                        Requested <b style={{color:'#1A1A1C'}}>{fmtDate(d.requested_date)}</b>
+                        {d.eta ? ' · ETA '+fmtDate(d.eta) : ''}
+                        {d.requested_by ? ' · by '+d.requested_by : ''}
+                        {/* The counter-offer sits BESIDE the ask, never over it. */}
+                        {d.proposed_date ? <><br/>We proposed <b style={{color:'#1A1A1C'}}>{fmtDate(d.proposed_date)}</b></> : null}
+                      </div>
+                      {d.note && <div style={{fontSize:'12.5px',color:'#4A4A4E',marginTop:'8px',background:'#FAFAFA',borderRadius:'8px',padding:'8px 10px',lineHeight:1.5}}>{d.note}</div>}
+                      {d.kui_response_note && <div style={{fontSize:'12.5px',color:'#4A4A4E',marginTop:'6px',borderLeft:'3px solid #DCDCE0',paddingLeft:'9px',lineHeight:1.5}}><b>Our reply:</b> {d.kui_response_note}</div>}
+                      {d.responded_at && <div style={{fontSize:'11px',color:'#A0A0A4',marginTop:'6px'}}>Answered {fmtDateTime(d.responded_at)}{d.responded_by?' by '+d.responded_by:''}</div>}
+                    </div>
+                    {open && !responding && (
+                      <button onClick={()=>{setRespondId(d.id);setRespNote('');setRespDate('');}} className="btn btn-dark" style={{fontSize:'12.5px',padding:'7px 14px'}}>Respond</button>
+                    )}
+                  </div>
+
+                  {responding && (
+                    <div style={{marginTop:'14px',borderTop:'1px solid #F0F0F2',paddingTop:'13px'}}>
+                      <div style={{display:'flex',gap:'12px',flexWrap:'wrap',alignItems:'flex-end'}}>
+                        <div style={{flex:'1 1 260px'}}>
+                          <label style={{fontSize:'11px',fontWeight:600,color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.04em'}}>Reply to the client</label>
+                          <textarea className="form-input" rows={2} value={respNote} onChange={e=>setRespNote(e.target.value)} placeholder="Optional — goes back to them in the portal" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5,marginTop:'4px'}} />
+                        </div>
+                        <div style={{flex:'0 0 165px'}}>
+                          <label style={{fontSize:'11px',fontWeight:600,color:'#8A8A8E',textTransform:'uppercase',letterSpacing:'.04em'}}>Date we propose</label>
+                          <input type="date" className="form-input" value={respDate} onChange={e=>setRespDate(e.target.value)} style={{marginTop:'4px'}} />
+                        </div>
+                      </div>
+                      <div style={{display:'flex',gap:'8px',marginTop:'12px',flexWrap:'wrap',alignItems:'center'}}>
+                        <button disabled={respBusy} onClick={()=>respond(d,'confirmed')} className="btn btn-dark" style={{fontSize:'12.5px',padding:'7px 14px'}}>Confirm {fmtDate(d.requested_date)}</button>
+                        {/* Adjust is the only action with a prerequisite: without a
+                            date it would claim we countered and say nothing with
+                            what, so it stays disabled rather than silently writing
+                            'adjusted' with a null proposed_date. */}
+                        <button disabled={respBusy||!respDate} title={respDate?'':'Pick the date you are proposing'} onClick={()=>respond(d,'adjusted')} className="btn btn-ghost" style={{fontSize:'12.5px',padding:'7px 14px',opacity:respDate?1:.45}}>Adjust</button>
+                        <button disabled={respBusy} onClick={()=>respond(d,'declined')} className="btn btn-ghost" style={{fontSize:'12.5px',padding:'7px 14px',color:'#B91C1C'}}>Decline</button>
+                        <button disabled={respBusy} onClick={()=>{setRespondId(null);setRespNote('');setRespDate('');}} style={{background:'none',border:'none',cursor:'pointer',color:'#8A8A8E',fontSize:'12.5px',fontWeight:600}}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )
       )}
 
@@ -6892,6 +7048,7 @@ export default function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
   const [crUnread, setCrUnread] = useState(0);
+  const [dreqOpen, setDreqOpen] = useState(0);
 
   const navigate = (p, pr={}) => { setRawPage(p); setParams(pr); setNavOpen(false); };
 
@@ -6938,6 +7095,14 @@ export default function App() {
         ]);
         const archived = new Set((arch||[]).map(t=>t.id));
         setCrUnread((rows||[]).filter(m => !archived.has(m.thread_id)).length);
+      } catch(e){}
+      // Open delivery requests, on the same poll. 'requested' only -- anything
+      // answered or withdrawn needs nothing from anyone, and a badge counting
+      // those would never reach zero.
+      try {
+        const { count } = await SB.schema('portal').from('delivery_requests')
+          .select('id',{count:'exact',head:true}).eq('status','requested');
+        setDreqOpen(count||0);
       } catch(e){}
     };
     fetchUnread();
@@ -7013,7 +7178,7 @@ export default function App() {
   if (!roleReady) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
 
   const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations'};
-  const badges = {'client-relations': crUnread};
+  const badges = {'client-relations': crUnread, 'shipments': dreqOpen};
 
   return (
     <ToastProvider>
@@ -7051,7 +7216,7 @@ export default function App() {
           {page==='codes'            && <Codes canDeleteCodes={role !== 'limited_qc'} />}
           {page==='pricing'          && <Pricing />}
           {page==='programs'         && <Programs userEmail={user?.email||''} />}
-          {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} />}
+          {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} userEmail={user?.email||''} />}
           {page==='inventory'        && <Inventory />}
           {page==='settings'         && <KuiSettings />}
           {page==='client-relations' && <ClientRelations user={user} />}
