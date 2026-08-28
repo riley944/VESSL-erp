@@ -6,6 +6,112 @@ against the live database on **2026-08-28**. Re-measure before acting: see
 
 ---
 
+## 0. Case study — the BUC-157 rename (2026-08-28)
+
+**The canonical propagation case.** A customer asked for one SKU to change. It
+was edited by hand on three screens by two people. Two edits landed, one did
+not, and a fourth variant was created in the process. Nobody could have known
+without a database sweep.
+
+> "if I have to update information on multiple screens, it allows more chance
+> for me to miss something."
+> — Kristy, Director of Ops
+
+### What was asked
+
+Customer asked that `BUC-157` become **`BUC-157 KU2607001`**.
+
+### Status: RESOLVED 2026-08-28 22:17 UTC via `scratchpad/15-buc157-sku-rename.sql`
+
+**Correction to an earlier status, and where it came from.** A status of
+"completed / 2 rows updated / fully verified" reached this session and was
+wrong on every count: `vessl.products.sku` was still the bare `BUC-157`, the two
+rows that *had* been edited both carried an undetected double space, and nothing
+had been checked against the database. Script 15 updated **three** rows, not two.
+
+That status originated in the **chat-side handoff summary** — the layer that
+condenses a session for the next one. It did not come from Kristy and it did not
+come from Claude Code. **Kristy's edits landed exactly where she said they did**,
+on the quote and on the SO line; her only defect was a double space no interface
+could have shown her. The summary turned "two screens were edited" into "the
+rename is complete and verified", which nobody had claimed and no query
+supported.
+
+### What actually happened, per the data
+
+| # | Location | Value before | Who / when | State |
+|---|---|---|---|---|
+| 1 | `vessl.products` `c8f3d2d2` | `BUC-157` | never modified | was **STALE** → fixed by script 15 |
+| 2 | `vessl.quotes` `56a08f12` | `BUC-157␣␣KU2607001` | kristy@ 21:33 | landed, double space → normalised |
+| 3 | `vessl.sales_order_items` `d1d0f5f7` | `BUC-157␣␣KU2607001` | kristy@ 18:54 | landed, double space → normalised |
+| 4 | `vessl.quotes` `3bc2833a` | `BUC-157` | loren@ 2026-07-23 | stale duplicate quote — **still open** |
+| 5 | `vessl.products` `6f92c254` | `BUC_157` / "CO BAG" | never modified | duplicate product — **still open** |
+| 6 | `vessl.programs` `576b59d8` | `BUC_157` ×2 | 2026-08-26 | underscore variant — **still open** |
+| 7 | `vessl.purchase_order_items` `3b753125` | `master_sku` NULL | PO draft | carries no SKU at all — no action |
+
+Before the fix, **four distinct strings existed for one product**: `BUC-157`,
+`BUC-157␣␣KU2607001`, `BUC_157`, and the intended `BUC-157␣KU2607001` — which
+existed nowhere.
+
+Rows 1–3 now all read `BUC-157 KU2607001`, length 17, single space. Verified
+outside the transaction after commit: 0 double-space forms remain,
+`count(distinct)` across the three = 1, and rows 4–6 confirmed untouched.
+**Rows 4–6 remain open** — they are decisions about which quote and which
+product are real, not string fixes, and belong to the catalogue session.
+
+### The three failures, each a different mechanism
+
+1. **The product edit did not land.** `vessl.products.sku` was still exactly
+   `BUC-157`, and no product row contained `KU2607001`. Note `updated_at` could
+   not corroborate this either way — it is never advanced on this table (§4) —
+   so the *value* was the only evidence. **A save that silently does nothing is
+   indistinguishable from a save that worked.**
+2. **A double space nobody can see.** Kristy typed `BUC-157␣␣KU2607001`
+   (length 18). The intended value is length 17. The two would never match, and
+   the difference is invisible in every UI. Both of the edits that *did* land
+   carried it.
+3. **Nothing propagated because nothing is linked.** The SO line has
+   `product_id` NULL *and* `quote_id` NULL. The PO line has `product_id` NULL.
+   There was no path for the rename to travel — which is §4's 419 unlinked
+   lines, met in the wild.
+
+### Why the SO PDF "didn't carry it"
+
+Kristy's read was that the quote edit failed to reach the SO. It did not fail —
+`sales_order_items.client_sku` is a **snapshot**, written once at SO creation
+(`page.jsx:1783`) and never re-read from the quote. There is no code path that
+would ever have carried it. Her manual fix was not a workaround for a bug; it
+was the only mechanism that exists.
+
+### What this case establishes
+
+- The propagation feature Kristy asked for would have prevented **one** of these
+  three failures (#3). It would not have caught the silent save (#1) or the
+  double space (#2).
+- A save-confirmation and a whitespace-normalising SKU input are cheaper than
+  propagation and would have caught two of the three.
+- **A fourth failure, in the reporting layer rather than the product: the
+  rename was summarised as done when it was not.** Two of three edits had
+  landed, both with a defect, and the third had silently failed — yet the
+  handoff summary said complete and verified. This one is not a UI problem and
+  not a user error: **no operator overstated anything.** A summarisation step
+  compressed "two screens were edited" into "the rename is finished", and the
+  claim survived into the next session with no query behind it. Treat any
+  inherited status as a hypothesis and re-measure; §"Number drift" is the same
+  lesson from a different angle.
+- The product-side version of the same lesson still stands: no screen in the app
+  can show you the other two screens, so "I updated it" is a true claim about
+  one row that gets *heard* as a claim about the product. Any future propagation
+  feature should report **what it changed, by row**, rather than that it
+  succeeded — both to the operator and to whatever reads its output later.
+- `scratchpad/15-buc157-sku-rename.sql` finished the rename on 2026-08-28:
+  three rows updated, all normalised to the single-space form, rows 4–7 left
+  alone as decisions for Kristy. It was safe to run because product `c8f3d2d2`
+  has zero linked order lines, so the live-SKU read at `page.jsx:2518`/`:2651`
+  had nothing to re-render and no issued document changed.
+
+---
+
 ## 1. The real schema
 
 Order lines link to products by **`product_id uuid`**, a UUID foreign key. There is
