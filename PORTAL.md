@@ -124,6 +124,86 @@ product for now. Recorded so the design is not re-derived from scratch:
   a thread marks it read for everyone. That is fine while visibility is shared and
   is the first thing that breaks if ownership is revived.
 
+## Delivery requests: what the first live test found
+
+The feature was exercised end to end on 28 Aug — a ZZTEST client filed a request
+from the portal, staff answered it in Shipments → Delivery Requests. That was the
+**first time `portal.delivery_requests` had ever held a row**, and the first time
+several code paths on both sides had ever executed.
+
+Confirmed working: HTML escaping (a note containing `<Friday> &` renders
+literally in both the notification email and the ERP, rather than as markup), the
+notification email itself, the Confirm path end to end, and the Adjust button's
+no-date guard.
+
+### `shipment_ref` holds the SALES ORDER number, not the shipment number
+
+This settles a question that was open through migrations 11 and 13. The portal
+writes `ZZTEST-SO-001` — `sales_orders.so_number` — into
+`delivery_requests.shipment_ref`, despite the column's name and despite
+`portal.order_logistics` exposing both `shipment_id` and `shipment_number`.
+
+The ERP resolves that column against `vessl.shipments.shipment_number`, so the
+row displayed with the **"unmatched ref"** chip. That is the design working: the
+request was still listed and still answerable, rather than being dropped because
+a join missed. Had it been hidden, the first real request would have vanished.
+
+**Backlog:** resolve against `sales_orders.so_number` as well, falling back to
+`shipment_number`. Do NOT simply switch — the portal is unreachable code and may
+write either, and a resolver that only understands one is how this happened.
+
+### The portal does not reflect our response
+
+After staff Confirm, the portal's summary card still reads **"Requested"**. The
+status and `kui_response_note` are written correctly and the client's own RLS
+lets them read the row, so this is a portal display gap, not a data one. At
+minimum the summary card is stale; whether the detail view shows it is unknown,
+because of the crash below.
+
+### ⚠ OPEN: delivery requests currently notify Matt only
+
+The `delivery_request_recipients` vault secret is **still set to
+mattdillon@kinguniversal.com alone**, held that way deliberately for testing and
+not yet restored to riley + kristy.
+
+**A real delivery request filed today reaches one person.** No error, no bounce —
+`portal.notify_delivery_request` reads whatever the secret holds and mails it.
+The hardcoded riley+kristy fallback in that function only applies when the secret
+is missing entirely, and it is not missing.
+
+Restore with:
+
+    select vault.update_secret(
+      (select id from vault.secrets where name='delivery_request_recipients'),
+      'riley@kinguniversal.com,kristy@kinguniversal.com',
+      'delivery_request_recipients',
+      'Comma-separated recipients for portal delivery-request notifications');
+
+Add the delivery coordinator to that same string when Riley names them — that is
+the whole reason the recipients moved to the vault rather than staying in the
+function body.
+
+**This cannot be checked from a read-only connection.** `vault.decrypted_secrets`
+is readable but the underlying decryption function is not granted, so a query can
+confirm the secret EXISTS and nothing more. Verifying the value means running the
+select as postgres. Do not infer from "the row is there" that it is correct — an
+earlier note in this session did exactly that and was wrong.
+
+### ⚠ The client-side delivery-request render path crashes
+
+Opening a shipment detail card **as a client** throws:
+
+    ReferenceError: requests is not defined
+
+inside an `Array.map` — the delivery-request render path itself. It had never
+executed before this test: no client had ever had a shipment-linked order, so
+the code shipped and sat unreachable. BucketGolf has 21 such orders, meaning
+**Killian would hit this the moment he opens a shipment card**.
+
+This is the lead item for the portal-repo access request, ahead of the badge bug.
+It is entirely in code we cannot read or fix, and unlike the badge — which shows
+a wrong number — this one takes the page down.
+
 ## `portal.notifications` is write-only
 
 154 rows as of 27 Aug, **none ever marked read**, and the string "notifications"
