@@ -3536,12 +3536,12 @@ function ProductDetailModal({quote:initQ, onClose, onCreatePO}){
   const [saving,setSaving]=useState(false);
   const tOf=q=>{try{const t=q.tiers;return Array.isArray(t)?t:(t?JSON.parse(t):[]);}catch{return [];}};
   const [tiers,setTiers]=useState(tOf(initQ));
-  const [form,setForm]=useState({product:initQ.product||'',sku:initQ.sku||'',client:initQ.client||'',factory:initQ.factory||'',notes:initQ.notes||'',mold_fee:initQ.mold_fee!=null?String(initQ.mold_fee):'',sample_fee:initQ.sample_fee!=null?String(initQ.sample_fee):'',status:initQ.status||'active'});
+  const [form,setForm]=useState({product:initQ.product||'',sku:initQ.sku||'',client:initQ.client||'',factory:initQ.factory||'',notes:initQ.notes||'',mold_fee:initQ.mold_fee!=null?String(initQ.mold_fee):'',sample_fee:initQ.sample_fee!=null?String(initQ.sample_fee):''});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const stf=(i,k,v)=>setTiers(prev=>prev.map((t,idx)=>idx===i?{...t,[k]:v}:t));
   const save=async()=>{
     setSaving(true);
-    const {error}=await SB.from('quotes').update({product:form.product,sku:form.sku||null,client:form.client||null,factory:form.factory||null,notes:form.notes||null,mold_fee:Number(form.mold_fee)||null,sample_fee:Number(form.sample_fee)||null,tiers,status:form.status,updated_at:new Date().toISOString()}).eq('id',q.id);
+    const {error}=await SB.from('quotes').update({product:form.product,sku:form.sku||null,client:form.client||null,factory:form.factory||null,notes:form.notes||null,mold_fee:Number(form.mold_fee)||null,sample_fee:Number(form.sample_fee)||null,tiers,updated_at:new Date().toISOString()}).eq('id',q.id);
     if(error){alert('Error: '+error.message);}
     else{setQ(prev=>({...prev,...form,tiers}));setEditing(false);}
     setSaving(false);
@@ -3561,7 +3561,7 @@ function ProductDetailModal({quote:initQ, onClose, onCreatePO}){
           {!editing ? (
             <>
               <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'12px',marginBottom:'20px'}}>
-                {[['Product',q.product||'—'],['SKU',q.sku||'—'],['Status',q.status||'—'],['Client',q.client||'—'],['Factory',q.factory||'—'],['Mold Fee',q.mold_fee?money(q.mold_fee):'—']].map(([l,v])=>(
+                {[['Product',q.product||'—'],['SKU',q.sku||'—'],['Client',q.client||'—'],['Factory',q.factory||'—'],['Mold Fee',q.mold_fee?money(q.mold_fee):'—']].map(([l,v])=>(
                   <div key={l}><div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)',marginBottom:'4px'}}>{l}</div><div style={{fontSize:'13px',fontWeight:500,color:'var(--ink)'}}>{v}</div></div>
                 ))}
               </div>
@@ -3594,7 +3594,7 @@ function ProductDetailModal({quote:initQ, onClose, onCreatePO}){
               <div className="form-row-2"><div><label>Client</label><input className="form-input" value={form.client} onChange={e=>f('client')(e.target.value)} /></div><div><label>Factory</label><input className="form-input" value={form.factory} onChange={e=>f('factory')(e.target.value)} /></div></div>
               <div className="form-row-2">
                 <div><label>Mold Fee</label><input type="number" step="0.01" className="form-input" value={form.mold_fee} onChange={e=>f('mold_fee')(e.target.value)} placeholder="0.00" /></div>
-                <div><label>Status</label><select className="form-select" value={form.status} onChange={e=>f('status')(e.target.value)}>{['active','draft','archived'].map(s=><option key={s} value={s}>{s}</option>)}</select></div>
+                <div></div>
               </div>
               <span className="form-section-label">Pricing Tiers</span>
               {tiers.map((t,i)=>(
