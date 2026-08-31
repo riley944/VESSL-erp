@@ -27,6 +27,15 @@ const FROM = 'King Universal Freight <rfq@vessl.io>';
 // is the address a FORWARDER sees, not an internal one -- changing it changes
 // who receives every bid.
 const DEFAULT_REPLY_TO = 'kristy@kinguniversal.com';
+// Kristy keeps a copy of every RFQ she sends. BCC rather than a second `to`:
+// the forwarder must not see an internal address on the recipient line, and one
+// that replies to it instead of to Reply-To sends the bid to the wrong place.
+//
+// A SEPARATE CONSTANT FROM DEFAULT_REPLY_TO even though both are her address
+// today. "Who receives the bids" and "who keeps a file copy" are different
+// decisions and will not necessarily move together -- collapsing them into one
+// name is how the next person changes one and silently changes the other.
+const ARCHIVE_BCC = 'kristy@kinguniversal.com';
 
 // The same test page.jsx applies at the UI, mirroring portal.is_kui_staff() in
 // Postgres: auth.jwt()->>'email' ilike '%@kinguniversal.com'. Three copies of one
@@ -134,6 +143,7 @@ export async function POST(req) {
     const { data, error } = await resend.emails.send({
       from: FROM,
       to: [to],
+      bcc: [ARCHIVE_BCC],
       replyTo: replyTo,
       subject: rfqSubject(quote),
       // The RESOLVED replyTo, not DEFAULT_REPLY_TO: the body names the address a
