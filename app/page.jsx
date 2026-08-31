@@ -5725,7 +5725,12 @@ function buildPODoc(d, opts={}) {
   const otherFiles = opts.otherFiles || [];
   const t = d.totals || {};
   const cur = d.currency || 'USD';
-  const m = (n,c) => n==null ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:c||cur}).format(n);
+  // AMOUNTS ONLY -- money owed, always cents. The fraction digits are explicit
+  // rather than left to the currency default, which is what buildSODoc's m()
+  // does and what kept its 2dp behaviour a stated intention instead of an
+  // accident of the locale data. Per-unit RATES use unitPrice() instead; see
+  // the comment on the unit-cost cell below.
+  const m = (n,c) => n==null ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:c||cur,minimumFractionDigits:2,maximumFractionDigits:2}).format(n);
   const fd = s => { if(!s) return '—'; const dt=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(dt)?'—':dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
   const fn = n => n==null ? '—' : new Intl.NumberFormat('en-US').format(n);
 
@@ -5743,16 +5748,30 @@ function buildPODoc(d, opts={}) {
       +'<td style="padding:16px 18px;vertical-align:top;border-bottom:1px solid #e5e7eb;">'
         +'<div style="font-size:15px;font-weight:600;color:#0f172a;margin-bottom:6px;">'+(l.description||'—')+'</div>'
         +(size?'<div style="margin-bottom:6px;"><span style="display:inline-block;background:#eef1f6;border:1px solid #e5e7eb;border-radius:5px;padding:3px 9px;font-size:13px;font-weight:700;color:#0c1322;letter-spacing:.04em;">Size '+size+'</span></div>':'')
+        // OUR SKU, above the barcode and vendor identifiers below it. Same
+        // position and style as buildSODoc:6454, and the same order the PO
+        // detail uses on screen -- description, size, SKU. The value is the
+        // snapshot product_sku when the line has one, so an already-issued PO
+        // keeps the code it was issued with; see script 16.
+        +(l.sku?'<div style="font-size:11.5px;color:#6b7280;font-family:monospace;margin-top:4px;"><span style="color:#9ca3af;">SKU</span> '+l.sku+'</div>':'')
         +(carton?'<div style="font-size:12px;color:#6b7280;margin-bottom:3px;">📦 '+carton+'</div>':'')
         +(vpn?'<div style="font-size:12px;color:#6b7280;font-family:monospace;">VPN# '+vpn+'</div>':'')
         +(masterSku?'<div style="font-size:12px;color:#6b7280;font-family:monospace;">Master: '+masterSku+'</div>':'')
         +(packSku?'<div style="font-size:12px;color:#6b7280;font-family:monospace;">Pack: '+packSku+'</div>':'')
         +(babySku?'<div style="font-size:12px;color:#6b7280;font-family:monospace;">Baby: '+babySku+'</div>':'')
-        +(retailPrice!=null?'<div style="font-size:12px;color:#059669;font-weight:600;margin-top:4px;">Retail: '+m(retailPrice,cur)+'</div>':'')
+        +(retailPrice!=null?'<div style="font-size:12px;color:#059669;font-weight:600;margin-top:4px;">Retail: '+unitPrice(retailPrice,cur)+'</div>':'')
       +'</td>'
       +'<td style="padding:16px 14px;text-align:center;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:16px;font-weight:700;color:#0f172a;font-family:monospace;">'+fn(l.quantity)+'</td>'
-      +'<td style="padding:16px 14px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;font-family:monospace;">'+(ci!=null?m(ci,cur):'—')+'</td>'
-      +'<td style="padding:16px 14px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;font-family:monospace;">'+m(l.unit_price,cur)+'</td>'
+      // CI VALUE AND UNIT COST ARE RATES, NOT AMOUNTS -- the same rule
+      // buildSODoc:6457 states for the client's order confirmation, and this is
+      // the document the FACTORY works from. The columns are numeric(18,5)
+      // since script 13 and 24 live rows already carry 3-4 decimals, so m()
+      // printed $0.09 for a bag costing $0.085 -- understating the price and
+      // making qty x unit fail to reconcile with the line amount beside it.
+      // The line-amount cell below keeps m(): that is money owed, and it rounds
+      // to cents.
+      +'<td style="padding:16px 14px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;font-family:monospace;">'+(ci!=null?unitPrice(ci,cur):'—')+'</td>'
+      +'<td style="padding:16px 14px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;font-family:monospace;">'+unitPrice(l.unit_price,cur)+'</td>'
       +'<td style="padding:16px 18px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:15px;font-weight:700;color:#0f172a;font-family:monospace;">'+m(l.line_amount,cur)+'</td>'
       +'</tr>';
   }).join('');
