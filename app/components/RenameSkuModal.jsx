@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { SB } from '@/lib/supabase';
+import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
 
 // ── RenameSkuModal ───────────────────────────────────────────────────────────
 // One deliberate SKU rename, propagated to CHOSEN references in one transaction
@@ -22,14 +23,6 @@ const Shell = ({ children }) => (
     <div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:'18px',boxShadow:'0 12px 48px rgba(0,0,0,.2)',width:'100%',maxWidth:'720px',padding:'24px'}}>{children}</div>
   </div>
 );
-
-// Mirrors page.jsx:3358 prodKey and the backfill in script 18. Three copies of
-// one rule is two too many, but the alternative today is an import cycle --
-// page.jsx imports this file. Change one, change all three.
-const keyOf = (sku, name) => {
-  const n = (name||'').trim();
-  return n ? (sku||'').trim()+'|'+n : null;
-};
 
 const pill = (bg,color) => ({display:'inline-block',padding:'2px 8px',borderRadius:'980px',fontSize:'10.5px',fontWeight:700,letterSpacing:'.03em',background:bg,color});
 
@@ -60,7 +53,7 @@ export function RenameSkuModal({ product, updatedBy = null, initialNewSku = null
   useEffect(() => {
     let dead = false;
     (async () => {
-      const oldKey = keyOf(product.sku, product.name);
+      const oldKey = prodKey(product.sku, product.name);
       // Quotes arrive two ways. The FK is authoritative; the sku match is the
       // fallback for the 53 rows script 18 could not link, and is also what
       // surfaces drift -- a quote holding this SKU under a different product
@@ -76,7 +69,7 @@ export function RenameSkuModal({ product, updatedBy = null, initialNewSku = null
       for (const r of (bySku.data||[])) {
         if (seen.has(r.id)) continue;
         seen.add(r.id);
-        qs.push({ row:r, group: keyOf(r.sku, r.product) === oldKey ? 'key' : 'drift' });
+        qs.push({ row:r, group: prodKey(r.sku, r.product) === oldKey ? 'key' : 'drift' });
       }
 
       const poiRes = await SB.from('purchase_order_items')
@@ -287,19 +280,12 @@ export function QuoteSkuChoiceModal({ product, quote, updatedBy = null, onClose,
   // belongs to, so re-pointing away from the old one is the whole intent.
   const useDifferentProduct = async () => {
     setErr(''); setBusy(true);
-    let row = null, created = false;
-    const ins = await SB.from('products').insert({ sku: newSku || null, name }).select('id,sku,name').single();
-    if (!ins.error && ins.data) { row = ins.data; created = true; }
-    else {
-      // products_sku_name_key fired: this product already exists, which is a
-      // perfectly good outcome -- adopt it rather than reporting a failure.
-      // .is() for a blank sku, for the reason productByKey documents.
-      let qy = SB.from('products').select('id,sku,name').eq('name', name);
-      qy = newSku ? qy.eq('sku', newSku) : qy.is('sku', null);
-      const { data } = await qy.limit(1);
-      row = (data && data[0]) || null;
-      if (!row) { setBusy(false); setErr(ins.error?.message || 'Could not create the product, and no existing one matched.'); return; }
-    }
+    // Was this insert-then-adopt written out by hand; it is lib/products now, so
+    // this path and the two quote-save paths cannot drift apart.
+    const before = await productByKey(newSku, name);
+    const row = await ensureProductForQuote(newSku, name, { origin: 'quote-save', updatedBy });
+    const created = !!row && !before;
+    if (!row) { setBusy(false); setErr('Could not create a product for that SKU and name, and no existing one matched.'); return; }
     const upd = await SB.from('quotes').update({ product_id: row.id, ...(updatedBy ? { updated_by: updatedBy } : {}) }).eq('id', quote.id);
     setBusy(false);
     if (upd.error) { setErr('Product '+(created?'created':'found')+', but the quote could not be linked to it — '+upd.error.message); return; }

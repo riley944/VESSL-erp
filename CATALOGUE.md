@@ -370,7 +370,25 @@ of the first group and set nothing at all, losing the rows that were fine.
   feature and to closing the 78 ambiguous PO rows.
 - **`product_id` capture on new SO lines** — going forward; the 254 historical rows
   stay NULL.
-- **`lib/prodKey.js` consolidation.** The composite `sku|name` key that identifies a
+- **Three quotes need Kristy, not a script.** Script 19 creates a product for every
+  quote whose SKU matches none, and links it. Five quotes are deliberately skipped;
+  three of them render as a hollow ring on the Products page and are the ones worth
+  a decision:
+  - `59456fa3` — **Stuffed lion**, Ritz Carlton, **no SKU**. Needs a SKU before it
+    can become a product; a SKU-less product row cannot be keyed on later.
+  - `8e477b5b` — **Ceramic mug anniver**, JOHNNIE-O, **no SKU**. Same, and the name
+    looks truncated.
+  - `56a08f12` — **BUC-157**. Quote says `BUC-157 KU2607001` / *"CO Bag - Buc-ee's
+    Reusable Non-Woven Bag "* (41 chars, trailing space); product `c8f3d2d2` holds
+    the same SKU under the name *"CO bag"* (6 chars). Same SKU, same thing, two
+    names — so the composite key misses it and it shows in the rename modal's
+    "same SKU, different name" drift group. A merge/naming decision.
+
+  Two more are skipped and render as a disabled em dash rather than a ring, having
+  no product name at all to key on: `415ed5cc` (nothing but an id) and `64ffc2d1`
+  (**`PEP-130`**, Peppa Pig Theme Park — a real SKU and a real client with no
+  product name, which is the one of the two worth chasing).
+- **`lib/prodKey.js` consolidation.** *(Done 2026-08-31 — see `lib/products.js`.)* The composite `sku|name` key that identifies a
   product now exists in five places: `prodKey` (`page.jsx:3358`), `productByKey`
   (`page.jsx`, just above `ProductDetailModal`), `productByKey` (`quotes.jsx`, module
   scope), `keyOf` (`components/RenameSkuModal.jsx`), and the backfill predicate in

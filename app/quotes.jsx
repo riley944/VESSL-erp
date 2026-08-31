@@ -10,6 +10,7 @@ import {
 import { SB } from "@/lib/supabase";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
+import { productByKey, ensureProductForQuote } from "@/lib/products";
 // sizesForScale is gone from this file: a quote can now carry several scales, and
 // every size here is addressed by the composite key sizesForSelection hands out.
 import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey } from "@/app/components/SizeGrid";
@@ -33,19 +34,6 @@ import { matches, normalizeTerm } from "@/lib/textFilter";
 //  All quotes data has been migrated from public → vessl.
 // ============================================================
 const supabase = SB;
-
-// Resolves a product from a sku|name pair -- the composite key products_sku_name_key
-// makes unique, that page.jsx:prodKey builds, and that script 18 backfilled
-// quotes.product_id from. A blank sku uses .is(): PostgREST renders eq('sku', null)
-// as sku=eq.null, which matches nothing.
-async function productByKey(sku, name) {
-  const n = (name || "").trim();
-  if (!n) return null;
-  let qy = supabase.from("products").select("id,sku,name").eq("name", n);
-  qy = (sku || "").trim() ? qy.eq("sku", (sku || "").trim()) : qy.is("sku", null);
-  const { data } = await qy.limit(1);
-  return (data && data[0]) || null;
-}
 
 // team members for task assignment
 const TEAM = [
@@ -832,9 +820,10 @@ function Platform({ session }) {
     // change that failed would be worse than offering nothing.
     if (savedRow) {
       // Link on the NEW key, and only when unlinked, so a deliberate link is
-      // never re-pointed by an unrelated edit.
+      // never re-pointed by an unrelated edit. Creates the product when none
+      // matches -- a quote implies a product, and nothing else was making them.
       if (!savedRow.product_id) {
-        const p = await productByKey(savedRow.sku, savedRow.product);
+        const p = await ensureProductForQuote(savedRow.sku, savedRow.product, { origin: "quote-save", updatedBy: userEmail });
         if (p) { try { await supabase.from("quotes").update({ product_id: p.id }).eq("id", savedRow.id).is("product_id", null); } catch (e) {} }
       }
       // Ask on the OLD key -- renamed, or a different product? Kristy's words on

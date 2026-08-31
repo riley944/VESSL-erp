@@ -15,6 +15,7 @@ import { SizeGrid, sizesForSelection, toScaleList, skuToken } from '@/app/compon
 // modals in this file are wired, so none is left behind on the old behaviour.
 import { useDirtyGuard } from '@/app/components/ModalGuard';
 import { RenameSkuModal, QuoteSkuChoiceModal } from '@/app/components/RenameSkuModal';
+import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
 // The RFQ sheet geometry and its builder, shared with app/api/rfq/send/route.js.
 // The row numbers are a wire format between the workbook this writes and the one
 // ImportBidsModal parses back -- a second copy would be a second chance to drift.
@@ -3350,16 +3351,9 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
     setQuotes(qRes.data||[]); setProds(pRes.data||[]); setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
-  // SKU alone is not enough -- products_sku_name_key is UNIQUE on (sku, name) and one
-  // SKU can carry several products (LL1-1629 has three sizes). The name alone IS enough
-  // to key on, so a SKU-less quote row still gets a key ('' + '|' + name) and can match
-  // a SKU-less product. That is what lets a product created from such a row match back
-  // on the very next render instead of being inserted again on the next click.
-  // Only a row with no name at all is unkeyable.
-  const prodKey = (sku, name) => {
-    const n = (name||'').trim();
-    return n ? (sku||'').trim()+'|'+n : null;
-  };
+  // prodKey now lives in lib/products.js, which carries the reasoning: SKU alone
+  // is not enough because products_sku_name_key is UNIQUE (sku, name) and 30 SKUs
+  // are shared by several rows, while a name alone IS enough to key on.
   const prodBy = new Map(prods.map(p=>[prodKey(p.sku,p.name), p]).filter(([k])=>k));
   const prodById = new Map(prods.map(p=>[p.id, p]));
   // product_id FIRST, the sku|name key only as a fallback. The FK is a recorded
@@ -3550,19 +3544,6 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
 }
 
 // ── Product Detail Modal ──────────────────────────────────────────────────────
-// Resolves a product from a sku|name pair, the same composite key prodKey builds
-// and script 18 backfilled with. A blank sku is looked up with .is() rather than
-// .eq(): PostgREST renders eq('sku', null) as sku=eq.null, which matches nothing
-// -- the same trap fetchExisting documents above.
-const productByKey = async (sku, name) => {
-  const n = (name||'').trim();
-  if (!n) return null;
-  let qy = SB.from('products').select('id,sku,name').eq('name', n);
-  qy = (sku||'').trim() ? qy.eq('sku', (sku||'').trim()) : qy.is('sku', null);
-  const { data } = await qy.limit(1);
-  return (data && data[0]) || null;
-};
-
 function ProductDetailModal({quote:initQ, userEmail='', onClose, onCreatePO}){
   // Add/remove tier both change the tier rows, which ARE inputs, so the snapshot
   // sees them and no markDirty is needed.
@@ -3588,8 +3569,10 @@ function ProductDetailModal({quote:initQ, userEmail='', onClose, onCreatePO}){
       setQ(prev=>({...prev,...form,tiers}));setEditing(false);
       // Link on the NEW key -- that is what this quote now claims to be -- and
       // only when it is not already linked, so a deliberate link is never moved.
+      // Creates the product when none matches: quoting has never produced one,
+      // which is why 48 quotes and 166 PO lines had nothing to point at.
       if(!q.product_id){
-        const match=await productByKey(form.sku, form.product);
+        const match=await ensureProductForQuote(form.sku, form.product, {origin:'quote-save', updatedBy:userEmail||null});
         if(match){ try{ await SB.from('quotes').update({product_id:match.id}).eq('id',q.id).is('product_id',null); }catch(e){} }
       }
       // A SKU moving off a product is ambiguous -- renamed, or repointed at a
