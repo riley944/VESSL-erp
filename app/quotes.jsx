@@ -9,6 +9,7 @@ import {
 // lib/supabaseQuotes still exists; page.jsx and pricing.jsx both import it.
 import { SB } from "@/lib/supabase";
 import { FilterSelect } from "@/app/components/FilterSelect";
+import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
 // sizesForScale is gone from this file: a quote can now carry several scales, and
 // every size here is addressed by the composite key sizesForSelection hands out.
 import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey } from "@/app/components/SizeGrid";
@@ -32,6 +33,19 @@ import { matches, normalizeTerm } from "@/lib/textFilter";
 //  All quotes data has been migrated from public → vessl.
 // ============================================================
 const supabase = SB;
+
+// Resolves a product from a sku|name pair -- the composite key products_sku_name_key
+// makes unique, that page.jsx:prodKey builds, and that script 18 backfilled
+// quotes.product_id from. A blank sku uses .is(): PostgREST renders eq('sku', null)
+// as sku=eq.null, which matches nothing.
+async function productByKey(sku, name) {
+  const n = (name || "").trim();
+  if (!n) return null;
+  let qy = supabase.from("products").select("id,sku,name").eq("name", n);
+  qy = (sku || "").trim() ? qy.eq("sku", (sku || "").trim()) : qy.is("sku", null);
+  const { data } = await qy.limit(1);
+  return (data && data[0]) || null;
+}
 
 // team members for task assignment
 const TEAM = [
@@ -557,6 +571,7 @@ function Platform({ session }) {
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
+  const [skuChoice, setSkuChoice] = useState(null);
   const [search, setSearch] = useState("");
   const [activeClient, setActiveClient] = useState(null);
   const [expanded, setExpanded] = useState(null);
@@ -781,6 +796,10 @@ function Platform({ session }) {
 
   const saveQuote = async (f) => {
     lastSaveRef.current = Date.now();
+    // The pre-edit row, read from state rather than re-fetched. The rename keys
+    // on the OLD sku and name: that is what vessl.products still holds, because
+    // saving a quote never touches that table.
+    const before = f.id ? quotes.find(x => x.id === f.id) : null;
     const row = formToRow({ ...f, updatedBy: userEmail });
     let savedRow = null;
     if (f.id) {
@@ -807,6 +826,25 @@ function Platform({ session }) {
     setEditing(null);
     if (!savedRow) await load();
     else flash("Quote saved");
+
+    // ── SKU PROPAGATION ──────────────────────────────────────────────────────
+    // Runs after the save is confirmed, never before: offering to propagate a
+    // change that failed would be worse than offering nothing.
+    if (savedRow) {
+      // Link on the NEW key, and only when unlinked, so a deliberate link is
+      // never re-pointed by an unrelated edit.
+      if (!savedRow.product_id) {
+        const p = await productByKey(savedRow.sku, savedRow.product);
+        if (p) { try { await supabase.from("quotes").update({ product_id: p.id }).eq("id", savedRow.id).is("product_id", null); } catch (e) {} }
+      }
+      // Ask on the OLD key -- renamed, or a different product? Kristy's words on
+      // why any of this exists: "if I have to update information on multiple
+      // screens, it allows more chance for me to miss something."
+      if (before && (before.sku || "") !== (savedRow.sku || "")) {
+        const target = await productByKey(before.sku, before.product);
+        if (target) setSkuChoice({ product: target, quote: savedRow });
+      }
+    }
   };
 
   const removeQuote = async (id) => {
@@ -1067,6 +1105,9 @@ function Platform({ session }) {
       )}
 
       {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} factories={factories} clientNames={clients.map((c) => c.name).filter((n) => n !== "Unassigned")} contacts={contacts} onSaveFactory={saveFactoryPreset} onSaveContact={saveContact} userEmail={userEmail} />}
+      {/* Opens after a SKU change is saved. onDone reloads so the list shows the
+          result; the modal stays up because the report IS the result. */}
+      {skuChoice && <QuoteSkuChoiceModal product={skuChoice.product} quote={skuChoice.quote} updatedBy={userEmail} onClose={() => setSkuChoice(null)} onDone={() => load()} />}
       {toast && <div style={S.toast}><Check size={15} /> {toast}</div>}
     </div>
   );

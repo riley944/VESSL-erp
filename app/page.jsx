@@ -14,6 +14,7 @@ import { SizeGrid, sizesForSelection, toScaleList, skuToken } from '@/app/compon
 // treatment quotes.jsx got: card ref, onClose becomes guardedClose. All sixteen
 // modals in this file are wired, so none is left behind on the old behaviour.
 import { useDirtyGuard } from '@/app/components/ModalGuard';
+import { RenameSkuModal, QuoteSkuChoiceModal } from '@/app/components/RenameSkuModal';
 // The RFQ sheet geometry and its builder, shared with app/api/rfq/send/route.js.
 // The row numbers are a wire format between the workbook this writes and the one
 // ImportBidsModal parses back -- a second copy would be a second chance to drift.
@@ -3331,7 +3332,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
 // It is intent, not enforcement: vessl.products carries a permissive `true` policy
 // (products_auth_all), so any authenticated @kinguniversal.com user can insert through
 // the API regardless. Locking that down is an RLS change, deliberately not made here.
-function Products({ navigate, canCreateProducts = true }) {
+function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [client, setClient] = useState('All');
@@ -3360,7 +3361,26 @@ function Products({ navigate, canCreateProducts = true }) {
     return n ? (sku||'').trim()+'|'+n : null;
   };
   const prodBy = new Map(prods.map(p=>[prodKey(p.sku,p.name), p]).filter(([k])=>k));
-  const matchOf = q => { const k = prodKey(q.sku, q.product); return k ? (prodBy.get(k)||null) : null; };
+  const prodById = new Map(prods.map(p=>[p.id, p]));
+  // product_id FIRST, the sku|name key only as a fallback. The FK is a recorded
+  // decision; the key is an inference that breaks the moment either half drifts,
+  // which is the whole reason script 18 added the column. A link pointing at a
+  // product no longer in `prods` falls through rather than resolving to nothing,
+  // so a stale list cannot turn a linked row into an unlinked one.
+  const matchOf = q => {
+    if (q.product_id) { const byId = prodById.get(q.product_id); if (byId) return byId; }
+    const k = prodKey(q.sku, q.product);
+    return k ? (prodBy.get(k)||null) : null;
+  };
+  // Records the link script 18 backfilled, for quotes that gain a product later.
+  // Guarded on product_id IS NULL so an existing link is never re-pointed: this
+  // fires from an Active toggle, which is not a statement about which product a
+  // quote belongs to. Failures are ignored on purpose -- the link is a bonus, and
+  // an alert here would be about something the user did not ask for.
+  const linkQuoteToProduct = async (quoteId, productId) => {
+    if (!quoteId || !productId) return;
+    try { await SB.from('quotes').update({ product_id: productId }).eq('id', quoteId).is('product_id', null); } catch(e){}
+  };
 
   // '' is the Not set option; the two real states arrive as strings from the <select>.
   const parseActive = v => (v === '' ? null : v === 'true');
@@ -3385,6 +3405,7 @@ function Products({ navigate, canCreateProducts = true }) {
         const { error } = await SB.from('products').update({ active: value }).eq('id', prod.id);
         if (error) { window._toast?.('Could not change active state — '+error.message,'err'); return; }
         setProds(prev => prev.map(p => p.id===prod.id ? {...p, active:value} : p));
+        await linkQuoteToProduct(q.id, prod.id);
         return;
       }
       const sku = (q.sku||'').trim() || null, name = (q.product||'').trim();
@@ -3394,6 +3415,7 @@ function Products({ navigate, canCreateProducts = true }) {
         // Adopting the returned row is what turns the hollow ring filled without a
         // reload -- and proves the widened key matched it back.
         setProds(prev => [...prev, data]);
+        await linkQuoteToProduct(q.id, data.id);
         return;
       }
       // products_name_nullsku_key (or products_sku_name_key) fired: somebody got here
@@ -3403,6 +3425,7 @@ function Products({ navigate, canCreateProducts = true }) {
         const existing = await fetchExisting(sku, name);
         if (existing) {
           setProds(prev => prev.some(p=>p.id===existing.id) ? prev : [...prev, existing]);
+          await linkQuoteToProduct(q.id, existing.id);
           window._toast?.('“'+name+'” already exists — showing the saved state instead','info');
           return;
         }
@@ -3520,14 +3543,27 @@ function Products({ navigate, canCreateProducts = true }) {
           </table>
         ) : <div className="empty"><h3>No products</h3><p>{quotes.length? 'Nothing matches this filter.' : 'Create quotes in the Quotes tab — each one becomes a pullable product here.'}</p></div>}
       </div>
-      {viewQuote && <ProductDetailModal quote={viewQuote} onClose={()=>setViewQuote(null)} onCreatePO={()=>{setPoQuote(viewQuote);setViewQuote(null);}} />}
+      {viewQuote && <ProductDetailModal quote={viewQuote} userEmail={userEmail} onClose={()=>setViewQuote(null)} onCreatePO={()=>{setPoQuote(viewQuote);setViewQuote(null);}} />}
       {poQuote && <CreatePOModal initialQuote={poQuote} onClose={()=>setPoQuote(null)} onCreated={id=>{setPoQuote(null);navigate('order-detail',{id});}} />}
     </>
   );
 }
 
 // ── Product Detail Modal ──────────────────────────────────────────────────────
-function ProductDetailModal({quote:initQ, onClose, onCreatePO}){
+// Resolves a product from a sku|name pair, the same composite key prodKey builds
+// and script 18 backfilled with. A blank sku is looked up with .is() rather than
+// .eq(): PostgREST renders eq('sku', null) as sku=eq.null, which matches nothing
+// -- the same trap fetchExisting documents above.
+const productByKey = async (sku, name) => {
+  const n = (name||'').trim();
+  if (!n) return null;
+  let qy = SB.from('products').select('id,sku,name').eq('name', n);
+  qy = (sku||'').trim() ? qy.eq('sku', (sku||'').trim()) : qy.is('sku', null);
+  const { data } = await qy.limit(1);
+  return (data && data[0]) || null;
+};
+
+function ProductDetailModal({quote:initQ, userEmail='', onClose, onCreatePO}){
   // Add/remove tier both change the tier rows, which ARE inputs, so the snapshot
   // sees them and no markDirty is needed.
   const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
@@ -3539,15 +3575,39 @@ function ProductDetailModal({quote:initQ, onClose, onCreatePO}){
   const [form,setForm]=useState({product:initQ.product||'',sku:initQ.sku||'',client:initQ.client||'',factory:initQ.factory||'',notes:initQ.notes||'',mold_fee:initQ.mold_fee!=null?String(initQ.mold_fee):'',sample_fee:initQ.sample_fee!=null?String(initQ.sample_fee):''});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const stf=(i,k,v)=>setTiers(prev=>prev.map((t,idx)=>idx===i?{...t,[k]:v}:t));
+  const [skuChoice,setSkuChoice]=useState(null);
   const save=async()=>{
     setSaving(true);
+    // Captured BEFORE the write. The rename keys on the OLD sku and name --
+    // that is what vessl.products still holds at this moment, since nothing
+    // here touches that table.
+    const oldSku=q.sku||'', oldName=q.product||'';
     const {error}=await SB.from('quotes').update({product:form.product,sku:form.sku||null,client:form.client||null,factory:form.factory||null,notes:form.notes||null,mold_fee:Number(form.mold_fee)||null,sample_fee:Number(form.sample_fee)||null,tiers,updated_at:new Date().toISOString()}).eq('id',q.id);
     if(error){alert('Error: '+error.message);}
-    else{setQ(prev=>({...prev,...form,tiers}));setEditing(false);}
+    else{
+      setQ(prev=>({...prev,...form,tiers}));setEditing(false);
+      // Link on the NEW key -- that is what this quote now claims to be -- and
+      // only when it is not already linked, so a deliberate link is never moved.
+      if(!q.product_id){
+        const match=await productByKey(form.sku, form.product);
+        if(match){ try{ await SB.from('quotes').update({product_id:match.id}).eq('id',q.id).is('product_id',null); }catch(e){} }
+      }
+      // A SKU moving off a product is ambiguous -- renamed, or repointed at a
+      // different product entirely -- so this asks rather than assuming. Keyed on
+      // the OLD value, which is what vessl.products still holds.
+      if((form.sku||'')!==oldSku){
+        const target=await productByKey(oldSku, oldName);
+        if(target) setSkuChoice({product:target, quote:{id:q.id, sku:form.sku||'', product:form.product||'', product_id:q.product_id||null}});
+      }
+    }
     setSaving(false);
   };
   const mc=p=>p===null?'var(--muted)':p>=25?'#059669':p>=15?'#d97706':'#dc2626';
   return (
+    <>
+    {/* Sits above this modal rather than replacing it: the quote edit has already
+        been saved, and what follows is a separate decision the user may decline. */}
+    {skuChoice && <QuoteSkuChoiceModal product={skuChoice.product} quote={skuChoice.quote} updatedBy={userEmail||null} onClose={()=>setSkuChoice(null)} />}
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box" style={{maxWidth:'680px'}}>
         <div className="modal-head">
@@ -3627,6 +3687,7 @@ function ProductDetailModal({quote:initQ, onClose, onCreatePO}){
         </div>
       </div>
     </div>
+    </>
   );
 }
 
@@ -5113,6 +5174,10 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   // a line is recoverable -- the per-line picker is right there -- and a wrong one is
   // not, because nothing downstream ever questions it again.
   const productIdForQuote = (q) => {
+    // The recorded link wins over the inferred one. Still checked against
+    // `products` rather than returned blind: a link to a product this form has
+    // not loaded would put an id on the line that its own picker cannot show.
+    if (q?.product_id && products.some(p => p.id === q.product_id)) return q.product_id;
     const sku  = (q?.sku || '').trim().toLowerCase();
     const name = (q?.product || '').trim().toLowerCase();
     if (!sku || !name) return '';
@@ -7336,8 +7401,8 @@ export default function App() {
           {page==='orders'           && <Orders navigate={navigate} />}
           {page==='order-detail'     && <OrderDetail id={params.id} navigate={navigate} />}
           {page==='companies'        && <Companies />}
-          {page==='products'         && <Products navigate={navigate} canCreateProducts={role !== 'limited_qc'} />}
-          {page==='testing'          && <Testing />}
+          {page==='products'         && <Products navigate={navigate} canCreateProducts={role !== 'limited_qc'} userEmail={user?.email||''} />}
+          {page==='testing'          && <Testing userEmail={user?.email||''} />}
           {page==='codes'            && <Codes canDeleteCodes={role !== 'limited_qc'} />}
           {page==='pricing'          && <Pricing />}
           {page==='programs'         && <Programs userEmail={user?.email||''} />}

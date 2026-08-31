@@ -8,6 +8,9 @@ import { CreateProductModal } from "@/app/components/CreateProductModal";
 import { RegulationsList, regSearchFields } from "@/app/components/RegulationsList";
 import { RegModal } from "@/app/components/RegModal";
 import { LinkRulesModal } from "@/app/components/LinkRulesModal";
+// This page is the only one that identifies a product by its own id rather than
+// inferring it from a quote's sku|name, which is why the rename action lives here.
+import { RenameSkuModal } from "@/app/components/RenameSkuModal";
 import { AddMaterialModal } from "@/app/components/AddMaterialModal";
 import { FilterSelect } from "@/app/components/FilterSelect";
 // One definition of "still choosable", shared with the quote form's SKU matcher.
@@ -196,7 +199,10 @@ function StatusPill({ map, status }) {
 const card = {background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)'};
 
 // ═══════════════════════════════════════════════════════════════════════════
-export default function Testing() {
+// userEmail follows the precedent Programs and Shipments already set -- passed
+// from the shell rather than re-read from the session -- so a rename started here
+// can stamp quotes.updated_by like the Quotes page does.
+export default function Testing({ userEmail = '' }) {
   const [tab, setTab] = useState('products');
   const [products, setProducts] = useState([]);
   const [materials, setMaterials] = useState([]);
@@ -846,7 +852,7 @@ export default function Testing() {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!(isAll(compSel) && isAll(efSel) && isAll(brandSel) && isAll(stageSel) && isAll(dateSel) && !clientFilter)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(dateSel)} testedByProduct={testedByProduct} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onRename={(p)=>setModal({type:'rename',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!(isAll(compSel) && isAll(efSel) && isAll(brandSel) && isAll(stageSel) && isAll(dateSel) && !clientFilter)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(dateSel)} testedByProduct={testedByProduct} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
@@ -880,6 +886,9 @@ export default function Testing() {
           new product while ones already linked to it keep their link. */}
       {modal?.type==='linkrules' && <LinkRulesModal product={modal.data} regs={regs} existing={prodRegs.filter(l=>l.product_id===modal.data.id)} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {modal?.type==='efiling'   && <EfilingModal product={modal.data} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
+      {/* onDone reloads but leaves the modal open: the report IS the result of the
+          action, and closing on success would take it away before it is read. */}
+      {modal?.type==='rename'    && <RenameSkuModal product={modal.data} updatedBy={userEmail||null} onClose={()=>setModal(null)} onDone={()=>load()} />}
     </div>
   );
 }
@@ -922,7 +931,7 @@ export default function Testing() {
 // └───────────────────────────────────────────────────────────────────────────┘
 const PROD_COLS = 'minmax(200px,660px) 170px 130px 140px 340px';
 
-function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false, testedByProduct = {} }) {
+function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onRename, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false, testedByProduct = {} }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
   // well exist, it just does not match.
   // The order filters get their own empty copy. "Nothing in this filter" would be read as
@@ -1152,6 +1161,14 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                   one material and five, which is the thing worth opening the cell for. */}
               <button onClick={e=>{e.stopPropagation();onLink(p);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Materials{links.length>0 && ' ('+links.length+')'}</button>
               <button onClick={e=>{e.stopPropagation();onLinkRules(p);}} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Rules{ruleCount>0 && ' ('+ruleCount+')'}</button>
+              {/* Disabled with no SKU rather than hidden: a product that has never had
+                  one is exactly the case where somebody goes looking for this, and a
+                  missing button says nothing about why. The rename keys on the old
+                  value throughout, so there is nothing to key on until one exists --
+                  give it a SKU in the editor first. */}
+              <button onClick={e=>{e.stopPropagation();onRename(p);}} disabled={!p.sku}
+                      title={p.sku ? 'Rename this SKU and propagate it' : 'This product has no SKU yet — set one in the editor first'}
+                      style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'6px 12px',fontSize:'12px',fontWeight:600,color:p.sku?'#1D1D1F':'#C7C7CC',cursor:p.sku?'pointer':'default'}}>Rename SKU</button>
               {/* Four states now, and a dot cannot carry four readings — so the dot keeps
                   only the distinction worth scanning for and the tooltip carries the
                   meaning, which is the split page.jsx's active cell already uses.

@@ -370,6 +370,20 @@ of the first group and set nothing at all, losing the rows that were fine.
   feature and to closing the 78 ambiguous PO rows.
 - **`product_id` capture on new SO lines** — going forward; the 254 historical rows
   stay NULL.
+- **`lib/prodKey.js` consolidation.** The composite `sku|name` key that identifies a
+  product now exists in five places: `prodKey` (`page.jsx:3358`), `productByKey`
+  (`page.jsx`, just above `ProductDetailModal`), `productByKey` (`quotes.jsx`, module
+  scope), `keyOf` (`components/RenameSkuModal.jsx`), and the backfill predicate in
+  `scratchpad/18-quotes-product-id-and-rename-fn.sql`. All five agree today —
+  `btrim`, `coalesce` to `''`, name required — and each carries a comment pointing at
+  the others, but that is a convention, not a guarantee. The fix is one exported
+  helper beside `lib/textFilter.js`, which is the existing precedent for a pure
+  function shared by page modules and components. Deliberately **not** done inside
+  the rename change: `page.jsx` imports both `quotes.jsx` and the component, so the
+  move needs its own pass to avoid an import cycle, and mixing it into a behavioural
+  change would make the diff unreviewable. Note `quotes.product_id` now reduces how
+  often the key is consulted at all — it is the fallback, not the primary — so this
+  is tidiness, not a live defect.
 - **Product-change propagation** (Kristy's original ask) — see the Phase 1 analysis.
   Recommended shape was a prompt at product-save ("3 open orders reference this —
   update them?"), sequenced behind the 2518/2651 fix and the duplicate cleanup.
