@@ -21,7 +21,23 @@ without a database sweep.
 
 Customer asked that `BUC-157` become **`BUC-157 KU2607001`**.
 
-### Status: RESOLVED 2026-08-28 22:17 UTC via `scratchpad/15-buc157-sku-rename.sql`
+### Status: FULLY CLOSED 2026-08-31 — `scratchpad/15` then `scratchpad/20`
+
+Script 15 (2026-08-28 22:17 UTC) renamed three rows: `products.sku`, which was
+still the bare `BUC-157`; and the quote and SO line, normalising Kristy's
+double-spaced value. Script 20 (2026-08-31) linked the last row — the draft PO
+line on `KUI-SO-2026-013` — to the product, which script 15 had deliberately left
+alone as "a new decision, not part of this rename". Verified after commit: line
+`3b753125` carries `product_id c8f3d2d2` and `product_sku 'BUC-157 KU2607001'`,
+stamped by the trigger rather than by the script, and the PO is still a draft.
+That line previously printed **no SKU at all**, so this is an addition to an
+unissued document, not a rewrite of an issued one.
+
+Four BUC-157 items remain and none is a script: duplicate product `6f92c254`
+(`BUC_157` / `CO BAG`, underscore variant), the stale duplicate quote `3bc2833a`,
+program `576b59d8` tracking the underscore variant, and quote `56a08f12`, whose
+product name has drifted from this product's `CO bag` — it is one of the three
+listed for Kristy in §6.
 
 **Correction to an earlier status, and where it came from.** A status of
 "completed / 2 rows updated / fully verified" reached this session and was
@@ -355,10 +371,23 @@ of the first group and set nothing at all, losing the rows that were fine.
 
 ## 6. Deferred work
 
-- **`scratchpad/14-batch1-poi-product-id.sql`** — 4 rows, explicit UUID pairs,
-  killian_untouched verification. Deferred: hygiene only, no visible defect, and
-  it carries the 2518/2651 prerequisite.
-- **`page.jsx:2518` / `2651` fallback fix** — ship independently, gates the above.
+- **`scratchpad/14-batch1-poi-product-id.sql` — PARKED, needs Kristy.** Re-censused
+  2026-08-31: of 166 unlinked PO lines, 64 have no name match, 89 are ambiguous,
+  and 13 resolve to exactly one product under both case-insensitive and exact
+  comparison. Nine of those are blocked by `UNIQUE (purchase_order_id, product_id)`
+  — three groups of three lines resolving to the same product on the same PO — so
+  **four are actionable**.
+
+  **The question for Kristy:** those four resolve to `BGRHJC-Landed` (×3) and
+  `BGLHAC-EXW` (×1). `-Landed` and `-EXW` are **costing bases, not product codes**.
+  Linking sets `product_id`, which fires `trg_poi_stamp_product_sku`, which stamps
+  `product_sku`, which `page.jsx:2518` prints in the SKU field of the factory's PO
+  document. Three of the four POs are `in_production` and one is `shipped` — none
+  is a draft — so this changes what an already-issued document says on reprint.
+  Either fix those two products' SKUs first, or link and then null the four
+  snapshots by hand (which does not re-fire the trigger, since `product_id` is not
+  in that SET list). The script carries both options in its header.
+- **`page.jsx:2518` / `2651` fallback fix** — ✅ done, shipped in `754d2f9`.
 - **Carton-spec two-store split.** `products.units_per_carton` / `carton_l/w/h_cm` /
   `carton_weight_kg` are written and read by `CreateProductModal.jsx` only. The CBM
   and carton maths that drive shipments read `quotes.units_per_carton` /
@@ -402,12 +431,48 @@ of the first group and set nothing at all, losing the rows that were fine.
   change would make the diff unreviewable. Note `quotes.product_id` now reduces how
   often the key is consulted at all — it is the fallback, not the primary — so this
   is tidiness, not a live defect.
-- **Product-change propagation** (Kristy's original ask) — see the Phase 1 analysis.
-  Recommended shape was a prompt at product-save ("3 open orders reference this —
-  update them?"), sequenced behind the 2518/2651 fix and the duplicate cleanup.
-  Note `vessl.products` has **no price column** at all, so order prices are
-  structurally immune to propagation; prices live on the order line and in
-  `quotes.tiers`.
+- **Product-change propagation** (Kristy's original ask) — ✅ shipped as the Rename
+  SKU action (`d99f63a`) plus create-or-link on quote save (`6b8b3bb`). Not a
+  cascade: a checklist, because a SKU means different things in
+  `products.sku` (live), `purchase_order_items.product_sku` (a snapshot of an
+  issued document) and `sales_order_items.client_sku` (mixed — 229 of 254 hold
+  ours, 25 hold the customer's own code). Note `vessl.products` has **no price
+  column** at all, so order prices are structurally immune to propagation; prices
+  live on the order line and in `quotes.tiers`.
+
+---
+
+## The scripts are the as-run record
+
+`scratchpad/15` through `scratchpad/20` are the scripts as actually executed
+against production, not drafts. Each carries its measured baseline in the header,
+its guards in the `where` clause rather than in a comment, and a verification
+block that returns exactly one row on success.
+
+| | what it did | status |
+|---|---|---|
+| 15 | BUC-157 rename across products / quote / SO line | run 2026-08-28 |
+| 16 | `purchase_order_items.product_sku` + the stamping trigger | run 2026-08-31 |
+| 17 | trigger behaviour test — transaction-only, never committed | rehearsal only |
+| 18 | `quotes.product_id` + `vessl.rename_product_sku()` | run 2026-08-31 |
+| 19 | `products.origin` + 48 products from quotes + links | run 2026-08-31 |
+| 20 | BUC-157 draft PO line linked | run 2026-08-31 |
+| 14 | four remaining PO-line links | **parked, see §6** |
+
+**Two checklist rules these scripts earned the hard way.**
+
+*The first branch of the verification `union all` must alias all three columns —
+`as chk`, `as got`, `as want`.* `UNION ALL` takes its output column names from the
+first branch alone, and the filter references `got`. Omit the alias and the column
+is named `?column?`, so the statement dies with `42703` **before any check is
+evaluated** — and returns no rows, which is indistinguishable from the "0 rows =
+the query did not run" case the sentinel exists to catch. Scripts 14 and 20 both
+shipped without it and failed on first run.
+
+*Printing a script is not writing it.* Several scripts were printed into the chat
+and never landed in `scratchpad/`, so the on-disk record and the executed record
+diverged — and 14's on-disk copy was a stale pre-re-census version naming
+different rows than the one that had been reviewed. Write the file, then print it.
 
 ---
 
