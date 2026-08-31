@@ -160,34 +160,39 @@ lets them read the row, so this is a portal display gap, not a data one. At
 minimum the summary card is stale; whether the detail view shows it is unknown,
 because of the crash below.
 
-### ⚠ OPEN: delivery requests currently notify Matt only
+### ✅ RESOLVED 2026-08-31: delivery-request recipients restored
 
-The `delivery_request_recipients` vault secret is **still set to
-mattdillon@kinguniversal.com alone**, held that way deliberately for testing and
-not yet restored to riley + kristy.
+For roughly two days the `delivery_request_recipients` vault secret held
+mattdillon@kinguniversal.com alone — set that way deliberately for testing and
+then left. Any real delivery request filed in that window reached one person,
+silently: no error, no bounce. `portal.notify_delivery_request` mails whatever
+the secret holds, and the hardcoded riley+kristy fallback inside that function
+applies only when the secret is missing entirely, which it never was.
 
-**A real delivery request filed today reaches one person.** No error, no bounce —
-`portal.notify_delivery_request` reads whatever the secret holds and mails it.
-The hardcoded riley+kristy fallback in that function only applies when the secret
-is missing entirely, and it is not missing.
-
-Restore with:
+Restored by hand 2026-08-31 03:58 UTC on secret id
+`c6d60a45-b574-41cd-9c1c-4d2777d14278`:
 
     select vault.update_secret(
-      (select id from vault.secrets where name='delivery_request_recipients'),
-      'riley@kinguniversal.com,kristy@kinguniversal.com',
-      'delivery_request_recipients',
-      'Comma-separated recipients for portal delivery-request notifications');
+      'c6d60a45-b574-41cd-9c1c-4d2777d14278'::uuid,
+      'riley@kinguniversal.com,kristy@kinguniversal.com');
+
+Read-back confirmed: value `riley@kinguniversal.com,kristy@kinguniversal.com`,
+length 48, `matches_target` true, `updated_at` advanced. Addressing by id rather
+than by name is deliberate — it cannot land on a similarly-named secret. Omitting
+the third and fourth arguments leaves `name` and `description` untouched.
 
 Add the delivery coordinator to that same string when Riley names them — that is
 the whole reason the recipients moved to the vault rather than staying in the
 function body.
 
-**This cannot be checked from a read-only connection.** `vault.decrypted_secrets`
-is readable but the underlying decryption function is not granted, so a query can
-confirm the secret EXISTS and nothing more. Verifying the value means running the
-select as postgres. Do not infer from "the row is there" that it is correct — an
-earlier note in this session did exactly that and was wrong.
+**The value cannot be checked from our read-only connection.** `vault.secrets` is
+readable, but `_crypto_aead_det_decrypt` is not granted, so selecting
+`decrypted_secrets` fails with `42501: permission denied for function
+_crypto_aead_det_decrypt` — confirmed again during this restore. A read-only
+query can prove the secret EXISTS and nothing more. Verifying the value means
+running the select as postgres, by hand. Do not infer from "the row is there"
+that it is correct — an earlier note did exactly that and was wrong. That is why
+this entry records the read-back result rather than the update alone.
 
 ### ⚠ The client-side delivery-request render path crashes
 

@@ -2515,7 +2515,7 @@ function OrderDetail({ id, navigate }) {
       },
       lines: items.map(it => ({
         description: it.description || it.products?.name || '—',
-        sku: it.products?.sku || '',
+        sku: it.product_sku || it.products?.sku || '',
         size: it.size || '',
         quantity: Number(it.quantity) || 0,
         unit_price: Number(it.unit_price) || 0,
@@ -2648,7 +2648,7 @@ function OrderDetail({ id, navigate }) {
                     <td>
                       <div style={{fontWeight:500}}>{it.description||it.products?.name||'—'}</div>
                       {it.size&&<div style={{marginTop:'3px'}}><span className="size-tag">Size {it.size}</span></div>}
-                      {it.products?.sku&&<div className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>SKU: {it.products.sku}</div>}
+                      {(it.product_sku||it.products?.sku)&&<div className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>SKU: {it.product_sku||it.products?.sku}</div>}
                       {it.vpn&&<div className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>VPN# {it.vpn}</div>}
                       {it.carton_info&&<div style={{fontSize:'11px',color:'var(--muted)',marginTop:'2px'}}>{it.carton_info}</div>}
                     </td>
