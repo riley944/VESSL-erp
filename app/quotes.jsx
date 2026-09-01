@@ -2373,12 +2373,36 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   // `reason` deliberately reads as an instruction rather than a diagnosis -- the
   // column is flex 1.0, and "set one in Codes" is more use in that space than the
   // code, which is three fields further up the same form.
+  // A one-line notice under the HTS field, not a toast: the thing it reports
+  // happened three rows below it, and a corner toast would be read after the eye
+  // had already moved on. Clears itself after 6s and on unmount -- a stale
+  // "recalculated" sitting there through the next edit would be a lie.
+  const [dutyNotice, setDutyNotice] = useState("");
+  const dutyNoticeTimer = useRef(null);
+  // Which tier's duty box was emptied during the CURRENT focus session, or null.
+  // A single index rather than a set: only one input can hold focus, and the value
+  // is cleared on the blur that consumes it. Index is safe for the same reason --
+  // it never outlives one focus, so a tier added or removed in between cannot
+  // shift it. A ref, not state: nothing renders from it and re-rendering the tier
+  // list on every clear would be work for no visible result.
+  const dutyClearedIdx = useRef(null);
+  const flashDuty = (msg) => {
+    setDutyNotice(msg);
+    clearTimeout(dutyNoticeTimer.current);
+    dutyNoticeTimer.current = setTimeout(() => setDutyNotice(""), 6000);
+  };
+  useEffect(() => () => clearTimeout(dutyNoticeTimer.current), []);
   const dutyRate = useMemo(() => {
     if (!f.hts) return { rate: null, reason: null };
     const rows = htsCodes.filter((c) => c.code === f.hts);
     if (!rows.length) return { rate: null, reason: "not in Codes", full: "This code is not in the code library, so there is no rate to apply. Add it from the HTS field above." };
     const rated = rows.filter((r) => r.total_duty != null);
-    if (!rated.length) return { rate: null, reason: "no rate — set one in Codes", full: "This code is in the library but carries no total duty. Set one on the Codes page and it will fill in here." };
+    // NAMES THE CODE, unlike the other three reasons. This is the state Kristy
+    // asked to be able to act on, and acting on it means going to the Codes page
+    // and finding the row -- which needs the number, not "this code". It is the
+    // longest string in a flex 1.0 column and will wrap to two lines on a 10-digit
+    // code; that is the trade, and the wrap is preferable to a lookup.
+    if (!rated.length) return { rate: null, reason: "No duty on file for " + f.hts + " — set one in Codes", full: "This code is in the library but carries no total duty. Set one on the Codes page and it will fill in here." };
     const distinct = [...new Set(rated.map((r) => Number(r.total_duty)))];
     if (distinct.length > 1) return { rate: null, reason: "several rates — type it", full: "This code covers several items with different duty rates (" + distinct.map((d) => d + "%").join(", ") + "), so the right one cannot be chosen automatically. Type it." };
     return { rate: distinct[0], reason: null, full: "Computed from " + distinct[0] + "% of EXW. Type over it to override." };
@@ -2399,11 +2423,39 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
     // so say so. Keyed on the field rather than on the two buttons, so a third
     // caller cannot reintroduce the hole.
     if (key === "ship") markDirty();
+    // Arms the blur refill, and only for a box that HELD something and was emptied
+    // by hand. Tabbing through a tier that was already empty must leave it empty:
+    // 10 existing quotes have a rated code and a blank duty, and a blur that filled
+    // those would rewrite priced work by being tabbed past. The Apply chip stays
+    // the only way to fill an untouched tier -- deliberate, and it says the rate on
+    // its face before you press it.
+    if (key === "duty") {
+      const prev = f.tiers && f.tiers[i] ? f.tiers[i].duty : "";
+      const wasFilled = prev !== "" && prev != null;
+      const emptied = val === "" || val == null;
+      dutyClearedIdx.current = wasFilled && emptied ? i : null;
+    }
     setF((p) => {
       const tiers = p.tiers.map((t, idx) => {
         if (idx !== i) return t;
         const next = { ...t, [key]: val };
-        if (key === "duty") next.dutyManual = true;
+        // EMPTYING THE BOX WITHDRAWS THE OVERRIDE. Until now the only way back to
+        // the library figure was to re-pick the HTS code, which is three fields up
+        // and clears every other tier's override too -- so someone who typed a duty
+        // by mistake had no local undo, and the tier stayed frozen against later EXW
+        // edits forever. Clearing it is the plainest possible way to say "I did not
+        // mean to set this".
+        //
+        // THE FLAG DROPS HERE; THE REFILL WAITS FOR BLUR. Refilling on this
+        // keystroke would put the library figure under a cursor that is still
+        // typing: backspacing 2.50 to empty would hand back 1.875, and the next
+        // digit would land on the end of it. So the box is left empty and the
+        // onBlur on the input finishes the job once the person has moved on.
+        if (key === "duty") {
+          const emptied = val === "" || val == null;
+          next.dutyManual = !emptied;
+          if (emptied) next.duty = "";
+        }
         if (key === "landed" && !next.dutyManual) next.duty = computeDuty(val, dutyRate.rate);
         // Touching freight is the acknowledgement. The marker asks a question about
         // that number, so editing it answers the question -- whatever the new value is.
@@ -2412,6 +2464,21 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
       });
       return { ...p, tiers };
     });
+  };
+  // Writes a duty WITHOUT claiming an override. setTier flags dutyManual on any
+  // duty write, which is right for a keystroke and wrong for this: accepting the
+  // library's own number is not overriding it. Routed through setTier, an applied
+  // rate would read "overridden" and the tier would stop tracking EXW -- so the
+  // one action whose whole purpose is "use the library value" would quietly opt
+  // that tier out of ever using it again.
+  //
+  // markDirty() explicitly, because this arrives from a CLICK. The guard snapshots
+  // inputs, so typing into the duty box is seen for free and a chip press is not
+  // -- the same hole the HTS picker, Add tier and the Air/Ocean toggles each have
+  // to close by hand.
+  const setTierAuto = (i, key, val) => {
+    markDirty();
+    setF((p) => ({ ...p, tiers: p.tiers.map((t, idx) => (idx === i ? { ...t, [key]: val } : t)) }));
   };
   // The only writer of f.hts. Values arrive already normalised -- either from a
   // library row, or from CodeModal, which strips as you type. formToRow is
@@ -2430,10 +2497,24 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   // typed in, so on a quote that is being filled in code-first the snapshot sees
   // no change at all. Covers the picker's clear button too, since the × routes
   // through commit("") to this same onChange.
-  const pickHts = (code, extra) => { markDirty(); return setF((p) => {
+  //
+  // THE CLEAR IS SILENT NO LONGER. Wiping an override is the right call -- the
+  // rate it was struck against is gone -- but it happened with no acknowledgement
+  // at all, so a typed-in duty could vanish while the person was looking at the
+  // HTS field three rows above. The notice states what happened; it does not ask
+  // permission, because the recalculation is still correct.
+  //
+  // Fired only when something actually moved: picking the same code twice, or
+  // picking any code on a quote with no EXW anywhere, changes nothing and should
+  // say nothing. Computed from the CURRENT render's tiers before setF, so it
+  // never reads state mid-update.
+  const pickHts = (code, extra) => {
+    markDirty();
     const rate = rateFromRows((extra ? htsCodes.concat(extra) : htsCodes).filter((c) => c.code === code));
-    return { ...p, hts: code || "", tiers: p.tiers.map((t) => ({ ...t, dutyManual: false, duty: computeDuty(t.landed, rate) })) };
-  }); };
+    const moved = (f.tiers || []).some((t) => t.dutyManual || String(t.duty ?? "") !== computeDuty(t.landed, rate));
+    if (moved) flashDuty(code ? "Duty recalculated for the new code." : "Duty cleared — no code, so no rate to apply.");
+    return setF((p) => ({ ...p, hts: code || "", tiers: p.tiers.map((t) => ({ ...t, dutyManual: false, duty: computeDuty(t.landed, rate) })) }));
+  };
   // "+ Add code" from inside the picker. The seeded value is whatever was typed
   // into the filter, so a code someone was hunting for is pre-filled.
   const [addingCode, setAddingCode] = useState(null);
@@ -2550,6 +2631,8 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
             <HtsField value={f.hts} onChange={pickHts} codes={htsCodes}
               onAdd={(seed) => setAddingCode({ code: seed || "" })}
               fieldStyle={S.field} labelStyle={S.fieldLabel} inputStyle={S.input} />
+            {/* Non-blocking, and it occupies no row of its own when silent. */}
+            {dutyNotice && <div style={{ gridColumn: "1 / -1", marginTop: -4, fontSize: 11.5, color: "#3461e0" }}>{dutyNotice}</div>}
             {/* BEFORE the two spanning blocks below, and that position is the whole
                 point of it being here rather than at the end of the section.
 
@@ -2746,7 +2829,27 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                         alone. The hint is terse because the column is flex 1.0; the
                         sentence lives on the title, like the eFiling button. */}
                     <div style={{ flex: 1.0, display: "flex", flexDirection: "column", gap: 2 }}>
-                      <input style={S.tierInput} type="number" value={t.duty ?? ""} onChange={(e) => setTier(i, "duty", e.target.value)} placeholder="$ duty" title={dutyRate.full || "Duty per unit. Set an HTS code with a rate and this fills itself."} />
+                      {/* THE OTHER HALF OF THE CLEAR. setTier drops dutyManual the
+                          moment the box goes empty but deliberately leaves it empty,
+                          so nothing rewrites the field under a live cursor. This puts
+                          the library figure back once focus leaves -- and only when
+                          the box is still empty, so a value typed after the clear is
+                          never overwritten.
+                          setTierAuto, not setTier: this is the library's number, so it
+                          must not re-raise the override flag the clear just lowered. */}
+                      <input style={S.tierInput} type="number" value={t.duty ?? ""} onChange={(e) => setTier(i, "duty", e.target.value)}
+                        onBlur={() => {
+                          // Consume the arming flag whatever happens next, so it can
+                          // never survive into an unrelated later blur.
+                          const armed = dutyClearedIdx.current === i;
+                          dutyClearedIdx.current = null;
+                          if (!armed) return;
+                          if (t.duty !== "" && t.duty != null) return;   // typed after the clear
+                          if (dutyRate.rate == null) return;             // no rate, or ambiguous
+                          const v = computeDuty(t.landed, dutyRate.rate);
+                          if (v !== "") setTierAuto(i, "duty", v);       // "" means no EXW
+                        }}
+                        placeholder="$ duty" title={dutyRate.full || "Duty per unit. Set an HTS code with a rate and this fills itself."} />
                       {/* Fires when a duty has landed on a tier whose freight was written
                           before duty was a separate box. Deliberately NOT an attempt to
                           detect duty inside freight: measuring the 19 such tiers put 3
@@ -2771,7 +2874,34 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                         <span title="This tier's freight was entered before duty had its own box, so it may already include duty — in which case the total now counts it twice. Check the freight figure; editing it clears this." style={{ fontSize: 9.5, fontWeight: 600, color: "#9a3412", background: "#ffedd5", borderRadius: 4, padding: "1px 4px", lineHeight: 1.3, cursor: "help" }}>check freight</span>
                       )}
                       {dutyRate.reason && <span title={dutyRate.full} style={{ fontSize: 9.5, color: "#b0763a", lineHeight: 1.25, cursor: "help" }}>{dutyRate.reason}</span>}
-                      {!dutyRate.reason && t.dutyManual && dutyRate.rate != null && <span title={"Computed would be " + computeDuty(t.landed, dutyRate.rate) + " at " + dutyRate.rate + "%."} style={{ fontSize: 9.5, color: "#6a7488", lineHeight: 1.25, cursor: "help" }}>overridden</span>}
+                      {/* THE RATE, SHOWN. The duty box holds dollars per unit -- exw x
+                          rate / 100 -- so the percentage it came from appeared nowhere
+                          on screen except a tooltip nobody hovers. A number with no
+                          visible provenance is a number people re-derive by hand.
+                          Display only: nothing here computes, and the chip is absent
+                          whenever dutyRate.reason has already said why there is no
+                          rate, so the two never contradict each other. */}
+                      {!dutyRate.reason && dutyRate.rate != null && (
+                        t.dutyManual
+                          ? <span title={"Library value is " + computeDuty(t.landed, dutyRate.rate) + " at " + dutyRate.rate + "% of EXW. This tier was typed over, so an EXW change no longer moves it. Clear the box to go back to the library figure."} style={{ fontSize: 11, fontWeight: 700, color: "#4b5563", lineHeight: 1.25, cursor: "help" }}>{dutyRate.rate}%<span style={{ fontWeight: 400, color: "#6a7488" }}> · overridden</span></span>
+                          : <span title={"Computed from " + dutyRate.rate + "% of EXW. Type over it to override; clear the box to come back."} style={{ fontSize: 11, fontWeight: 700, color: "#4b5563", lineHeight: 1.25, cursor: "help" }}>{dutyRate.rate}% of EXW</span>
+                      )}
+                      {/* OPT-IN, one tier at a time -- never a backfill. 10 quotes have a
+                          rated code and a tier with no duty, and filling them in bulk
+                          would write a cost into priced quotes nobody has looked at.
+                          Needs an EXW: computeDuty returns "" without one, so the chip
+                          would apply nothing. setTierAuto, NOT setTier: accepting the
+                          library's number is not overriding it, so the tier keeps
+                          tracking EXW and the chip still reads the bare rate after. */}
+                      {!dutyRate.reason && dutyRate.rate != null && !t.dutyManual
+                        && (t.duty === "" || t.duty == null)
+                        && t.landed !== "" && t.landed != null && Number(t.landed) > 0 && (
+                        <button type="button" onClick={() => setTierAuto(i, "duty", computeDuty(t.landed, dutyRate.rate))}
+                          title={"Sets duty to " + computeDuty(t.landed, dutyRate.rate) + ", being " + dutyRate.rate + "% of this tier's EXW. Leaves the tier tracking EXW — type in the box to override instead."}
+                          style={{ alignSelf: "flex-start", fontSize: 9.5, fontWeight: 600, color: "#3461e0", background: "#eef1f6", border: "none", borderRadius: 4, padding: "1px 5px", lineHeight: 1.3, cursor: "pointer" }}>
+                          Apply {dutyRate.rate}%
+                        </button>
+                      )}
                     </div>
                     <div style={{ flex: 1.1, textAlign: "right", alignSelf: "center", ...S.num, fontWeight: 600, color: "#0f1729" }}>{total ? `$${fmt(total)}` : "—"}</div>
                     {/* Column, not a row: the mix line sits under both the input and the
