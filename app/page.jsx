@@ -4001,7 +4001,14 @@ function Shipments({ onNewShipment, userEmail }) {
             </button>
           ))}
         </div>
-        <div style={{position:'relative',flex:'1 1 220px',maxWidth:'340px'}}>
+        {/* ~100px wider: maxWidth is what actually binds when the row has room, so
+            the basis moves with it or the input keeps settling at its old preferred
+            size and the extra ceiling never gets used.
+            flex-shrink stays 1, which is what keeps the pills and Import reply on
+            this row -- the search gives way first as the window narrows, exactly as
+            it did before. The row is flexWrap, so on a genuinely narrow window the
+            pills still drop below rather than being crushed. */}
+        <div style={{position:'relative',flex:'1 1 320px',maxWidth:'440px'}}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#A0A0A4" strokeWidth="2" strokeLinecap="round" style={{position:'absolute',left:'13px',top:'50%',transform:'translateY(-50%)'}}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={view==='quotes'?'Search quotes, clients, routes\u2026':'Search shipments, vessels, refs\u2026'} style={{width:'100%',border:'none',borderRadius:'980px',padding:'10px 15px 10px 38px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
         </div>
