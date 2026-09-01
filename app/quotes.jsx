@@ -122,6 +122,14 @@ function fmtUnit(n) {
 // The other numeric columns need none of this. Duty and EXW hold a lone input at
 // width 100%, so cell and box are the same rectangle and a centred header is
 // already centred over the box.
+// CLIENT NAMES DO NOT GO IN THE DISPLAY SERIF. Fraunces is a high-contrast face
+// chosen for our own chrome -- page titles, modal headings. Client names are DATA,
+// they are not ours to style, and they arrive in shapes the serif handles badly:
+// all caps, hyphens, ampersands, initialisms. "JOHNNIE-O" reads as distorted
+// beside "BucketGolf" in the same style purely because caps expose the contrast.
+// The UI sans renders every name the same way, which is the only property that
+// matters for a field somebody else owns the contents of.
+const SANS = "'Spline Sans', system-ui, sans-serif";
 const FB_BTN_W = 44;     // px, the "build" button in the Freight cell
 const FB_BTN_GAP = 3;    // px, matches the flex gap in that cell
 const AUTO_BTN_W = 46;   // px, the "auto" button in the Client Price cell
@@ -1952,7 +1960,9 @@ function SendToClientModal({ clients, onClose }) {
     <div style={S.overlay} onClick={guardedClose}>
       <div ref={cardRef} style={{ ...S.modal, maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
-          <h2 style={S.modalTitle}>{step === "client" ? "Send Quote Sheet" : chosenClient}</h2>
+          {/* modalTitle stays serif for our own wording and switches to sans the
+              moment it is holding a client name instead. */}
+          <h2 style={step === "client" ? S.modalTitle : { ...S.modalTitle, fontFamily: SANS }}>{step === "client" ? "Send Quote Sheet" : chosenClient}</h2>
           <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
         </div>
         <div style={{ padding: "20px 26px 24px", maxHeight: "62vh", overflowY: "auto" }}>
@@ -2034,7 +2044,7 @@ function DirectoryPanel({ onClose, contacts, factories, clientRecords, quoteClie
     <div style={S.overlay} onClick={guardedClose}>
       <div ref={cardRef} style={{ ...S.modal, maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
-          <h2 style={S.modalTitle}>{openClient ? openClient : "Directory"}</h2>
+          <h2 style={openClient ? { ...S.modalTitle, fontFamily: SANS } : S.modalTitle}>{openClient ? openClient : "Directory"}</h2>
           <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
         </div>
         {!openClient && (
@@ -3109,13 +3119,13 @@ const S = {
   breadcrumb: { display: "flex", alignItems: "center", gap: 10, maxWidth: 1280, margin: "0 auto 14px" },
   crumbBtn: { display: "inline-flex", alignItems: "center", gap: 3, background: "transparent", border: "none", color: "#3461e0", fontSize: 14, fontWeight: 600, padding: 0 },
   crumbSep: { color: "#9aa3b5" },
-  crumbCurrent: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 20, fontWeight: 600, color: "#0f1729" },
+  crumbCurrent: { fontFamily: SANS, fontSize: 20, fontWeight: 600, color: "#0f1729", letterSpacing: "-0.01em" },   // breadcrumb client name
   crumbMeta: { fontSize: 12.5, color: "#6a7488", marginLeft: 4 },
   clientGrid: { maxWidth: 1280, margin: "0 auto", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 16 },
   clientCard: { background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 16, padding: "20px 20px 18px", textAlign: "left", display: "flex", flexDirection: "column", gap: 4, boxShadow: "0 2px 8px rgba(26,34,56,0.05)" },
   clientCardTop: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
-  clientAvatar: { width: 42, height: 42, borderRadius: 11, background: "linear-gradient(135deg,#eef1f6,#e7eaf0)", color: "#3461e0", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Fraunces', Georgia, serif", fontWeight: 600, fontSize: 16 },
-  clientName: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 19, fontWeight: 600, color: "#0f1729" },
+  clientAvatar: { width: 42, height: 42, borderRadius: 11, background: "linear-gradient(135deg,#eef1f6,#e7eaf0)", color: "#3461e0", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: SANS, fontWeight: 600, fontSize: 16 },   // client initials
+  clientName: { fontFamily: SANS, fontSize: 19, fontWeight: 600, color: "#0f1729", letterSpacing: "-0.01em" },   // client card title
   clientMeta: { fontSize: 13, color: "#6a7488", fontWeight: 500 },
   clientUpdated: { fontSize: 11.5, color: "#6a7488", marginTop: 2 },
   tableWrap: { maxWidth: 1280, margin: "0 auto", background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 10px rgba(26,34,56,0.05)" },

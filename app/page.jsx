@@ -3472,7 +3472,8 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
         <div style={{display:'flex',alignItems:'center',gap:'8px',margin:'4px 0 16px',fontSize:'15px'}}>
           <button className="crumb" onClick={()=>setClient('All')}>‹ All Clients</button>
           <span style={{color:'var(--faint)'}}>/</span>
-          <span style={{fontFamily:'var(--serif)',fontWeight:600}}>{client}</span>
+          {/* Client name, so sans -- see the SANS note in quotes.jsx. */}
+          <span style={{fontFamily:'var(--sans)',fontWeight:600}}>{client}</span>
           <span style={{color:'var(--muted)',fontSize:'12.5px'}}>{filtered.length} {filtered.length===1?'product':'products'}</span>
         </div>
       )}
