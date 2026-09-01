@@ -104,6 +104,28 @@ function fmtUnit(n) {
   const decimals = Math.max(2, Math.min(5, (trimmed.split(".")[1] || "").length));
   return v.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
+// Two tier cells hold an input AND a button side by side -- Freight ("build")
+// and Client Price ("auto") -- while their headers name only the input. Centring
+// the word over the whole cell puts it visibly right of the box it labels, so
+// each header is padded on the right by exactly what its button occupies and
+// centres over the remainder.
+//
+// The buttons therefore get FIXED widths rather than sizing to their text. Two
+// numbers that have to agree cannot both be "whatever the font does": content-
+// sized, the padding is a guess that drifts with the font, the zoom level and the
+// word inside it. Pinning one and deriving the other is what makes it hold.
+//
+// The two are sized separately because they are: "build" is 10px/700 and "auto"
+// is 11px/600 with a border. One shared constant would centre one header and
+// leave the other a few pixels out -- which is the failure this is fixing.
+//
+// The other numeric columns need none of this. Duty and EXW hold a lone input at
+// width 100%, so cell and box are the same rectangle and a centred header is
+// already centred over the box.
+const FB_BTN_W = 44;     // px, the "build" button in the Freight cell
+const FB_BTN_GAP = 3;    // px, matches the flex gap in that cell
+const AUTO_BTN_W = 46;   // px, the "auto" button in the Client Price cell
+const AUTO_BTN_GAP = 4;  // px, matches the flex gap in that cell
 function stamp() { return new Date().toISOString(); }
 function fmtStamp(iso) {
   if (!iso) return "—";
@@ -2773,14 +2795,38 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                     because it sits above every tier and each tier has its own ship.
                     The freed width goes to the three cells that gained content:
                     Quantity, Client Price and Margin. Child rows mirror these. */}
-                <div style={{ flex: 1.0 }}>Quantity</div>
-                <div style={{ flex: 1.0 }}>EXW Cost</div>
-                <div style={{ flex: 1.0 }}>Method</div>
-                <div style={{ flex: 1.2 }}>Freight</div>
-                <div style={{ flex: 1.0 }}>Duty</div>
-                <div style={{ flex: 1.1, textAlign: "right" }}>Total Cost</div>
-                <div style={{ flex: 1.3 }}>Client Price</div>
-                <div style={{ flex: 0.8, textAlign: "right" }}>Margin</div>
+                {/* Every header centred over its column. The CELLS keep their own
+                    alignment -- numbers stay right, inputs stay left -- because a
+                    heading labels a column while a figure has to line up with the
+                    figures above and below it. */}
+                <div style={{ flex: 1.0, textAlign: "center" }}>Quantity</div>
+                <div style={{ flex: 1.0, textAlign: "center" }}>EXW Cost</div>
+                {/* Method gives up 0.2 to Freight. It holds two fixed-width toggles
+                    that never grow, so it was the only column with width to spare. */}
+                <div style={{ flex: 0.8, textAlign: "center" }}>Method</div>
+                {/* The widest cell in the row: an input whose placeholder runs to
+                    "$ ocean" AND the build button beside it, sharing one flex box.
+                    paddingRight subtracts the button from the centring, so the word
+                    sits over the box rather than over box-plus-button -- see the
+                    FB_BTN_W note at the top of the file. */}
+                <div style={{ flex: 1.5, textAlign: "center", paddingRight: FB_BTN_W + FB_BTN_GAP, boxSizing: "border-box" }}>Freight</div>
+                <div style={{ flex: 1.0, textAlign: "center" }}>Duty</div>
+                {/* Header and value cell are both flex 1.1 and both centred, so the
+                    boxes agree exactly -- verified, not assumed. What is off is the
+                    TEXT: this row is uppercase with letterSpacing .05em, which adds a
+                    trailing space after the final letter that centring counts as part
+                    of the word, so every header in this row sits about half a space
+                    left of true. It only shows here because this is the one column
+                    whose value is also centred and directly beneath. */}
+                <div style={{ flex: 1.1, textAlign: "center", paddingLeft: 6, boxSizing: "border-box" }}>Total Cost</div>
+                {/* Nudged by eye, not derived. Subtracting the whole button
+                    (AUTO_BTN_W + AUTO_BTN_GAP = 50) over-corrected and left the words
+                    sitting off the left edge of the box; half of it reads centred.
+                    The full subtraction is geometrically right and visually wrong --
+                    "Client Price" is wider than the box it labels, so it cannot sit
+                    inside it and the eye centres it on the whole cell instead. */}
+                <div style={{ flex: 1.3, textAlign: "center", paddingRight: 25, boxSizing: "border-box" }}>Client Price</div>
+                <div style={{ flex: 0.8, textAlign: "center" }}>Margin</div>
                 <div style={{ width: 30 }} />
               </div>
               {f.tiers.map((t, i) => {
@@ -2815,13 +2861,13 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       ? <input style={S.tierInput} type="number" value={t.qty ?? ""} onChange={(e) => setTier(i, "qty", e.target.value)} placeholder="Qty" />
                       : <div style={S.qtyFromSizes} title="Quantity comes from the size rows below"><span style={S.qfsV}>{sizeTotal.toLocaleString()}</span><span style={S.qfsK}>from sizes</span></div>}</div>
                     <div style={{ flex: 1.0 }}><input style={S.tierInput} type="number" value={t.landed ?? ""} onChange={(e) => setTier(i, "landed", e.target.value)} placeholder="$ EXW" /></div>
-                    <div style={{ flex: 1.0, display: "flex", gap: 3, alignItems: "center" }}>
+                    <div style={{ flex: 0.8, display: "flex", gap: 3, alignItems: "center" }}>
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "air" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "air")}>Air</button>
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "ocean" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "ocean")}>Ocean</button>
                     </div>
-                    <div style={{ flex: 1.2, display: "flex", gap: 3 }}>
+                    <div style={{ flex: 1.5, display: "flex", gap: FB_BTN_GAP }}>
                       <input style={S.tierInput} type="number" value={t[freightKey] ?? ""} onChange={(e) => setTier(i, freightKey, e.target.value)} placeholder={ship === "air" ? "$ air" : "$ ocean"} />
-                      <button type="button" onClick={() => setFbTier(i)} title="Build the freight & duty number from its cost legs — containers, warehousing, trucking, duty" style={{ flexShrink: 0, padding: "0 8px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, letterSpacing: ".02em", cursor: "pointer", background: (t.fb && t.fb.length) ? "#2f6df6" : "#e7edfd", color: (t.fb && t.fb.length) ? "#fff" : "#3551c4", whiteSpace: "nowrap" }}>build</button>
+                      <button type="button" onClick={() => setFbTier(i)} title="Build the freight & duty number from its cost legs — containers, warehousing, trucking, duty" style={{ flexShrink: 0, width: FB_BTN_W, padding: 0, borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, letterSpacing: ".02em", cursor: "pointer", background: (t.fb && t.fb.length) ? "#2f6df6" : "#e7edfd", color: (t.fb && t.fb.length) ? "#fff" : "#3551c4", whiteSpace: "nowrap" }}>build</button>
                     </div>
                     {/* Computed from the HTS code where that is unambiguous, typed
                         otherwise, and typing always wins -- setTier flags the tier
@@ -2903,12 +2949,20 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                         </button>
                       )}
                     </div>
-                    <div style={{ flex: 1.1, textAlign: "right", alignSelf: "center", ...S.num, fontWeight: 600, color: "#0f1729" }}>{total ? `$${fmt(total)}` : "—"}</div>
+                    {/* fmtUnit, not fmt. This is a PER-UNIT figure -- EXW plus
+                        freight plus duty plus the mold share, all of which are
+                        rendered at up to 5dp in the cells feeding it -- so fmt's
+                        2dp made the row fail to add up on screen: 0.085 showed as
+                        $0.09 beside components reading $0.0850. The detail view
+                        (fmtUnit at the Total Cost cell) and the printed quote
+                        (fmtUnit in tierRows) already did this; the editor was the
+                        odd one out, so all three now agree. */}
+                    <div style={{ flex: 1.1, textAlign: "center", alignSelf: "center", ...S.num, fontWeight: 600, color: "#0f1729" }}>{total ? `$${fmtUnit(total)}` : "—"}</div>
                     {/* Column, not a row: the mix line sits under both the input and the
                         auto button. The base price stays typed — the per-size prices are
                         derived from it, so deriving it back would be circular. */}
                     <div style={{ flex: 1.3, display: "flex", flexDirection: "column", gap: 3 }}>
-                      <div style={{ display: "flex", gap: 4 }}>
+                      <div style={{ display: "flex", gap: AUTO_BTN_GAP }}>
                         <input style={S.tierInput} type="number" value={t.client ?? ""} onChange={(e) => setTier(i, "client", e.target.value)} placeholder="$" />
                         <button style={S.autoBtn} title="Suggest from margin logic" onClick={() => autoFillClient(i)}>auto</button>
                       </div>
@@ -3116,7 +3170,9 @@ const S = {
   qfsV: { fontSize: 13, fontWeight: 600, color: "#0f1729", lineHeight: 1.2, fontVariantNumeric: "tabular-nums" },
   qfsK: { fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em", color: "#9aa3b5", fontWeight: 600 },
   tierMixLine: { fontSize: 11, color: "#9aa3b5", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
-  autoBtn: { background: "#eef1f6", border: "1px solid #e7eaf0", color: "#3461e0", borderRadius: 8, padding: "0 9px", fontSize: 11, fontWeight: 600 },
+  // width pinned, not content-sized: the Client Price header pads itself by
+  // AUTO_BTN_W to centre over the input alone. See the note beside that constant.
+  autoBtn: { background: "#eef1f6", border: "1px solid #e7eaf0", color: "#3461e0", borderRadius: 8, width: AUTO_BTN_W, padding: 0, fontSize: 11, fontWeight: 600, flexShrink: 0 },
   tierDel: { background: "transparent", border: "none", color: "#bba", padding: 2, display: "inline-flex" },
   addTierBtn: { display: "inline-flex", alignItems: "center", gap: 5, background: "#eef1f6", color: "#0f1729", border: "none", borderRadius: 9, padding: "8px 14px", fontSize: 13, fontWeight: 600 },
   presetBtn: { background: "#ffffff", border: "1px solid #e7eaf0", color: "#6a7488", borderRadius: 9, padding: "8px 14px", fontSize: 13, fontWeight: 500 },
