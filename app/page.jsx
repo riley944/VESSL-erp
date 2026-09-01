@@ -3981,8 +3981,13 @@ function Shipments({ onNewShipment, userEmail }) {
 
       {/* ── Pulse strip ── */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:'12px',marginBottom:'22px'}}>
+        {/* textAlign on the button, not on the two children: they inherit it, so
+            one word keeps the count and its label centred on the same axis. The
+            cards are auto-fit 140px minimum and the labels run from "Bids in" to
+            "Arriving ≤14d", so left-aligning left the short ones adrift in their
+            own card. */}
         {pulse.map(m=>(
-          <button key={m.k} onClick={m.go} style={{background:m.on?'#1D1D1F':'#fff',borderRadius:'16px',padding:'14px 16px',border:'none',boxShadow:'0 1px 3px rgba(0,0,0,.04)',cursor:'pointer',textAlign:'left',transition:'.15s'}}>
+          <button key={m.k} onClick={m.go} style={{background:m.on?'#1D1D1F':'#fff',borderRadius:'16px',padding:'14px 16px',border:'none',boxShadow:'0 1px 3px rgba(0,0,0,.04)',cursor:'pointer',textAlign:'center',transition:'.15s'}}>
             <div style={{fontSize:'24px',fontWeight:600,letterSpacing:'-.02em',lineHeight:1,color:m.on?'#fff':(m.v>0?m.c:'#1D1D1F'),fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
             <div style={{fontSize:'11.5px',color:m.on?'rgba(255,255,255,.65)':'#86868B',marginTop:'5px',letterSpacing:'-.006em'}}>{m.k}</div>
           </button>
