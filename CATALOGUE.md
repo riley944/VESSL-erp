@@ -458,6 +458,8 @@ block that returns exactly one row on success.
 | 19 | `products.origin` + 48 products from quotes + links | run 2026-08-31 |
 | 20 | BUC-157 draft PO line linked | run 2026-08-31 |
 | 22 | client name recase, five clients, 49 rows | run 2026-09-02 |
+| 23 | HTS description title-case, 24 rows | run 2026-09-02 |
+| 24 | HTS description bracket case, 2 rows | run 2026-09-02 |
 | 14 | four remaining PO-line links | **parked, see §6** |
 
 ---
@@ -531,7 +533,7 @@ names, because the ZZTEST company was deleted after script 22 ran. Its `d1`/`c1`
 checks passed against 34 and 22 at run time. Re-census before reusing any figure
 from that file.
 
-**Two checklist rules these scripts earned the hard way.**
+**Three checklist rules these scripts earned the hard way.**
 
 *The first branch of the verification `union all` must alias all three columns —
 `as chk`, `as got`, `as want`.* `UNION ALL` takes its output column names from the
@@ -540,6 +542,19 @@ is named `?column?`, so the statement dies with `42703` **before any check is
 evaluated** — and returns no rows, which is indistinguishable from the "0 rows =
 the query did not run" case the sentinel exists to catch. Scripts 14 and 20 both
 shipped without it and failed on first run.
+
+*Zero apostrophe characters outside string literals — comments included.*
+Strict Postgres ends a `--` comment at the newline and ignores quotes inside it,
+but the SQL client these are pasted into lexes quotes first. Script 23 carried
+`-- 4203301090  was: men's belt`; that apostrophe opened a string that ran past
+the newline, and the parser reported `42601 syntax error at or near "plastic"` —
+pointing at a line several rows later that was perfectly fine. It survived one
+reprint because the fix doubled the apostrophe in the value and left the comment
+alone. Write comment prose without possessives or contractions, double
+apostrophes only where the data truly holds one, and verify mechanically before
+printing: apostrophes inside comments must be 0, and the total apostrophe count
+must equal 2 per literal plus 2 per doubled pair. Test a `values` block by
+running it as a read-only `select count(*) from (values …) t(…)` first.
 
 *Printing a script is not writing it.* Several scripts were printed into the chat
 and never landed in `scratchpad/`, so the on-disk record and the executed record
