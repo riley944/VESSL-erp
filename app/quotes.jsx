@@ -2434,20 +2434,40 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
     dutyNoticeTimer.current = setTimeout(() => setDutyNotice(""), 6000);
   };
   useEffect(() => () => clearTimeout(dutyNoticeTimer.current), []);
+  // note IS A FOURTH FIELD, not a fifth reason, and the distinction is load-bearing.
+  // reason means "there is no rate, and here is why" -- the chip and the Apply button
+  // both render on !reason. A surcharge is the opposite case: the rate is real and
+  // applies, it is simply not the whole duty. Carried in reason it would blank the
+  // rate chip AND the Apply button, so the one code that most needs its rate applied
+  // would be the one code you could not apply it to.
+  //
+  // Same distinct-value discipline as the rate above it: rows sharing a code can
+  // disagree about a note exactly as they disagree about a rate, and picking one
+  // arbitrarily would attach a surcharge to an item that does not carry it. One
+  // distinct note shows; several showing nothing is the same answer rateFromRows
+  // gives, for the same reason.
   const dutyRate = useMemo(() => {
-    if (!f.hts) return { rate: null, reason: null };
+    if (!f.hts) return { rate: null, reason: null, note: null };
     const rows = htsCodes.filter((c) => c.code === f.hts);
-    if (!rows.length) return { rate: null, reason: "not in Codes", full: "This code is not in the code library, so there is no rate to apply. Add it from the HTS field above." };
+    // note: null on every branch, so the shape is the same whichever way this returns.
+    // These two branches have no rated row to read a note from, so null is also the
+    // true answer -- but an absent key and a null one read identically only until
+    // somebody tests for one explicitly.
+    if (!rows.length) return { rate: null, reason: "not in Codes", note: null, full: "This code is not in the code library, so there is no rate to apply. Add it from the HTS field above." };
     const rated = rows.filter((r) => r.total_duty != null);
     // NAMES THE CODE, unlike the other three reasons. This is the state Kristy
     // asked to be able to act on, and acting on it means going to the Codes page
     // and finding the row -- which needs the number, not "this code". It is the
     // longest string in a flex 1.0 column and will wrap to two lines on a 10-digit
     // code; that is the trade, and the wrap is preferable to a lookup.
-    if (!rated.length) return { rate: null, reason: "No duty on file for " + f.hts + " — set one in Codes", full: "This code is in the library but carries no total duty. Set one on the Codes page and it will fill in here." };
+    if (!rated.length) return { rate: null, reason: "No duty on file for " + f.hts + " — set one in Codes", note: null, full: "This code is in the library but carries no total duty. Set one on the Codes page and it will fill in here." };
     const distinct = [...new Set(rated.map((r) => Number(r.total_duty)))];
-    if (distinct.length > 1) return { rate: null, reason: "several rates — type it", full: "This code covers several items with different duty rates (" + distinct.map((d) => d + "%").join(", ") + "), so the right one cannot be chosen automatically. Type it." };
-    return { rate: distinct[0], reason: null, full: "Computed from " + distinct[0] + "% of EXW. Type over it to override." };
+    // Read off the RATED rows, not off every row sharing the code: a note belongs to
+    // the rate it qualifies, and an unrated row has no rate for it to qualify.
+    const notes = [...new Set(rated.map((r) => r.duty_note).filter((n) => n))];
+    const note = notes.length === 1 ? notes[0] : null;
+    if (distinct.length > 1) return { rate: null, reason: "several rates — type it", note, full: "This code covers several items with different duty rates (" + distinct.map((d) => d + "%").join(", ") + "), so the right one cannot be chosen automatically. Type it." };
+    return { rate: distinct[0], reason: null, note, full: "Computed from " + distinct[0] + "% of EXW" + (note ? ", plus " + note + " which is NOT included" : "") + ". Type over it to override." };
   }, [f.hts, htsCodes]);
   // Duty recompute lives in the setter, not at the call sites, so nothing can change
   // an EXW without the duty following it.
@@ -2964,6 +2984,23 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                         t.dutyManual
                           ? <span title={"Library value is " + computeDuty(t.landed, dutyRate.rate) + " at " + dutyRate.rate + "% of EXW. This tier was typed over, so an EXW change no longer moves it. Clear the box to go back to the library figure."} style={{ fontSize: 11, fontWeight: 700, color: "#4b5563", lineHeight: 1.25, cursor: "help" }}>{dutyRate.rate}%<span style={{ fontWeight: 400, color: "#6a7488" }}> · overridden</span></span>
                           : <span title={"Computed from " + dutyRate.rate + "% of EXW. Type over it to override; clear the box to come back."} style={{ fontSize: 11, fontWeight: 700, color: "#4b5563", lineHeight: 1.25, cursor: "help" }}>{dutyRate.rate}% of EXW</span>
+                      )}
+                      {/* THE SURCHARGE, ON ITS OWN LINE. Not gated on dutyRate.reason,
+                          unlike the chip above and the button below: those two are
+                          alternatives to a reason, this is a qualifier on the duty
+                          however the duty arrived. It shows beside the rate chip, and
+                          it shows on "several rates -- type it" too, because a duty
+                          typed by hand from a compound tariff needs the warning just as
+                          much as a computed one -- arguably more.
+                          Amber and bold: it is the same class of statement as the other
+                          amber notes -- something is not what it appears -- and it is
+                          the only one that qualifies a number the reader can see and
+                          would otherwise trust. */}
+                      {dutyRate.note && (
+                        <span title={"This code carries a compound tariff. The percentage covers the ad valorem part only; " + dutyRate.note + " applies on top and is NOT in the duty figure or in any total on this quote. Price it in separately."}
+                          style={{ fontSize: 9.5, fontWeight: 600, color: "#b0763a", lineHeight: 1.25, cursor: "help" }}>
+                          {dutyRate.note} not included
+                        </span>
                       )}
                       {/* OPT-IN, one tier at a time -- never a backfill. 10 quotes have a
                           rated code and a tier with no duty, and filling them in bulk

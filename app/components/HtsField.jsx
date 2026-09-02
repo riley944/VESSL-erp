@@ -74,7 +74,10 @@ export function useHtsCodes() {
     // that is no longer unique.
     // total_duty rides along for the quote form's duty calculation. CreateProductModal
     // ignores it; one fetch shared beats two that can disagree about which codes exist.
-    SB.from("htscodes").select("id,code,description,total_duty").eq("active", true).order("code")
+    // duty_note rides the same way, and MUST: it is the warning that total_duty is only
+    // part of the duty on a compound rate, so a fetch that brought the rate without the
+    // note would render a confident percentage with nothing saying it understates.
+    SB.from("htscodes").select("id,code,description,total_duty,duty_note").eq("active", true).order("code")
       .then(({ data, error }) => { if (alive && !error && data) setCodes(data); });
     return () => { alive = false; };
   }, []);

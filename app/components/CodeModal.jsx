@@ -39,6 +39,10 @@ export function CodeModal({ data, canDelete = false, onClose, onSaved, onDeleted
     // numeric comes back from PostgREST as a string ("36.50"), which is what the input
     // wants anyway. null becomes '' so the box is empty rather than showing "null".
     total_duty: data?.total_duty == null ? '' : String(data.total_duty),
+    // Free text, unlike the two fields above -- there is nothing to sanitise, because
+    // the value is prose read by a person and never parsed. '' rather than null for
+    // the same reason total_duty uses '': a controlled input must not read undefined.
+    duty_note: data?.duty_note || '',
     active: editing ? !!data.active : true,
   });
   const [saving,setSaving] = useState(false);
@@ -132,15 +136,26 @@ export function CodeModal({ data, canDelete = false, onClose, onSaved, onDeleted
     // numeric(5,2) tops out at 999.99. Caught here so an overflow reads as a sentence
     // rather than as a raw 22003 from Postgres.
     if (duty !== null && duty > 999.99) { toast('Total duty cannot be above 999.99%','err'); return; }
+    // Blank trims to NULL, so a note cleared to spaces reads as "no surcharge" rather
+    // than as an empty warning that renders an amber line saying nothing.
+    const note = f.duty_note.trim() || null;
+    // A note with no rate is a warning about a number that is not there: the quote form
+    // would show "a surcharge applies on top of" beside "No duty on file". Refused here
+    // as well as being asserted in the database, because this modal is the only way the
+    // pair can be entered by hand and a toast explains it where a constraint would not.
+    if (note !== null && duty === null) { toast('A surcharge note needs a duty percentage to sit beside — enter the rate, or clear the note','err'); return; }
     setSaving(true);
     // One payload, keyed on id. Duty belongs to the ROW, not the code -- 4202320000 is
     // 32.50 for a coin purse and 30.10 for a fabric zip pouch -- so editing one row
     // must never reach another sharing its code.
-    const payload = { code, description, total_duty: duty, active: !!f.active };
-    // .select().single() on both paths so onSaved can hand the row back.
+    const payload = { code, description, total_duty: duty, duty_note: note, active: !!f.active };
+    // .select().single() on both paths so onSaved can hand the row back. duty_note is
+    // named in both lists: onSaved feeds addCode, which drops the returned row straight
+    // into the picker the quote form reads, so a column missing here would leave a
+    // just-created code showing its rate with no surcharge warning until a refetch.
     const { data:row, error } = editing
-      ? await SB.from('htscodes').update(payload).eq('id', data.id).select('id,code,description,total_duty,active').single()
-      : await SB.from('htscodes').insert(payload).select('id,code,description,total_duty,active').single();
+      ? await SB.from('htscodes').update(payload).eq('id', data.id).select('id,code,description,total_duty,duty_note,active').single()
+      : await SB.from('htscodes').insert(payload).select('id,code,description,total_duty,duty_note,active').single();
     setSaving(false);
     if (error) {
       // Uniqueness is on (code, description), so a repeat code is fine as long as
@@ -175,6 +190,14 @@ export function CodeModal({ data, canDelete = false, onClose, onSaved, onDeleted
             <span style={{fontSize:'14px',color:'#8A8A8E',flexShrink:0}}>%</span>
           </div>
           <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'5px'}}>The percentage itself — 36.5 means 36.5%. Leave blank if no rate is established.</div>
+        </div>
+        {/* Sits under Total duty, not beside it, because it qualifies that number and
+            is read as a continuation of it. No % suffix and no sanitiser: the value is
+            prose, and the whole point is that it holds what a percentage cannot. */}
+        <div>
+          <label style={lbl}>Surcharge note</label>
+          <input style={inp} value={f.duty_note} onChange={e=>setF(p=>({...p,duty_note:e.target.value}))} placeholder="e.g. + $0.20 per kg" />
+          <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'5px'}}>For a compound rate only — the part the percentage cannot hold. It shows as an amber warning on any quote using this code, so leave it blank unless a real extra fee applies.</div>
         </div>
         <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',color:'#3A3A3E',cursor:'pointer'}}>
           <input type="checkbox" checked={f.active} onChange={e=>setF(p=>({...p,active:e.target.checked}))} />

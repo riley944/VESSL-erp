@@ -62,7 +62,7 @@ export default function Codes({ canDeleteCodes = true }) {
   const load = async () => {
     setLoading(true); setLoadErr('');
     const [c, r] = await Promise.all([
-      SB.from('htscodes').select('id,code,description,total_duty,active').order('code'),
+      SB.from('htscodes').select('id,code,description,total_duty,duty_note,active').order('code'),
       SB.from('regulations').select('*').order('sort_order').order('code'),
     ]);
     if (c.error || r.error) { setLoadErr((c.error || r.error).message); setCodes([]); setRegs([]); }
@@ -148,10 +148,18 @@ export default function Codes({ canDeleteCodes = true }) {
               <div style={{fontSize:'13px',color:'#3A3A3E',minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.description || <span style={{color:'#C0C0C4'}}>—</span>}</div>
               {/* parseFloat drops the stored scale, so 36.50 reads 36.5% and 30.00 reads
                   30%. The em dash is the same one the Description cell uses for empty --
-                  9 rows have no rate, 2 of them permanently, so it is a normal state
-                  rather than an error. */}
+                  a row with no rate is a normal state rather than an error. No count
+                  here: it moves whenever anyone fills one in, and a stale number in a
+                  comment is worse than none.
+                  THE ASTERISK IS NOT DECORATION. A row with a duty_note carries a
+                  compound rate whose specific part cannot live in the percentage, so
+                  the figure beside it is an understatement. Marked at the rate, not in
+                  the description, because the rate is the thing being qualified -- and
+                  title rather than a second column, since the list is a fixed four-column
+                  grid and one qualified row in a hundred does not earn a column. */}
               <div style={{fontSize:'13px',color:'#3A3A3E',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>
                 {c.total_duty == null ? <span style={{color:'#C0C0C4'}}>—</span> : parseFloat(c.total_duty)+'%'}
+                {c.duty_note && <span title={'Plus a surcharge not included in this percentage: ' + c.duty_note} style={{color:'#B45309',fontWeight:700,marginLeft:'3px',cursor:'help'}}>*</span>}
               </div>
               <div style={{fontSize:'12px',fontWeight:600,textAlign:'right',color:c.active?'#15803D':'#8A8A8E'}}>{c.active?'Active':'Inactive'}</div>
             </div>
