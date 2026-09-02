@@ -444,7 +444,7 @@ of the first group and set nothing at all, losing the rows that were fine.
 
 ## The scripts are the as-run record
 
-`scratchpad/15` through `scratchpad/20` are the scripts as actually executed
+`scratchpad/14` through `scratchpad/22` are the scripts as actually executed
 against production, not drafts. Each carries its measured baseline in the header,
 its guards in the `where` clause rather than in a comment, and a verification
 block that returns exactly one row on success.
@@ -457,7 +457,79 @@ block that returns exactly one row on success.
 | 18 | `quotes.product_id` + `vessl.rename_product_sku()` | run 2026-08-31 |
 | 19 | `products.origin` + 48 products from quotes + links | run 2026-08-31 |
 | 20 | BUC-157 draft PO line linked | run 2026-08-31 |
+| 22 | client name recase, five clients, 49 rows | run 2026-09-02 |
 | 14 | four remaining PO-line links | **parked, see §6** |
+
+---
+
+## Client names — where they live, and the 2026-09-02 recase
+
+### Census correction
+
+An earlier pass treated the *candidate* list — `sales_orders`, `purchase_orders`,
+`shipment_quotes`, `shipments`, `containers`, `products` — as places a client name
+might be stored. Confirmed against `information_schema`: **none of them holds a
+name.** They carry `client_company_id` (uuid) and resolve the name through
+`companies!client_company_id(name)` at render time.
+
+**Exactly five text columns hold a client name:**
+
+| Column | Rows | Distinct |
+|---|---|---|
+| `vessl.companies.name` where `type='client'` | 22 | 22 |
+| `vessl.quotes.client` | 325 non-blank of 328 | 20 |
+| `vessl.client_contacts.client` | 41 | 20 |
+| `vessl.clients.name` | 4 | 4 |
+| `vessl.programs.client` | 1 | 1 |
+
+Plus the pre-migration copies in `public.quotes` / `public.clients` /
+`public.client_contacts`, which nothing reads since `lib/supabaseQuotes.js` was
+repointed at `vessl`.
+
+### What groups by the name, and what does not
+
+**The All Clients cards and the client detail page group by `quotes.client`,
+trimmed** — `quotes.jsx:885` and `:918` — never by `companies`. So a rename must
+move `quotes.client` and `companies.name` together or one client shows as two
+cards. Company upserts also key on the name (`onConflict:'name,type'`), so an old
+spelling arriving later creates a second company row rather than matching.
+
+**The portal does not group by name at all.** `portal.users` maps a login to a
+company by `company_id` (uuid); `portal.orders` and `portal.me` join on
+`client_company_id`. `portal.orders` *displays* `companies.name` but never matches
+on it, no `client_keys` table exists, and no portal RLS policy references a name.
+A rename changes what a client sees, never what they can reach.
+
+### The recase (script 22)
+
+`BUC-EES → Buc-ees` · `JOHNNIE-O → Johnnie-O` · `legal → Legal` ·
+`PAW PATROL → Paw Patrol` · `TREMONT SPORTING CO → Tremont Sporting Co`
+
+49 rows across the five columns. Verified after commit: 0 old spellings left,
+**21 All Clients cards** (20 distinct `quotes.client` + the `Unassigned` bucket for
+3 blank rows), Killian's `company_id` unchanged, and the 16 `public.*` rows left
+on the old spellings deliberately.
+
+**Recases only — no merges.** These stayed separate on purpose, and folding any of
+them would change the client count, which is a different decision:
+
+- `bucees` (1 row, contacts) is **not** `Buc-ees`.
+- `Monster energy ` (1 row, contacts) is **not** `Monster Energy` (1 row,
+  companies) — and note the **trailing space** on the first.
+- The six Legolands — bare, California, Florida, Japan, New York, Windsor — are
+  six real clients. Only five appear in `companies`; `Legoland New York` exists
+  only in `vessl.quotes`.
+
+**Whitespace, found while measuring:** exactly six rows across two values carry a
+trailing space — `Alison ` and `Monster energy `. Neither was a rename target, and
+script 22 pins them so it cannot quietly normalise them. The All Clients grouping
+trims, so `Alison ` and `Alison` already collapse into one card. Worth its own
+pass; not folded into a recase.
+
+**Numbers drift.** `companies` has since gone 34 → 33 rows and 22 → 21 client
+names, because the ZZTEST company was deleted after script 22 ran. Its `d1`/`c1`
+checks passed against 34 and 22 at run time. Re-census before reusing any figure
+from that file.
 
 **Two checklist rules these scripts earned the hard way.**
 
