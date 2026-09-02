@@ -134,6 +134,16 @@ const FB_BTN_W = 44;     // px, the "build" button in the Freight cell
 const FB_BTN_GAP = 3;    // px, matches the flex gap in that cell
 const AUTO_BTN_W = 46;   // px, the "auto" button in the Client Price cell
 const AUTO_BTN_GAP = 4;  // px, matches the flex gap in that cell
+// Margin is the last flex cell, and a 38px gutter sits to its right that no
+// header names: the 8px flex gap plus the 30px cell holding the delete X. So a
+// perfectly centred Margin cell still reads left, because the eye centres on
+// the whole right-hand block, not on the cell. Half the gutter, 19px, is the
+// full correction; this shifts by 15 of it and leaves ~9px of slack before
+// "MARGIN" (the widest thing the column holds, alongside a 22-31% range) would
+// hit min-width:auto and widen the cell, which would break the mirroring. One
+// constant used by the header, the tier row and the size row, so the three can
+// never drift apart again -- change it here or not at all.
+const MARGIN_GUTTER_PAD = 30;  // px of paddingLeft; moves the centre right by half
 function stamp() { return new Date().toISOString(); }
 function fmtStamp(iso) {
   if (!iso) return "—";
@@ -2816,10 +2826,14 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                 <div style={{ flex: 0.8, textAlign: "center" }}>Method</div>
                 {/* The widest cell in the row: an input whose placeholder runs to
                     "$ ocean" AND the build button beside it, sharing one flex box.
-                    paddingRight subtracts the button from the centring, so the word
-                    sits over the box rather than over box-plus-button -- see the
-                    FB_BTN_W note at the top of the file. */}
-                <div style={{ flex: 1.5, textAlign: "center", paddingRight: FB_BTN_W + FB_BTN_GAP, boxSizing: "border-box" }}>Freight</div>
+                    paddingRight subtracts the button from the centring so the word
+                    sits over the box rather than over box-plus-button.
+                    24, not the derived FB_BTN_W + FB_BTN_GAP of 47 -- the same
+                    over-correction Client Price hit below. Subtracting the whole
+                    button is geometrically right and visually wrong when the label
+                    is wider than the box it names, because the eye then centres it
+                    on the cell. Half the button reads correct. */}
+                <div style={{ flex: 1.5, textAlign: "center", paddingRight: 24, boxSizing: "border-box" }}>Freight</div>
                 <div style={{ flex: 1.0, textAlign: "center" }}>Duty</div>
                 {/* Header and value cell are both flex 1.1 and both centred, so the
                     boxes agree exactly -- verified, not assumed. What is off is the
@@ -2836,7 +2850,16 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                     "Client Price" is wider than the box it labels, so it cannot sit
                     inside it and the eye centres it on the whole cell instead. */}
                 <div style={{ flex: 1.3, textAlign: "center", paddingRight: 25, boxSizing: "border-box" }}>Client Price</div>
-                <div style={{ flex: 0.8, textAlign: "center" }}>Margin</div>
+                {/* CENTRED, and the two value cells below are centred to match --
+                    tier row and size row both. Right-aligning them made the title
+                    and the number share a right EDGE, which is not the same as
+                    sharing a centreline: "MARGIN" is about 48px wide and an em dash
+                    about 9px, so flush right their centres sit ~19px apart and the
+                    title reads as hanging left. A real percentage narrows the gap to
+                    ~12px without closing it. Centring both puts every value, however
+                    long, on the same axis as the word above it -- which is what
+                    Total Cost already does. */}
+                <div style={{ flex: 0.8, textAlign: "center", paddingLeft: MARGIN_GUTTER_PAD, boxSizing: "border-box" }}>Margin</div>
                 <div style={{ width: 30 }} />
               </div>
               {f.tiers.map((t, i) => {
@@ -2978,7 +3001,9 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       </div>
                       {mix && <span style={S.tierMixLine}>${fmt(mix.blended)} avg · ${fmt(mix.total)} total</span>}
                     </div>
-                    <div style={{ flex: 0.8, textAlign: "right", ...S.num, alignSelf: "center" }}>
+                    {/* Centred to share a centreline with the MARGIN header, not a
+                        right edge. See the note on that header. */}
+                    <div style={{ flex: 0.8, textAlign: "center", paddingLeft: MARGIN_GUTTER_PAD, boxSizing: "border-box", ...S.num, alignSelf: "center" }}>
                       {mixMargin != null
                         ? <span style={{ color: mixMargin && mixMargin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{mixMargin.toFixed(0)}%</span>
                         : <span style={{ color: (mr ? mr.low : m) && (mr ? mr.low : m) < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{mr ? (mr.low.toFixed(0) === mr.high.toFixed(0) ? mr.low.toFixed(0) + "%" : mr.low.toFixed(0) + "-" + mr.high.toFixed(0) + "%") : (m ? m.toFixed(0) + "%" : "—")}</span>}
@@ -2995,10 +3020,48 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       since keying on "L" would have merged them into one box. */}
                   {sizeRows.map((r) => (
                     <div key={r.key} style={S.tierSizeRow}>
-                      <div style={{ flex: 1.0, display: "flex", alignItems: "center", gap: 6, paddingLeft: 12 }}>
-                        <span style={{ ...S.tierSizeCell, color: "#8a93a5", fontWeight: 600, minWidth: 24 }}>{r.label}</span>
+                      {/* minWidth 0 turns off this cell's automatic minimum size.
+                          Neither child can shrink now, so 12 + 58 + 6 + 64 = 140px
+                          of content sits in a 109.2px cell; left to itself the cell
+                          would grow to 140 to contain it, and being flex-grow it
+                          would take that back out of the columns to its right --
+                          this row alone, so the size rows would stop lining up with
+                          the tier row and the header. minWidth 0 holds the cell at
+                          its share and lets the content spill instead, to the right,
+                          where every size row has an empty spacer under EXW COST.
+                          This is the holding position, not the answer: the modal
+                          needs to reach ~1362px for 140px to fit honestly. */}
+                      <div style={{ flex: 1.0, minWidth: 0, display: "flex", alignItems: "center", gap: 6, paddingLeft: 12 }}>
+                        {/* THE LABEL SHARES THIS CELL WITH THE INPUT, and S.tierInput
+                            asks for width 100%, so without flexShrink 0 the span is
+                            squeezed to its MIN-CONTENT width -- the longest single
+                            word. "Adult S" then breaks after "Adult" while "2XL" and
+                            "3T" survive, because a one-word label has no space to
+                            break at. nowrap and flexShrink together are what hold it:
+                            either alone leaves the other failure reachable.
+                            minWidth 52 fits "Adult 2XL", the longest qualified label
+                            sizesForSelection produces, at 12px/600 -- and being a
+                            floor rather than a fixed width it also lines the quantity
+                            boxes up with each other, which minWidth 24 only managed
+                            for short labels. */}
+                        <span style={{ ...S.tierSizeCell, color: "#8a93a5", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0, minWidth: 52, textAlign: "left" }}>{r.label}</span>
+                        {/* 40px, overriding the width 100% that S.tierInput carries.
+                            100% meant "whatever the label leaves", which is how a
+                            longer label made a smaller box -- the two shared the cell
+                            and only the input could give.
+                            width 40 was never what rendered. An input is a flex item
+                            here, so it carried flex-shrink 1, and the cell only has
+                            91.2px for label + gap + input: a 52px label left 39.2,
+                            "Adult 2XL" at ~58px left 33.2. Minus 14px of padding and
+                            2px of border that is 17-23px of content, three digits at
+                            best -- which is the clipping, and it was never one width
+                            but a different one per label. flexShrink 0 is the fix;
+                            raising the number alone would have been given straight
+                            back. 64px holds six digits (45px of text at 12.5px, plus
+                            the 16px the box costs) with a little over half a digit
+                            spare. See the note on the cell for what that overflows. */}
                         <input
-                          style={{ ...S.tierInput, padding: "5px 7px", fontSize: 12.5, textAlign: "right" }}
+                          style={{ ...S.tierInput, padding: "5px 7px", fontSize: 12.5, textAlign: "center", width: 64, flexShrink: 0 }}
                           type="text"
                           inputMode="numeric"
                           placeholder="0"
@@ -3008,10 +3071,16 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                         />
                       </div>
                       <div style={{ flex: 1.0 }} />
-                      <div style={{ flex: 1.0 }} />
+                      {/* Method: 0.8, matching the header and the tier row. It was left
+                          at 1.0 when Method gave 0.2 to Freight, so these spacers
+                          summed to 8.4 against their parent 8.5 and every column from
+                          here rightward sat at a slightly different x on a size row
+                          than on the tier above it. Width-only, no content. */}
+                      <div style={{ flex: 0.8 }} />
                       {/* Two spacers where there was one, mirroring the split above --
-                          these keep every size row aligned under its tier's columns. */}
-                      <div style={{ flex: 1.2 }} />
+                          these keep every size row aligned under its tier's columns.
+                          Freight: 1.5, same correction as Method. */}
+                      <div style={{ flex: 1.5 }} />
                       <div style={{ flex: 1.0 }} />
                       <div style={{ flex: 1.1, textAlign: "right", ...S.tierSizeCell }}>{total ? `$${fmt(total)}` : "—"}</div>
                       {/* The parenthetical is what the base was moved BY, so it only makes
@@ -3025,7 +3094,9 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                           </>
                         )}
                       </div>
-                      <div style={{ flex: 0.8, textAlign: "right", ...S.tierSizeCell }}>
+                      {/* Same centring as the tier row above and the header, so a
+                          size-row margin sits on the same axis as both. */}
+                      <div style={{ flex: 0.8, textAlign: "center", paddingLeft: MARGIN_GUTTER_PAD, boxSizing: "border-box", ...S.tierSizeCell }}>
                         {r.margin == null ? "—" : <span style={{ color: r.margin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{r.margin.toFixed(0)}%</span>}
                       </div>
                       <div style={{ width: 30 }} />
@@ -3152,7 +3223,19 @@ const S = {
   tierHeadRow: { display: "flex", gap: 8, padding: "10px 14px", background: "#eef1f6", fontSize: 11, letterSpacing: "0.05em", textTransform: "uppercase", color: "#9aa3b5", fontWeight: 600 },
   tierBodyRow: { display: "flex", gap: 8, padding: "11px 14px", borderTop: "1px solid #eef1f6", fontSize: 13.5 },
   overlay: { position: "fixed", inset: 0, background: "rgba(26,34,56,0.46)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "36px 16px", zIndex: 50, overflowY: "auto" },
-  modal: { background: "#ffffff", borderRadius: 20, width: "100%", maxWidth: 860, boxShadow: "0 24px 60px rgba(11,21,48,0.22)", border: "1px solid #e7eaf0" },
+  // 1100, up from 860, so the tier table fits without horizontal scrolling and
+  // the size-quantity boxes have room to sit at a usable width beside a label
+  // that no longer shrinks. At 860 the flex 1.0 label cell resolved to 87px --
+  // 12 padding, a 52+ label and a 6 gap left the input under 20px.
+  //
+  // ONLY THE QUOTE FORM READS THIS BARE. The other three modals in this file
+  // spread it and set their own maxWidth (620, 560, 640), so none of them moves.
+  //
+  // THE ALTERNATIVE, if the wider form reads wrong: put this back to 860 and
+  // raise the tier table minWidth from 860 to 1053 instead -- same column
+  // arithmetic, paid for with horizontal scrolling inside the table rather than
+  // a wider dialog. That number is at the tierEditTable call site.
+  modal: { background: "#ffffff", borderRadius: 20, width: "100%", maxWidth: 1100, boxShadow: "0 24px 60px rgba(11,21,48,0.22)", border: "1px solid #e7eaf0" },
   modalHead: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 26px", borderBottom: "1px solid #e7eaf0" },
   modalTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 25, fontWeight: 600, margin: 0, color: "#0f1729" },
   modalBody: { padding: "22px 26px", maxHeight: "66vh", overflowY: "auto" },
