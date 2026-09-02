@@ -488,11 +488,37 @@ function TaskPanel({ open, onClose }) {
   );
 }
 
+// ── Who is signed in ─────────────────────────────────────────────────────────
+// LAST RESORT, and deliberately not clever. Splits on the separators a mailbox
+// actually uses -- dot, underscore, hyphen -- and title-cases what falls out.
+// It cannot rescue "mattdillon", and must not try: any heuristic that guesses
+// word boundaries inside a run of letters gets "Matt Dillon" right and "Kris Ty"
+// wrong, with no way to tell which it just did. The fix for a crunched prefix is
+// a stored name, not a smarter parser.
+const nameFromEmail = (email) =>
+  (email||'').split('@')[0].replace(/[._-]+/g,' ').trim().replace(/\b\w/g, c => c.toUpperCase());
+
+// Initials follow the NAME once there is one: "Matt Dillon" -> MD, which is what
+// an avatar is meant to say. Taken off the email prefix it was the first two
+// letters -- "MA" -- which reads as a truncation rather than a monogram.
+// A single-word name keeps two letters, so "Kristy" stays KR and nothing that
+// already looked right changes.
+const initialsFrom = (name, email) => {
+  const parts = (name||'').trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
+  if (parts.length === 1) return parts[0].slice(0,2).toUpperCase();
+  return (email||'KU').split('@')[0].slice(0,2).toUpperCase();
+};
+
 // ── Top Bar ──────────────────────────────────────────────────────────────────
-function TopBar({ user, title, taskCount=0, taskOpen=false, onBell, onSettings }) {
+// displayName is the stored one when there is one. Passed in rather than fetched
+// here: the shell already reads this person's staff_profiles row for their role,
+// so asking again would be a second request for a value the first one could have
+// carried -- and two requests are two chances to disagree about who is signed in.
+function TopBar({ user, displayName='', title, taskCount=0, taskOpen=false, onBell, onSettings }) {
   const [drop, setDrop] = useState(false);
-  const initials = (user?.email||'KU').split('@')[0].slice(0,2).toUpperCase();
-  const name = (user?.email||'').split('@')[0].replace(/[._]/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+  const name = (displayName||'').trim() || nameFromEmail(user?.email);
+  const initials = initialsFrom(name, user?.email);
   return (
     <div className="topbar">
       <div className="topbar-title">{title}</div>
@@ -590,6 +616,36 @@ function NotStaff({ user }) {
         </div>
         <div className="login-note">You are signed in as <strong>{user?.email||'—'}</strong>.</div>
         <button className="btn-login" onClick={()=>SB.auth.signOut()}>Sign out</button>
+      </div>
+    </div>
+  );
+}
+
+// Signed in, right domain, but no vessl.staff_profiles row.
+//
+// SIGNED OUT, unlike NotStaff above. That case is a legitimate account for the
+// other app and the person needs to read where to go before the session ends.
+// This one is different: a @kinguniversal.com address with no profile row is an
+// account that cannot be given anything to do here. vessl.is_staff() tests for
+// that row and is the only permissive policy on seven tables, so the session
+// would render a full UI whose Programs and Freight pages come back empty and
+// whose every write is silently refused -- the exact failure PRESHIP recorded
+// when three accounts were unrostered. Ending the session is kinder than
+// letting someone work in it.
+//
+// `email` is passed rather than read from `user`, because by the time this
+// renders the sign-out has already cleared `user` to null.
+function NoStaffAccess({ email, onBack }) {
+  return (
+    <div className="login-wrap">
+      <div className="login-card">
+        <div className="login-mark">
+          <img className="login-logo-img" src="/logo.png" alt="King Universal" />
+        </div>
+        <div className="login-sub">Operations Platform</div>
+        <div className="login-note">This account doesn’t have access to the staff app.</div>
+        <div className="login-note">Signed out {email ? <strong>{email}</strong> : null}. Ask Riley if you think this is wrong.</div>
+        <button className="btn-login" onClick={onBack}>Back to sign in</button>
       </div>
     </div>
   );
@@ -7241,6 +7297,19 @@ export default function App() {
   const [recovery, setRecovery] = useState(false);
   const [role,      setRole]      = useState(null);
   const [roleReady, setRoleReady] = useState(false);
+  // '' means "no stored name", which TopBar reads as "fall back to the email".
+  // Not null: it is a string the whole way down, and one shape is easier to
+  // reason about than two.
+  const [displayName, setDisplayName] = useState('');
+  // null while unknown, true/false once the profile lookup has answered. Three
+  // states, not two: "not checked yet" and "checked, no row" must not collapse,
+  // or the gate fires during the first render of every legitimate session.
+  const [hasProfile, setHasProfile] = useState(null);
+  // Survives the sign-out that follows it. Once SB.auth.signOut() lands, `user`
+  // is null and the render would fall through to <Login/>, taking the
+  // explanation with it -- so the address is held here and the blocked screen is
+  // checked BEFORE the !user branch.
+  const [blocked, setBlocked] = useState(null);
 
   const pageActions = {
     orders:    <button className="btn btn-dark" onClick={()=>setModal('create-po')}>+ New PO</button>,
@@ -7263,22 +7332,55 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const email = user?.email;
-    if (!email) { setRole(null); setRoleReady(false); return; }
+    if (!email) { setRole(null); setRoleReady(false); setHasProfile(null); return; }
     (async () => {
       try {
         // ilike can only widen the match (_ and % are wildcards), never narrow
         // it, so re-check the exact address in JS before trusting the row.
-        const { data } = await SB.from('staff_profiles').select('email,role').ilike('email', email);
+        // full_name rides along on the query already being made for the role.
+        // staff_profiles is itself is_staff()-gated, so a user with no row reads
+        // nothing here -- a supported state, not an error: it is exactly when the
+        // email fallback applies. Loren is the live example today.
+        const { data } = await SB.from('staff_profiles').select('email,role,full_name').ilike('email', email);
         const row = (data||[]).find(r => (r.email||'').toLowerCase() === email.toLowerCase());
-        if (!cancelled) setRole(row ? row.role : null);
-      } catch(e) { if (!cancelled) setRole(null); }
+        if (!cancelled) { setRole(row ? row.role : null); setDisplayName(row ? (row.full_name||'') : ''); setHasProfile(!!row); }
+      } catch(e) {
+        // A THROWN QUERY IS NOT A MISSING ROW. Network trouble or an RLS change
+        // would otherwise sign everybody out at once, which is a far worse
+        // failure than the one this gate exists to prevent. hasProfile stays
+        // null, the session survives, and the app behaves as it did before.
+        if (!cancelled) { setRole(null); setDisplayName(''); }
+      }
       if (!cancelled) setRoleReady(true);
     })();
     return () => { cancelled = true; };
   }, [user?.email]);
 
-  // poll unread client messages every 30s
+  // THE GATE. Runs only on a definite false -- null means the lookup has not
+  // answered yet, or threw, and neither is grounds for ending a session.
+  //
+  // Separate from the effect that sets hasProfile so the sign-out is not tangled
+  // up with the fetch's cancellation flag: this fires once, on a state
+  // transition, and the address is captured before signOut clears `user`.
   useEffect(() => {
+    if (hasProfile !== false) return;
+    if (!user?.email) return;
+    setBlocked(user.email);
+    SB.auth.signOut();
+  }, [hasProfile, user?.email]);
+
+  // poll unread client messages every 30s
+  //
+  // GATED ON hasProfile, and it did not used to be. With deps [] this ran on
+  // mount for anyone who loaded the page -- signed out, portal client, blocked
+  // account alike -- reading portal.threads, portal.messages and
+  // portal.delivery_requests before a single gate had been evaluated. RLS would
+  // have refused a stranger the rows, but "the database said no" is not the same
+  // as not asking, and the requirement here is that no data fetch precedes the
+  // gate. Now it starts when a staff profile is confirmed and stops when it is
+  // not.
+  useEffect(() => {
+    if (hasProfile !== true) return;
     // ┌─────────────────────────────────────────────────────────────────────────┐
     // │ FILTERED THE SAME WAY THE PANEL IS, OR THE TWO DISAGREE FOREVER.        │
     // │                                                                         │
@@ -7313,7 +7415,7 @@ export default function App() {
     fetchUnread();
     const iv = setInterval(fetchUnread, 30000);
     return () => clearInterval(iv);
-  }, []);
+  }, [hasProfile]);
 
   useEffect(()=>{
     // recovery links land back here as #access_token=...&type=recovery
@@ -7378,9 +7480,19 @@ export default function App() {
 
   if (loading) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
   if (recovery) return <ResetPassword onDone={()=>setRecovery(false)} />;
+  // BEFORE the !user branch, because the sign-out this follows has already made
+  // user null -- checked after it, the explanation would never be seen.
+  if (blocked) return <NoStaffAccess email={blocked} onBack={()=>setBlocked(null)} />;
   if (!user)   return <Login />;
+  // Wrong domain: a real account for the other app, so it is told where to go and
+  // is NOT signed out, and no profile lookup ever runs for it.
   if (!isStaffEmail(user.email)) return <NotStaff user={user} />;
+  // Right domain, lookup still running. Nothing below this line renders, so no
+  // page mounts and no page-level fetch starts before the gate has answered.
   if (!roleReady) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
+  // Right domain, lookup answered, no row. The effect above is signing out; this
+  // holds the screen steady for the render in between.
+  if (hasProfile === false) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
 
   const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations'};
   const badges = {'client-relations': crUnread, 'shipments': dreqOpen};
@@ -7393,7 +7505,7 @@ export default function App() {
       </button>
       <div className={'sidebar-backdrop ' + (navOpen?'show':'')} onClick={()=>setNavOpen(false)} />
       <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} allowedPages={allowedPages} />
-      <TopBar user={user} title="" taskOpen={taskPanelOpen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
+      <TopBar user={user} displayName={displayName} title="" taskOpen={taskPanelOpen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
       <TaskPanel open={taskPanelOpen} onClose={()=>setTaskPanelOpen(false)} />
       {page==='quotes' ? (
         <div className="main-area">
