@@ -444,7 +444,7 @@ of the first group and set nothing at all, losing the rows that were fine.
 
 ## The scripts are the as-run record
 
-`scratchpad/14` through `scratchpad/22` are the scripts as actually executed
+`scratchpad/14` through `scratchpad/26` are the scripts as actually executed
 against production, not drafts. Each carries its measured baseline in the header,
 its guards in the `where` clause rather than in a comment, and a verification
 block that returns exactly one row on success.
@@ -460,6 +460,8 @@ block that returns exactly one row on success.
 | 22 | client name recase, five clients, 49 rows | run 2026-09-02 |
 | 23 | HTS description title-case, 24 rows | run 2026-09-02 |
 | 24 | HTS description bracket case, 2 rows | run 2026-09-02 |
+| 25 | `htscodes.duty_note` + both column comments rewritten | run 2026-09-02 |
+| 26 | the two compound-rate hat codes, 44.50 + the note | run 2026-09-02 |
 | 14 | four remaining PO-line links | **parked, see §6** |
 
 ---
@@ -560,6 +562,55 @@ running it as a read-only `select count(*) from (values …) t(…)` first.
 and never landed in `scratchpad/`, so the on-disk record and the executed record
 diverged — and 14's on-disk copy was a stale pre-re-census version naming
 different rows than the one that had been reviewed. Write the file, then print it.
+
+*A check on comment or free text must be simulated against the exact string the
+script installs, before the script is printed.* Script 25's first rehearsal
+returned two rows: `a5` and `z0`. That check asserted the word `permanent` was
+gone from the rewritten `total_duty` comment — but the replacement text quotes
+the superseded claim in order to supersede it, so the word is present in both and
+the check could never pass. The DDL was correct and every other check passed. The
+aliases and the apostrophes had been verified mechanically; this one was asserted
+by eye. It became a positive test on `SUPERSEDES` plus a negative one on `0.207`,
+a figure only the old text held — the pair proving the comment was replaced
+rather than appended to, which one check established in neither direction.
+
+---
+
+## Compound duty rates — 2026-09-02, scripts 25 and 26
+
+Two hat codes had carried no duty since the August import, and the `total_duty`
+comment called them permanently NULL: `6505006090` Beanie and `6505009900` Bucket
+Hat are **44.5% plus USD 0.20 per kilogram**, and the column holds a percentage.
+Kristy supplied the rate and proposed storing the percentage with a note. One
+figure covers both codes, confirmed — the earlier `7.5% plus 0.207 per kilo` in
+the column comment was superseded, not a typo of it.
+
+**The percentage is stored and the surcharge is not computed.** A per-kilogram fee
+needs a shipped weight nothing in a quote holds, and a number invented from an
+assumed weight would be worse than an honest gap because it would look like the
+others. `computeDuty`, `tierDuty` and `activeFreight` are untouched.
+
+**`duty_note` is a surcharge note, not a comment field.** Anything stored in it
+renders as an amber warning that the computed duty is incomplete, so a note that
+is not a surcharge would warn about nothing. The column comment says so, and
+`CodeModal` refuses a note with no rate — the same invariant script 26 asserts.
+
+**Sequencing was DDL, then code, then data**, and the middle step is the point.
+Had 26 run before the reading build shipped, the quote form would have computed a
+confident `44.5% of EXW` with nothing saying a per-kg fee sits outside it — worse
+than the `No duty on file` it showed before. 25 was safe to run early because
+nothing read the column; 26 waited on `ae6a4e0` being READY by SHA.
+
+**Duty never appears alone on a client-facing document** — the printed quote and
+the CSV fold it into `activeFreight` (freight + duty). So the surcharge gap flows
+into a combined figure and into total cost. The note is internal, and pricing the
+surcharge in is a commercial step, not something the app does.
+
+After 26: 112 rows, 2 carrying a note, **1 row still with no rate** — `4202220000`
+Swimsuit Bag, a genuine "not established" rather than a compound rate. The
+"permanently NULL" concept is gone from the schema. The count of no-rate rows is
+deliberately not repeated in `codes.jsx`, where a stale `9` sat for weeks: it
+moves whenever anyone fills one in.
 
 ---
 
