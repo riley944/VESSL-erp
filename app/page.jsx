@@ -3384,6 +3384,40 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
 }
 
 // ── Products ─────────────────────────────────────────────────────────────────
+// THE SYMBOL IS WHAT SAYS A COLUMN SORTS. A neutral glyph on every sortable header and
+// nothing at all on the others, so the affordance is visible before anyone clicks and
+// the absence of one is equally informative. A header that only reveals itself on hover
+// is a header nobody finds.
+//
+// Three states, two glyphs. Neutral is a muted double arrow -- an offer, not a claim
+// about order. Active is a single solid arrow in the ink colour, which is both a
+// different shape and a different weight: colour alone would leave the two states
+// indistinguishable to a red-green reader and nearly so in bright light.
+//
+// Defined at module level rather than inside Products, so it is one component type
+// across renders instead of a fresh one each time -- a nested definition remounts its
+// subtree on every parent render.
+//
+// aria-sort carries the same three states for a screen reader, which no glyph does.
+// userSelect none because a header people click repeatedly otherwise starts selecting
+// its own text on the second click.
+function SortTh({ col, label, sort, onSort, style }) {
+  const active = sort && sort.col === col;
+  const dir = active ? sort.dir : null;
+  return (
+    <th onClick={()=>onSort(col)}
+        aria-sort={dir==='asc'?'ascending':dir==='desc'?'descending':'none'}
+        title={dir==='asc' ? 'Sorted A to Z — click for Z to A'
+             : dir==='desc' ? 'Sorted Z to A — click to clear'
+             : 'Click to sort by '+label}
+        style={{cursor:'pointer',userSelect:'none',...style}}>
+      {label}
+      <span aria-hidden="true" style={{marginLeft:'5px',color:active?'var(--ink)':'var(--faint)',fontWeight:active?700:400}}>
+        {dir==='asc' ? '↑' : dir==='desc' ? '↓' : '⇅'}
+      </span>
+    </th>
+  );
+}
 // canCreateProducts is a derived boolean rather than the role string, so the policy
 // stays beside ROLE_PAGES instead of scattering role names through view components.
 // It is intent, not enforcement: vessl.products carries a permissive `true` policy
@@ -3398,6 +3432,20 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   const [viewQuote, setViewQuote] = useState(null);
   const [prods, setProds] = useState([]);
   const [activeF, setActiveF] = useState('All');
+  // 'All' is the sentinel for "no narrowing", the same string the other two use.
+  // Named factoryF rather than factory so it cannot be mistaken for a row value in
+  // a file where q.factory is read a few lines away.
+  const [factoryF, setFactoryF] = useState('All');
+  // ONE SORT, NOT ONE PER COLUMN. null | { col, dir }, where null is a REAL state --
+  // the order the query returned, which is what this page has always shown and what the
+  // cycle comes back to.
+  // A single object is what makes the two sorts mutually exclusive for free: there is
+  // nowhere to hold a second one, so clicking Company cannot leave a stale SKU
+  // direction behind for a later render to find. Per-column state would need a
+  // clear-the-others step on every handler, and the bug that arrangement produces --
+  // two columns both showing an arrow -- is invisible until someone reads the list
+  // and trusts the wrong one.
+  const [sort, setSort] = useState(null);
   const load = async () => {
     setLoading(true);
     const [qRes, pRes] = await Promise.all([
@@ -3503,16 +3551,116 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   // counted -- an unruled product belongs to neither bucket.
   const activeCounts = quotes.reduce((a,q)=>{ const p=matchOf(q); if(p&&p.active!=null) a[p.active?'active':'inactive']++; return a; }, {active:0,inactive:0});
   const activeOptions = [
-    { value:'All', label:'All', count:quotes.length },
+    // "All Statuses", not "All". FilterSelect shows the SELECTED OPTION's label on the
+    // button, falling back to the `label` prop only when nothing is selected -- and
+    // 'All' is a real option here, so the option label is what was reading. Both are
+    // set, matching the two other status filters in this file.
+    { value:'All', label:'All Statuses', count:quotes.length },
     { value:'active', label:'Active', color:'var(--ok)', count:activeCounts.active },
     { value:'inactive', label:'Inactive', color:'var(--hot)', count:activeCounts.inactive },
   ];
+  // FACTORY, MIRRORING THE CLIENT FILTER ABOVE LINE FOR LINE, because two controls
+  // sitting side by side that count or sort differently is a bug nobody reports.
+  // Three things there are not obvious and all three are copied deliberately:
+  //   TRIMMED, with blank collapsing to an em dash. One row holds "emily " with a
+  //     trailing space; trimming files it under "emily" instead of offering a second
+  //     option that looks identical. 3 quotes carry no factory at all and land on the
+  //     dash, which is the same glyph the Factory cell already renders for them.
+  //   COUNTED OVER ALL QUOTES, not over `filtered`. The numbers therefore do not move
+  //     as the other filters narrow -- they say how big each bucket is, not how much
+  //     of it survives, which is what makes them useful for choosing where to go next.
+  //   SORTED BY localeCompare, so the dash and the mixed-case names order the same way
+  //     they do under All Clients.
+  // No colour, unlike the client options: companyColor is the company convention and
+  // there is no factory palette anywhere in the app. Borrowing the company one would
+  // assert a relationship between a factory and a company that does not exist.
+  const facCounts = {}; quotes.forEach(q=>{ const f=(q.factory||'').trim()||'—'; facCounts[f]=(facCounts[f]||0)+1; });
+  const factoryList = Object.keys(facCounts).sort((a,b)=>a.localeCompare(b));
+  const factoryOptions = [
+    { value:'All', label:'All Factories', count:quotes.length },
+    ...factoryList.map(f=>({ value:f, label:f, count:facCounts[f] })),
+  ];
   const filtered = quotes.filter(q=>{
     if(client!=='All' && ((q.client||'').trim()||'—')!==client) return false;
+    // ANDs with the rest, and uses the identical normalisation to the option list above
+    // -- the sentinel has to be built the same way on both sides or picking the dash
+    // matches nothing.
+    if(factoryF!=='All' && ((q.factory||'').trim()||'—')!==factoryF) return false;
     if(activeF!=='All'){ const p=matchOf(q); if(!p||p.active==null) return false; if((activeF==='active')!==p.active) return false; }
     const s=search.toLowerCase(); if(!s) return true;
     return `${q.product} ${q.client} ${q.factory} ${q.sku} ${q.country}`.toLowerCase().includes(s);
   });
+
+  // SORT SITS AFTER THE FILTERS, on their output, so it reorders what is on screen and
+  // never changes what is on screen.
+  //
+  // NOT AN IN-PLACE SORT, even though `filtered` is a fresh array from .filter() every
+  // render and sorting it could not reach `quotes` today. It is one useMemo away from
+  // being a cached array that an in-place sort would corrupt, and the copy costs a
+  // shallow clone of at most 327 references.
+  //
+  // MISSING ROWS LAST IN BOTH DIRECTIONS, decided before the comparison rather than
+  // falling out of it. An empty string sorts first ascending and last descending under
+  // any string compare, and null coerces to 0 in arithmetic -- so "last" would have been
+  // true half the time by accident for text and never for numbers. What counts as
+  // missing differs per column, which is why each key carries its own test rather than
+  // the comparator guessing from the value.
+  //
+  // Ties keep their filtered order: Array.prototype.sort has been stable since ES2019,
+  // so two rows sharing a SKU -- and 39 products do -- stay in the order the query
+  // returned rather than swapping about between renders.
+  //
+  // SORT_KEYS IS THE ONLY PLACE A COLUMN'S KEY IS DEFINED. get reads it, missing says
+  // when there is nothing to sort on, numeric picks the comparison. One comparator
+  // below serves all six because those three answers are all it needs.
+  //
+  // TEXT compares with localeCompare numeric:true -- that is what makes LL1-380 precede
+  // LL1-1616 and Legoland 2 precede Legoland 10. Plain string order compares "3" against
+  // "1" at the fourth character and puts 1616 first: correct ASCII, wrong to every human
+  // reading a SKU list.
+  //
+  // NUMBERS SUBTRACT, and must -- localeCompare would be wrong on this page's own data,
+  // not merely inelegant. numeric:true reads a run of digits as one integer, so it
+  // compares the FRACTION of a decimal as a whole number: 1.15 sorts after 1.9, because
+  // it weighs 15 against 9. Client prices here run to five decimals (0.085 is a live
+  // value), so that is the common case, not the exotic one. Measured, both ways:
+  //   subtraction   0.085  1.1  1.15  1.2  1.9
+  //   localeCompare 0.085  1.1  1.2   1.9  1.15
+  // Subtraction also keeps negative margins as ordinary values -- -64% really is less
+  // than 12%, and those rows are the ones worth finding.
+  //
+  // The numeric keys are DERIVED FROM THE SAME HELPERS THE CELLS USE, never parsed back
+  // out of what was rendered. Client Price displays a range built by priceRange() from
+  // clientPrices(); the sort takes the minimum of that same array, so the column orders
+  // by the number the row leads with. Reading "$1.20 – $3.40" back out of the DOM string
+  // would break the first time the format changed.
+  const minPrice = q => { const p = clientPrices(q); return p.length ? Math.min(...p) : null; };
+  const SORT_KEYS = {
+    sku:     { get: q => (q.sku||'').trim(),     missing: v => !v,        numeric:false },
+    company: { get: q => (q.client||'').trim(),  missing: v => !v,        numeric:false },
+    factory: { get: q => (q.factory||'').trim(), missing: v => !v,        numeric:false },
+    // A tier count of 0 is a real answer, not a gap -- the quote genuinely has no
+    // tiers -- so nothing is missing here and 0 sorts as the smallest number.
+    tiers:   { get: q => tiersOf(q).length,      missing: () => false,    numeric:true  },
+    price:   { get: minPrice,                    missing: v => v == null, numeric:true  },
+    // avgMargin returns null when no tier yields one. Explicitly == null rather than
+    // falsy: a margin of exactly 0 is a real margin and must sort with the numbers.
+    margin:  { get: q => avgMargin(q),           missing: v => v == null, numeric:true  },
+  };
+  const rows = !sort ? filtered : [...filtered].sort((a,b)=>{
+    const k = SORT_KEYS[sort.col];
+    const A = k.get(a), B = k.get(b);
+    const ma = k.missing(A), mb = k.missing(B);
+    if(ma && mb) return 0;
+    if(ma) return 1;
+    if(mb) return -1;
+    const r = k.numeric ? A - B : A.localeCompare(B, undefined, { numeric:true });
+    return sort.dir==='desc' ? -r : r;
+  });
+  // unsorted -> asc -> desc -> unsorted, and clicking a DIFFERENT column starts that
+  // column at asc rather than inheriting the direction of the one it replaced.
+  const cycleSort = col => setSort(s =>
+    !s || s.col !== col ? { col, dir:'asc' } : s.dir==='asc' ? { col, dir:'desc' } : null);
 
   return (
     <>
@@ -3522,7 +3670,8 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
       </div>
       <div className="fs-row" style={{marginBottom:'20px'}}>
         <FilterSelect label="All Clients" value={client} onChange={setClient} options={clientOptions} />
-        <FilterSelect label="All" value={activeF} onChange={setActiveF} options={activeOptions} />
+        <FilterSelect label="All Factories" value={factoryF} onChange={setFactoryF} options={factoryOptions} />
+        <FilterSelect label="All Statuses" value={activeF} onChange={setActiveF} options={activeOptions} />
       </div>
       {client!=='All' && (
         <div style={{display:'flex',alignItems:'center',gap:'8px',margin:'4px 0 16px',fontSize:'15px'}}>
@@ -3536,9 +3685,39 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
       <div className="section-card">
         {loading ? <div className="loading">Loading products…</div> : filtered.length ? (
           <table className="data-table">
-            <thead><tr><th>SKU / Product</th><th>Factory</th><th>Tiers</th><th>Client Price</th><th>Avg Margin</th><th>Active</th><th></th></tr></thead>
+            {/* COMPANY IS ITS OWN COLUMN, and the trailing actions column is gone with
+                Create PO. Seven columns before, seven after -- but this is a real
+                <table>, so header and body cells are matched by the browser rather than
+                by a shared grid template: the PROD_COLS drift dc3bff7 diagnosed cannot
+                happen here. A miscount shows up as a ragged table, not as labels quietly
+                sitting over the wrong data. Both still have to move together.
+                The old last column held nothing but the Create PO link and carried an
+                empty <th>; with the link gone there is no width to re-derive, so the
+                column itself goes rather than being left as dead space. */}
+            {/* THERE WAS NO HEADER-VS-CELL MISMATCH TO FIX: .data-table th carries
+                text-align:left in globals.css and td inherits the same default, so both
+                sides were already left. What was missing was centring on the four
+                columns whose content is a number or a control, and it has to be added to
+                BOTH sides or it becomes the mismatch it was mistaken for.
+                Inline rather than in globals.css. .data-table dresses two tables -- this
+                one and Orders at :2690 -- and a rule there would silently re-align a
+                table nobody was looking at.
+                The three text columns stay left. Centring SKU / Product, Company or
+                Factory would set ellipsised strings of different lengths adrift from a
+                shared left edge, which is the thing that makes a column scannable. */}
+            {/* SIX OF SEVEN SORT. Product Status is the one that does not, and it is
+                the right exception: its cell holds a live <select>, so a click there
+                already means something, and the column has three values -- ordering
+                them would be ordering a set with no order. It carries no glyph, which
+                is what says so.
+                Still exactly one sort at a time; SortTh reads the shared {col, dir}
+                and only the matching column shows a solid arrow. */}
+            <thead><tr><SortTh col="sku" label="SKU / Product" sort={sort} onSort={cycleSort} /><SortTh col="company" label="Company" sort={sort} onSort={cycleSort} /><SortTh col="factory" label="Factory" sort={sort} onSort={cycleSort} /><SortTh col="tiers" label="Tiers" sort={sort} onSort={cycleSort} style={{textAlign:'center'}} /><SortTh col="price" label="Client Price" sort={sort} onSort={cycleSort} style={{textAlign:'center'}} /><SortTh col="margin" label="Avg Margin" sort={sort} onSort={cycleSort} style={{textAlign:'center'}} /><th style={{textAlign:'center'}}>Product Status</th></tr></thead>
             <tbody>
-              {filtered.map(q=>{
+              {/* rows, not filtered: same rows, possibly reordered. The counts above and
+                  the empty check below stay on `filtered`, because sorting cannot change
+                  how many there are and they are answering a filtering question. */}
+              {rows.map(q=>{
                 const col=companyColor(q.client); const tiers=tiersOf(q); const m=avgMargin(q); const prod=matchOf(q);
                 return (
                   <tr key={q.id} onClick={()=>setViewQuote(q)} style={{cursor:'pointer'}}>
@@ -3547,20 +3726,51 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
                         <span style={{width:'26px',height:'26px',borderRadius:'7px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'9px',fontWeight:600,fontFamily:'var(--mono)',color:'#0b1120',background:col}}>{initials(q.client)}</span>
                         <div style={{minWidth:0}}>
                           <div style={{fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'260px',fontFamily:'var(--mono)'}}>{q.sku||'No SKU'}</div>
-                          <div style={{fontSize:'11px',color:'var(--muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'260px'}}>{q.product||'Untitled'}{q.client?' · '+q.client:''}</div>
+                          {/* Client dropped from this line -- it has its own column now,
+                              and the same name twice in one row is noise that also costs
+                              this cell the width its product name needs at 260px. */}
+                          <div style={{fontSize:'11px',color:'var(--muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'260px'}}>{q.product||'Untitled'}</div>
                         </div>
                       </div>
                     </td>
+                    {/* THE COMPANY CHIP. Same companyColor() hash and palette as the
+                        square to its left and as the Quotes app, so one company is one
+                        hue everywhere -- that shared function is the convention, not the
+                        shape it is drawn in.
+                        The 26px square in the cell before this one stays: it shows
+                        initials, not the name, and it anchors the row visually at the far
+                        left. Two colour marks for one company is deliberate; two spellings
+                        of the name was not.
+                        UI sans, per 1 Sep -- a client name is data somebody else owns the
+                        contents of, and the display serif renders caps and hyphens badly.
+                        Em dash when blank, matching the filter at the top of this file,
+                        which already maps a blank client to the same glyph. One quote of
+                        327 lands here, so this is the exception rather than the norm.
+                        maxWidth plus ellipsis because the longest name on file is 38
+                        characters, and a chip that grows with its text would push the
+                        five numeric columns around row by row. */}
+                    <td>
+                      {(q.client||'').trim() ? (
+                        <span title={q.client} style={{display:'inline-flex',alignItems:'center',maxWidth:'190px',padding:'3px 9px',borderRadius:'980px',background:col,color:'#0b1120',fontFamily:'var(--sans)',fontSize:'11.5px',fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.client}</span>
+                      ) : <span style={{color:'var(--faint)'}} title="No client recorded on this quote">—</span>}
+                    </td>
                     <td><div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'200px'}}>{q.factory||'—'}</div><div style={{fontSize:'11px',color:'var(--faint)'}}>{q.country||''}</div></td>
-                    <td className="mono">{tiers.length}</td>
-                    <td className="mono">{priceRange(q)||'—'}</td>
-                    <td className="mono" style={{color:m==null?'var(--faint)':m<15?'var(--hot)':m<25?'var(--warn)':'var(--ok)'}}>{m==null?'—':m+'%'}</td>
+                    {/* Centred to match their headers. The em dash a blank price or
+                        margin renders centres with them, which is what keeps a sparse
+                        column reading as a column. */}
+                    <td className="mono" style={{textAlign:'center'}}>{tiers.length}</td>
+                    <td className="mono" style={{textAlign:'center'}}>{priceRange(q)||'—'}</td>
+                    <td className="mono" style={{textAlign:'center',color:m==null?'var(--faint)':m<15?'var(--hot)':m<25?'var(--warn)':'var(--ok)'}}>{m==null?'—':m+'%'}</td>
                     {/* A FILLED dot means a product record exists — green/red/grey for
                         true/false/undecided. A HOLLOW ring means no product record does,
                         so this quote has drifted out of sync; setting it creates one.
                         The em dash is narrower still: no SKU and no name, nothing to key
                         on or create, so the control is disabled rather than misleading. */}
-                    <td onClick={e=>e.stopPropagation()} style={{whiteSpace:'nowrap'}}>
+                    {/* Centred like the three numeric columns. The cell holds an
+                        inline-flex dot-and-select pair, so text-align is what positions
+                        the group inside the cell -- and the disabled em-dash variant
+                        below lands on the same axis. */}
+                    <td onClick={e=>e.stopPropagation()} style={{whiteSpace:'nowrap',textAlign:'center'}}>
                       {!prodKey(q.sku,q.product) ? (
                         <span style={{color:'var(--faint)'}} title="No SKU and no product name — this row cannot be matched to a product or given one.">—</span>
                       ) : (
@@ -3586,13 +3796,18 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
                         </span>
                       )}
                     </td>
-                    <td style={{textAlign:'right'}} onClick={e=>{e.stopPropagation();setPoQuote(q);}}><span className="pull-link">Create PO →</span></td>
+                    {/* The Create PO cell was here, and its empty <th> with it.
+                        setPoQuote SURVIVES: ProductDetailModal still calls it through
+                        onCreatePO below, which is what powers "Create PO from this →"
+                        inside the modal. The poQuote state and <CreatePOModal> stay for
+                        that path -- removing them would take the modal button with them.
+                        Only the row shortcut is gone. */}
                   </tr>
                 );
               })}
             </tbody>
           </table>
-        ) : <div className="empty"><h3>No products</h3><p>{quotes.length? 'Nothing matches this filter.' : 'Create quotes in the Quotes tab — each one becomes a pullable product here.'}</p></div>}
+        ) : <div className="empty"><h3>No products</h3><p>{quotes.length? 'Nothing matches this filter.' : 'Create quotes in the Quotes tab — each one appears here as a product.'}</p></div>}
       </div>
       {viewQuote && <ProductDetailModal quote={viewQuote} userEmail={userEmail} onClose={()=>setViewQuote(null)} onCreatePO={()=>{setPoQuote(viewQuote);setViewQuote(null);}} />}
       {poQuote && <CreatePOModal initialQuote={poQuote} onClose={()=>setPoQuote(null)} onCreated={id=>{setPoQuote(null);navigate('order-detail',{id});}} />}
@@ -7314,7 +7529,12 @@ export default function App() {
   const pageActions = {
     orders:    <button className="btn btn-dark" onClick={()=>setModal('create-po')}>+ New PO</button>,
     companies: <button className="btn btn-dark" onClick={()=>setModal('create-company')}>+ New Company</button>,
-    products:  <button className="btn btn-ghost" onClick={()=>navigate('quotes')}>+ New Quote</button>,
+    // products has no action. The key is absent rather than set to null, because
+    // pageActions[page] is rendered directly and an absent key gives undefined,
+    // which React renders as nothing -- same result, one less thing to read.
+    // .page-actions is display:flex with a gap and no border or background, so an
+    // empty one leaves no artifact. New quotes are made in the Quotes tab, which
+    // this page's empty state already says.
     shipments: <button className="btn btn-dark" onClick={()=>setModal('create-shipment')}>+ New Shipment</button>,
   };
   const [modal, setModal] = useState(null);
