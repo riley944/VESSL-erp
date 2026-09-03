@@ -444,7 +444,7 @@ of the first group and set nothing at all, losing the rows that were fine.
 
 ## The scripts are the as-run record
 
-`scratchpad/14` through `scratchpad/30` are the scripts as actually executed
+`scratchpad/14` through `scratchpad/31` are the scripts as actually executed
 against production, not drafts. Each carries its measured baseline in the header,
 its guards in the `where` clause rather than in a comment, and a verification
 block that returns exactly one row on success.
@@ -466,6 +466,7 @@ block that returns exactly one row on success.
 | 29 | the two surviving name-variant rows renamed | run 2026-09-03 |
 | 28 | 110 size-variant rows retired, `active=false` | run 2026-09-03 |
 | 30 | regulation and material links copied to the survivors | run 2026-09-03 |
+| 31 | `staff_profiles.notifications_enabled`, NOT NULL DEFAULT true | run 2026-09-03 |
 | 14 | four remaining PO-line links | **parked, see §6** |
 
 ---
@@ -675,6 +676,48 @@ asserted the LHS-183 bare row carried no origin, when it reads
 `quote-backfill-19` from script 19. The insert was correct and the rehearsal
 failed on the check alone — the same fault as script 25's `a5`, and the same
 cause: a value asserted by eye instead of measured.
+
+---
+
+## Two findings from the settings rework — 2026-09-03
+
+### `vessl.kui_settings` has never existed
+
+The Settings page carried a Company Info form and an ACH / Wire block whose
+caption read *"Auto-fills the bottom of client quote sheets."* **It never has.**
+Checked across every schema and every relation kind in `pg_class`, not just
+`information_schema.tables`: no relation of that name exists anywhere, and
+nothing matching `%setting%` does either. `SB` is pinned to `db: { schema:
+'vessl' }`, so `SB.from('kui_settings')` resolves to `vessl.kui_settings`.
+
+Three consequences, and the reason it went unnoticed for so long is that all
+three are quiet:
+
+- The load returns `{data:null}` and falls back to blank defaults, so the form
+  renders **empty rather than broken**.
+- The save errors — but only after somebody has typed a page of bank details in.
+- `printClientSheet` in `quotes.jsx` is its **only** reader, and it gates the
+  payment block on `settings?.ach_info`. That block has therefore **never
+  rendered on a client quote sheet**. The sheet falls back to the hardcoded
+  string `King Universal Inc.` for the company name.
+
+The form now lives on an admin-only Company tab with a visible notice saying so.
+Creating the table is approved and separate; the notice comes out when it lands,
+and its RLS shape is to be proposed in that script for approval.
+
+### `staff_profiles` write access is not per-user
+
+`vessl.staff_profiles` carries two policies: `read_own_profile` (SELECT, own row
+by `auth_user_id` or JWT email) and `staff_only` (**ALL**, `vessl.is_staff()`).
+The second is the one that matters — **any authenticated staff member can UPDATE
+any profile row, including somebody else's `role`.**
+
+Nothing in the app offers to do that, and the Settings page writes only the
+signed-in person's row, keyed on the id it resolved for their own address. But
+the admin-only Company tab added on 2026-09-03 is **UI intent, not enforcement**,
+exactly the standing `canCreateProducts` has: the tab is hidden, the API is not
+closed. Recorded here so the next person reading that gate knows what it is and
+is not. Tightening it is an RLS change, deliberately not made in that pass.
 
 ---
 
