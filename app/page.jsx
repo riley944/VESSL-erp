@@ -266,7 +266,19 @@ const isStaffEmail = email =>
 // Only roles listed here are limited, to exactly the page ids they map to.
 // Any other role — including no staff_profiles row, or a lookup error — is
 // unrestricted and sees every page, exactly as before.
-const ROLE_PAGES = { limited_qc: ['testing', 'products', 'shipments', 'codes'] };
+// Pages every role reaches, however limited. Settings is one because what it now
+// holds -- your own name, your own password -- belongs to the person, not the job.
+// Spread into each limited role rather than special-cased in the `page` fallback
+// below, and the difference matters: allowedPages is also what the sidebar filters
+// its links against and what supplies the [0] fallback, so it has to stay the
+// complete list of what a role may render. An exception written into the fallback
+// line would leave those two reading a list that no longer says what it means.
+// It cannot surface a nav link: the sidebar filters over `links`, which has never
+// had a settings entry -- that button was always separate, and is now gone.
+const UNIVERSAL_PAGES = ['settings'];
+// Appended last on purpose, so allowedPages[0] is still 'testing' and a limited
+// role landing on a genuinely disallowed page falls back where it always did.
+const ROLE_PAGES = { limited_qc: ['testing', 'products', 'shipments', 'codes', ...UNIVERSAL_PAGES] };
 // Returns the allowed page ids for a limited role, or null meaning unrestricted.
 // hasOwnProperty guard: role is free text, so a value like 'constructor' must
 // not pick up an inherited Object.prototype member and read as limited.
@@ -391,13 +403,10 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null }) {
           </button>
         ))}
       </div>
-      <div className="sb-bottom">
-        {!allowedPages && (
-        <button className={'nav-link sb-settings ' + (page==='settings'?'active':'')} onClick={()=>navigate('settings')}>
-          <span className="ic">{Ic.settings}</span> KUI Settings
-        </button>
-        )}
-      </div>
+      {/* The pinned KUI Settings button lived here, with the .sb-bottom rail that
+          existed only to hold it. Settings is reached from the avatar menu now --
+          one door, and the one that already had no role check on it. Its CSS went
+          with it: .sb-bottom and both .sb-settings rules had no other user. */}
     </aside>
   );
 }
@@ -2196,8 +2205,243 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   );
 }
 
-// ── KUI Settings ──────────────────────────────────────────────────────────────
-function KuiSettings() {
+// ── Settings ─────────────────────────────────────────────────────────────────
+// TWO TABS, and the split is about ownership. My Account holds what belongs to the
+// person -- their name, their password -- and every role sees it. Company holds
+// configuration that happens to be reached from the same gear and belongs to the
+// business; admin only.
+//
+// The admin check is UI INTENT, NOT ENFORCEMENT, the same standing canCreateProducts
+// has. vessl.staff_profiles carries a permissive staff_only policy on ALL commands,
+// so any authenticated staff member can already write any profile row through the
+// API. Hiding the tab is worth doing and is not a security boundary; the boundary
+// would be RLS on the table the tab writes to.
+function SettingsPage({ role, user, displayName, onDisplayName }) {
+  const isAdmin = role === 'admin';
+  const [tab, setTab] = useState('account');
+  // Nobody can land on a tab they cannot see, including through a stale state value:
+  // the render reads isAdmin, not the tab name alone.
+  const showCompany = isAdmin && tab === 'company';
+  return (
+    <>
+      <div style={{display:'flex',gap:'6px',marginBottom:'20px',borderBottom:'1px solid var(--line)'}}>
+        {[['account','My Account'], ['general','General Settings'], ...(isAdmin?[['company','Company']]:[])].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)}
+            style={{background:'none',border:'none',borderBottom:'2px solid '+(tab===id?'var(--accent)':'transparent'),
+                    color:tab===id?'var(--ink)':'var(--muted)',fontWeight:tab===id?600:500,fontFamily:'inherit',
+                    fontSize:'13.5px',padding:'9px 14px',marginBottom:'-1px',cursor:'pointer'}}>{label}</button>
+        ))}
+      </div>
+      {showCompany ? <CompanySettings />
+        : tab === 'general' ? <GeneralSettings user={user} />
+        : <MyAccount user={user} displayName={displayName} onDisplayName={onDisplayName} />}
+    </>
+  );
+}
+
+// ── My Account ───────────────────────────────────────────────────────────────
+function MyAccount({ user, displayName, onDisplayName }) {
+  const email = user?.email || '';
+  const [name, setName] = useState(displayName||'');
+  const [nameBusy, setNameBusy] = useState(false);
+  const [nameMsg, setNameMsg] = useState('');
+  // displayName arrives from the shell's role lookup, which is async -- this can
+  // mount before it lands. Syncing on change rather than only at mount is what
+  // stops the field showing blank for the first second on a cold load.
+  useEffect(()=>{ setName(displayName||''); }, [displayName]);
+
+  const saveName = async () => {
+    const next = name.trim();
+    if (!email) return;
+    setNameBusy(true); setNameMsg('');
+    // THE SAME ilike PLUS EXACT RE-CHECK THE SHELL'S LOADER USES. ilike can only
+    // widen a match -- _ and % are wildcards in it -- so an address containing one
+    // could return somebody else's row. Matching exactly in JS before writing is
+    // what makes sure this updates the row belonging to the person signed in.
+    // Then keyed on id, never on the email, so the write cannot widen either.
+    const { data, error: readErr } = await SB.from('staff_profiles').select('id,email').ilike('email', email);
+    const row = (data||[]).find(r => (r.email||'').toLowerCase() === email.toLowerCase());
+    if (readErr || !row) {
+      setNameBusy(false);
+      setNameMsg(readErr ? 'Could not load your profile — '+readErr.message : 'No staff profile found for this address.');
+      return;
+    }
+    const { error } = await SB.from('staff_profiles').update({ full_name: next || null }).eq('id', row.id);
+    setNameBusy(false);
+    if (error) { setNameMsg('Could not save — '+error.message); return; }
+    // Lift it so the avatar and its initials change now. The shell reads full_name
+    // once per session, on the email-keyed effect, so without this the header would
+    // keep the old name until a reload.
+    onDisplayName && onDisplayName(next);
+    setNameMsg('Saved.'); setTimeout(()=>setNameMsg(''), 2500);
+  };
+
+  const [pw, setPw] = useState({ current:'', next:'', confirm:'' });
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwMsg, setPwMsg] = useState('');
+  const setP = k => e => setPw(p=>({...p,[k]:e.target.value}));
+  const changePassword = async () => {
+    setPwMsg('');
+    if (pw.next.length < 8) { setPwMsg('New password must be at least 8 characters.'); return; }
+    if (pw.next !== pw.confirm) { setPwMsg('The two new passwords do not match.'); return; }
+    setPwBusy(true);
+    // RE-AUTH FIRST, because supabase.auth.updateUser DOES NOT ASK for the current
+    // password. Without this step anyone who walked up to an unlocked screen could
+    // change it. signInWithPassword against the session's own address is the check:
+    // it succeeds only if the typed current password is right, and on success it
+    // simply re-issues a session for the same user, which is harmless.
+    const { error: reauthErr } = await SB.auth.signInWithPassword({ email, password: pw.current });
+    if (reauthErr) { setPwBusy(false); setPwMsg('Current password is not correct.'); return; }
+    const { error } = await SB.auth.updateUser({ password: pw.next });
+    setPwBusy(false);
+    if (error) { setPwMsg('Could not change password — '+error.message); return; }
+    setPw({ current:'', next:'', confirm:'' });
+    setPwMsg('Password changed.'); setTimeout(()=>setPwMsg(''), 3500);
+  };
+
+  const pwInput = { width:'100%', maxWidth:'340px' };
+  return (
+    <>
+      <div className="section-card" style={{marginBottom:'20px'}}>
+        <div className="section-head"><h3>Profile</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>How your name appears in the app</span></div>
+        <div style={{padding:'18px',display:'flex',flexDirection:'column',gap:'16px',maxWidth:'420px'}}>
+          <div>
+            <label>Display name</label>
+            <input className="form-input" value={name} onChange={e=>setName(e.target.value)}
+                   placeholder={nameFromEmail(email)} onKeyDown={e=>{ if(e.key==='Enter') saveName(); }} />
+            {/* The placeholder is the fallback the header actually uses when this is
+                blank, so an empty field previews what clearing it would give you
+                rather than looking like a field that lost its value. */}
+            <p style={{fontSize:'12px',color:'var(--muted)',marginTop:'6px'}}>
+              Shown in the header and on the avatar. Leave it blank to fall back to your email name.
+            </p>
+          </div>
+          <div>
+            <label>Email</label>
+            {/* Read-only, and not an input: a disabled box invites a click and then
+                does nothing. Changing the address would move the staff_profiles match,
+                the RLS identity and the sign-in all at once -- not a settings field. */}
+            <div style={{fontSize:'13.5px',color:'var(--ink-2)',fontFamily:'var(--mono)',padding:'2px 0'}}>{email || '—'}</div>
+            <p style={{fontSize:'12px',color:'var(--muted)',marginTop:'6px'}}>Your sign-in address. Ask an admin if this needs to change.</p>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:'14px'}}>
+            <button className="btn btn-dark" onClick={saveName} disabled={nameBusy || name.trim()===(displayName||'').trim()}>
+              {nameBusy?'Saving…':'Save name'}
+            </button>
+            {nameMsg && <span style={{fontSize:'13px',color:nameMsg==='Saved.'?'var(--accent)':'var(--hot)'}}>{nameMsg}</span>}
+          </div>
+        </div>
+      </div>
+
+      <div className="section-card" style={{marginBottom:'20px'}}>
+        <div className="section-head"><h3>Change Password</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Applies to your sign-in immediately</span></div>
+        <div style={{padding:'18px',display:'flex',flexDirection:'column',gap:'14px',maxWidth:'420px'}}>
+          <div><label>Current password</label><input className="form-input" style={pwInput} type="password" autoComplete="current-password" value={pw.current} onChange={setP('current')} /></div>
+          <div><label>New password</label><input className="form-input" style={pwInput} type="password" autoComplete="new-password" value={pw.next} onChange={setP('next')} /></div>
+          <div><label>Confirm new password</label><input className="form-input" style={pwInput} type="password" autoComplete="new-password" value={pw.confirm} onChange={setP('confirm')} onKeyDown={e=>{ if(e.key==='Enter') changePassword(); }} /></div>
+          <div style={{display:'flex',alignItems:'center',gap:'14px'}}>
+            <button className="btn btn-dark" onClick={changePassword} disabled={pwBusy || !pw.current || !pw.next || !pw.confirm}>
+              {pwBusy?'Changing…':'Change password'}
+            </button>
+            {pwMsg && <span style={{fontSize:'13px',color:pwMsg==='Password changed.'?'var(--accent)':'var(--hot)'}}>{pwMsg}</span>}
+          </div>
+          <p style={{fontSize:'12px',color:'var(--muted)',margin:0}}>At least 8 characters. Your current password is checked before anything changes.</p>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── General settings ─────────────────────────────────────────────────────────
+// One toggle today. Reads and writes vessl.staff_profiles.notifications_enabled,
+// added by script 31 -- which must be committed before this deploys, or the column
+// comes back undefined and an undefined toggle renders OFF, showing everybody
+// opted out of something they are opted in to.
+function GeneralSettings({ user }) {
+  const email = user?.email || '';
+  // ON UNTIL PROVEN OTHERWISE, and that is the whole state model. true is both the
+  // column default and the value this holds while loading, on a read error, and on
+  // a missing profile row. Opting somebody out by accident is silent and costs them
+  // a message they were waiting for; opting somebody in by accident is visible and
+  // costs them a message they can then turn off.
+  const [on, setOn] = useState(true);
+  const [rowId, setRowId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState('');
+
+  useEffect(()=>{
+    if (!email) { setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      // Same ilike plus exact re-check as the display-name save: ilike can only
+      // widen a match, so the row is confirmed in JS before it is trusted, and
+      // every write below is keyed on its id rather than on the address.
+      const { data, error } = await SB.from('staff_profiles')
+        .select('id,email,notifications_enabled').ilike('email', email);
+      if (cancelled) return;
+      const row = (data||[]).find(r => (r.email||'').toLowerCase() === email.toLowerCase());
+      if (error || !row) {
+        // Deliberately NOT setOn(false). Left ON, and the caption below says the
+        // preference is not being honoured by anything yet either way.
+        setLoading(false);
+        setMsg(error ? 'Could not read your preference — showing the default.' : '');
+        return;
+      }
+      setRowId(row.id);
+      // == null covers both a null column and a column PostgREST did not return,
+      // which is what a stale schema cache looks like before script 31 lands.
+      setOn(row.notifications_enabled == null ? true : !!row.notifications_enabled);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [email]);
+
+  const toggle = async () => {
+    if (loading || !rowId) return;
+    const next = !on;
+    setOn(next); setMsg('');           // optimistic: a switch that lags reads as broken
+    const { error } = await SB.from('staff_profiles')
+      .update({ notifications_enabled: next }).eq('id', rowId);
+    if (error) { setOn(!next); setMsg('Could not save — '+error.message); }
+  };
+
+  return (
+    <div className="section-card" style={{marginBottom:'20px'}}>
+      <div className="section-head"><h3>Notifications</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Applies to your account only</span></div>
+      <div style={{padding:'18px',maxWidth:'520px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'14px'}}>
+          {/* A real button with role=switch and aria-checked, not a styled checkbox:
+              the state has to reach a screen reader, and the label has to be
+              clickable without a second element wired to it. */}
+          <button type="button" role="switch" aria-checked={on} aria-label="Notifications"
+            onClick={toggle} disabled={loading || !rowId}
+            style={{width:'44px',height:'25px',flexShrink:0,borderRadius:'980px',border:'none',padding:'2px',
+                    background: loading||!rowId ? 'var(--line)' : on ? 'var(--accent)' : '#c7c7cc',
+                    cursor: loading||!rowId ? 'default' : 'pointer', transition:'background .15s',
+                    display:'flex', justifyContent: on ? 'flex-end' : 'flex-start', alignItems:'center'}}>
+            <span style={{width:'21px',height:'21px',borderRadius:'50%',background:'#fff',boxShadow:'0 1px 2px rgba(0,0,0,.25)',transition:'.15s'}} />
+          </button>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:'13.5px',fontWeight:600,color:'var(--ink)'}}>Notifications</div>
+            <div style={{fontSize:'12.5px',color:'var(--muted)'}}>{loading ? 'Loading…' : on ? 'On' : 'Off'}</div>
+          </div>
+        </div>
+        {/* Same principle as the Company tab notice: no control that quietly does
+            nothing. The preference is stored for real -- this says what it does and
+            does not yet do, rather than implying an effect it has not got. */}
+        <p style={{fontSize:'12px',color:'var(--muted)',marginTop:'14px',lineHeight:1.55,margin:'14px 0 0'}}>
+          Nothing sends notifications yet. Your choice is saved now and will apply when they start.
+        </p>
+        {msg && <p style={{fontSize:'12.5px',color:'var(--hot)',marginTop:'10px'}}>{msg}</p>}
+      </div>
+    </div>
+  );
+}
+
+// ── Company settings (admin) ─────────────────────────────────────────────────
+// MOVED INTACT from the old KUI Settings page -- same fields, same single-row
+// upsert, same copy. Only its home changed, plus the notice below.
+function CompanySettings() {
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -2217,6 +2461,23 @@ function KuiSettings() {
   const fields = [['Company name','company_name','King Universal Inc.'],['Contact name','contact_name',''],['Email','email',''],['Phone','phone',''],['Office phone','office_phone','']];
   return (
     <>
+      {/* SAYS SO OUT LOUD, because the failure is silent in both directions: the
+          load returns no row and falls back to blank defaults, so the form looks
+          untouched rather than broken, and the save reports an error only after
+          somebody has typed a page of bank details into it.
+          vessl.kui_settings does not exist -- checked across every schema and
+          relation kind. printClientSheet in quotes.jsx is its only reader and
+          gates the payment block on settings?.ach_info, so that block has never
+          rendered on a client sheet. The table is a separate, approved piece of
+          work; this notice comes out when it lands. */}
+      <div style={{marginBottom:'20px',padding:'14px 16px',borderRadius:'10px',border:'1px solid #f0d9a8',background:'#fdf6e7'}}>
+        <div style={{fontSize:'12.5px',fontWeight:600,color:'#8a5a00',marginBottom:'4px'}}>Not connected yet</div>
+        <div style={{fontSize:'12.5px',color:'#6b5220',lineHeight:1.55}}>
+          The table behind this form has not been created, so saving will fail and the payment block
+          will not appear on client quote sheets. The form is here ready for it. Nothing else on the
+          quote sheet is affected — it falls back to the company name in the template.
+        </div>
+      </div>
       <div className="section-card" style={{marginBottom:'20px'}}>
         <div className="section-head"><h3>Company Info</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Used on documents sent to clients</span></div>
         <div className="logi-grid">
@@ -7755,7 +8016,10 @@ export default function App() {
           {page==='programs'         && <Programs userEmail={user?.email||''} />}
           {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} userEmail={user?.email||''} />}
           {page==='inventory'        && <Inventory />}
-          {page==='settings'         && <KuiSettings />}
+          {/* role and user are already in this scope for the gate and the header;
+              onDisplayName is the shell's own setter, so saving a name in My Account
+              updates the avatar without a reload. */}
+          {page==='settings'         && <SettingsPage role={role} user={user} displayName={displayName} onDisplayName={setDisplayName} />}
           {page==='client-relations' && <ClientRelations user={user} />}
         </div>
       </div>
