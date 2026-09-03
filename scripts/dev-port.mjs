@@ -22,14 +22,31 @@ import { execFileSync } from 'node:child_process';
 const PORT = Number(process.env.PORT || 3000);
 const WIN = process.platform === 'win32';
 
-const free = (port) => new Promise((resolve) => {
+const freeOn = (port, host) => new Promise((resolve) => {
   const s = createServer();
   s.once('error', () => resolve(false));
   s.once('listening', () => s.close(() => resolve(true)));
-  // 0.0.0.0, not localhost: a server bound to one and not the other still takes
-  // the port for Next's purposes, and a check that misses it defeats the guard.
-  s.listen(port, '0.0.0.0');
+  // host null means "the way Next does it" -- no host argument at all.
+  if (host === null) s.listen(port); else s.listen(port, host);
 });
+
+// TEST THE PORT THE WAY NEXT BINDS IT, WHICH IS NOT 0.0.0.0.
+// `next dev` calls listen(port) with no host, so Node binds :: in dual-stack
+// mode. This guard used to probe 0.0.0.0 alone, and on Windows that bind
+// SUCCEEDS while another process holds :: -- so a stale server was reported as
+// "port free", the guard returned without killing anything, and Next then died
+// with EADDRINUSE on ::. Meanwhile localhost:3000 answered 200 the whole time,
+// from the stale process. That is the exact failure this file exists to stop,
+// produced by the file itself.
+// Both families are probed and the port counts as busy if either refuses: :: to
+// match Next, 0.0.0.0 to catch a server bound only to IPv4, which :: alone can
+// miss on some hosts.
+const free = async (port) => {
+  for (const host of [null, '0.0.0.0']) {
+    if (!(await freeOn(port, host))) return false;
+  }
+  return true;
+};
 
 const sh = (cmd, args) => {
   try { return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore','pipe','ignore'] }); }
