@@ -444,7 +444,7 @@ of the first group and set nothing at all, losing the rows that were fine.
 
 ## The scripts are the as-run record
 
-`scratchpad/14` through `scratchpad/26` are the scripts as actually executed
+`scratchpad/14` through `scratchpad/30` are the scripts as actually executed
 against production, not drafts. Each carries its measured baseline in the header,
 its guards in the `where` clause rather than in a comment, and a verification
 block that returns exactly one row on success.
@@ -462,6 +462,10 @@ block that returns exactly one row on success.
 | 24 | HTS description bracket case, 2 rows | run 2026-09-02 |
 | 25 | `htscodes.duty_note` + both column comments rewritten | run 2026-09-02 |
 | 26 | the two compound-rate hat codes, 44.50 + the note | run 2026-09-02 |
+| 27 | 18 size-less parent products, origin `size-merge-27` | run 2026-09-03 |
+| 29 | the two surviving name-variant rows renamed | run 2026-09-03 |
+| 28 | 110 size-variant rows retired, `active=false` | run 2026-09-03 |
+| 30 | regulation and material links copied to the survivors | run 2026-09-03 |
 | 14 | four remaining PO-line links | **parked, see §6** |
 
 ---
@@ -611,6 +615,66 @@ Swimsuit Bag, a genuine "not established" rather than a compound rate. The
 "permanently NULL" concept is gone from the schema. The count of no-rate rows is
 deliberately not repeated in `codes.jsx`, where a stale `9` sat for weeks: it
 moves whenever anyone fills one in.
+
+---
+
+## SKU size variants merged into parents — 2026-09-03, scripts 27, 29, 28, 30
+
+Kristy commissioned merging size-variant SKUs into size-less parents. **Nothing
+was deleted and nothing was repointed**: variants were retired, parents created,
+and compliance links copied rather than moved. Every quote and purchase order
+line still points exactly where it did — 110 quotes and 30 PO lines on retired
+rows, asserted after the fact rather than assumed.
+
+**The classifier is the operation.** A sized row is one whose trailing tokens,
+split on `-` `_` space `/`, are size vocabulary, stripped iteratively so
+`X-Youth-XL` loses both. Costing bases (`-EXW`, `-Landed`, `-INT`, `-USA`) are
+excluded — those are script 14's park, not sizes. Two normalisations matter and
+neither is obvious: the LHS and SL skus use a **spaced** hyphen
+(`LHS-152 - Large`), so repeated separators must be collapsed and trimmed, or
+`SL-117` splits into two groups and LHS-183 never joins its siblings.
+19 groups, 105 sized rows, matching the CSV-side census exactly.
+
+**Three findings the brief did not have, each from measuring rather than
+reading the export:**
+
+- **Ten of the 110 rows were already `active = true`, not NULL** — the three
+  LL1-1616 rows, the five SL-117 rows, the two LL1-380 non-survivors. The brief
+  described the step as writing false over NULL, so `and active is null` looked
+  right and would have skipped exactly those ten, leaving them selectable while
+  every count check still passed. The predicate is `is distinct from false`.
+- **`LLF-1605 youth poncho` escapes the trailing-token rule** because the size
+  word sits in the middle, not at the end. It was added by uuid.
+- **39 of the rows share a duplicated sku string.** Each BG group is 6 sizes x 2
+  rows, and within a pair only one row carries the PO line. `sku` does not
+  identify a row here; only `id` does. Uniqueness on this table is
+  **`(sku, name)`**, not `sku`, which is what makes a bare parent able to coexist
+  with its variants at all.
+
+**The 110 uuids were resolved, not transcribed.** Pasting them by hand is 110
+chances to retire a product nobody meant to touch; the target set is built by the
+same classifier, minus one exclusion, plus six rows named by uuid, and `a1`
+refuses to proceed unless it resolves to exactly 110.
+
+**Order was 27 → 29 → 28 → 30**, and the middle swap is deliberate: renaming the
+survivors *before* retiring their siblings lets the deactivation script assert
+each survivor by its final name, so a mis-picked row fails a guard instead of
+being retired quietly.
+
+Left deliberately alone: `LL1-1629-MED` stays selectable (Kristy), the Ollie row
+was already false, Olivia survives, the 14 Youth-line products and the costing
+bases are out of scope. `products` 328 → 346; `active` true/false/null
+91/51/186 → 81/161/104; `product_regulations` 153 → 170; `product_materials`
+5 → 7.
+
+**A fifth checklist rule, from a defect reported in review:** the verification
+block must be checked to *parse* before printing — branch selects minus one must
+equal the `union all` count. It is the first structural check in the set rather
+than a lexical one. Script 27 also shipped with a wrong `want` on `a6`: it
+asserted the LHS-183 bare row carried no origin, when it reads
+`quote-backfill-19` from script 19. The insert was correct and the rehearsal
+failed on the check alone — the same fault as script 25's `a5`, and the same
+cause: a value asserted by eye instead of measured.
 
 ---
 
