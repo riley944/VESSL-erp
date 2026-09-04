@@ -858,6 +858,51 @@ path.
 
 ---
 
+## Inventory status column — and the mixed-group case that cannot happen yet
+
+The breakdown tables carry the product's catalogue status between SKU and On
+order, with a filter beside All Clients and All Factories. `products.active` was
+one more column on a join the query already made, so it costs no extra request.
+The visual vocabulary is the Products page's exactly — filled 8px dot in
+`var(--ok)` / `var(--hot)` / `var(--muted)` for true / false / undecided, hollow
+1.5px ring for no product record — because two controls in one app that spell the
+same four states differently is a bug nobody reports.
+
+**The filter narrows contributing lines**, like the factory filter. Tab 1 reads
+the whole line set and does not move.
+
+### The finding: status is per-product, the display key is not
+
+Rows group on `(client, product name, sku)` — **not on product id** — so in
+principle one row can hold lines belonging to two different catalogue entries,
+and those two entries can disagree about `active`. That would make a status
+filter partially drop a row's quantity, which is the behaviour the factory filter
+has and the status filter is not supposed to have.
+
+**Measured against the live set: it does not happen.** 158 lines, 71 display
+groups (the same 71 script 33 produced), **zero groups holding more than one
+status**, including the case likeliest to break it — a description-fallback row
+colliding with a real product name under a blank sku. Bucket split: `noprod` 108,
+`active` 34, `inactive` 12, `notset` 4.
+
+**That is a fact about today's data, not a structural guarantee.** Two catalogue
+rows sharing a name and a sku would collide, and nothing prevents that. So the
+row renders **Mixed** with a hollow ring and an explaining tooltip rather than
+reporting whichever line landed first.
+
+**The tripwire is judged against the whole line set, not `shown`.** Reading it
+from the filtered rows would make a mixed row look unanimous precisely when the
+status filter was dropping half of it — the failure would hide itself at the
+moment it started to matter. This is the same shape as the factory caveat that
+only appears while a factory is selected: say the thing that is true, at the time
+it is true.
+
+If a Mixed row ever appears, the fix is upstream — two catalogue entries sharing
+a name and sku is a duplicate to merge, in the same family as the size-variant
+merge (scripts 27 to 30). It is not a display rule to tune.
+
+---
+
 ## The `x.s` bug — sized PO lines wrote nothing, 21 Aug to 4 Sep
 
 `5c0ad12` (2026-08-21 13:21) replaced the producer in **both** order expansions
