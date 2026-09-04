@@ -281,6 +281,12 @@ SO editor (`page.jsx:2025-2026`) write `description` and `client_sku` as free te
 > Post-script-14 the PO figures become **92 linked / 161 unlinked**. Script 14 is
 > deferred, so **88 / 165 is the current state.** Do not quote 92/161 as present tense.
 
+> **Superseded 2026-09-04.** Both figures above are 28 Aug measurements and script
+> 33 has since linked five more rows. Measured directly after 33 committed:
+> **254 rows, 94 linked / 160 unlinked, 94 stamped.** The 74 / 78 / 13
+> resolvability split below is likewise a 28 Aug snapshot and has not been
+> re-measured since. Re-count before quoting any of it.
+
 ### Resolvability of the 165 unlinked PO rows, by description
 
 ```
@@ -444,7 +450,7 @@ of the first group and set nothing at all, losing the rows that were fine.
 
 ## The scripts are the as-run record
 
-`scratchpad/14` through `scratchpad/32` are the scripts as actually executed
+`scratchpad/14` through `scratchpad/33` are the scripts as actually executed
 against production, not drafts. Each carries its measured baseline in the header,
 its guards in the `where` clause rather than in a comment, and a verification
 block that returns exactly one row on success.
@@ -468,6 +474,7 @@ block that returns exactly one row on success.
 | 30 | regulation and material links copied to the survivors | run 2026-09-03 |
 | 31 | `staff_profiles.notifications_enabled`, NOT NULL DEFAULT true | run 2026-09-03 |
 | 32 | `quotes.size_plate_fees` + `quotes.size_cartons`, both jsonb NOT NULL `[]` | run 2026-09-04 |
+| 33 | five BUC bag PO lines linked to their products, v4 after three failed rehearsals | run 2026-09-04 |
 | 14 | four remaining PO-line links | **parked, see §6** |
 
 ---
@@ -760,6 +767,94 @@ size on every line.
 carton columns, so on a quote carrying per-size dimensions its CBM is an average
 rather than an exact figure. Riley has been told; that is his call to make later,
 not ours to make for him.
+
+---
+
+## The BUC bag lines — 2026-09-04, script 33, and the three rehearsals it took
+
+Five `purchase_order_items` rows named BUC-148, BUC-149 and BUC-150 in free text
+but carried no `product_id`. The Inventory page groups on client, product name and
+sku, and on an unlinked row **the name is the description**, so two typings of one
+product drew two lines. Setting `product_id` on the five collapsed the display
+from 74 lines to 71.
+
+**No description was touched, and that was the design.** `description` is the
+snapshot of what the purchase order said, and all five POs are `in_production`,
+meaning issued. Rewriting the text to fix a display would rewrite an issued
+document. `buildPODoc` renders `description` first and falls back to the product
+name, so no factory document changed. The verification asserts this rather than
+claiming it: `a3` counts descriptions identical to the pre-state snapshot.
+
+A sixth row appears alongside the five in any `ilike` net over these SKUs — the
+BUC-150 twin on another PO, already linked to `acbca34f` before this script and
+deliberately not touched. Linking the fifth row is what merged that pair.
+
+### Three failed rehearsals, three different characters eaten in transport
+
+`a0`, the identity guard, returned 0 of 5 three times while every component
+returned 5 when run standalone against the live database. The data never moved and
+the file on disk was byte-correct every time.
+
+| | what `a0` matched on | outcome |
+|---|---|---|
+| v1 | descriptions carrying runs of five spaces | 0 of 5, plus `c3` asserting a want measured by eye |
+| v2 | id + raw `length()` + text normalised with a backslash-s pattern | 0 of 5 |
+| v3 | id + raw `length()` + text normalised with `[[:space:]]` | 0 of 5, identical |
+| v4 | **id + raw `length()`, no text at all** | passed |
+
+The scripts are copied by hand into a SQL editor, and **that transport is lossy in
+a different way each time**. v1 lost its runs of spaces to reflow. v2 lost a
+backslash, collapsing the pattern to s-plus, which replaces runs of the letter s.
+v3 most likely lost a colon: `[[:space:]]` contains `:space:`, clients rewrite a
+single leading colon as a bind placeholder, and the exception they make is the
+**double** colon cast — which is why every `::uuid` in the same file survived and
+only that one check broke. Unproven, and v4 does not depend on it.
+
+The pattern worth seeing is that **each fix was itself free text carrying a new
+fragile character.** Three escapes, three failures. The answer was not a fourth.
+
+### What finally diagnosed it
+
+Every theory came from running `a0`'s pieces standalone, and standalone runs
+exercise neither the transport nor the surrounding transaction. What settled it was
+a diagnostic that **reproduced the guard in the position it runs** — snapshot
+built, `a0`'s four components counted into a temp table before the update, the
+update run, everything reported either side, ending in `rollback` so it wrote
+nothing and was safe to hand over. It reported, before the update:
+
+```
+b33_rows 5   joined 5   pid_null 5   len_ok 5   norm_ok 0   a0_all 0
+```
+
+Which exonerated the snapshot, proved the update, and named the one failing
+condition. `len_ok` had held at 5 in every run including the failures — that is
+the evidence that raw character count is the identity test that survives this
+path.
+
+### Rules earned or corrected
+
+- **Corrected — the fifth rule's own advice was the bug.** It had said to assert
+  identity with `length()` *plus normalised text whose literals are single-spaced*.
+  That normalisation expression is free text too, and it is what wrote v2 and v3.
+  Identity is now **`id` plus `length()`, nothing else**. Comments may quote the
+  text freely; nothing matches on them.
+- **Extended** — the list of characters a hand paste eats now reads runs of
+  spaces, backslashes, and single colons including inside a POSIX class.
+- **New, the sixth rule — test a guard in the position it runs, not just against
+  the data it reads.** When a check fails and re-running its pieces says it should
+  pass, stop theorising and write the rollback-terminated diagnostic. One round
+  trip, and it names the condition instead of guessing.
+- **Reinforced, the third rule** — every `want` measured, never asserted. v1's
+  `c3` claimed 4 for a number that was 17 and had never been measured, the same
+  fault script 25's `a5` had. `c3` is now a before-and-after difference, which is
+  the claim actually being made: this script does not go near the `-EXW` and
+  `-Landed` costing rows, so the count must come out unchanged either side.
+- **A self-check blind to its own fault class is worse than none.** The lexer that
+  cleared v3 skipped newlines *before* testing whether it was inside a string, so
+  it could never have detected an embedded newline — and it reported a pass. It
+  now reconstructs literals and checks backslashes, newlines, multi-space runs,
+  single colons, comment apostrophes, branch count against `union all` count, the
+  three first-branch aliases, and that the file ends in `rollback`.
 
 ---
 
