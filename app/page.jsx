@@ -4044,7 +4044,19 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   // could not be reached from this control at all: 327 rows, 80 active, 161
   // inactive, and 83 that no option selected.
   //
-  const activeCounts = quotes.reduce((a,q)=>{ const p=matchOf(q); if(p&&p.active!=null) a[p.active?'active':'inactive']++; return a; }, {active:0,inactive:0});
+  // FOUR BUCKETS, and the fourth is its own option rather than being folded into
+  // Not Set. A quote with no product row at all is a different state from a product
+  // whose active was never decided -- the row already draws them differently, a
+  // hollow ring against a grey dot -- and it is the most actionable one on the page:
+  // it is a catalogue gap, and setting the dropdown creates the missing product.
+  // Putting them under one label would have made an arithmetic gap close at the cost
+  // of saying two unlike things with one word.
+  const activeCounts = quotes.reduce((a,q)=>{
+    const p=matchOf(q);
+    if(!p) { a.noprod++; return a; }
+    if(p.active==null) a.notset++; else a[p.active?'active':'inactive']++;
+    return a;
+  }, {active:0,inactive:0,notset:0,noprod:0});
   const activeOptions = [
     // "All Statuses", not "All". FilterSelect shows the SELECTED OPTION's label on the
     // button, falling back to the `label` prop only when nothing is selected -- and
@@ -4053,6 +4065,12 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
     { value:'All', label:'All Statuses', count:quotes.length },
     { value:'active', label:'Active', color:'var(--ok)', count:activeCounts.active },
     { value:'inactive', label:'Inactive', color:'var(--hot)', count:activeCounts.inactive },
+    // var(--muted) is the same grey the row's dot already uses for this state, so
+    // the option and the rows it selects look like the same thing.
+    { value:'notset', label:'Not Set', color:'var(--muted)', count:activeCounts.notset },
+    // Last, because it is the smallest and the least like the other three: the
+    // others describe a product, this one says there is not one yet.
+    { value:'noprod', label:'No product record', color:'var(--faint)', count:activeCounts.noprod },
   ];
   // FACTORY, MIRRORING THE CLIENT FILTER ABOVE LINE FOR LINE, because two controls
   // sitting side by side that count or sort differently is a bug nobody reports.
@@ -4081,7 +4099,14 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
     // -- the sentinel has to be built the same way on both sides or picking the dash
     // matches nothing.
     if(factoryF!=='All' && ((q.factory||'').trim()||'—')!==factoryF) return false;
-    if(activeF!=='All'){ const p=matchOf(q); if(!p||p.active==null) return false; if((activeF==='active')!==p.active) return false; }
+    // Not an early return: the search test below still has to run, so each branch
+    // only rejects.
+    if(activeF!=='All'){
+      const p=matchOf(q);
+      if(activeF==='noprod'){ if(p) return false; }
+      else if(activeF==='notset'){ if(!p || p.active!=null) return false; }
+      else { if(!p||p.active==null) return false; if((activeF==='active')!==p.active) return false; }
+    }
     const s=search.toLowerCase(); if(!s) return true;
     return `${q.product} ${q.client} ${q.factory} ${q.sku} ${q.country}`.toLowerCase().includes(s);
   });
