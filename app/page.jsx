@@ -5824,8 +5824,20 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       if (!entries.length) return [{ ...base, size:null }];
       // Qualified for the same reason as the SO path: two Ls on one PO would print
       // identically on the document the factory works from.
+      //
+      // ⚠ x.e, NOT x.s. The objects built one line above are {e, q} and carry no `s`
+      // at all, so `size: x.s` wrote undefined on every row and sizePriceOf(it, x.s)
+      // missed the map and silently fell back to the line's flat price. Every sized
+      // PO line since the refactor that introduced it therefore recorded NO SIZE and
+      // NO per-size price -- the 9 rows in the table that do carry a size all predate
+      // it. Nothing surfaced because the columns simply read empty.
+      //
+      // e.label, matching the SO path: the qualified label is what prints, so an
+      // Adult+Youth line writes "Adult L" rather than two rows both reading "L".
+      // e.key is what the per-size price map is keyed on, and the two are different
+      // strings -- which is exactly how one undefined could stand in for both.
       return entries.map(e=>({e,q:Number((it.sizeQty||{})[e.key])||0})).filter(x=>x.q>0)
-        .map(x=>({ ...base, quantity:x.q, unit_price:sizePriceOf(it,x.s), size:x.s }));
+        .map(x=>({ ...base, quantity:x.q, unit_price:sizePriceOf(it,x.e.key), size:x.e.label }));
     };
     for (const it of valid) {
       const hasDesc=(it.desc||'').trim();
