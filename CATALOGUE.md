@@ -444,7 +444,7 @@ of the first group and set nothing at all, losing the rows that were fine.
 
 ## The scripts are the as-run record
 
-`scratchpad/14` through `scratchpad/31` are the scripts as actually executed
+`scratchpad/14` through `scratchpad/32` are the scripts as actually executed
 against production, not drafts. Each carries its measured baseline in the header,
 its guards in the `where` clause rather than in a comment, and a verification
 block that returns exactly one row on success.
@@ -467,6 +467,7 @@ block that returns exactly one row on success.
 | 28 | 110 size-variant rows retired, `active=false` | run 2026-09-03 |
 | 30 | regulation and material links copied to the survivors | run 2026-09-03 |
 | 31 | `staff_profiles.notifications_enabled`, NOT NULL DEFAULT true | run 2026-09-03 |
+| 32 | `quotes.size_plate_fees` + `quotes.size_cartons`, both jsonb NOT NULL `[]` | run 2026-09-04 |
 | 14 | four remaining PO-line links | **parked, see §6** |
 
 ---
@@ -718,6 +719,102 @@ the admin-only Company tab added on 2026-09-03 is **UI intent, not enforcement**
 exactly the standing `canCreateProducts` has: the tab is hidden, the API is not
 closed. Recorded here so the next person reading that gate knows what it is and
 is not. Tightening it is an RLS change, deliberately not made in that pass.
+
+---
+
+## Per-size plate fees and cartons — 2026-09-04, script 32
+
+Loren: *"I have to add in plate fees to each size as they are different"* and
+*"the carton dimensions are also different for each size bag."* Two new jsonb
+columns on `quotes`, both `NOT NULL DEFAULT '[]'`, mirroring `size_price_deltas`
+exactly — same shape, same scope, same strings-in-form-state rule.
+
+**Quote level, not tier level, and that is load-bearing.** `ProductDetailModal`
+`.save` writes `tiers` as a **full replacement**, so anything held inside that
+json survives only as long as whatever that modal last read. Its own column
+survives. Confirmed with Loren that neither varies per quantity break, so tier
+level was not needed anyway.
+
+**A plate amortizes over its own size, not the tier** — the one way it differs
+from mold, and the point of the feature. Mold spreads thinner as the tier grows;
+a plate spreads thinner only as its size grows. A $400 plate over 2,000 units is
+$0.20; over 200 it is $2.00, and that jump on a short size is what the buyer
+needs to see. The size row's margin is recomputed from tier cost **plus** plate
+rather than adjusted from the tier margin, so no rounding gap can open between a
+size row and the tier above it.
+
+**Cartons are dimensions only.** `units_per_carton` and `carton_weight` stay
+quote-level — only the dimensions vary by bag size, per Loren. Entries are sparse
+and may be **partial** (a size can override height alone); anything absent falls
+back to the quote-level column *at the point of use*, never at load time, which
+would freeze today's value into the row.
+
+**Where each reaches.** Plate fees are internal — the quote editor and nothing
+else; mold's existing appearance on the client PDF is unchanged. Cartons compose
+into each expanded PO row's `carton_info` as `60×40×30 cm`, printed by
+`buildPODoc` through the box line it already had, with **zero template changes**.
+A line with no override still gets the quote-level dims: the factory needs a box
+size on every line.
+
+**`ApplyBidModal` is deliberately untouched.** It keeps reading the quote-level
+carton columns, so on a quote carrying per-size dimensions its CBM is an average
+rather than an exact figure. Riley has been told; that is his call to make later,
+not ours to make for him.
+
+---
+
+## The `x.s` bug — sized PO lines wrote nothing, 21 Aug to 4 Sep
+
+`5c0ad12` (2026-08-21 13:21) replaced the producer in **both** order expansions
+with a `{e, q}` shape and updated only the **sales order** consumer — to
+`x.e.label`, `x.e.key`, `skuToken(x.e)`. The purchase-order consumer is not in
+that diff at all: it was left reading `x.s`, off objects that carry no `s`.
+
+So every sized PO line wrote `size = undefined`, and `sizePriceOf(it, undefined)`
+missed the per-size price map and fell back to the line's flat price. **Nothing
+surfaced, because both columns simply read empty.**
+
+**Zero purchase orders affected, measured rather than assumed.** The insert
+computes `description` once per line item and copies it onto every size row, so a
+sized PO always produces N rows sharing one description on one PO. That is the
+fingerprint. Across all 14 POs and 42 line rows created since the refactor: 0 rows
+carry a size, 0 groups share a PO and description, 0 rows have a null description
+that could have hidden such a group — every PO has as many distinct descriptions
+as it has rows. The date boundary does not change it: the eleven POs dated 21 Aug
+straddle the 13:21 commit, and had any run the old code while sized it would carry
+sizes, which none do.
+
+The feature was therefore **inert, not wrong** — nobody attempted a sized PO in
+those two weeks, no factory received a document with a collapsed size breakdown,
+and there is no data to repair. The nine sized rows in the table are from one PO
+on 31 July, before the refactor, and are correct.
+
+`e.label` and `e.key` are deliberately different strings — the qualified label
+prints on the factory document, the key is what the price map is stored under —
+which is precisely how one `undefined` could stand in for both without either
+looking obviously wrong.
+
+---
+
+## `storedQtyToMap` — the third helper consolidation
+
+`qtyMapFrom` was private to `quotes.jsx`. Both order modals now need the same
+conversion to prefill their size grids from a quote tier, so it moved to
+`SizeGrid.jsx` beside `sizeKey`, `sizesForSelection` and `toScaleList`, and is
+imported back into `quotes.jsx` under its original name so no call site changed.
+
+**It moved rather than being copied because a hand-copy is how `page.jsx` ended up
+with a margin that omitted duty** (see the `lib/tierCost.js` consolidation the day
+before). That file still carries one hand-written mirror — `deltaMap` inside
+`CreateSOModal`, with a comment saying it must not drift from `deltasToMap`. It is
+the last of them and worth folding in next time that area is opened.
+
+**The maps do not line up, which is the thing to check before assuming they do.**
+`tier.sizeQty` is *stored* as `{scale, size, qty}` records, or as a legacy object
+keyed by bare size; the grid keys on `sizeKey(scale, size)`. Reading the stored
+value straight into the grid keys it on `"0"`, `"1"`, `"2"` and prefills nothing
+while looking like it worked. The converter also keeps its refusal to guess: a
+legacy bare-size map is only interpretable when the quote carries **one** scale.
 
 ---
 
