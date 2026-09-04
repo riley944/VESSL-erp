@@ -1095,6 +1095,41 @@ function Dashboard({ navigate }) {
 // borrowed conventions from one place rather than one from each.
 const INV_TABS = [['overview', 'Overview'], ['breakdown', 'Inventory Breakdown']];
 
+// The same four buckets, colours and ordering as the Products page status filter,
+// because two controls in one app that spell the same states differently is a bug
+// nobody reports. products.active is nullable and null means undecided, so Not Set
+// is a real state; a line with no product row at all is a different state again and
+// gets its own bucket rather than being folded in.
+//
+// READ-ONLY HERE. The Products page pairs its dot with a <select> that writes
+// products.active. This page reports what the catalogue says and offers no way to
+// change it -- an inventory row is a purchase-order line, and the thing being
+// described belongs to the product.
+const INV_STATUS = [
+  ['active',   'Active',            'var(--ok)'],
+  ['inactive', 'Inactive',          'var(--hot)'],
+  ['notset',   'Not Set',           'var(--muted)'],
+  ['noprod',   'No product record', 'var(--faint)'],
+];
+// Short forms for the cell, where the column is 128px and "No product record" is not.
+// The title carries the full sentence, so nothing is lost to the abbreviation.
+const INV_ST_SHORT = { active:'Active', inactive:'Inactive', notset:'Not set', noprod:'No record' };
+// A map rather than a .find() at render time: a find returns undefined for a bucket
+// that is not in the list, and indexing that undefined throws inside the row -- which
+// takes the whole page down over one unrecognised string. Unknown falls back to the
+// hollow ring, which is the honest answer to "no status I can name".
+const INV_ST_COLOR = Object.fromEntries(INV_STATUS.map(([v,,color])=>[v,color]));
+// One constant for the header and the body row. They were two identical literals and
+// a Status column is exactly the kind of edit that updates one and not the other --
+// which is the MARGIN header bug from the quote table, in a different table.
+const INV_COLS = '1fr 130px 128px 90px';
+const INV_ST_TITLE = {
+  active:   'Active in the catalogue',
+  inactive: 'Inactive in the catalogue',
+  notset:   'This product exists but its active state has never been set',
+  noprod:   'No product record — this line falls back to its purchase-order description',
+};
+
 function Inventory() {
   // ONE FLAT LIST, not the nested map this used to build. Every view here is a
   // different grouping of the same rows -- by client, by factory, by client then
@@ -1107,6 +1142,7 @@ function Inventory() {
   const [tab, setTab] = useState('overview');
   const [clientF, setClientF] = useState('All');
   const [factoryF, setFactoryF] = useState('All');
+  const [statusF, setStatusF] = useState('All');
   const [search, setSearch] = useState('');
 
   const load = async () => {
@@ -1115,7 +1151,11 @@ function Inventory() {
     // factory is on the PO the page was already reading -- populated on all 40 live
     // POs -- so the filter costs one join and no extra round trip.
     const { data: pos } = await SB.from('purchase_orders')
-      .select('id,order_number,client_po_number,status,client:companies!client_company_id(name,id),factory:companies!factory_company_id(name,id),purchase_order_items(description,quantity,products(name,sku)),shipment_pos(shipments(status,actual_arrival))')
+      // products.active is the only addition: one more column on a join the query
+      // already makes, so the status column and its filter cost no extra round trip
+      // and no second request. The embed is null when product_id is null, which is
+      // exactly the fourth bucket rather than something to guard against.
+      .select('id,order_number,client_po_number,status,client:companies!client_company_id(name,id),factory:companies!factory_company_id(name,id),purchase_order_items(description,quantity,products(name,sku,active)),shipment_pos(shipments(status,actual_arrival))')
       .not('status','in','("draft","cancelled","closed","delivered")');
     const active = (pos||[]).filter(po => {
       const ships = (po.shipment_pos||[]).map(sp=>sp.shipments).filter(Boolean);
@@ -1136,6 +1176,12 @@ function Inventory() {
           qty:  Number(it.quantity)||0,
           po:   po.client_po_number||po.order_number||po.id.slice(0,8),
           status: po.status,
+          // `bucket` and not `status`: that name is taken by the PURCHASE ORDER's
+          // status on this same object, and the two are unrelated -- one is where the
+          // order is, the other is whether the product is still sold.
+          bucket: !it.products ? 'noprod'
+                : it.products.active == null ? 'notset'
+                : it.products.active ? 'active' : 'inactive',
         });
       });
     });
@@ -1158,6 +1204,16 @@ function Inventory() {
   };
   const clientOptions  = optionsFrom('client',  'All Clients');
   const factoryOptions = optionsFrom('factory', 'All Factories');
+  // Not built by optionsFrom: that one derives its options from the values present and
+  // sorts them alphabetically, which is right for names and wrong for these. The four
+  // buckets are a fixed set in a fixed order, and one showing 0 is information -- it
+  // says the state is empty, not that it does not exist.
+  const stCounts = {};
+  lines.forEach(l => { stCounts[l.bucket] = (stCounts[l.bucket]||0) + 1; });
+  const statusOptions = [
+    { value:'All', label:'All Statuses', count:lines.length },
+    ...INV_STATUS.map(([v,l,color])=>({ value:v, label:l, color, count:stCounts[v]||0 })),
+  ];
 
   // The sentinel is built the same way on both sides -- option list and predicate --
   // or choosing the em dash matches nothing.
@@ -1165,9 +1221,30 @@ function Inventory() {
   const shown = lines.filter(l => {
     if (clientF !== 'All' && ((l.client ||'').trim()||'—') !== clientF)  return false;
     if (factoryF!== 'All' && ((l.factory||'').trim()||'—') !== factoryF) return false;
+    // No sentinel and no normalisation: bucket is one of four fixed strings this file
+    // computes itself, so the option value and the line value cannot drift apart the
+    // way a trimmed name can.
+    if (statusF !== 'All' && l.bucket !== statusF) return false;
     if (term && !((l.prod+' '+l.sku).toLowerCase().includes(term))) return false;
     return true;
   });
+
+  // WHOLE-SET, deliberately, and this is the one place a filtered set would lie.
+  // Status is a property of the PRODUCT while the display key is (client, name, sku),
+  // so every line in a row normally shares one status -- measured across all 71 rows
+  // in the live set: zero disagreements, including the case where a description
+  // fallback could collide with a real product name under a blank sku. The key is not
+  // the product id though, so two catalogue rows sharing a name and sku would land in
+  // one row here. Judging that from `shown` would hide it exactly when it matters:
+  // narrowing to a single status makes a mixed row look unanimous while the filter is
+  // quietly dropping the rest of it.
+  const bucketsByKey = {};
+  lines.forEach(l => {
+    const k = l.client+'|||'+l.prod+'|||'+l.sku;
+    if (!bucketsByKey[k]) bucketsByKey[k] = {};
+    bucketsByKey[k][l.bucket] = true;
+  });
+  const isMixed = (c,p) => Object.keys(bucketsByKey[c+'|||'+p.prod+'|||'+p.sku]||{}).length > 1;
 
   // Grouping is UNCHANGED: client, then product name + sku. Rows with no product_id
   // fall back to their free-text description, which is why two typings of one
@@ -1179,7 +1256,7 @@ function Inventory() {
     rows.forEach(l => {
       if (!g[l.client]) g[l.client] = {};
       const k = l.prod+'|||'+l.sku;
-      if (!g[l.client][k]) g[l.client][k] = { prod:l.prod, sku:l.sku, qty:0 };
+      if (!g[l.client][k]) g[l.client][k] = { prod:l.prod, sku:l.sku, qty:0, st:l.bucket };
       g[l.client][k].qty += l.qty;
     });
     return g;
@@ -1288,6 +1365,7 @@ function Inventory() {
         <div className="fs-row" style={{marginBottom:'14px'}}>
           <FilterSelect label="All Clients"   value={clientF}  onChange={setClientF}  options={clientOptions} />
           <FilterSelect label="All Factories" value={factoryF} onChange={setFactoryF} options={factoryOptions} />
+          <FilterSelect label="All Statuses"  value={statusF}  onChange={setStatusF}  options={statusOptions} />
         </div>
         <div style={{marginBottom:'18px',maxWidth:'420px'}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search product or SKU…"
@@ -1308,7 +1386,7 @@ function Inventory() {
         {clients.length===0 ? (
           <div style={{background:'#fff',borderRadius:'20px',padding:'48px 32px',textAlign:'center',boxShadow:cardShadow}}>
             <div style={{fontSize:'16px',fontWeight:600,color:'#1D1D1F',marginBottom:'6px'}}>Nothing matches</div>
-            <div style={{color:'#86868B',fontSize:'14px'}}>Try a different client, factory or search term.</div>
+            <div style={{color:'#86868B',fontSize:'14px'}}>Try a different client, factory, status or search term.</div>
           </div>
         ) : clients.map((c)=>{
           const rows = Object.values(groups[c]).sort((a,b)=>b.qty-a.qty);
@@ -1322,18 +1400,38 @@ function Inventory() {
                 </div>
                 <span style={{fontSize:'14px',color:'#86868B',fontVariantNumeric:'tabular-nums',letterSpacing:'-.01em',flexShrink:0}}>{fmtNum(total)} units</span>
               </div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 130px 90px',gap:'16px',padding:'9px 24px',borderTop:'1px solid rgba(0,0,0,.06)',background:'#FAFAFA'}}>
+              <div style={{display:'grid',gridTemplateColumns:INV_COLS,gap:'16px',padding:'9px 24px',borderTop:'1px solid rgba(0,0,0,.06)',background:'#FAFAFA'}}>
                 <div style={{fontSize:'11px',fontWeight:500,letterSpacing:'-.004em',color:'#A0A0A4'}}>Product</div>
                 <div style={{fontSize:'11px',fontWeight:500,letterSpacing:'-.004em',color:'#A0A0A4'}}>SKU</div>
+                <div style={{fontSize:'11px',fontWeight:500,letterSpacing:'-.004em',color:'#A0A0A4'}}>Status</div>
                 <div style={{fontSize:'11px',fontWeight:500,letterSpacing:'-.004em',color:'#A0A0A4',textAlign:'right'}}>On order</div>
               </div>
-              {rows.map((p,i)=>(
-                <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 130px 90px',gap:'16px',padding:'13px 24px',borderTop:'1px solid rgba(0,0,0,.06)',alignItems:'center'}}>
+              {rows.map((p,i)=>{
+                const mixed = isMixed(c,p);
+                return (
+                <div key={i} style={{display:'grid',gridTemplateColumns:INV_COLS,gap:'16px',padding:'13px 24px',borderTop:'1px solid rgba(0,0,0,.06)',alignItems:'center'}}>
                   <div style={{fontSize:'15px',color:'#1D1D1F',letterSpacing:'-.01em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.prod}</div>
                   <div style={{fontSize:'13px',color:'#86868B',fontFamily:'var(--mono)',letterSpacing:'-.006em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.sku||'—'}</div>
+                  {/* The Products page convention exactly: a FILLED dot means a product
+                      record exists -- green, red or grey for true, false, undecided --
+                      and a HOLLOW ring means none does. Same 8px, same colours, same
+                      1.5px ring, so the two pages read as one vocabulary. */}
+                  <div title={mixed
+                        ? 'Lines in this row have different catalogue statuses. Rows are keyed on product name and SKU rather than product id, so two catalogue entries sharing both land here together.'
+                        : INV_ST_TITLE[p.st]}
+                    style={{display:'flex',alignItems:'center',gap:'7px',minWidth:0}}>
+                    <span style={{width:'8px',height:'8px',borderRadius:'50%',flexShrink:0,boxSizing:'border-box',
+                      ...(mixed || p.st==='noprod' || !INV_ST_COLOR[p.st]
+                        ? {background:'transparent', border:'1.5px solid var(--muted)'}
+                        : {background: INV_ST_COLOR[p.st]})}} />
+                    <span style={{fontSize:'12.5px',color:'#86868B',letterSpacing:'-.006em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                      {mixed ? 'Mixed' : (INV_ST_SHORT[p.st] || '—')}
+                    </span>
+                  </div>
                   <div style={{fontSize:'15px',fontWeight:600,color:'#1D1D1F',textAlign:'right',fontVariantNumeric:'tabular-nums',letterSpacing:'-.01em'}}>{fmtNum(p.qty)}</div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           );
         })}
