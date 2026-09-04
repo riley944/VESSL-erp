@@ -13,6 +13,40 @@ import { SizeGrid, sizesForSelection, toScaleList, skuToken } from '@/app/compon
 // The SAME cost model the quote editor uses. This page carried a hand-written copy
 // that had drifted on both the mold divisor and the duty term; see lib/tierCost.js.
 import { tierTotalCost } from '@/lib/tierCost';
+
+// ── Carton text for a purchase order line ────────────────────────────────────
+// "60×40×30 cm" -- DIMENSIONS ONLY, the format Loren approved. Units-per-carton
+// and weight are quote-level and do not vary by size, so putting them in a
+// per-size string would repeat a number that is not per-size and can go stale.
+// U+00D7, not the letter x: this reaches a factory document.
+//
+// All three or nothing. A box described by two of its dimensions is not a box,
+// and half a carton size on a factory PO is worse than none -- it reads as
+// complete.
+function cartonText(l, w, h) {
+  const n = (v) => { const x = Number(v); return isFinite(x) && x > 0 ? String(x) : null; };
+  const a = n(l), b = n(w), c = n(h);
+  if (!a || !b || !c) return null;
+  return a + '×' + b + '×' + c + ' cm';
+}
+// Per-size dimensions where the quote gives them, quote-level where it does not.
+// Falling back rather than requiring an override is Matt's decision: the factory
+// needs a carton size on every line, and a line gaining one where it previously
+// had none is an improvement.
+// Same attribution rule as the quote editor: a record carrying no scale is adopted
+// by the only scale on the line and refused when there are several, because a bare
+// "L" on an Adult+Youth line does not say which L it meant.
+function cartonForSize(it, e) {
+  const arr = Array.isArray(it.sizeCartons) ? it.sizeCartons : [];
+  const scales = toScaleList(it.sizeScales);
+  const hit = arr.find((d) => d && d.size != null && String(d.size) === String(e.size)
+    && (d.scale != null ? String(d.scale) === String(e.scale) : scales.length === 1));
+  return cartonText(
+    hit && hit.l != null ? hit.l : it.qCartonL,
+    hit && hit.w != null ? hit.w : it.qCartonW,
+    hit && hit.h != null ? hit.h : it.qCartonH,
+  );
+}
 // A backdrop click used to discard everything typed into these modals. Same
 // treatment quotes.jsx got: card ref, onClose becomes guardedClose. All sixteen
 // modals in this file are wired, so none is left behind on the old behaviour.
@@ -5746,7 +5780,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     }));
     const qScale = toScaleList(q.size_scale);
     const qPrice = t.landed!=null?String(t.landed):'';
-    setItems([{ prodId: productIdForQuote(q), desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: qPrice, ci:'', carton:'', sizeScales: qScale, sizeQty:{}, sizePrice: seedPrices(qScale,qPrice) }]);
+setItems([{ prodId: productIdForQuote(q), desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: qPrice, ci:'', carton:'', sizeCartons: q.size_cartons||[], qCartonL: q.carton_l, qCartonW: q.carton_w, qCartonH: q.carton_h, sizeScales: qScale, sizeQty:{}, sizePrice: seedPrices(qScale,qPrice) }]);
   };
   const pickTier = ti => { if(picked) applyQuote(picked, ti); };
   const addExtraFromQuote = async (q, ti) => {
@@ -5757,7 +5791,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     const xPrice = t.landed!=null?String(t.landed):'';
     // Matched too. This line comes from a quote just as items[0] does; leaving it
     // blank was why a multi-line PO could only ever carry one resolved product.
-    const newItem = { prodId:productIdForQuote(q), desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:xPrice, ci:'', carton:'', sizeScales:xScale, sizeQty:{}, sizePrice:seedPrices(xScale,xPrice) };
+    const newItem = { prodId:productIdForQuote(q), desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:xPrice, ci:'', carton:'', sizeCartons: q.size_cartons||[], qCartonL: q.carton_l, qCartonW: q.carton_w, qCartonH: q.carton_h, sizeScales:xScale, sizeQty:{}, sizePrice:seedPrices(xScale,xPrice) };
     setItems(prev=>[...prev, newItem]);
     // If no client set yet on this PO, pull it from this quote's client
     if (!form.clientId && q.client) {
@@ -5821,7 +5855,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     const rowsFor = it => {
       const base={ purchase_order_id:po.id, product_id:it.prodId||null, quantity:Number(it.qty), unit_price:Number(it.price)||0, currency:form.currency, ci_value:Number(it.ci)||null, carton_info:it.carton||null, vpn:it.vpn||null, master_sku:it.masterSku||null, pack_sku:it.packSku||null, baby_sku:it.babySku||null, retail_price:it.retailPrice?Number(it.retailPrice):null };
       const entries=sizesForSelection(it.sizeScales);
-      if (!entries.length) return [{ ...base, size:null }];
+      // An unsized line still gets the quote's carton, for the same reason a sized
+      // one does: the factory needs a box size on every line it packs.
+      if (!entries.length) return [{ ...base, size:null, carton_info: it.carton || cartonText(it.qCartonL,it.qCartonW,it.qCartonH) || null }];
       // Qualified for the same reason as the SO path: two Ls on one PO would print
       // identically on the document the factory works from.
       //
@@ -5837,7 +5873,8 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       // e.key is what the per-size price map is keyed on, and the two are different
       // strings -- which is exactly how one undefined could stand in for both.
       return entries.map(e=>({e,q:Number((it.sizeQty||{})[e.key])||0})).filter(x=>x.q>0)
-        .map(x=>({ ...base, quantity:x.q, unit_price:sizePriceOf(it,x.e.key), size:x.e.label }));
+        .map(x=>({ ...base, quantity:x.q, unit_price:sizePriceOf(it,x.e.key), size:x.e.label,
+                   carton_info: it.carton || cartonForSize(it, x.e) || null }));
     };
     for (const it of valid) {
       const hasDesc=(it.desc||'').trim();

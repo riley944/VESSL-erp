@@ -16,7 +16,7 @@ import { productByKey, ensureProductForQuote } from "@/lib/products";
 import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey } from "@/app/components/SizeGrid";
 // The tier cost helpers live in lib/tierCost.js so page.jsx reads the SAME ones.
 // They were duplicated by hand there and had drifted; see that file for what broke.
-import { tierFreight, tierDuty, activeFreight, moldPerUnit, effectiveQty, tierTotalCost } from "@/lib/tierCost";
+import { tierFreight, tierDuty, activeFreight, moldPerUnit, effectiveQty, tierTotalCost, platePerUnit } from "@/lib/tierCost";
 import { CodeModal } from "@/app/components/CodeModal";
 // HtsField used to live in this file. It moved to app/components so the Edit
 // Product modal could use the same control rather than a second copy -- the
@@ -224,7 +224,9 @@ function marginRangeFor(t, moldFee, deltaMap, scales) {
 // whose client price is not settled yet still needs a quantity. A missing base is
 // zero, so a +10 with no base is simply a price of 10; price is null only when the
 // arithmetic lands at or below zero, and margin follows the price.
-function sizeRowsFor(t, moldFee, deltaMap, scales) {
+// plateMap is optional, so the two callers that do not have one -- and any future
+// caller reading only prices -- keep working unchanged.
+function sizeRowsFor(t, moldFee, deltaMap, scales, plateMap) {
   const base = Number(t.client) || 0;
   // key is what the quantity is stored under, label is what the row prints. They
   // differ only when the selection collides -- "Adult L" over key 'adult|L'.
@@ -232,7 +234,23 @@ function sizeRowsFor(t, moldFee, deltaMap, scales) {
     const d = Number((deltaMap || {})[e.key]);
     const delta = isFinite(d) ? d : 0;
     const price = base + delta > 0 ? base + delta : null;
-    return { key: e.key, size: e.size, label: e.label, scale: e.scale, delta, price, margin: price == null ? null : tierMargin(t, price, moldFee) };
+    // THE PLATE LANDS ON THIS ROW'S COST, not on the tier's. tierMargin computes
+    // the tier-wide cost -- EXW, freight, duty, mold over the whole mix -- and the
+    // plate is added on top for this size alone, which is why it is done here and
+    // not inside tierTotalCost: that function has no idea which size it is for.
+    const qty = Number((t.sizeQty || {})[e.key]) || 0;
+    const plateFee = Number((plateMap || {})[e.key]) || 0;
+    const plate = platePerUnit(plateMap, e.key, qty);
+    // Recomputed from the tier cost rather than by adjusting the tier margin, so a
+    // rounding difference cannot open up between a size row and the tier above it.
+    const margin = price == null ? null : ((price - (tierTotalCost(t, moldFee) + plate)) / price) * 100;
+    return {
+      key: e.key, size: e.size, label: e.label, scale: e.scale, delta, price, margin,
+      qty, plateFee, plate,
+      // The state the muted note beside the row is for: a fee was entered and is
+      // contributing nothing, because nothing of this size is being made yet.
+      plateIdle: plateFee > 0 && qty <= 0,
+    };
   });
 }
 // What the size mix on a tier is actually worth: the amount it bills to, and the
@@ -347,6 +365,82 @@ function mapToDeltas(map, scales) {
     .map((e) => ({ scale: e.scale, size: e.size, delta: Number((map || {})[e.key]) }))
     .filter((d) => isFinite(d.delta) && d.delta !== 0);
 }
+
+// ── Per-size plate fees ──────────────────────────────────────────────────────
+// A THIRD PAIR ON THE SAME PATTERN as deltasToMap/mapToDeltas above, deliberately
+// written out rather than generalised: the boxed note further up says each pair
+// must agree exactly, and a shared helper parameterised by field name would make
+// the two halves agree by construction while making it much harder to see that
+// they do. Three explicit pairs read better than one clever one.
+//
+// Same attribution rule: a record with no scale is adopted by the only scale on
+// the quote and refused when there are several, because guessing which Adult-or-
+// Youth L a bare "L" meant is exactly the ambiguity the composite key removed.
+// Strings in form state, for the reason the deltas are: coercing to Number on each
+// keystroke makes "1.50" untypeable.
+function platesToMap(v, scales) {
+  let arr = [];
+  try { arr = Array.isArray(v) ? v : (v ? JSON.parse(v) : []); } catch { arr = []; }
+  const list = toScaleList(scales);
+  const map = {};
+  (Array.isArray(arr) ? arr : []).forEach((d) => {
+    if (!d || d.size == null) return;
+    const n = Number(d.fee);
+    if (!isFinite(n) || n === 0) return;
+    const scale = d.scale != null ? String(d.scale) : (list.length === 1 ? list[0] : null);
+    if (!scale) return;
+    map[sizeKey(scale, String(d.size))] = String(n);
+  });
+  return map;
+}
+function mapToPlates(map, scales) {
+  return sizesForSelection(scales)
+    .map((e) => ({ scale: e.scale, size: e.size, fee: Number((map || {})[e.key]) }))
+    .filter((d) => isFinite(d.fee) && d.fee !== 0);
+}
+
+// ── Per-size carton dimensions ───────────────────────────────────────────────
+// DIMENSIONS ONLY -- no units-per-carton and no weight, confirmed with Loren that
+// only the dimensions vary by bag size. Those two stay quote level, which is also
+// what keeps ApplyBidModal's reading of them meaningful.
+//
+// SPARSE AND PARTIAL. A size appears only when it overrides something, and it may
+// override one dimension without the other two -- so unlike the deltas, the filter
+// keeps a record when ANY of l/w/h is a real number rather than requiring all
+// three. Anything still missing falls back to the quote-level carton_l/w/h at the
+// point of use, never here: filling the gaps at load time would freeze today's
+// quote-level value into the row and stop it tracking later edits.
+function cartonsToMap(v, scales) {
+  let arr = [];
+  try { arr = Array.isArray(v) ? v : (v ? JSON.parse(v) : []); } catch { arr = []; }
+  const list = toScaleList(scales);
+  const map = {};
+  (Array.isArray(arr) ? arr : []).forEach((d) => {
+    if (!d || d.size == null) return;
+    const scale = d.scale != null ? String(d.scale) : (list.length === 1 ? list[0] : null);
+    if (!scale) return;
+    const cell = {};
+    ["l", "w", "h"].forEach((k) => {
+      const n = Number(d[k]);
+      if (isFinite(n) && n > 0) cell[k] = String(n);
+    });
+    if (Object.keys(cell).length) map[sizeKey(scale, String(d.size))] = cell;
+  });
+  return map;
+}
+function mapToCartons(map, scales) {
+  return sizesForSelection(scales)
+    .map((e) => {
+      const cell = (map || {})[e.key] || {};
+      const out = { scale: e.scale, size: e.size };
+      ["l", "w", "h"].forEach((k) => {
+        const n = Number(cell[k]);
+        if (isFinite(n) && n > 0) out[k] = n;
+      });
+      return out;
+    })
+    .filter((d) => d.l != null || d.w != null || d.h != null);
+}
 // Per-size quantities ride on the TIER, not the quote — 500 units split S/M/L is a
 // different split at 5,000. Stored as an object keyed by size, held in form state as
 // STRINGS for the same reason the deltas are. Absent on every tier written before
@@ -434,7 +528,7 @@ function rowToForm(r) {
   return {
     id: r.id,
     quoteDate: r.quote_date || "", product: r.product || "",
-    sku: r.sku || "", sizeScales: scales, sizeDeltas: deltasToMap(r.size_price_deltas, scales), notes: r.notes || "",
+    sku: r.sku || "", sizeScales: scales, sizeDeltas: deltasToMap(r.size_price_deltas, scales), sizePlateFees: platesToMap(r.size_plate_fees, scales), sizeCartons: cartonsToMap(r.size_cartons, scales), notes: r.notes || "",
     client: r.client || "", clientContact: r.client_contact || "", clientEmail: r.client_email || "",
     clientPhone: r.client_phone || "", clientAddress: r.client_address || "",
     factory: r.factory || "", factoryContact: r.factory_contact || "", factoryEmail: r.factory_email || "",
@@ -484,7 +578,7 @@ function formToRow(f) {
     quote_date: f.quoteDate || null, product: f.product || null,
     // text[] since the migration. An empty selection writes NULL, not '{}': NULL is
     // "this quote has no sizes", which is what every unsized quote has always said.
-    sku: f.sku || null, size_scale: (f.sizeScales || []).length ? f.sizeScales : null, size_price_deltas: mapToDeltas(f.sizeDeltas, f.sizeScales), qty: num(first.qty), notes: f.notes || null,
+    sku: f.sku || null, size_scale: (f.sizeScales || []).length ? f.sizeScales : null, size_price_deltas: mapToDeltas(f.sizeDeltas, f.sizeScales), size_plate_fees: mapToPlates(f.sizePlateFees, f.sizeScales), size_cartons: mapToCartons(f.sizeCartons, f.sizeScales), qty: num(first.qty), notes: f.notes || null,
     client: f.client || null, client_contact: f.clientContact || null, client_email: f.clientEmail || null,
     client_phone: f.clientPhone || null, client_address: f.clientAddress || null,
     factory: f.factory || null, factory_contact: f.factoryContact || null, factory_email: f.factoryEmail || null,
@@ -507,7 +601,7 @@ const SKU_SIZE_SUFFIX = /[-_\/ ]\s*(?:[0-9]?X{0,3}(?:S|M|L|XS|SM|MED|LG|XL|XXL|S
 const skuLooksSized = (sku) => SKU_SIZE_SUFFIX.test((sku || "").trim());
 
 const BLANK = {
-  id: null, quoteDate: "", product: "", sku: "", sizeScales: [], sizeDeltas: {}, notes: "",
+  id: null, quoteDate: "", product: "", sku: "", sizeScales: [], sizeDeltas: {}, sizePlateFees: {}, sizeCartons: {}, notes: "",
   updatedAt: "", updatedBy: "",
   client: "", clientContact: "", clientEmail: "", clientPhone: "", clientAddress: "",
   factory: "", factoryContact: "", factoryEmail: "", factoryPhone: "", country: "", leadTime: "", hts: "",
@@ -2283,7 +2377,11 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
         Object.keys(m || {}).forEach((k) => { if (live.has(k)) kept[k] = m[k]; });
         return kept;
       };
-      return { ...p, sizeScales: next, sizeDeltas: keep(p.sizeDeltas), tiers: p.tiers.map((t) => ({ ...t, sizeQty: keep(t.sizeQty) })) };
+      // Both new maps join the prune. A fee or a carton left behind on a size the
+      // quote no longer offers would be invisible on screen and still written back
+      // by formToRow -- which is the shape of every stale-per-size bug this file
+      // has already had.
+      return { ...p, sizeScales: next, sizeDeltas: keep(p.sizeDeltas), sizePlateFees: keep(p.sizePlateFees), sizeCartons: keep(p.sizeCartons), tiers: p.tiers.map((t) => ({ ...t, sizeQty: keep(t.sizeQty) })) };
     });
   };
   // Deltas can be negative, so SizeGrid's digit-only strip is wrong here. Keep one
@@ -2296,6 +2394,32 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
     if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, "");
     if (neg) s = "-" + s;
     setF((p) => ({ ...p, sizeDeltas: { ...(p.sizeDeltas || {}), [key]: s } }));
+  };
+  // A plate fee is a cost and cannot be negative, so unlike the delta above this
+  // strips the minus as well. One dot, digits, nothing else. Blank means none.
+  const setSizePlate = (key, raw) => {
+    let s = String(raw).replace(/[^0-9.]/g, "");
+    const dot = s.indexOf(".");
+    if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, "");
+    setF((p) => ({ ...p, sizePlateFees: { ...(p.sizePlateFees || {}), [key]: s } }));
+  };
+  // Carton dimensions: positive numbers in centimetres, one dot, no minus. Each
+  // size holds up to three of them and may hold fewer -- a partial override is
+  // legitimate, and whatever is left blank falls back to the quote-level box at
+  // the point of use rather than being filled in here.
+  const setSizeCarton = (key, dim, raw) => {
+    let s = String(raw).replace(/[^0-9.]/g, "");
+    const dot = s.indexOf(".");
+    if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, "");
+    setF((p) => {
+      const cell = { ...((p.sizeCartons || {})[key] || {}) };
+      if (s === "") delete cell[dim]; else cell[dim] = s;
+      const next = { ...(p.sizeCartons || {}) };
+      // Drop the whole entry when its last dimension is cleared, so an empty cell
+      // never survives as {} and mapToCartons has nothing to filter out later.
+      if (Object.keys(cell).length) next[key] = cell; else delete next[key];
+      return { ...p, sizeCartons: next };
+    });
   };
   // Quantities are whole units, so here SizeGrid's digit-only strip is exactly right —
   // type="number" would still admit 'e' and '-'. Blank means none. Unlike the deltas,
@@ -2660,6 +2784,77 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                 <span style={S.tierHint}>+/- on the client price, applied across every tier. Blank is no adjustment. Negative lowers the price for that size.</span>
               </label>
             )}
+            {/* PLATE FEES, a second row on the same grid rather than a second input
+                inside each delta box. They are different kinds of number -- one is a
+                price adjustment the client pays, the other a one-time cost we carry
+                -- and stacking them in one cell would invite reading a fee as a
+                delta. Same widths and the same e.label captions, so the two rows
+                line up column for column and a size can be read down. */}
+            {sizeEntries.length > 0 && (
+              <label style={{ ...S.field, gridColumn: "1 / -1" }}>
+                <span style={S.fieldLabel}>Per-size plate fee (one-time)</span>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {sizeEntries.map((e) => (
+                    <div key={e.key} style={{ display: "flex", flexDirection: "column", gap: 3, width: 74 }}>
+                      <span style={{ fontSize: 11, color: "#6a7488", fontWeight: 600, textAlign: "center" }}>{e.label}</span>
+                      <input
+                        style={{ ...S.tierInput, textAlign: "right" }}
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        aria-label={"Plate fee for size " + e.label}
+                        value={(f.sizePlateFees || {})[e.key] ?? ""}
+                        onChange={(ev) => setSizePlate(e.key, ev.target.value)}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <span style={S.tierHint}>
+                  Tooling, charged once for that size and spread across the units of that size only —
+                  so a size with few units carries more of it. Internal: it affects the margin shown
+                  here and appears on no client or factory document. Blank is none.
+                </span>
+              </label>
+            )}
+            {/* PER-SIZE CARTON DIMENSIONS, deliberately here beside the other
+                per-size grids rather than inside the Carton Info section. The three
+                quote-level boxes there are the DEFAULT and stay the thing you fill
+                first; this is the exception list, and it reads as one only when it
+                sits with the other per-size exceptions. Dimensions only -- units per
+                carton and carton weight stay quote level. */}
+            {sizeEntries.length > 0 && (
+              <label style={{ ...S.field, gridColumn: "1 / -1" }}>
+                <span style={S.fieldLabel}>Per-size carton dimensions (cm)</span>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {sizeEntries.map((e) => (
+                    <div key={e.key} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                      <span style={{ fontSize: 11, color: "#6a7488", fontWeight: 600, textAlign: "center" }}>{e.label}</span>
+                      <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+                        {["l", "w", "h"].map((dim, di) => (
+                          <React.Fragment key={dim}>
+                            {di > 0 && <span style={{ fontSize: 11, color: "#9aa3b5" }}>×</span>}
+                            <input
+                              style={{ ...S.tierInput, textAlign: "center", width: 52, padding: "8px 4px" }}
+                              type="text"
+                              inputMode="decimal"
+                              placeholder={dim.toUpperCase()}
+                              aria-label={dim.toUpperCase() + " for size " + e.label}
+                              value={((f.sizeCartons || {})[e.key] || {})[dim] ?? ""}
+                              onChange={(ev) => setSizeCarton(e.key, dim, ev.target.value)}
+                            />
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <span style={S.tierHint}>
+                  Only for sizes whose carton differs. Anything left blank falls back to the Carton Info
+                  boxes above, so a size needs filling in only where it is an exception. These reach the
+                  factory PO on each size line; units per carton and carton weight stay quote-wide.
+                </span>
+              </label>
+            )}
             <Field label="Product" k="product" placeholder="e.g. Needlepoint Belt" f={f} set={set} />
             {/* The three style props reproduce exactly what this file used to apply
                 inline, so the row renders the same as before the extraction. */}
@@ -2864,7 +3059,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                 // stored once per quote and apply to every tier, so editing one here
                 // would silently move the others; that stays in the Product section.
                 // The quantity box is the exception: it belongs to this tier alone.
-                const sizeRows = sizeRowsFor(t, f.moldFee, f.sizeDeltas, f.sizeScales);
+                const sizeRows = sizeRowsFor(t, f.moldFee, f.sizeDeltas, f.sizeScales, f.sizePlateFees);
                 const sizeTotal = sizeQtyTotal(t, f.sizeScales);
                 // With a mix entered the tier has one real margin rather than a band,
                 // so the blended price supersedes the delta range in the Margin cell.
@@ -3107,11 +3302,24 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                       {/* Same centring as the tier row above and the header, so a
                           size-row margin sits on the same axis as both. */}
                       <div style={{ flex: 0.8, textAlign: "center", paddingLeft: MARGIN_GUTTER_PAD, boxSizing: "border-box", ...S.tierSizeCell }}>
-                        {r.margin == null ? "—" : <span style={{ color: r.margin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{r.margin.toFixed(0)}%</span>}
+                        {r.margin == null ? "—" : <span title={r.plate > 0 ? "Includes $" + fmtUnit(r.plate) + " of plate fee, being $" + fmt(r.plateFee) + " over " + r.qty.toLocaleString() + " units of this size" : undefined} style={{ color: r.margin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{r.margin.toFixed(0)}%{r.plate > 0 && <span style={{ fontWeight: 400, color: "#6a7488" }}> ·p</span>}</span>}
                       </div>
                       <div style={{ width: 30 }} />
                     </div>
                   ))}
+                  {/* NO SILENT CONTROLS. A plate fee entered against a size with no
+                      quantity contributes nothing to any cost on this screen -- the
+                      divisor is zero, the same guard mold has -- so without this the
+                      number sits in its box looking applied and is not. One line for
+                      all such sizes rather than one per row: it is a prompt to enter
+                      quantities, not a fault against any single size. */}
+                  {sizeRows.some((r) => r.plateIdle) && (
+                    <div style={{ ...S.tierSizeRow, paddingTop: 2, paddingBottom: 6 }}>
+                      <div style={{ flex: 1, paddingLeft: 12, fontSize: 11, color: "#b0763a", lineHeight: 1.35 }}>
+                        Plate fee entered for {sizeRows.filter((r) => r.plateIdle).map((r) => r.label).join(", ")} — not in the cost above until that size has a quantity.
+                      </div>
+                    </div>
+                  )}
                   </React.Fragment>
                 );
               })}
