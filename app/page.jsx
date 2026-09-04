@@ -9,10 +9,38 @@ import Testing from '@/app/testing';
 import Pricing from '@/app/pricing';
 import Programs from '@/app/programs';
 import { FilterSelect } from '@/app/components/FilterSelect';
-import { SizeGrid, sizesForSelection, toScaleList, skuToken } from '@/app/components/SizeGrid';
+import { SizeGrid, sizesForSelection, toScaleList, skuToken, storedQtyToMap } from '@/app/components/SizeGrid';
 // The SAME cost model the quote editor uses. This page carried a hand-written copy
 // that had drifted on both the mold divisor and the duty term; see lib/tierCost.js.
 import { tierTotalCost } from '@/lib/tierCost';
+
+// ── Prefilling an order grid from a quote tier ───────────────────────────────
+// A PREFILL, NEVER A LOCK. The tier already carries the split somebody worked out
+// on the quote; retyping it into the order is transcription, and transcription is
+// where a 50/50 becomes a 60/40.
+//
+// tier.sizeQty is NOT keyed the way the grid is. It is stored as {scale,size,qty}
+// records (or a legacy bare-size object), so it goes through storedQtyToMap first
+// -- reading it directly would key the grid on "0","1","2" and silently prefill
+// nothing. That is the check worth doing before believing two maps line up.
+const seedQtyFromTier = (tier, scales) => storedQtyToMap(tier ? tier.sizeQty : null, scales);
+// Order-independent comparison: the grid rebuilds its map on every keystroke, so
+// two identical maps can differ in key order and JSON.stringify would call them
+// different.
+const sameQtyMap = (a, b) => {
+  const ka = Object.keys(a || {}).sort(), kb = Object.keys(b || {}).sort();
+  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && String(a[k]) === String((b || {})[k]));
+};
+// Re-seeding on a tier change without eating hand edits. "Untouched" is decided by
+// comparing what is on screen against what the PREVIOUS tier seeded: equal means
+// nobody has typed since, so replacing it is safe; different means it is their work
+// and it stays. Each tier's mix is its own split, so an untouched grid SHOULD follow
+// the tier -- silently keeping tier 1's mix under tier 2's prices is the same class
+// of wrong as silently discarding what was typed.
+const reseedQty = (currentQty, prevTier, nextTier, scales) => {
+  const prevSeed = seedQtyFromTier(prevTier, scales);
+  return sameQtyMap(currentQty, prevSeed) ? seedQtyFromTier(nextTier, scales) : (currentQty || {});
+};
 
 // ── Carton text for a purchase order line ────────────────────────────────────
 // "60×40×30 cm" -- DIMENSIONS ONLY, the format Loren approved. Units-per-carton
@@ -28,6 +56,21 @@ function cartonText(l, w, h) {
   const a = n(l), b = n(w), c = n(h);
   if (!a || !b || !c) return null;
   return a + '×' + b + '×' + c + ' cm';
+}
+// The FULLER form, for a line that has exactly one carton to describe. Matches the
+// field's own placeholder: "12 pcs/ctn, 60×40×30 cm, 11 kg". Units-per-carton and
+// weight are omitted from the PER-SIZE strings because they are quote-level and
+// repeating a non-per-size number on every size row is how it goes stale -- but on
+// an unsized line there is one row and no such risk, so all three facts belong.
+// Whatever the quote does not have is left out rather than written as a blank.
+function cartonSummary(upc, l, w, h, kg) {
+  const parts = [];
+  const n = (v) => { const x = Number(v); return isFinite(x) && x > 0 ? x : null; };
+  if (n(upc)) parts.push(n(upc) + ' pcs/ctn');
+  const dims = cartonText(l, w, h);
+  if (dims) parts.push(dims);
+  if (n(kg)) parts.push(n(kg) + ' kg');
+  return parts.length ? parts.join(', ') : null;
 }
 // Per-size dimensions where the quote gives them, quote-level where it does not.
 // Falling back rather than requiring an override is Matt's decision: the factory
@@ -1823,7 +1866,7 @@ function CreateSOModal({onClose,onCreated}){
     const noPrice=!tier.client||Number(tier.client)===0;
     const scale=toScaleList(q.size_scale);
     const price=tier.client?String(tier.client):'';
-    setItems([{desc:q.product||'',sku:q.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:q.id,tierIdx:tIdx,noPrice,sizeScales:scale,sizeQty:{},sizePrice:seedSizePrices(scale,price,q.size_price_deltas)}]);
+    setItems([{desc:q.product||'',sku:q.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:q.id,tierIdx:tIdx,noPrice,sizeScales:scale,sizeQty:seedQtyFromTier(tier, scale),sizePrice:seedSizePrices(scale,price,q.size_price_deltas)}]);
     if(q.client&&!form.clientId){const m=clients.find(c=>(c.name||'').toLowerCase()===q.client.toLowerCase());if(m)setForm(prev=>({...prev,clientId:m.id,shipTo:(m.shipping_address&&!prev.shipTo)?m.shipping_address:prev.shipTo}));}
   };
   const pickTier=i=>{
@@ -1836,7 +1879,13 @@ function CreateSOModal({onClose,onCreated}){
       // Switching tier re-seeds prices at the new tier, but quantities the user has
       // already typed are theirs -- carry them across the wholesale item replacement.
       setItems(prev=>{
-        const keptQty=(prev[0]&&(prev[0].sizeScales||[]).join(',')===scale.join(','))?(prev[0].sizeQty||{}):{};
+        // Was: keep whatever was typed, seed nothing. It protected hand edits and
+        // that half stays -- but an UNTOUCHED grid now follows the tier, because
+        // each tier's mix is its own split. Scale change still resets, since a map
+        // keyed on the old scale means nothing under the new one.
+        const scaleSame = prev[0] && (prev[0].sizeScales||[]).join(',')===scale.join(',');
+        const prevTier = prev[0] ? (ts[prev[0].tierIdx] || null) : null;
+        const keptQty = scaleSame ? reseedQty(prev[0].sizeQty, prevTier, tier, scale) : seedQtyFromTier(tier, scale);
         return [{desc:picked.product||'',sku:picked.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:picked.id,tierIdx:i,noPrice,sizeScales:scale,sizeQty:keptQty,sizePrice:seedSizePrices(scale,price,picked.size_price_deltas)}];
       });
     }
@@ -3313,7 +3362,14 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
                     <td colSpan={4}>
                       <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 4px'}}>
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 100px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>CI Value ($)</span><input type="number" step="0.00001" className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.ci||''} onChange={e=>setItem(i,'ci',e.target.value)} placeholder="0.00" /></div>
-                        <div style={{display:'flex',flexDirection:'column',flex:'1 1 180px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Carton info</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.carton||''} onChange={e=>setItem(i,'carton',e.target.value)} placeholder="e.g. 12 pcs/ctn, 60×40×30 cm, 11 kg" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'1 1 180px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Carton info{sizesForSelection(it.sizeScales).length>0 && <span style={{textTransform:'none',letterSpacing:0,color:'var(--faint)'}}> — override</span>}</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.carton||''} onChange={e=>setItem(i,'carton',e.target.value)} placeholder="e.g. 12 pcs/ctn, 60×40×30 cm, 11 kg" />
+                          {/* Only says "override" when there is something to override. On an
+                              unsized line this box IS the carton and the word would be a
+                              puzzle. */}
+                          {sizesForSelection(it.sizeScales).length>0 && (
+                            <span style={{fontSize:'10.5px',color:'var(--muted)',marginTop:'3px',lineHeight:1.4}}>Typing here overrides the per-size cartons on every size row of this line.</span>
+                          )}
+                        </div>
                       </div>
                       <div style={{display:'flex',gap:'8px',flexWrap:'wrap',padding:'0 0 8px'}}>
                         <div style={{display:'flex',flexDirection:'column',flex:'0 0 90px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'#7c3aed'}}>VPN #</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12px'}} value={it.vpn||''} onChange={e=>setItem(i,'vpn',e.target.value)} placeholder="VPN" /></div>
@@ -5780,7 +5836,25 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     }));
     const qScale = toScaleList(q.size_scale);
     const qPrice = t.landed!=null?String(t.landed):'';
-setItems([{ prodId: productIdForQuote(q), desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: qPrice, ci:'', carton:'', sizeCartons: q.size_cartons||[], qCartonL: q.carton_l, qCartonW: q.carton_w, qCartonH: q.carton_h, sizeScales: qScale, sizeQty:{}, sizePrice: seedPrices(qScale,qPrice) }]);
+    // applyQuote serves BOTH the first pick and every tier change, so the seed has
+    // to know which it is. On a fresh quote there is nothing to protect and the mix
+    // is taken straight from the tier; on a tier change within the same quote the
+    // hand-edit guard applies. prevTier is read from the item on screen, whose
+    // tierIdx says which tier its numbers came from.
+    setItems(prev=>{
+      const cur = prev && prev[0];
+      const sameQuote = cur && cur.quoteId === q.id;
+      const prevTier = sameQuote ? (tiersOf(q)[cur.tierIdx] || null) : null;
+      const seeded = sameQuote ? reseedQty(cur.sizeQty, prevTier, t, qScale) : seedQtyFromTier(t, qScale);
+      // PREFILLED ONLY ON AN UNSIZED LINE. With a scale, this box is an override and
+      // filling it would silently suppress every per-size carton -- the exact
+      // behaviour the preview below it exists to make visible. Without a scale there
+      // is one carton to describe, so the box can simply show it, editable.
+      // Carried across a tier change rather than recomputed: cartons do not vary by
+      // tier, and recomputing would overwrite anything typed since.
+      const cartonSeed = qScale.length ? '' : (sameQuote ? (cur.carton||'') : (cartonSummary(q.units_per_carton, q.carton_l, q.carton_w, q.carton_h, q.carton_weight) || ''));
+      return [{ prodId: productIdForQuote(q), desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: qPrice, ci:'', carton: cartonSeed, sizeCartons: q.size_cartons||[], qCartonL: q.carton_l, qCartonW: q.carton_w, qCartonH: q.carton_h, sizeScales: qScale, sizeQty: seeded, sizePrice: seedPrices(qScale,qPrice), quoteId: q.id, tierIdx: ti }];
+    });
   };
   const pickTier = ti => { if(picked) applyQuote(picked, ti); };
   const addExtraFromQuote = async (q, ti) => {
@@ -5791,7 +5865,7 @@ setItems([{ prodId: productIdForQuote(q), desc: q.product||'', qty: t.qty!=null?
     const xPrice = t.landed!=null?String(t.landed):'';
     // Matched too. This line comes from a quote just as items[0] does; leaving it
     // blank was why a multi-line PO could only ever carry one resolved product.
-    const newItem = { prodId:productIdForQuote(q), desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:xPrice, ci:'', carton:'', sizeCartons: q.size_cartons||[], qCartonL: q.carton_l, qCartonW: q.carton_w, qCartonH: q.carton_h, sizeScales:xScale, sizeQty:{}, sizePrice:seedPrices(xScale,xPrice) };
+    const newItem = { prodId:productIdForQuote(q), desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:xPrice, ci:'', carton: xScale.length ? '' : (cartonSummary(q.units_per_carton, q.carton_l, q.carton_w, q.carton_h, q.carton_weight) || ''), sizeCartons: q.size_cartons||[], qCartonL: q.carton_l, qCartonW: q.carton_w, qCartonH: q.carton_h, sizeScales:xScale, sizeQty:seedQtyFromTier(t, xScale), sizePrice:seedPrices(xScale,xPrice), quoteId:q.id, tierIdx:ti };
     setItems(prev=>[...prev, newItem]);
     // If no client set yet on this PO, pull it from this quote's client
     if (!form.clientId && q.client) {
@@ -6096,6 +6170,40 @@ setItems([{ prodId: productIdForQuote(q), desc: q.product||'', qty: t.qty!=null?
                       </div>
                       <div style={{padding:'0 0 8px'}}>
                         <SizeGrid scales={it.sizeScales||[]} onScalesChange={ks=>setSizeScales(i,ks)} quantities={it.sizeQty||{}} onQuantityChange={(k,v)=>setSizeQty(i,k,v)} prices={it.sizePrice||{}} onPriceChange={(k,v)=>setSizePrice(i,k,v)} fallbackPrice={it.price} />
+                        {/* WHAT EACH ROW WILL ACTUALLY CARRY, before the PO exists. The
+                            per-size cartons are composed at insert time from the quote,
+                            so without this the only evidence they applied was the created
+                            PO -- and an empty Carton Info box read as "nothing carried".
+                            Built from the same cartonForSize the insert uses, so the
+                            preview cannot claim something the write will not do.
+                            Zero-quantity sizes produce no row, so they are dropped here
+                            too; the list recomputes as quantities are typed. */}
+                        {(() => {
+                          const entries = sizesForSelection(it.sizeScales);
+                          if (!entries.length) return null;
+                          const overridden = (it.carton||'').trim();
+                          const rows = entries
+                            .filter(e => (Number((it.sizeQty||{})[e.key])||0) > 0)
+                            .map(e => ({ label: e.label, txt: overridden || cartonForSize(it, e) }));
+                          if (!rows.length) return null;
+                          const anyText = rows.some(r => r.txt);
+                          return (
+                            <div style={{marginTop:'6px',fontSize:'11.5px',color:'var(--muted)',lineHeight:1.5}}>
+                              <span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em'}}>Carton per size on the PO</span>
+                              <div style={{marginTop:'2px'}}>
+                                {anyText
+                                  ? rows.map((r,ri) => (
+                                      <React.Fragment key={r.label}>
+                                        {ri>0 && <span style={{color:'var(--faint)'}}> · </span>}
+                                        <span><b style={{color:'var(--ink-2)',fontWeight:600}}>{r.label}</b> {r.txt || <span style={{color:'var(--faint)'}}>none</span>}</span>
+                                      </React.Fragment>
+                                    ))
+                                  : <span style={{color:'var(--faint)'}}>No carton dimensions on this quote — these lines will carry none.</span>}
+                              </div>
+                              {overridden && <div style={{color:'var(--faint)',marginTop:'2px'}}>From the override above, on every size.</div>}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </td>
                   </tr>

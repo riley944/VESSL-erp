@@ -104,6 +104,42 @@ export function sizesForSelection(scales) {
 // baked into SKUs here (BG-101-2XL), and the scale goes BEFORE the size so the
 // size stays the trailing token, which is the convention every existing SKU
 // follows. SKU-L-ADULT would read as a size of "L-ADULT".
+// Stored per-size quantities -> a flat map keyed by sizeKey(scale,size).
+//
+// TWO STORED SHAPES, told apart by Array.isArray rather than by a version flag.
+// The current one is a list of {scale,size,qty} records. The legacy one is a bare
+// object keyed by size alone, which is only interpretable when the quote carries
+// exactly ONE scale -- with two, a bare "L" does not say whether it meant the
+// adult L or the youth L, and this refuses to guess rather than picking one.
+//
+// Lives here beside sizeKey and sizesForSelection because three files now need it:
+// the quote editor reads it, and both order modals prefill their grids from it. It
+// was a private function in quotes.jsx; a hand-copy in page.jsx is exactly the
+// drift that put duty on one margin and not the other.
+export function storedQtyToMap(v, scales) {
+  let obj = v;
+  try { if (typeof v === 'string') obj = v ? JSON.parse(v) : {}; } catch { obj = {}; }
+  const map = {};
+  if (Array.isArray(obj)) {
+    obj.forEach((e) => {
+      if (!e || e.size == null || e.scale == null) return;
+      const n = Number(e.qty);
+      if (!isFinite(n)) return;
+      map[sizeKey(String(e.scale), String(e.size))] = String(n);
+    });
+    return map;
+  }
+  if (!obj || typeof obj !== 'object') return {};
+  const list = toScaleList(scales);
+  if (list.length !== 1) return {};
+  Object.keys(obj).forEach((sz) => {
+    const n = Number(obj[sz]);
+    if (!isFinite(n)) return;
+    map[sizeKey(list[0], String(sz))] = String(n);
+  });
+  return map;
+}
+
 export const skuToken = entry =>
   entry.label === entry.size ? entry.size : (entry.scaleLabel + '-' + entry.size).toUpperCase();
 

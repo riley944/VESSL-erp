@@ -13,7 +13,7 @@ import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
 import { productByKey, ensureProductForQuote } from "@/lib/products";
 // sizesForScale is gone from this file: a quote can now carry several scales, and
 // every size here is addressed by the composite key sizesForSelection hands out.
-import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey } from "@/app/components/SizeGrid";
+import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey, storedQtyToMap as qtyMapFrom } from "@/app/components/SizeGrid";
 // The tier cost helpers live in lib/tierCost.js so page.jsx reads the SAME ones.
 // They were duplicated by hand there and had drifted; see that file for what broke.
 import { tierFreight, tierDuty, activeFreight, moldPerUnit, effectiveQty, tierTotalCost, platePerUnit } from "@/lib/tierCost";
@@ -448,29 +448,9 @@ function mapToCartons(map, scales) {
 // Two stored shapes, told apart by Array.isArray rather than by a version flag: the
 // new one is a list of records, the legacy one an object keyed by bare size. Same
 // attribution rule as deltasToMap, and the same refusal to guess.
-function qtyMapFrom(v, scales) {
-  let obj = v;
-  try { if (typeof v === "string") obj = v ? JSON.parse(v) : {}; } catch { obj = {}; }
-  const map = {};
-  if (Array.isArray(obj)) {
-    obj.forEach((e) => {
-      if (!e || e.size == null || e.scale == null) return;
-      const n = Number(e.qty);
-      if (!isFinite(n)) return;
-      map[sizeKey(String(e.scale), String(e.size))] = String(n);
-    });
-    return map;
-  }
-  if (!obj || typeof obj !== "object") return {};
-  const list = toScaleList(scales);
-  if (list.length !== 1) return {};
-  Object.keys(obj).forEach((s) => {
-    const n = Number(obj[s]);
-    if (!isFinite(n)) return;
-    map[sizeKey(list[0], String(s))] = String(n);
-  });
-  return map;
-}
+// qtyMapFrom is storedQtyToMap from SizeGrid, imported under its original name so
+// every call site here is unchanged. It moved because page.jsx needs the same
+// conversion to prefill the order grids, and a hand-copy is how helpers drift.
 // Returns null rather than {} when nothing is entered, so formToRow can leave the key
 // off entirely and a tier nobody has touched keeps writing exactly the six keys it
 // always has. Sizes outside the current scale are dropped here as well as on scale
