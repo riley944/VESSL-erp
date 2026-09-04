@@ -1082,76 +1082,192 @@ function Dashboard({ navigate }) {
 
 // ── Inventory ─────────────────────────────────────────────────────────────────
 // ── Inventory ─────────────────────────────────────────────────────────────────
+
+// ── Inventory ────────────────────────────────────────────────────────────────
+// TWO TABS, because the chart was the page. The analytical view and the per-client
+// tables answer different questions -- "where is our volume" and "what exactly is
+// on order for this client" -- and stacking them meant the second was always below
+// the fold.
+//
+// Tabs follow testing.jsx, not Settings: this page already shares that page's
+// visual language exactly (#F5F5F7 ground, 20px cards, #1D1D1F ink), and
+// testing.jsx is also where FilterSelect is already used on such a page. Two
+// borrowed conventions from one place rather than one from each.
+const INV_TABS = [['overview', 'Overview'], ['breakdown', 'Inventory Breakdown']];
+
 function Inventory() {
-  const [groups, setGroups] = useState({});
+  // ONE FLAT LIST, not the nested map this used to build. Every view here is a
+  // different grouping of the same rows -- by client, by factory, by client then
+  // product -- and filtering a flat list is a filter() while filtering a nested map
+  // is a rebuild. The old shape had the client grouping baked in before anything
+  // could be filtered.
+  const [lines, setLines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshed, setRefreshed] = useState(null);
+  const [tab, setTab] = useState('overview');
+  const [clientF, setClientF] = useState('All');
+  const [factoryF, setFactoryF] = useState('All');
+  const [search, setSearch] = useState('');
+
   const load = async () => {
     setLoading(true);
+    // factory:companies!factory_company_id is the only addition to this query. The
+    // factory is on the PO the page was already reading -- populated on all 40 live
+    // POs -- so the filter costs one join and no extra round trip.
     const { data: pos } = await SB.from('purchase_orders')
-      .select('id,order_number,client_po_number,status,client:companies!client_company_id(name,id),purchase_order_items(description,quantity,products(name,sku)),shipment_pos(shipments(status,actual_arrival))')
+      .select('id,order_number,client_po_number,status,client:companies!client_company_id(name,id),factory:companies!factory_company_id(name,id),purchase_order_items(description,quantity,products(name,sku)),shipment_pos(shipments(status,actual_arrival))')
       .not('status','in','("draft","cancelled","closed","delivered")');
     const active = (pos||[]).filter(po => {
       const ships = (po.shipment_pos||[]).map(sp=>sp.shipments).filter(Boolean);
       return !ships.some(s=>s?.actual_arrival || ['delivered'].includes(s?.status));
     });
-    const g = {};
+    const out = [];
     active.forEach(po=>{
-      const cName = po.client?.name||'Unassigned';
-      if (!g[cName]) g[cName] = { products:{} };
       (po.purchase_order_items||[]).forEach(it=>{
-        const prod = it.products?.name||it.description||'—';
-        const sku  = it.products?.sku||'';
-        const k = prod+'|||'+sku;
-        if (!g[cName].products[k]) g[cName].products[k] = { prod, sku, qty:0, orders:[] };
-        g[cName].products[k].qty  += Number(it.quantity)||0;
-        g[cName].products[k].orders.push({ num:po.client_po_number||po.order_number||po.id.slice(0,8), status:po.status });
+        out.push({
+          client: po.client?.name||'Unassigned',
+          // FACTORY IS A PROPERTY OF THE PO, NOT THE LINE. A product ordered from two
+          // factories legitimately belongs to both, which is why the filter narrows
+          // contributing lines rather than whole products -- see the note rendered
+          // above the tables when a factory is chosen.
+          factory: po.factory?.name||'Unassigned',
+          prod: it.products?.name||it.description||'—',
+          sku:  it.products?.sku||'',
+          qty:  Number(it.quantity)||0,
+          po:   po.client_po_number||po.order_number||po.id.slice(0,8),
+          status: po.status,
+        });
       });
     });
-    setGroups(g); setRefreshed(new Date()); setLoading(false);
+    setLines(out); setRefreshed(new Date()); setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
 
+  // Counted over EVERY line, never the filtered set -- the same rule the Products
+  // page filters use. A count that shrinks as you narrow tells you how much of a
+  // bucket survives; a count that does not tells you how big the bucket is, which is
+  // what you need in order to decide where to look next.
+  const optionsFrom = (key, label) => {
+    const counts = {};
+    lines.forEach(l => { const v=(l[key]||'').trim()||'—'; counts[v]=(counts[v]||0)+1; });
+    return [
+      { value:'All', label, count: lines.length },
+      ...Object.keys(counts).sort((a,b)=>a.localeCompare(b))
+        .map(v=>({ value:v, label:v, count:counts[v], ...(key==='client'?{color:companyColor(v)}:{}) })),
+    ];
+  };
+  const clientOptions  = optionsFrom('client',  'All Clients');
+  const factoryOptions = optionsFrom('factory', 'All Factories');
+
+  // The sentinel is built the same way on both sides -- option list and predicate --
+  // or choosing the em dash matches nothing.
+  const term = search.trim().toLowerCase();
+  const shown = lines.filter(l => {
+    if (clientF !== 'All' && ((l.client ||'').trim()||'—') !== clientF)  return false;
+    if (factoryF!== 'All' && ((l.factory||'').trim()||'—') !== factoryF) return false;
+    if (term && !((l.prod+' '+l.sku).toLowerCase().includes(term))) return false;
+    return true;
+  });
+
+  // Grouping is UNCHANGED: client, then product name + sku. Rows with no product_id
+  // fall back to their free-text description, which is why two typings of one
+  // product still make two lines -- a display rule cannot safely tell a typo from a
+  // genuine variant, and the one rule that merged the typos also merged SL-117
+  // Large/Medium/Small/XSmall into a single line. Script 33 fixes the data instead.
+  const groupBy = (rows) => {
+    const g = {};
+    rows.forEach(l => {
+      if (!g[l.client]) g[l.client] = {};
+      const k = l.prod+'|||'+l.sku;
+      if (!g[l.client][k]) g[l.client][k] = { prod:l.prod, sku:l.sku, qty:0 };
+      g[l.client][k].qty += l.qty;
+    });
+    return g;
+  };
+  const sumBy = (rows, key) => {
+    const m = {};
+    rows.forEach(l => { const v=(l[key]||'').trim()||'—'; m[v]=(m[v]||0)+l.qty; });
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]);
+  };
+
   if (loading) return <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading inventory…</div>;
 
+  const byClient  = sumBy(lines, 'client');
+  const byFactory = sumBy(lines, 'factory');
+  const totalUnits = lines.reduce((a,l)=>a+l.qty,0);
+  const allGroups  = groupBy(lines);
+  const totalSkus  = Object.values(allGroups).reduce((a,ps)=>a+Object.keys(ps).length,0);
+
+  const groups = groupBy(shown);
   const clients = Object.keys(groups).sort((a,b)=>{
-    const av=Object.values(groups[a].products).reduce((x,p)=>x+p.qty,0);
-    const bv=Object.values(groups[b].products).reduce((x,p)=>x+p.qty,0);
+    const av=Object.values(groups[a]).reduce((x,p)=>x+p.qty,0);
+    const bv=Object.values(groups[b]).reduce((x,p)=>x+p.qty,0);
     return bv-av;
   });
-  const clientQty = c => Object.values(groups[c].products).reduce((a,p)=>a+p.qty,0);
-  const totalUnits = clients.reduce((a,c)=>a+clientQty(c),0);
-  const totalSkus  = clients.reduce((a,c)=>a+Object.keys(groups[c].products).length,0);
-  const maxUnits   = Math.max(1,...clients.map(clientQty));
+  const clientQty = c => Object.values(groups[c]).reduce((a,p)=>a+p.qty,0);
 
   const cardShadow = '0 1px 3px rgba(0,0,0,.04)';
+  // One renderer for both charts -- same bars, same scale rule, different axis.
+  const Bars = ({ title, rows, colored }) => {
+    const max = Math.max(1, ...rows.map(r=>r[1]));
+    return (
+      <div style={{background:'#fff',borderRadius:'20px',boxShadow:cardShadow,padding:'22px 24px 20px',marginBottom:'20px'}}>
+        <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.018em',marginBottom:'20px'}}>{title}</div>
+        {rows.length===0 && <div style={{fontSize:'14px',color:'#86868B'}}>Nothing on order.</div>}
+        {rows.map(([name,qty])=>(
+          <div key={name} style={{display:'flex',alignItems:'center',gap:'14px',marginBottom:'13px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:'9px',width:'150px',flexShrink:0,minWidth:0}}>
+              <span style={{width:'22px',height:'22px',borderRadius:'6px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'9px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:colored?companyColor(name):'#8E8E93'}}>{initials(name)}</span>
+              <span style={{fontSize:'14px',color:'#1D1D1F',letterSpacing:'-.01em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{name}</span>
+            </div>
+            <div style={{flex:1,height:'8px',background:'#F0F0F2',borderRadius:'4px',overflow:'hidden',minWidth:0}}>
+              <div style={{height:'100%',width:(qty/max*100)+'%',background:colored?companyColor(name):'#8E8E93',opacity:.9,borderRadius:'4px',minWidth:qty>0?'4px':'0',transition:'width .45s'}} />
+            </div>
+            <span style={{fontSize:'14px',fontWeight:500,color:'#1D1D1F',width:'62px',textAlign:'right',flexShrink:0,fontVariantNumeric:'tabular-nums',letterSpacing:'-.01em'}}>{fmtNum(qty)}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="db-apple" style={{padding:'34px 32px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
 
-      {/* ── Header ── */}
-      <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'20px',marginBottom:'30px',flexWrap:'wrap'}}>
+      <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'20px',marginBottom:'22px',flexWrap:'wrap'}}>
         <div>
           <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#BF5AF2'}}/><span style={{fontSize:'11px',fontWeight:700,letterSpacing:'.12em',textTransform:'uppercase',color:'#86868B'}}>Stock &amp; Production</span></div>
           <div style={{fontSize:'32px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.032em',lineHeight:1.02}}>Inventory</div>
+          {/* "updated" is when this tab last loaded, not a live feed -- the page never
+              refetches on its own, so an open tab keeps saying the same time and
+              means it. Refresh is the only thing that moves it. */}
           <div style={{fontSize:'15px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>Units on order across live production · updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
         </div>
         <button onClick={load} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 18px',fontSize:'14px',fontWeight:500,letterSpacing:'-.01em',cursor:'pointer'}}>Refresh</button>
       </div>
 
-      {clients.length===0 ? (
+      {/* Pill tabs, testing.jsx's shape. */}
+      <div style={{display:'flex',gap:'6px',marginBottom:'22px',flexWrap:'wrap'}}>
+        {INV_TABS.map(([v,l])=>(
+          <button key={v} onClick={()=>setTab(v)}
+            style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'9px 16px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:tab===v?'#1D1D1F':'transparent',color:tab===v?'#fff':'#5A5A5E',boxShadow:tab===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>{l}</button>
+        ))}
+      </div>
+
+      {lines.length===0 ? (
         <div style={{background:'#fff',borderRadius:'20px',padding:'56px 32px',textAlign:'center',boxShadow:cardShadow}}>
           <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',marginBottom:'7px',letterSpacing:'-.018em'}}>Inventory is empty</div>
           <div style={{color:'#86868B',fontSize:'14px'}}>Live purchase orders appear here automatically. Counts clear once a shipment is delivered.</div>
         </div>
-      ) : (
+      ) : tab==='overview' ? (
       <>
-        {/* ── Summary tiles ── */}
+        {/* Tiles read the WHOLE live set, never the filters -- those live on the other
+            tab, and a total that moved with a filter you cannot see from here would
+            be a number nobody could account for. */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'20px',marginBottom:'20px'}} className="inv-summary">
           {[
             { k:'Total units on order', v:fmtNum(totalUnits), sub:'across all clients' },
             { k:'Active SKUs', v:fmtNum(totalSkus), sub:'unique products' },
-            { k:'Active clients', v:String(clients.length), sub:'with live orders' },
+            { k:'Active clients', v:String(byClient.length), sub:'with live orders' },
           ].map(m=>(
             <div key={m.k} style={{background:'#fff',borderRadius:'20px',padding:'22px 24px',boxShadow:cardShadow}}>
               <div style={{fontSize:'13px',color:'#86868B',fontWeight:400,letterSpacing:'-.006em',marginBottom:'14px'}}>{m.k}</div>
@@ -1160,30 +1276,42 @@ function Inventory() {
             </div>
           ))}
         </div>
-
-        {/* ── Units by client bar chart ── */}
-        <div style={{background:'#fff',borderRadius:'20px',boxShadow:cardShadow,padding:'22px 24px 20px',marginBottom:'20px'}}>
-          <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.018em',marginBottom:'20px'}}>Units on order by client</div>
-          {clients.map((c)=>{
-            const qty=clientQty(c); const pct=qty/maxUnits*100;
-            return (
-              <div key={c} style={{display:'flex',alignItems:'center',gap:'14px',marginBottom:'13px'}}>
-                <div style={{display:'flex',alignItems:'center',gap:'9px',width:'150px',flexShrink:0,minWidth:0}}>
-                  <span style={{width:'22px',height:'22px',borderRadius:'6px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'9px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:companyColor(c)}}>{initials(c)}</span>
-                  <span style={{fontSize:'14px',color:'#1D1D1F',letterSpacing:'-.01em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c}</span>
-                </div>
-                <div style={{flex:1,height:'8px',background:'#F0F0F2',borderRadius:'4px',overflow:'hidden',minWidth:0}}>
-                  <div style={{height:'100%',width:pct+'%',background:companyColor(c),opacity:.9,borderRadius:'4px',minWidth:qty>0?'4px':'0',transition:'width .45s'}} />
-                </div>
-                <span style={{fontSize:'14px',fontWeight:500,color:'#1D1D1F',width:'62px',textAlign:'right',flexShrink:0,fontVariantNumeric:'tabular-nums',letterSpacing:'-.01em'}}>{fmtNum(qty)}</span>
-              </div>
-            );
-          })}
+        <Bars title="Units on order by client" rows={byClient} colored />
+        {/* The free one: the factory was already on the PO, so this is the same
+            aggregation against the other axis. Grey rather than per-name colour --
+            companyColor is the CLIENT convention, and giving factories their own hues
+            would imply a palette that does not exist. */}
+        <Bars title="Units on order by factory" rows={byFactory} />
+      </>
+      ) : (
+      <>
+        <div className="fs-row" style={{marginBottom:'14px'}}>
+          <FilterSelect label="All Clients"   value={clientF}  onChange={setClientF}  options={clientOptions} />
+          <FilterSelect label="All Factories" value={factoryF} onChange={setFactoryF} options={factoryOptions} />
+        </div>
+        <div style={{marginBottom:'18px',maxWidth:'420px'}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search product or SKU…"
+            style={{width:'100%',border:'none',borderRadius:'980px',padding:'10px 15px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
         </div>
 
-        {/* ── Per-client product tables ── */}
-        {clients.map((c)=>{
-          const rows = Object.values(groups[c].products).sort((a,b)=>b.qty-a.qty);
+        {/* SAYS SO WHEN IT MATTERS. The factory is on the purchase order, not the
+            line, so narrowing to one factory drops the CONTRIBUTING lines -- a
+            product ordered from two factories stays, with a smaller number. That
+            reads as a bug unless it is said, and it is only worth saying while a
+            factory is actually selected. */}
+        {factoryF !== 'All' && (
+          <div style={{background:'#FEF3C7',borderRadius:'12px',padding:'11px 15px',marginBottom:'18px',fontSize:'12.5px',color:'#8a5a00',lineHeight:1.5}}>
+            Showing only lines ordered from <b>{factoryF}</b>. A product made at more than one factory still appears, with a smaller quantity — the factory is recorded on the purchase order, not on the product.
+          </div>
+        )}
+
+        {clients.length===0 ? (
+          <div style={{background:'#fff',borderRadius:'20px',padding:'48px 32px',textAlign:'center',boxShadow:cardShadow}}>
+            <div style={{fontSize:'16px',fontWeight:600,color:'#1D1D1F',marginBottom:'6px'}}>Nothing matches</div>
+            <div style={{color:'#86868B',fontSize:'14px'}}>Try a different client, factory or search term.</div>
+          </div>
+        ) : clients.map((c)=>{
+          const rows = Object.values(groups[c]).sort((a,b)=>b.qty-a.qty);
           const total = clientQty(c);
           return (
             <div key={c} style={{background:'#fff',borderRadius:'20px',boxShadow:cardShadow,overflow:'hidden',marginBottom:'20px'}}>
@@ -1194,7 +1322,6 @@ function Inventory() {
                 </div>
                 <span style={{fontSize:'14px',color:'#86868B',fontVariantNumeric:'tabular-nums',letterSpacing:'-.01em',flexShrink:0}}>{fmtNum(total)} units</span>
               </div>
-              {/* column header */}
               <div style={{display:'grid',gridTemplateColumns:'1fr 130px 90px',gap:'16px',padding:'9px 24px',borderTop:'1px solid rgba(0,0,0,.06)',background:'#FAFAFA'}}>
                 <div style={{fontSize:'11px',fontWeight:500,letterSpacing:'-.004em',color:'#A0A0A4'}}>Product</div>
                 <div style={{fontSize:'11px',fontWeight:500,letterSpacing:'-.004em',color:'#A0A0A4'}}>SKU</div>
@@ -3912,6 +4039,11 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   // An unmatched row is neither active nor inactive and is excluded by either filter.
   // active is nullable and null means undecided, so only an explicit true or false is
   // counted -- an unruled product belongs to neither bucket.
+  // THREE BUCKETS, NOT TWO. active is nullable and null means undecided, so a row
+  // with a product whose active has never been set belonged to neither filter and
+  // could not be reached from this control at all: 327 rows, 80 active, 161
+  // inactive, and 83 that no option selected.
+  //
   const activeCounts = quotes.reduce((a,q)=>{ const p=matchOf(q); if(p&&p.active!=null) a[p.active?'active':'inactive']++; return a; }, {active:0,inactive:0});
   const activeOptions = [
     // "All Statuses", not "All". FilterSelect shows the SELECTED OPTION's label on the
