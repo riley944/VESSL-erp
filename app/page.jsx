@@ -10,6 +10,9 @@ import Pricing from '@/app/pricing';
 import Programs from '@/app/programs';
 import { FilterSelect } from '@/app/components/FilterSelect';
 import { SizeGrid, sizesForSelection, toScaleList, skuToken } from '@/app/components/SizeGrid';
+// The SAME cost model the quote editor uses. This page carried a hand-written copy
+// that had drifted on both the mold divisor and the duty term; see lib/tierCost.js.
+import { tierTotalCost } from '@/lib/tierCost';
 // A backdrop click used to discard everything typed into these modals. Same
 // treatment quotes.jsx got: card ref, onClose becomes guardedClose. All sixteen
 // modals in this file are wired, so none is left behind on the old behaviour.
@@ -3793,9 +3796,18 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
     } finally { setBusyId(null); }
   };
   const tiersOf = q => { try { return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]); } catch { return []; } };
-  const activeFreight = t => { const ship=t.ship||'ocean'; return ship==='air'?(Number(t.freightAir??t.freightDuty)||0):(Number(t.freightOcean??t.freightDuty)||0); };
-  const moldPer = (m,qty)=>{ const f=Number(m)||0,qn=Number(qty)||0; return (f<=0||qn<=0)?0:f/qn; };
-  const tierMargin = (t,mold)=>{ const total=(Number(t.landed)||0)+activeFreight(t)+moldPer(mold,t.qty); const p=Number(t.client)||0; return p<=0?null:((p-total)/p)*100; };
+  // COST COMES FROM lib/tierCost NOW. The three lines this replaces were a
+  // hand-written second copy of the quote editor's cost model and had drifted from
+  // it twice: the mold fee was amortized over t.qty rather than the size mix, and
+  // activeFreight returned freight with NO DUTY TERM -- so this page overstated
+  // margin by the whole duty amount on any tier carrying duty.
+  //
+  // tierMargin stays local, and deliberately: it returns NULL when there is no
+  // client price, which is what lets avgMargin below exclude a priceless tier from
+  // the average. quotes.jsx returns 0 in the same case, which is right for its own
+  // screen and wrong here. The cost is a fact and is shared; that is a presentation
+  // choice and is not.
+  const tierMargin = (t,mold)=>{ const total=tierTotalCost(t,mold); const p=Number(t.client)||0; return p<=0?null:((p-total)/p)*100; };
   const clientPrices = q => tiersOf(q).map(t=>Number(t.client)||0).filter(Boolean);
   const priceRange = q => { const p=clientPrices(q); if(!p.length) return null; const lo=Math.min(...p),hi=Math.max(...p); return lo===hi?money(lo):`${money(lo)} – ${money(hi)}`; };
   const avgMargin = q => { const ms=tiersOf(q).map(t=>tierMargin(t,q.mold_fee)).filter(v=>v!=null); return ms.length?Math.round(ms.reduce((a,b)=>a+b,0)/ms.length):null; };

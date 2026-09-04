@@ -14,6 +14,9 @@ import { productByKey, ensureProductForQuote } from "@/lib/products";
 // sizesForScale is gone from this file: a quote can now carry several scales, and
 // every size here is addressed by the composite key sizesForSelection hands out.
 import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey } from "@/app/components/SizeGrid";
+// The tier cost helpers live in lib/tierCost.js so page.jsx reads the SAME ones.
+// They were duplicated by hand there and had drifted; see that file for what broke.
+import { tierFreight, tierDuty, activeFreight, moldPerUnit, effectiveQty, tierTotalCost } from "@/lib/tierCost";
 import { CodeModal } from "@/app/components/CodeModal";
 // HtsField used to live in this file. It moved to app/components so the Edit
 // Product modal could use the same control rather than a second copy -- the
@@ -157,14 +160,6 @@ function fmtStamp(iso) {
 // Freight alone -- what the Freight input edits. freightDuty is the legacy key from
 // before air and ocean were separate, and predates duty being split out, so a tier
 // still carrying it has freight and duty combined in this number.
-function tierFreight(t) {
-  const ship = t.ship || "ocean";
-  if (ship === "air") return Number(t.freightAir ?? t.freightDuty) || 0;
-  return Number(t.freightOcean ?? t.freightDuty) || 0;
-}
-// Duty alone. Not ship-specific: it is a percentage of EXW, and US customs assesses
-// on transaction value, so how the goods travel does not enter it.
-function tierDuty(t) { return Number(t.duty) || 0; }
 // Duty from a rate, or "" when there is nothing to compute from.
 //
 // The blank-EXW guard is the point of the explicit test: Number("") is 0, so a rated
@@ -184,33 +179,6 @@ function computeDuty(exw, rate) {
   const e = Number(exw);
   if (exw === "" || exw == null || !isFinite(e) || e <= 0) return "";
   return String(+(e * rate / 100).toFixed(4));
-}
-// Deliberately keeps the name it had when it was the only accessor. Every consumer
-// goes through this -- tierTotalCost, the detail view, the printed quote and the CSV
-// -- and all four want freight AND duty. Renaming it would have meant touching each
-// one, and a miss would have dropped duty out of a total, an export or a customer's
-// quote without saying anything.
-function activeFreight(t) { return tierFreight(t) + tierDuty(t); }
-function moldPerUnit(moldFee, qty) {
-  const f = Number(moldFee) || 0;
-  const q = Number(qty) || 0;
-  if (f <= 0 || q <= 0) return 0;
-  return f / q;
-}
-// The quantity this tier is really for. A size mix takes over from the Quantity box
-// the moment any size carries a number — the box stops being editable at that point —
-// so anything per-unit has to divide by the mix, not by a qty nobody is maintaining.
-// Unscoped by design: sizes outside the scale are already pruned on scale change and
-// again on save, and the caller here has no scale to hand.
-function effectiveQty(t) {
-  const qty = t.sizeQty || {};
-  const entered = Object.keys(qty).filter((s) => qty[s] !== "" && qty[s] != null);
-  if (entered.length) return entered.reduce((a, s) => a + (Number(qty[s]) || 0), 0);
-  return Number(t.qty) || 0;
-}
-function tierTotalCost(t, moldFee) {
-  const exw = Number(t.landed) || 0;
-  return exw + activeFreight(t) + moldPerUnit(moldFee, effectiveQty(t));
 }
 function suggestClientPriceForTier(t, moldFee) {
   const c = tierTotalCost(t, moldFee);
@@ -1742,7 +1710,12 @@ function printQuote(q) {
     const m = tierMargin(t, t.client, q.moldFee);
     const total = tierTotalCost(t, q.moldFee);
     const af = activeFreight(t);
-    const mpu = moldPerUnit(q.moldFee, t.qty);
+    // effectiveQty, not t.qty -- the SAME divisor tierTotalCost used one line above.
+    // On a tier with a size mix these disagreed, so this caption could claim a mold
+    // share the total beside it had not used, on a document that goes to the client.
+    // The on-screen detail view at the top of this file already had it right; the
+    // printed copy of the same row did not.
+    const mpu = moldPerUnit(q.moldFee, effectiveQty(t));
     return `<tr${idx % 2 ? ' class="alt"' : ''}>
       <td class="qty">${t.qty ? Number(t.qty).toLocaleString() : "—"}</td>
       <td class="r">${t.landed ? "$" + fmtUnit(t.landed) : "—"}</td>
