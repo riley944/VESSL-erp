@@ -239,11 +239,24 @@ function Badge({ status }) {
 const poClient   = p => p.client?.name || '';
 const poFactory  = p => p.factory?.name || p.companies?.name || '';
 const poProducts = p => (p.purchase_order_items||[]).map(it=>it.products?.name||it.description||'').join(' ');
+// ── One membership test for every multi-select filter ────────────────────────
+// An EMPTY selection means no filtering, which is exactly the contract
+// FilterSelect already uses in multi mode -- there, All is the ABSENCE of a
+// selection rather than a member of it, and unticking the last option returns to
+// it. Writing that rule once means the twelve filter sites cannot each invent a
+// slightly different version of it.
+//
+// A non-array is treated as no filter rather than throwing. Every caller is
+// converted in this pass, so that branch should be unreachable; it exists so a
+// site converted later fails OPEN, showing every row, rather than silently
+// showing none.
+const inSel = (sel, v) => !Array.isArray(sel) || sel.length === 0 || sel.includes(v);
+
 function filterPOs(rows, { search, client, status }){
   const s = (search||'').toLowerCase().trim();
   return (rows||[]).filter(p=>{
-    if (status && status!=='all' && alignStatus(p.status)!==status) return false;
-    if (client && client!=='all' && poClient(p)!==client) return false;
+    if (!inSel(status, alignStatus(p.status))) return false;
+    if (!inSel(client, poClient(p))) return false;
     if (s){
       const hay = ((p.client_po_number||'')+' '+(p.order_number||'')+' '+poClient(p)+' '+poFactory(p)+' '+poProducts(p)).toLowerCase();
       if (!hay.includes(s)) return false;
@@ -295,19 +308,19 @@ function OrderCard({ p, navigate, onStatus }){
 function PoToolbar({ rows, search, setSearch, client, setClient, status, setStatus }){
   const clients = distinctClients(rows);
   const clientOptions = [
-    { value:'all', label:'All Clients' },
+    { value:'', label:'All Clients' },
     ...clients.map(([c,n])=>({ value:c, label:c, color:companyColor(c), count:n })),
   ];
   const statusOptions = [
-    { value:'all', label:'All Statuses' },
+    { value:'', label:'All Statuses' },
     ...SO_STATUSES.map(s=>{ const m=SO_SM[s]; return { value:s, label:(m&&m.label)||s.replace(/_/g,' '), color:m&&m.color, bg:m&&m.bg }; }),
   ];
   return (
     <div className="po-toolbar">
       <input className="po-search" placeholder="Search PO #, client, or product…" value={search} onChange={e=>setSearch(e.target.value)} />
       <div className="fs-row">
-        <FilterSelect label="All Clients"  value={client} onChange={setClient} options={clientOptions} />
-        <FilterSelect label="All Statuses" value={status} onChange={setStatus} options={statusOptions} />
+        <FilterSelect multiple label="All Clients"  value={client} onChange={setClient} options={clientOptions} />
+        <FilterSelect multiple label="All Statuses" value={status} onChange={setStatus} options={statusOptions} />
       </div>
     </div>
   );
@@ -1178,9 +1191,11 @@ function Inventory() {
   const [loading, setLoading] = useState(true);
   const [refreshed, setRefreshed] = useState(null);
   const [tab, setTab] = useState('overview');
-  const [clientF, setClientF] = useState('All');
-  const [factoryF, setFactoryF] = useState('All');
-  const [statusF, setStatusF] = useState('All');
+  // All three are multi-select arrays. An empty array is no narrowing, matching
+  // the All row optionsFrom emits with value ''.
+  const [clientF, setClientF] = useState([]);
+  const [factoryF, setFactoryF] = useState([]);
+  const [statusF, setStatusF] = useState([]);
   const [search, setSearch] = useState('');
 
   const load = async () => {
@@ -1235,7 +1250,7 @@ function Inventory() {
     const counts = {};
     lines.forEach(l => { const v=(l[key]||'').trim()||'—'; counts[v]=(counts[v]||0)+1; });
     return [
-      { value:'All', label, count: lines.length },
+      { value:'', label, count: lines.length },
       ...Object.keys(counts).sort((a,b)=>a.localeCompare(b))
         .map(v=>({ value:v, label:v, count:counts[v], ...(key==='client'?{color:companyColor(v)}:{}) })),
     ];
@@ -1249,7 +1264,7 @@ function Inventory() {
   const stCounts = {};
   lines.forEach(l => { stCounts[l.bucket] = (stCounts[l.bucket]||0) + 1; });
   const statusOptions = [
-    { value:'All', label:'All Statuses', count:lines.length },
+    { value:'', label:'All Statuses', count:lines.length },
     ...INV_STATUS.map(([v,l,color])=>({ value:v, label:l, color, count:stCounts[v]||0 })),
   ];
 
@@ -1257,12 +1272,12 @@ function Inventory() {
   // or choosing the em dash matches nothing.
   const term = search.trim().toLowerCase();
   const shown = lines.filter(l => {
-    if (clientF !== 'All' && ((l.client ||'').trim()||'—') !== clientF)  return false;
-    if (factoryF!== 'All' && ((l.factory||'').trim()||'—') !== factoryF) return false;
+    if (!inSel(clientF, ((l.client ||'').trim()||'—')))  return false;
+    if (!inSel(factoryF, ((l.factory||'').trim()||'—'))) return false;
     // No sentinel and no normalisation: bucket is one of four fixed strings this file
     // computes itself, so the option value and the line value cannot drift apart the
     // way a trimmed name can.
-    if (statusF !== 'All' && l.bucket !== statusF) return false;
+    if (!inSel(statusF, l.bucket)) return false;
     if (term && !((l.prod+' '+l.sku).toLowerCase().includes(term))) return false;
     return true;
   });
@@ -1401,9 +1416,9 @@ function Inventory() {
       ) : (
       <>
         <div className="fs-row" style={{marginBottom:'14px'}}>
-          <FilterSelect label="All Clients"   value={clientF}  onChange={setClientF}  options={clientOptions} />
-          <FilterSelect label="All Factories" value={factoryF} onChange={setFactoryF} options={factoryOptions} />
-          <FilterSelect label="All Statuses"  value={statusF}  onChange={setStatusF}  options={statusOptions} />
+          <FilterSelect multiple label="All Clients"   value={clientF}  onChange={setClientF}  options={clientOptions} />
+          <FilterSelect multiple label="All Factories" value={factoryF} onChange={setFactoryF} options={factoryOptions} />
+          <FilterSelect multiple label="All Statuses"  value={statusF}  onChange={setStatusF}  options={statusOptions} />
         </div>
         <div style={{marginBottom:'18px',maxWidth:'420px'}}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search product or SKU…"
@@ -1414,10 +1429,26 @@ function Inventory() {
             line, so narrowing to one factory drops the CONTRIBUTING lines -- a
             product ordered from two factories stays, with a smaller number. That
             reads as a bug unless it is said, and it is only worth saying while a
-            factory is actually selected. */}
-        {factoryF !== 'All' && (
+            factory is actually selected.
+
+            NAMES ONE, COUNTS BEYOND ONE. The factory names here run 25 to 45
+            characters, so listing three would put over a hundred characters of
+            name in front of the warning and wrap the box to three lines -- the
+            caveat would be buried inside its own subject. One name reads exactly
+            as it always did, which is the common case; two or more says "n of N
+            factories" and stays on one line at any count.
+
+            N COMES FROM factoryOptions, minus its All row, rather than a literal.
+            It is the same list the dropdown renders, so the denominator cannot
+            drift from what is on screen when a factory is added.
+
+            This is the third place the same rule now applies -- FilterSelect
+            tints for one choice and says "n selected" beyond, the Products
+            breadcrumb names one client and says "n clients" beyond. One rule in
+            three places rather than three rules. */}
+        {factoryF.length > 0 && (
           <div style={{background:'#FEF3C7',borderRadius:'12px',padding:'11px 15px',marginBottom:'18px',fontSize:'12.5px',color:'#8a5a00',lineHeight:1.5}}>
-            Showing only lines ordered from <b>{factoryF}</b>. A product made at more than one factory still appears, with a smaller quantity — the factory is recorded on the purchase order, not on the product.
+            Showing only lines ordered from <b>{factoryF.length === 1 ? factoryF[0] : factoryF.length + ' of ' + (factoryOptions.length - 1) + ' factories'}</b>. A product made at more than one factory still appears, with a smaller quantity — the factory is recorded on the purchase order, not on the product.
           </div>
         )}
 
@@ -1520,15 +1551,15 @@ function SalesOrders({navigate}){
   const [rows,setRows]=useState([]);
   const [loading,setLoading]=useState(true);
   const [search,setSearch]=useState('');
-  const [statusF,setStatusF]=useState('all');
-  const [clientF,setClientF]=useState('all');
+  const [statusF,setStatusF]=useState([]);
+  const [clientF,setClientF]=useState([]);
   const [showCreate,setShowCreate]=useState(false);
   const load=async()=>{ setLoading(true); const {data}=await SB.from('sales_orders').select('*,client:companies!client_company_id(id,name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(unit_price,quantity))),order_costs(amount,kind)').order('created_at',{ascending:false}); setRows(data||[]); setLoading(false); };
   useEffect(()=>{ load(); },[]);
   const clients=[...new Set(rows.map(r=>r.client?.name).filter(Boolean))].sort();
   const shown=rows.filter(r=>{
-    if(statusF!=='all'&&r.status!==statusF) return false;
-    if(clientF!=='all'&&r.client?.name!==clientF) return false;
+    if(!inSel(statusF,r.status)) return false;
+    if(!inSel(clientF,r.client?.name)) return false;
     if(search){ const q=search.toLowerCase(); return (r.so_number||'').toLowerCase().includes(q)||(r.client_po_number||'').toLowerCase().includes(q)||(r.client?.name||'').toLowerCase().includes(q); }
     return true;
   });
@@ -1536,11 +1567,11 @@ function SalesOrders({navigate}){
   const totalMgn=totals.rev>0?(totals.rev-totals.cost)/totals.rev*100:null;
   const totalUnits = shown.reduce((a,so)=>a+(so.sales_order_items||[]).reduce((b,i)=>b+(Number(i.quantity)||0),0),0);
   const clientOptions = [
-    { value:'all', label:'All Clients' },
+    { value:'', label:'All Clients' },
     ...clients.map(c=>({ value:c, label:c, color:companyColor(c) })),
   ];
   const statusOptions = [
-    { value:'all', label:'All Statuses' },
+    { value:'', label:'All Statuses' },
     ...SO_STATUSES.map(s=>{ const m=SO_SM[s]; return { value:s, label:(m&&m.label)||s.replace(/_/g,' '), color:m&&m.color, bg:m&&m.bg }; }),
   ];
   return (
@@ -1591,9 +1622,9 @@ function SalesOrders({navigate}){
       {/* Client + status filters */}
       <div className="fs-row" style={{marginBottom:'18px'}}>
         {clients.length>1 && (
-          <FilterSelect label="All Clients" value={clientF} onChange={setClientF} options={clientOptions} />
+          <FilterSelect multiple label="All Clients" value={clientF} onChange={setClientF} options={clientOptions} />
         )}
-        <FilterSelect label="All Statuses" value={statusF} onChange={setStatusF} options={statusOptions} />
+        <FilterSelect multiple label="All Statuses" value={statusF} onChange={setStatusF} options={statusOptions} />
       </div>
 
       {/* Orders — distinct 2-col card grid */}
@@ -1655,7 +1686,7 @@ function SalesOrders({navigate}){
           <div style={{width:'52px',height:'52px',borderRadius:'14px',background:'#F2F2F6',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#A0A0A4" strokeWidth="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           </div>
-          <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'8px'}}>{'No sales orders'+(statusF!=='all'?' with this status':'')}</div>
+          <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'8px'}}>{'No sales orders'+(statusF.length===1?' with this status':statusF.length>1?' with these statuses':'')}</div>
           <div style={{color:'#8A8A8E',fontSize:'13.5px',marginBottom:'22px',lineHeight:1.6,maxWidth:'340px',marginLeft:'auto',marginRight:'auto'}}>Sales orders are client POs received by KUI. Create one to start tracking.</div>
           <button onClick={()=>setShowCreate(true)} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>New Sales Order</button>
         </div>
@@ -2861,7 +2892,7 @@ function CompanyBanking() {
         </div>
       </div>
       <div style={{display:'flex',alignItems:'center',gap:'14px'}}>
-        <button className="btn btn-dark" onClick={save} disabled={saving}>{saving?'Saving…':'Save settings'}</button>
+        <button className="btn btn-dark" onClick={save} disabled={saving}>{saving?'Saving…':'Save changes'}</button>
         {msg && <span style={{fontSize:'13px',color:'var(--accent)'}}>{msg}</span>}
       </div>
     </>
@@ -2871,9 +2902,9 @@ function CompanyBanking() {
 // ── Orders List ───────────────────────────────────────────────────────────────
 function Orders({ navigate }) {
   const [rows, setRows]     = useState([]);
-  const [status, setStatus] = useState('all');
+  const [status, setStatus] = useState([]);
   const [search, setSearch] = useState('');
-  const [client, setClient] = useState('all');
+  const [client, setClient] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView]     = useState('list'); // 'list' | 'board'
   const load = async () => {
@@ -4059,16 +4090,18 @@ function SortTh({ col, label, sort, onSort, style }) {
 function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [client, setClient] = useState('All');
+  const [client, setClient] = useState([]);
   const [search, setSearch] = useState('');
   const [poQuote, setPoQuote] = useState(null);
   const [viewQuote, setViewQuote] = useState(null);
   const [prods, setProds] = useState([]);
-  const [activeF, setActiveF] = useState('All');
-  // 'All' is the sentinel for "no narrowing", the same string the other two use.
+  // All three are multi-select ARRAYS. An empty array is no narrowing, which is
+  // the contract FilterSelect uses -- All is the absence of a selection, never a
+  // member of one, so the sentinel that used to be the string All is now [].
   // Named factoryF rather than factory so it cannot be mistaken for a row value in
   // a file where q.factory is read a few lines away.
-  const [factoryF, setFactoryF] = useState('All');
+  const [activeF, setActiveF] = useState([]);
+  const [factoryF, setFactoryF] = useState([]);
   // ONE SORT, NOT ONE PER COLUMN. null | { col, dir }, where null is a REAL state --
   // the order the query returned, which is what this page has always shown and what the
   // cycle comes back to.
@@ -4203,18 +4236,25 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   // it is a catalogue gap, and setting the dropdown creates the missing product.
   // Putting them under one label would have made an arithmetic gap close at the cost
   // of saying two unlike things with one word.
-  const activeCounts = quotes.reduce((a,q)=>{
-    const p=matchOf(q);
-    if(!p) { a.noprod++; return a; }
-    if(p.active==null) a.notset++; else a[p.active?'active':'inactive']++;
-    return a;
-  }, {active:0,inactive:0,notset:0,noprod:0});
+  // ONE CLASSIFIER, used by both the counts and the filter. This rule was written
+  // twice -- once as a four-branch reduce here and once as a four-branch predicate
+  // in `filtered` -- and the two had to agree for a count to describe the rows it
+  // selects. Multi-select needed the predicate rewritten anyway, so both now read
+  // the same function. It is also the same shape the Inventory page uses for its
+  // status buckets.
+  const statusBucket = q => {
+    const p = matchOf(q);
+    if (!p) return 'noprod';
+    if (p.active == null) return 'notset';
+    return p.active ? 'active' : 'inactive';
+  };
+  const activeCounts = quotes.reduce((a,q)=>{ a[statusBucket(q)]++; return a; },
+                                     {active:0,inactive:0,notset:0,noprod:0});
   const activeOptions = [
-    // "All Statuses", not "All". FilterSelect shows the SELECTED OPTION's label on the
-    // button, falling back to the `label` prop only when nothing is selected -- and
-    // 'All' is a real option here, so the option label is what was reading. Both are
-    // set, matching the two other status filters in this file.
-    { value:'All', label:'All Statuses', count:quotes.length },
+    // The All row carries value '' because that is what FilterSelect reserves for it
+    // in multi mode -- picking it clears the selection to []. The label prop on the
+    // control says the same words for the empty case.
+    { value:'', label:'All Statuses', count:quotes.length },
     { value:'active', label:'Active', color:'var(--ok)', count:activeCounts.active },
     { value:'inactive', label:'Inactive', color:'var(--hot)', count:activeCounts.inactive },
     // var(--muted) is the same grey the row's dot already uses for this state, so
@@ -4242,23 +4282,20 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   const facCounts = {}; quotes.forEach(q=>{ const f=(q.factory||'').trim()||'—'; facCounts[f]=(facCounts[f]||0)+1; });
   const factoryList = Object.keys(facCounts).sort((a,b)=>a.localeCompare(b));
   const factoryOptions = [
-    { value:'All', label:'All Factories', count:quotes.length },
+    { value:'', label:'All Factories', count:quotes.length },
     ...factoryList.map(f=>({ value:f, label:f, count:facCounts[f] })),
   ];
   const filtered = quotes.filter(q=>{
-    if(client!=='All' && ((q.client||'').trim()||'—')!==client) return false;
+    if(!inSel(client, ((q.client||'').trim()||'—'))) return false;
     // ANDs with the rest, and uses the identical normalisation to the option list above
     // -- the sentinel has to be built the same way on both sides or picking the dash
     // matches nothing.
-    if(factoryF!=='All' && ((q.factory||'').trim()||'—')!==factoryF) return false;
+    if(!inSel(factoryF, ((q.factory||'').trim()||'—'))) return false;
     // Not an early return: the search test below still has to run, so each branch
     // only rejects.
-    if(activeF!=='All'){
-      const p=matchOf(q);
-      if(activeF==='noprod'){ if(p) return false; }
-      else if(activeF==='notset'){ if(!p || p.active!=null) return false; }
-      else { if(!p||p.active==null) return false; if((activeF==='active')!==p.active) return false; }
-    }
+    // Four branches became one membership test, because statusBucket already
+    // answers which of the four states a row is in.
+    if(!inSel(activeF, statusBucket(q))) return false;
     const s=search.toLowerCase(); if(!s) return true;
     return `${q.product} ${q.client} ${q.factory} ${q.sku} ${q.country}`.toLowerCase().includes(s);
   });
@@ -4341,16 +4378,22 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
         <input placeholder="Search products — name, client, factory, SKU…" value={search} onChange={e=>setSearch(e.target.value)} />
       </div>
       <div className="fs-row" style={{marginBottom:'20px'}}>
-        <FilterSelect label="All Clients" value={client} onChange={setClient} options={clientOptions} />
-        <FilterSelect label="All Factories" value={factoryF} onChange={setFactoryF} options={factoryOptions} />
-        <FilterSelect label="All Statuses" value={activeF} onChange={setActiveF} options={activeOptions} />
+        <FilterSelect multiple label="All Clients" value={client} onChange={setClient} options={clientOptions} />
+        <FilterSelect multiple label="All Factories" value={factoryF} onChange={setFactoryF} options={factoryOptions} />
+        <FilterSelect multiple label="All Statuses" value={activeF} onChange={setActiveF} options={activeOptions} />
       </div>
-      {client!=='All' && (
+      {/* THE BREADCRUMB ONLY MAKES SENSE FOR ONE CLIENT. It reads as a location --
+          All Clients / Acme -- and there is no location called two clients, so with
+          several chosen it says how many instead of naming one. Clearing still goes
+          back to [], which is every client. */}
+      {client.length > 0 && (
         <div style={{display:'flex',alignItems:'center',gap:'8px',margin:'4px 0 16px',fontSize:'15px'}}>
-          <button className="crumb" onClick={()=>setClient('All')}>‹ All Clients</button>
+          <button className="crumb" onClick={()=>setClient([])}>‹ All Clients</button>
           <span style={{color:'var(--faint)'}}>/</span>
           {/* Client name, so sans -- see the SANS note in quotes.jsx. */}
-          <span style={{fontFamily:'var(--sans)',fontWeight:600}}>{client}</span>
+          <span style={{fontFamily:'var(--sans)',fontWeight:600}}>
+            {client.length===1 ? client[0] : client.length+' clients'}
+          </span>
           <span style={{color:'var(--muted)',fontSize:'12.5px'}}>{filtered.length} {filtered.length===1?'product':'products'}</span>
         </div>
       )}

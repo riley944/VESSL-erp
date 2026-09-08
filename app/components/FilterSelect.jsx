@@ -38,10 +38,21 @@ export function FilterSelect({ label, value, onChange, options = [], multiple = 
   const isSel = o => multiple ? (o.value === '' ? sel.length === 0 : sel.includes(o.value))
                               : o.value === value;
   const selected = multiple ? null : (options.find(o => o.value === value) || null);
-  // options carrying `bg` render as tinted status pills; the selected one inverts to a solid fill.
-  // Never in multi: a button cannot take the colour of four different options at once.
-  const selTinted = !!(selected && selected.bg);
   const chosen = multiple ? options.filter(o => o.value !== '' && sel.includes(o.value)) : [];
+  // options carrying `bg` render as tinted status pills; the chosen one inverts to a solid fill.
+  //
+  // IN MULTI THIS APPLIES ONLY WHEN EXACTLY ONE IS CHOSEN. A button cannot take
+  // the colour of four options at once, but it can take the colour of one -- and
+  // one is the common case, because a filter set to a single status is what most
+  // people leave it on. Making multi-select cost the tint would have been a
+  // visible downgrade on the PO, SO and Inventory status filters, which is the
+  // whole reason this is a separate change ahead of the rollout.
+  //
+  // Two or more chosen falls back to neutral with the "n selected" label, which
+  // is the honest rendering -- there is no colour that means "shipped or
+  // delivered".
+  const tintSource = multiple ? (chosen.length === 1 ? chosen[0] : null) : selected;
+  const selTinted = !!(tintSource && tintSource.bg);
   // One selection names itself; several would not fit, so they count instead.
   const btnLabel = !multiple ? (selected ? selected.label : label)
                  : chosen.length === 0 ? label
@@ -134,13 +145,16 @@ export function FilterSelect({ label, value, onChange, options = [], multiple = 
   return (
     <>
       <button ref={btnRef} type="button" className={'fs-btn' + (open ? ' open' : '') + (selTinted ? ' tint' : '')}
-        style={selTinted ? { background:selected.color, borderColor:selected.color, color:'#fff' } : undefined}
+        style={selTinted ? { background:tintSource.color, borderColor:tintSource.color, color:'#fff' } : undefined}
         aria-haspopup="listbox" aria-expanded={open}
         aria-multiselectable={multiple ? true : undefined}
         aria-controls={open ? listId : undefined}
         aria-activedescendant={open && active >= 0 ? listId + '-' + active : undefined}
         onClick={()=>open ? setOpen(false) : openPanel()} onKeyDown={onKeyDown}>
-        {!selTinted && selected && selected.color && <span className="chip-dot" style={{background:selected.color}} />}
+        {/* tintSource, not selected, so a single chosen option in multi shows its
+            dot the same way single-select does -- the client filters carry a
+            colour without a bg and would otherwise lose their chip. */}
+        {!selTinted && tintSource && tintSource.color && <span className="chip-dot" style={{background:tintSource.color}} />}
         <span className="fs-btn-label">{btnLabel}</span>
         <svg className="fs-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </button>

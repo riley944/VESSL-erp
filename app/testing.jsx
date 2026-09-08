@@ -232,7 +232,9 @@ export default function Testing({ userEmail = '' }) {
   const [dateSel,  setDateSel]  = useState([]);   // 30 | 60 | 90 | over90 | nolink
   // Client stays SINGLE-select: it is an identity, not a bucket, and 13 of them
   // behave differently from a five-item state list. FilterSelect serves both.
-  const [clientFilter, setClientFilter] = useState(''); // '' | <company uuid> | unassigned
+  // Multi-select, so an ARRAY of company uuids and the string unassigned. An
+  // empty array is every client, the same contract the five filters beside it use.
+  const [clientSel, setClientSel] = useState([]);
   const [matFilter, setMatFilter] = useState('');     // '' | passed | untested | attention
   const [repFilter, setRepFilter] = useState('');     // '' | pass | fail | expiring
 
@@ -544,8 +546,10 @@ export default function Testing({ userEmail = '' }) {
     // follows. client_company_id is NULL on the six products whose SKU names no guide
     // prefix; those are unresolved, not "some other client", and
     // p.client_company_id !== id would sweep all six into every named client's result.
-    if (clientFilter==='unassigned') list = list.filter(p=>p.client_company_id == null);
-    else if (clientFilter)           list = list.filter(p=>p.client_company_id === clientFilter);
+    // One membership test covers both branches the single-select needed. A row
+    // with no client answers to the literal unassigned, which is its option value.
+    if (clientSel.length) list = list.filter(p =>
+      clientSel.includes(p.client_company_id == null ? 'unassigned' : p.client_company_id));
     // ORDERED IS THE ONE THAT IS NOT A KEY FUNCTION, because its buckets are not a
     // partition: 30 ⊂ 60 ⊂ 90 are nested, so a product can be in three of them at
     // once. It is a UNION of the chosen windows instead -- ticking 30 and 60 means
@@ -576,7 +580,7 @@ export default function Testing({ userEmail = '' }) {
     return list;
     // Joined rather than passed raw: each selection is a fresh array identity on every
     // render, which would defeat the memo entirely.
-  }, [products, q, compSel.join(), efSel.join(), brandSel.join(), stageSel.join(), dateSel.join(), clientFilter, ordersByProduct]);
+  }, [products, q, compSel.join(), efSel.join(), brandSel.join(), stageSel.join(), dateSel.join(), clientSel.join(), ordersByProduct]);
   const shownMaterials = useMemo(() => {
     let list = !q ? materials : materials.filter(m =>
       // material_code is the identifier a person actually holds -- database-generated,
@@ -814,7 +818,7 @@ export default function Testing({ userEmail = '' }) {
             <FilterSelect multiple label="Ordered · Any"  value={dateSel}  onChange={setDateSel}  options={dateOptions} />
             {/* Single-select: a client is an identity, not a bucket, and the 13 of
                 them behave nothing like a five-item state list. */}
-            <FilterSelect label="All Clients" value={clientFilter} onChange={setClientFilter} options={clientOptions} />
+            <FilterSelect multiple label="All Clients" value={clientSel} onChange={setClientSel} options={clientOptions} />
             {/* The caption is not decoration. Only a fraction of products have a
                 reachable order date, so picking "90 days" and seeing a small number
                 reads as "only this many were ordered in 90 days" -- when the truth is
@@ -852,7 +856,7 @@ export default function Testing({ userEmail = '' }) {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onRename={(p)=>setModal({type:'rename',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!(isAll(compSel) && isAll(efSel) && isAll(brandSel) && isAll(stageSel) && isAll(dateSel) && !clientFilter)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(dateSel)} testedByProduct={testedByProduct} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onRename={(p)=>setModal({type:'rename',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!(isAll(compSel) && isAll(efSel) && isAll(brandSel) && isAll(stageSel) && isAll(dateSel) && isAll(clientSel))} ordersByProduct={ordersByProduct} orderFiltered={!isAll(dateSel)} testedByProduct={testedByProduct} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
