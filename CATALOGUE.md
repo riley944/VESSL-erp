@@ -445,6 +445,41 @@ of the first group and set nothing at all, losing the rows that were fine.
   ours, 25 hold the customer's own code). Note `vessl.products` has **no price
   column** at all, so order prices are structurally immune to propagation; prices
   live on the order line and in `quotes.tiers`.
+- **Docs-only commits each trigger a full production deploy.** Every push to `main`
+  builds and deploys, including commits that touch only `CATALOGUE.md`,
+  `PORTAL.md` or `RFQ-SEND.md` — none of which the app imports. On a working day
+  that is roughly half the deploys: measured from the Vercel API, **7 production
+  deploys on 2026-09-04 and 7 on 2026-09-03**, of which the docs commits were
+  `8db3838`, `5692ece` and `d26e860`.
+
+  **No limit has been hit.** Nothing has failed or been throttled — every
+  deployment in both days reached READY. This is waste and a ceiling worth knowing
+  about before a heavy day meets it mid-feature, not a live incident. Vercel's
+  Hobby plan caps deploys per day, so the headroom is real but finite, and the
+  number to check against the plan is the daily count above rather than a
+  remembered one.
+
+  **DECIDED 2026-09-08 — batching. Docs commits ride the next feature push
+  instead of going out alone.** Commit docs when the work is fresh, leave them in
+  the tree, and let them travel with the code. A docs commit costs a deploy only
+  when it lands with nothing else, which is now the case to avoid rather than the
+  norm.
+
+  **Vercel's Ignored Build Step was considered and rejected**, and the reason is
+  worth keeping because it is not about the mechanism working. An `ignoreCommand`
+  in `vercel.json`, or the project setting, would skip docs-only builds correctly
+  enough. What it would break is the **invariant every deploy check in this repo
+  rests on: the production deployment's SHA equals `origin/main` HEAD.** Once some
+  pushes deliberately do not deploy, production legitimately lags `origin/main`,
+  and "verify READY by SHA" can no longer tell a skipped build from a build that
+  failed to trigger. That check is the thing that has caught real problems here —
+  it is why the dev-port guard bug and the alias-attaches-after-READY lag were both
+  seen rather than assumed. Trading it for a handful of deploys a week is the wrong
+  side of the bargain. Batching costs nothing and keeps the invariant exact.
+
+  Consequence for the deploy check, unchanged and now deliberate: after any push,
+  the built SHA must equal `origin/main`. A mismatch is a fault, never a
+  configured skip.
 
 ---
 
