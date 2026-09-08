@@ -393,6 +393,26 @@ of the first group and set nothing at all, losing the rows that were fine.
   Either fix those two products' SKUs first, or link and then null the four
   snapshots by hand (which does not re-fire the trigger, since `product_id` is not
   in that SET list). The script carries both options in its header.
+
+  **Leaning 2026-09-08, going to Kristy as a recommendation, NOT a decision:**
+  keep costing bases as **separate products**, because they carry different client
+  prices and different margins. That is a recommendation only — it goes to her
+  with the other product questions, because it decides how test reports and
+  compliance links attach, and that is her call rather than an engineering one.
+
+  **Do not act on script 14 or on the BG09RL rows until she has answered.** The
+  four visible BG09RL rows stay exactly as they are — `-EXW` and `-Landed`
+  selectable, `-USA` and `-INT` retired by hand, an asymmetry that is deliberate
+  (script 28 explicitly excluded all four suffixes as "script 14's park, not
+  sizes"). Script 38 retires only the unreferenced fifth row, `54dff5d7`, which is
+  a duplicate of `-EXW` carrying nothing at all — not part of this question.
+
+  **One measurement that shapes the recommendation.** Across all 84 costing-basis
+  products (41 selectable): **32 regulation links, and zero test reports, zero
+  material links, zero compliance tasks.** So the compliance concern is almost
+  entirely *forward-looking* — there is very little attached today that a merge
+  would have to move or a split would have to duplicate. The 83 quotes and 26 PO
+  lines pointing at them are the weight, not the compliance records.
 - **`page.jsx:2518` / `2651` fallback fix** — ✅ done, shipped in `754d2f9`.
 - **Carton-spec two-store split.** `products.units_per_carton` / `carton_l/w/h_cm` /
   `carton_weight_kg` are written and read by `CreateProductModal.jsx` only. The CBM
@@ -445,6 +465,32 @@ of the first group and set nothing at all, losing the rows that were fine.
   ours, 25 hold the customer's own code). Note `vessl.products` has **no price
   column** at all, so order prices are structurally immune to propagation; prices
   live on the order line and in `quotes.tiers`.
+- **A product with no quote is invisible on the Products page, and stays
+  selectable.** Found 2026-09-08 trying to retire the `BG09RL-EXW` orphan
+  `54dff5d7` by hand and discovering there was nothing to click.
+
+  **The page renders from QUOTES, not from products.** It loads `quotes` and maps
+  each row to a product through `matchOf`, so a product no quote points at has no
+  row, no status dot and no Active dropdown. Searching its SKU shows only the
+  siblings that do have quotes. It is not hidden by a filter — there is no row to
+  filter.
+
+  **Measured, and it is not one row: 27 products have no quote at all, and 23 of
+  those are selectable.** One of the 23 sits on a purchase order. All 23 remain
+  eligible for SKU matching and for `create-or-link` on quote save, so they can be
+  matched against, but never seen or managed.
+
+  That combination is the actual hazard: **a product can be picked up by matching
+  logic while being unreachable by a person.** The BG09RL orphan was found only
+  because a duplicate-SKU census went looking; nothing surfaces the other 22.
+
+  **Not fixed, and deliberately so.** Script 38 retires that one row because it
+  was already decided; retiring the other 22 would be deciding something nobody
+  has decided — some are probably legitimate catalogue entries awaiting their
+  first quote. The fix worth considering is a **"show unquoted products" toggle**
+  on the Products page, rendering products with no quote as rows with an em dash
+  where the quote columns go. Not built, not scheduled.
+
 - **Docs-only commits each trigger a full production deploy.** Every push to `main`
   builds and deploys, including commits that touch only `CATALOGUE.md`,
   `PORTAL.md` or `RFQ-SEND.md` — none of which the app imports. On a working day
@@ -485,7 +531,7 @@ of the first group and set nothing at all, losing the rows that were fine.
 
 ## The scripts are the as-run record
 
-`scratchpad/14` through `scratchpad/35` are the scripts as actually executed
+`scratchpad/14` through `scratchpad/38` are the scripts as actually executed
 against production, not drafts. Each carries its measured baseline in the header,
 its guards in the `where` clause rather than in a comment, and a verification
 block that returns exactly one row on success.
@@ -512,6 +558,10 @@ block that returns exactly one row on success.
 | 33 | five BUC bag PO lines linked to their products, v4 after three failed rehearsals | run 2026-09-04 |
 | 34 | `vessl.kui_settings` + `can_write_settings()` + RLS, v2 after the default-ACL catch | run 2026-09-08 |
 | 35 | six `bank_` columns on `kui_settings`, `ach_info` dropped | run 2026-09-08 |
+| 21 | `rfq_digest_rows()` + the only two grants `service_role` holds | run 2026-09-08 |
+| 37 | four imported-twice product pairs retired, renamed and repointed | run 2026-09-08 |
+| 38 | the unreachable `BG09RL-EXW` orphan retired | run 2026-09-08 |
+| 36 | `payment_accounts` + `quotes.payment_account_id` | **written, NOT RUN** |
 | 14 | four remaining PO-line links | **parked, see §6** |
 
 ---
@@ -1119,6 +1169,125 @@ the hash lands it on `testing` before gate 2 is even consulted.
 
 Still **UI intent, not enforcement** — the enforcement is script 34's RLS on the
 table itself, which is why that came first.
+
+---
+
+## The RFQ digest — 2026-09-08, script 21, and a key that opens one door
+
+Verified that day: **11 of 12 sent RFQs had no bid recorded, the oldest 47 days.**
+A weekly digest now mails that list to Kristy on Mondays.
+
+**The digest cannot run as its caller, so the key had to be narrowed instead.**
+`/api/rfq/send` refuses the service-role key outright and says why — it runs every
+read under the caller's token, so it can never see a row that person could not
+open. A cron invocation has no session. `service_role` carries **`rolbypassrls`**,
+verified in `pg_roles`, so **RLS does not constrain it at all and grants are the
+only limit**.
+
+So script 21 created **one `SECURITY DEFINER` function**, `vessl.rfq_digest_rows()`,
+and granted `service_role` exactly **schema `USAGE` and `EXECUTE` on that
+function** — no table grants. Asserted after the fact: it reads none of
+`shipment_quotes`, `forwarder_bids` or `companies`. A leaked key returns one list
+of RFQ numbers instead of three tables in full.
+
+### `CREATE FUNCTION` grants `EXECUTE` to `PUBLIC`, and `anon` is in `PUBLIC`
+
+This is the function-shaped version of the lesson script 34 paid for on tables.
+Two defaults apply to a new function in this schema — the built-in grant to
+`PUBLIC`, and an `ALTER DEFAULT PRIVILEGES` giving `authenticated` `EXECUTE`
+(`authenticated=X/postgres` in `pg_default_acl`). **The anon key ships in the
+browser bundle**, so a function created the obvious way would have published this
+list to anyone who found the endpoint.
+
+**The trap is live, not theoretical:** `anon` currently holds `EXECUTE` on the
+existing `vessl.is_staff()`. Low impact there — it returns false for `anon` — but
+it is the same mechanism, already in effect on a function nobody revoked.
+
+Script 21 revokes from `PUBLIC` and from `authenticated` before granting, and
+`b5`/`b6` assert the end state rather than trusting the revokes. The after-commit
+file went further and proved the refusal behaviourally: `set local role anon` then
+calling the function **must** fail with permission denied. It did.
+
+### The wording is what the data can support
+
+Bids are entered **by hand** when replies are imported, so an absent
+`forwarder_bids` row means no bid has been **recorded** — it cannot distinguish a
+forwarder who never answered from one whose reply has not been typed in. The
+subject and heading say *no bid recorded in VESSL*, and a line under the count
+says a reply may exist that has not been entered. Never *no response received*.
+
+Four buckets, worst first: **stale** at 22 days or more needs a decision rather
+than a chase, **chase** at 8 to 21, **awaiting** at 2 to 7, and a separate
+**unassigned** section for RFQs with no forwarder company recorded — which cannot
+be chased at all and need one assigning. `FQ-TO4KF` is that case. Empty buckets
+are omitted, and **nothing outstanding sends no email at all**, because a weekly
+note saying there is nothing to report is how a weekly note stops being read.
+
+Weekly rather than daily: 12 RFQs across seven weeks gives a daily mail almost
+nothing new to say, and the first send would have repeated nine items already
+ignored for 11 days or more.
+
+**The service key is currently the LEGACY `service_role` JWT.** If legacy keys are
+disabled the route stops at its configuration check, so the symptom is a missing
+digest and a *not configured* message rather than a read failure. The fix is
+swapping that variable's **value** for the new `sb_secret` key — no code change and
+no new script, because the grant is to the **role**.
+
+---
+
+## Duplicate products resolved — 2026-09-08, scripts 37 and 38
+
+A census of selectable products (`active is distinct from false`) found **seven
+duplicate-SKU groups**. Four were the same product imported twice; three were not
+cleanups at all.
+
+**Script 37 took the four.** Each pair had one row carrying the purchase order line
+*and* a quote, and one carrying only a quote. For each: the quote-only row was
+retired, the survivor renamed from its padded spreadsheet line to a clean name, and
+the orphan quote repointed onto the survivor. Run 2026-09-08, rehearsal `z0`,
+commit `z0`, after-commit checks clean.
+
+Names dropped the SKU prefix, since the SKU has its own column — `LL1-1212␣␣␣␣␣Cotton
+Christmas Bag␣␣␣␣␣Red Reindeer` (50 chars) became `Cotton Christmas Bag Red
+Reindeer` (33). The `Christmsas` typo went with it. **`b2` asserted the resulting
+LENGTH, not the text** — a `SET` value has to be a literal, and a paste that lost a
+character would otherwise store a wrong name silently.
+
+**The repoint was deliberate, and the app refuses to do it implicitly.**
+`linkQuoteToProduct` updates `quotes.product_id` only where it `IS NULL`, because
+that write fires from an Active toggle and a toggle is not a statement about which
+product a quote belongs to. That guard is right for an implicit write. But
+`matchOf` reads `product_id` **first** and only then falls back to sku and name, so
+leaving four quotes pointed at rows the script had just retired would have rendered
+each with a red **Inactive** dot describing a decision nobody made about it. Moving
+the link is what makes the retirement honest. Nothing client-facing changed —
+`printClientSheet` prints `q.product`/`q.sku` from the quote row, and PO lines print
+`product_sku` stamped from their own `product_id`.
+
+**Script 38 took a fifth row the interface could not reach** — see the §6 board
+entry on unquoted products for why. `54dff5d7`, a `BG09RL-EXW` duplicate carrying
+nothing across **all ten tables holding a `product_id`**, retired 2026-09-08.
+
+### The three that were left, and why each is not a cleanup
+
+- **`BG09RL-EXW`** — resolved by script 38, the orphan being unreferenced.
+- **`BUC-157 KU2607001`** — the two rows have **split the evidence**: `c8f3d2d2`
+  ("CO bag") holds the purchase order line, `ab86a997` (created 2 Sep, the better
+  name) holds the quote. Which is the real product is a decision, not a merge.
+- **`LL1-1618`** — **two different products sharing one SKU**, a green youth swim
+  shirt and a pink girls shirt, each with three regulation links. Merging would be
+  wrong; one needs a new SKU.
+
+Both go to Kristy, with the null-SKU **Koozie with magnet** (`78dffbc0`), which
+cannot be matched or linked until it has a SKU.
+
+**On `BG09RL-USA` and `BG09RL-INT` being inactive** — deliberate, and **not**
+script 28, which excluded those suffixes explicitly: *"Costing bases (`-EXW`,
+`-Landed`, `-INT`, `-USA`) are excluded — those are script 14's park, not sizes."*
+So they were hand-set. Neither column can prove by whom: `origin` was never used to
+mark retirement (164 of 165 retired rows carry none), and **`updated_at` is
+advanced on only 2 of 350 product rows**, confirming §4's note that this table
+never maintains it.
 
 ---
 
