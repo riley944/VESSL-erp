@@ -501,7 +501,7 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, rol
     // GATE 1 of 3. Directly under Codes, admin and staff only. This one only
     // hides the link, and a hidden link is not a lock -- the other two gates are
     // in the shell and are what actually stop the page rendering.
-    ...(canSeeBanking(role) ? [{ id:BANKING_PAGE, label:'Company Banking' }] : []),
+    ...(canSeeBanking(role) ? [{ id:BANKING_PAGE, label:'KUI Banking' }] : []),
     { id:'client-relations',   label:'Client Relations' },
   ];
   const activeFor = { 'sales-orders':['sales-orders','so-detail'], 'orders':['orders','order-detail'] };
@@ -2817,7 +2817,10 @@ function CompanyBanking() {
     setMsg(error ? 'Error: '+error.message : 'Saved.'); setTimeout(()=>setMsg(''),2500);
   };
   if (!form) return <div className="loading">Loading...</div>;
-  const fields = [['Company name','company_name','King Universal Inc.'],['Contact name','contact_name',''],['Email','email',''],['Phone','phone',''],['Office phone','office_phone','']];
+  // LABELS ONLY. The keys are kui_settings column names and are untouched -- the
+  // KUI prefix is what this card is called on screen, not what anything is called
+  // in the database or on a printed sheet.
+  const fields = [['KUI Name','company_name','King Universal Inc.'],['KUI Contact Name','contact_name',''],['KUI Email','email',''],['KUI Phone','phone',''],['KUI Office Phone','office_phone','']];
   // Drives the caption below. THE SHEET USES THE SAME PREDICATE, imported from
   // the same module, so the promise the form makes and the decision the sheet
   // takes cannot disagree.
@@ -2825,12 +2828,12 @@ function CompanyBanking() {
   return (
     <>
       <div className="section-card" style={{marginBottom:'20px'}}>
-        <div className="section-head"><h3>Company Info</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Used on documents sent to clients</span></div>
+        <div className="section-head"><h3>KUI Information</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Used on documents sent to clients</span></div>
         <div className="logi-grid">
           {fields.map(([lab,k,ph])=>(
             <div key={k} className="logi-field"><label>{lab}</label><input className="form-input" value={form[k]||''} placeholder={ph} onChange={e=>f(k)(e.target.value)} /></div>
           ))}
-          <div className="logi-field" style={{gridColumn:'1 / -1'}}><label>Address</label><textarea className="form-input" rows={2} value={form.address||''} onChange={e=>f('address')(e.target.value)} /></div>
+          <div className="logi-field" style={{gridColumn:'1 / -1'}}><label>KUI Address</label><textarea className="form-input" rows={2} value={form.address||''} onChange={e=>f('address')(e.target.value)} /></div>
         </div>
       </div>
       {/* SIX FIELDS, NOT A TEXTAREA, and that is the point of script 35. A blob
@@ -8465,7 +8468,7 @@ export default function App() {
   // holds the screen steady for the render in between.
   if (hasProfile === false) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
 
-  const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations','company-banking':'Company Banking'};
+  const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations','company-banking':'KUI Banking'};
   const badges = {'client-relations': crUnread, 'shipments': dreqOpen};
 
   return (
