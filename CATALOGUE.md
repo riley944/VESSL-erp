@@ -485,7 +485,7 @@ of the first group and set nothing at all, losing the rows that were fine.
 
 ## The scripts are the as-run record
 
-`scratchpad/14` through `scratchpad/33` are the scripts as actually executed
+`scratchpad/14` through `scratchpad/35` are the scripts as actually executed
 against production, not drafts. Each carries its measured baseline in the header,
 its guards in the `where` clause rather than in a comment, and a verification
 block that returns exactly one row on success.
@@ -510,6 +510,8 @@ block that returns exactly one row on success.
 | 31 | `staff_profiles.notifications_enabled`, NOT NULL DEFAULT true | run 2026-09-03 |
 | 32 | `quotes.size_plate_fees` + `quotes.size_cartons`, both jsonb NOT NULL `[]` | run 2026-09-04 |
 | 33 | five BUC bag PO lines linked to their products, v4 after three failed rehearsals | run 2026-09-04 |
+| 34 | `vessl.kui_settings` + `can_write_settings()` + RLS, v2 after the default-ACL catch | run 2026-09-08 |
+| 35 | six `bank_` columns on `kui_settings`, `ach_info` dropped | run 2026-09-08 |
 | 14 | four remaining PO-line links | **parked, see §6** |
 
 ---
@@ -726,6 +728,11 @@ cause: a value asserted by eye instead of measured.
 
 ### `vessl.kui_settings` has never existed
 
+> **RESOLVED 2026-09-08 by script 34**, which created the table. The finding below
+> is kept as written because it is the evidence that motivated the script and the
+> record of what the form did in the five days it had no table behind it. For the
+> table as built, see the script 34 section further down.
+
 The Settings page carried a Company Info form and an ACH / Wire block whose
 caption read *"Auto-fills the bottom of client quote sheets."* **It never has.**
 Checked across every schema and every relation kind in `pg_class`, not just
@@ -935,6 +942,183 @@ it is true.
 If a Mixed row ever appears, the fix is upstream — two catalogue entries sharing
 a name and sku is a duplicate to merge, in the same family as the size-variant
 merge (scripts 27 to 30). It is not a display rule to tune.
+
+---
+
+## `kui_settings` — 2026-09-08, script 34, and the privilege that was never granted
+
+`vessl.kui_settings` now exists: one row, `id = 1`, holding the company details and
+the ACH/wire text that print on a client quote sheet. Created 2026-09-08, rehearsed
+to `z0`, committed, verified outside the transaction in a fresh tab including the
+behaviour test.
+
+**The code was already written.** `CompanySettings` in `page.jsx` already loaded
+`id = 1` and already upserted `id = 1`; `printClientSheet` in `quotes.jsx` already
+read the row and already gated the payment block on `ach_info`. Both were built
+against a table that did not exist, which is what the "Not connected yet" notice
+was for. So the column list was **not a design choice** — it is exactly the payload
+that upsert already sends, and the only code change on landing was deleting the
+notice.
+
+### Shape
+
+- `id integer primary key default 1` **plus** `check (id = 1)`. The default alone
+  would not stop a second row and the primary key alone would not stop `id = 2`; it
+  takes both plus the check to make the table structurally single-row.
+- Nine columns, all of them the form's payload: `id`, `company_name`,
+  `contact_name`, `email`, `phone`, `office_phone`, `address`, `ach_info`,
+  `updated_at`.
+- **Not seeded.** The first Save inserts, which is also what exercises the INSERT
+  policy in real use.
+- RLS: **read for every authenticated user** — printing a client sheet requires it,
+  and printing is not restricted to the roles that may edit — **insert and update
+  for `admin` and `staff` only**, matching the Settings tab allowlist, and **no
+  DELETE policy at all**.
+- `vessl.can_write_settings()`, new, mirrors `vessl.is_staff()` and adds the role
+  filter. `is_staff()` could not be reused: it returns true for *any*
+  `staff_profiles` row, `limited_qc` included. The mirrored part that matters is the
+  `OR` on email — **one of the seven profiles has a null `auth_user_id`**, so a
+  check written against `auth.uid()` alone would lock that person out.
+
+### Who the allowlist covers — settled 2026-09-08, do not re-investigate
+
+Six accounts hold `admin` or `staff`, all `@kinguniversal.com`: **riley** (admin,
+the only one), and **carmela**, **kristy**, **loren**, **mattdillon** and **steven**
+as staff. One `limited_qc` account is excluded by design.
+
+**Carmela is the one to know about, and she is fine.** Her profile is the only one
+of the six with a **null `auth_user_id`** — a real colleague with a legitimate
+profile whose login has simply never been linked. Confirmed 2026-09-08; she gets
+the same access as the rest of staff and **no allowlist or role change was made.**
+She is also the live reason `can_write_settings()` matches on email as well as
+`auth.uid()`: a check written against `auth.uid()` alone would silently exclude
+her. If a future change to that function drops the email branch, it locks her out
+and the failure will look like a permissions bug rather than a missing join.
+
+### The finding: a privilege you did not grant is not a privilege they lack
+
+**Rehearsal 1 failed on `c1`, reading `true/true/true/TRUE`.** `authenticated` held
+DELETE on a table the script never granted DELETE on.
+
+The cause is a schema-level default. `pg_default_acl` carries, for schema `vessl`,
+object type table, **`authenticated=arwdDxtm/postgres`** — an `ALTER DEFAULT
+PRIVILEGES` that grants all seven privileges on every new table **at CREATE time**.
+So the `grant select, insert, update` added nothing, and withholding DELETE
+withheld nothing.
+
+v2 revokes first and grants back:
+
+```sql
+revoke all on vessl.kui_settings from authenticated;
+grant select, insert, update on vessl.kui_settings to authenticated;
+```
+
+**This is why every other `vessl` table shows `authenticated=arwdDxtm` and leans
+entirely on RLS** — not a decision anyone made, just the schema default nobody has
+revoked. `kui_settings` is the first table that does not. Whether the rest should
+be tightened is a separate question and is not something to fix table-by-table on
+the way past.
+
+**The lesson generalises past privileges.** The same trap runs the other way at the
+policy layer: a permissive policy elsewhere ORs with yours, so `products` and
+`quotes` each carry a `..._auth_all` policy with `qual: true` that makes their
+`staff_only` policy irrelevant. **Assert the end state from the catalogue rather
+than reasoning forward from the statements you wrote.** `c1` caught this only
+because it asked `has_table_privilege` what was true, instead of concluding "we
+did not grant DELETE, therefore there is no DELETE."
+
+Two checks were added rather than the want being softened to fit. `a2` captures, in
+the pre-state block, that the schema default exists — if it ever reads 0 the revoke
+has stopped being load-bearing and can be reconsidered instead of copied forward.
+`c3` asserts TRUNCATE, REFERENCES and TRIGGER went too; on `staff_profiles` those
+same three currently read `true/true/true`, so it is not a tautology.
+
+### The check constraint is asserted from the catalogue, not by tripping it
+
+Proving `id = 2` is refused means causing an error, and a failed statement poisons
+the transaction unless wrapped in savepoint handling that differs by client. So the
+rehearsal asserts the constraint **exists**, and the behaviour test lives in
+`34-after-commit-checks.sql`, run in a fresh tab after commit, where a rejected
+insert costs nothing. It failed with `kui_settings_single_row` as intended, and the
+table still reads 0 rows afterwards.
+
+That second file exists because its lines carry quotes, and **a quote inside a `--`
+comment is what broke script 23** in this client.
+
+---
+
+## Company Banking — 2026-09-08, script 35 and the redirect
+
+### What changed, and why the plan changed mid-build
+
+The Company form was originally a **tab inside Settings**, widened earlier the same
+day from admin-only to admin plus staff. That was built and reviewed before the
+shape was reconsidered: company details and bank details belong to the **business**,
+while Settings holds what belongs to the **person** — your name, your password, your
+notification preference — which is exactly why Settings sits in `UNIVERSAL_PAGES`
+and every role reaches it. A role-gated business page arriving by way of a
+per-person page was the wrong home for it.
+
+So the form moved out to a **top-level sidebar entry, Company Banking, directly
+under Codes**, and Settings went back to two tabs. `SettingsPage` now carries no
+role check at all. The earlier widening was not wasted — the allowlist it
+introduced is the same one now gating the new page, relocated rather than rewritten.
+
+### Script 35 — as-run
+
+Six columns in, one out. `ach_info`, a single textarea printed verbatim, became
+`bank_name`, `bank_beneficiary`, `bank_account_number`, `bank_routing_aba`,
+`bank_swift` and `bank_address` so the sheet can print labelled lines and **skip
+the blanks** — a wire route with no ACH routing number now prints five lines
+instead of a paragraph with a dangling empty label.
+
+**Run 2026-09-08. Rehearsal one `z0` row, commit one `z0` row, and
+`35-after-commit-checks.sql` clean in a fresh tab — every check passed.** Verified
+independently afterwards: 14 columns, the six `bank_` present and `text`,
+`ach_info` gone, policies `INSERT, SELECT, UPDATE`, privileges
+`true/true/true/false`, `can_write_settings` still `true/s`, 0 rows.
+
+`ach_info` was **dropped rather than kept**: the table was created hours earlier by
+script 34 and had never held a row, so there was nothing to migrate and keeping it
+would have left a second home for payment details. `a1` guarded that drop by
+asserting the table was still empty at run time, so a save landing between writing
+and running would have failed the script rather than destroyed data.
+
+All six carry a `bank_` prefix because the table already has an `address` column
+holding the **company** address, and the new one is the **bank** address. Unprefixed
+they would have been `address` and `bank_address` — a pair nobody keeps straight in
+a form or a print template.
+
+**RLS was deliberately untouched and the script says so**, because "no change" is
+indistinguishable from "forgotten" a month later. Script 34's policies already
+expressed the new intent exactly. Adding a column cannot alter a table-wide policy,
+but `c1` through `c4` re-read the policies, the DELETE absence, the grant and the
+function from the catalogue anyway — the same end-state-not-inference habit that
+caught the default-ACL problem in script 34.
+
+### The three gates, and why one is not enough
+
+`limited_qc` must never reach this page, and neither should a role nobody has
+invented yet. The trap is that **`allowedPagesFor` returns `null` — meaning
+unrestricted — for every role except `limited_qc`**, so an unrecognised role string
+on a real profile row reads as unrestricted and sees every link. A denylist would
+have shown it the bank account number.
+
+`COMPANY_TAB_ROLES = ['admin', 'staff']` therefore gates **three** sites:
+
+1. **The sidebar link** — hides it. A hidden link is not a lock.
+2. **The `rawPage` → `page` fallback** — a separate line from the `allowedPages`
+   one, because that line only constrains `limited_qc` and would happily let
+   `#company-banking` through for everyone else. Anyone who cannot see the page is
+   sent to `programs` rather than left on a blank screen.
+3. **The render** — belt and braces over gate 2, one boolean, and the gate that
+   actually keeps the component off the screen if gate 2 is ever edited.
+
+`limited_qc` is covered twice over: its `ROLE_PAGES` list has no banking entry, so
+the hash lands it on `testing` before gate 2 is even consulted.
+
+Still **UI intent, not enforcement** — the enforcement is script 34's RLS on the
+table itself, which is why that came first.
 
 ---
 

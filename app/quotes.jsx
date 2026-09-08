@@ -17,6 +17,7 @@ import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey, storedQtyToMap as
 // The tier cost helpers live in lib/tierCost.js so page.jsx reads the SAME ones.
 // They were duplicated by hand there and had drifted; see that file for what broke.
 import { tierFreight, tierDuty, activeFreight, moldPerUnit, effectiveQty, tierTotalCost, platePerUnit } from "@/lib/tierCost";
+import { BANK_FIELDS } from "@/lib/bankFields";
 import { CodeModal } from "@/app/components/CodeModal";
 // HtsField used to live in this file. It moved to app/components so the Edit
 // Product modal could use the same control rather than a second copy -- the
@@ -1894,6 +1895,33 @@ function printQuote(q) {
   if (w) { w.document.write(html); w.document.close(); }
 }
 
+// ---------- payment block ----------
+// SIX LABELLED LINES, NOT A BLOB. Script 35 replaced kui_settings.ach_info with
+// six columns so this can print only what is known -- a wire route with no ACH
+// routing number now prints five lines instead of a paragraph with a dangling
+// empty label.
+//
+// THE LIST IS IMPORTED, not repeated. It lived here as a second copy for about an
+// hour, mirroring the one in page.jsx by hand, which is the arrangement that put
+// duty in one margin calculation and not the other. lib/bankFields.js is the
+// single definition and lib/tierCost.js is the precedent.
+//
+// THE EMPTY CASE IS THE IMPORTANT ONE. The block renders only when at least one
+// field has content after trimming, so a row of blank strings -- which is what
+// the table holds until somebody fills it in -- produces exactly nothing here,
+// identical to the no-row behaviour that predates the table existing.
+function bankBlock(settings) {
+  const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const rows = BANK_FIELDS
+    .map(([k, label]) => [label, String(settings?.[k] ?? '').trim()])
+    .filter(([, v]) => v !== '');
+  if (rows.length === 0) return '';
+  const lines = rows.map(([label, v]) =>
+    `<div style="margin-bottom:3px"><span style="display:inline-block;min-width:104px;color:#8a8478">${esc(label)}</span><span style="color:#3a3a36">${esc(v).replace(/\n/g, '<br>')}</span></div>`
+  ).join('');
+  return `<div style="margin-top:16px;padding:14px 16px;border:1px solid #e3e3dd;border-radius:8px;background:#faf9f5"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8a8478;margin-bottom:6px">Payment / Wire Instructions</div><div style="font-size:12.5px;line-height:1.6">${lines}</div></div>`;
+}
+
 // ---------- client-safe sheet ----------
 function printClientSheet(clientName, quotesArr, settings, vendor) {
   const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -1966,7 +1994,7 @@ function printClientSheet(clientName, quotesArr, settings, vendor) {
       <div class="foot">
         ${settings?.company_name ? esc(settings.company_name) : 'King Universal Inc.'}
         ${(settings?.contact_name||settings?.email||settings?.phone||settings?.office_phone||settings?.address) ? `<div class="terms">${[settings.contact_name,settings.email,settings.phone,settings.office_phone].filter(Boolean).map(esc).join(' &middot; ')}${settings.address?'<br>'+esc(settings.address).replace(/\n/g,'<br>'):''}</div>` : ''}
-        ${settings?.ach_info ? `<div style="margin-top:16px;padding:14px 16px;border:1px solid #e3e3dd;border-radius:8px;background:#faf9f5"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8a8478;margin-bottom:6px">Payment / Wire Instructions</div><div style="font-size:12.5px;color:#3a3a36;line-height:1.6;white-space:pre-wrap">${esc(settings.ach_info)}</div></div>` : ''}
+        ${bankBlock(settings)}
         <div class="terms">Pricing shown is per unit and quoted in USD. Quantities and pricing are estimates valid for 30 days and subject to final confirmation. Prepared by ${settings?.company_name?esc(settings.company_name):'King Universal Inc.'}.</div>
       </div>
     </div>

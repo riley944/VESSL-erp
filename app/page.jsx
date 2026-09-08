@@ -13,6 +13,7 @@ import { SizeGrid, sizesForSelection, toScaleList, skuToken, storedQtyToMap } fr
 // The SAME cost model the quote editor uses. This page carried a hand-written copy
 // that had drifted on both the mold divisor and the duty term; see lib/tierCost.js.
 import { tierTotalCost } from '@/lib/tierCost';
+import { BANK_FIELDS, BANK_KEYS, hasAnyBankDetail } from '@/lib/bankFields';
 
 // ── Prefilling an order grid from a quote tier ───────────────────────────────
 // A PREFILL, NEVER A LOCK. The tier already carries the split somebody worked out
@@ -328,6 +329,10 @@ const Ic = {
   quotes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9.5 14.5h3.5a1.5 1.5 0 0 0 0-3h-2a1.5 1.5 0 0 1 0-3H14"/></svg>,
   codes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>,
   'client-relations':<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M17 8h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2v4l-4-4H9a1.9 1.9 0 0 1-1.4-.6"/><path d="M3 4h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2z"/></svg>,
+  // A classical bank front -- pediment over four columns on a plinth. Same 17px,
+  // same 1.7 stroke, same round caps and joins as every icon above, and drawn
+  // only in strokes so it inherits currentColor like the rest.
+  'company-banking':<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 10h18L12 4 3 10z"/><line x1="6" y1="13" x2="6" y2="17"/><line x1="10" y1="13" x2="10" y2="17"/><line x1="14" y1="13" x2="14" y2="17"/><line x1="18" y1="13" x2="18" y2="17"/><line x1="3" y1="20" x2="21" y2="20"/></svg>,
   settings:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
 };
 
@@ -365,6 +370,27 @@ const ROLE_PAGES = { limited_qc: ['testing', 'products', 'shipments', 'codes', .
 const allowedPagesFor = role =>
   (role && Object.prototype.hasOwnProperty.call(ROLE_PAGES, role)) ? ROLE_PAGES[role] : null;
 
+// ── Company Banking access ───────────────────────────────────────────────────
+// AN ALLOWLIST, NOT A DENYLIST, and this is the whole reason the constant exists.
+// The rule is "admin and staff may reach Company Banking", which happens today to
+// select the same six people as "not limited_qc" -- 1 admin, 5 staff, 1
+// limited_qc. Writing it as `role !== 'limited_qc'` would encode the coincidence
+// rather than the rule, and would hand the page to any role invented later,
+// silently, on the day it is invented.
+//
+// IT HAS TO BE A POSITIVE TEST HERE IN PARTICULAR, because allowedPagesFor above
+// returns null -- meaning UNRESTRICTED -- for every role except limited_qc. An
+// unrecognised role string on a real profile row reads as unrestricted and sees
+// every link. A denylist would show it the bank account number; an allowlist
+// simply does not match, so a role nobody has heard of gets nothing.
+const COMPANY_TAB_ROLES = ['admin', 'staff'];
+const canSeeBanking = role => COMPANY_TAB_ROLES.includes(role);
+// Used at THREE sites, and all three are needed. The sidebar link is only the
+// visible one; the page render stops a hash from mounting the component, and the
+// rawPage fallback stops it being the active page at all. Dropping any one of the
+// three leaves #company-banking working for somebody who cannot see the link.
+const BANKING_PAGE = 'company-banking';
+
 // ── Tab in the URL hash ───────────────────────────────────────────────────────
 // A refresh used to land back on Programs whatever you were looking at.
 //
@@ -380,7 +406,15 @@ const allowedPagesFor = role =>
 const HASH_PAGES = [
   'programs', 'dashboard', 'sales-orders', 'orders', 'companies', 'products',
   'testing', 'pricing', 'shipments', 'inventory', 'quotes', 'codes',
-  'client-relations', 'settings',
+  // Listed like any other page, and SAFE TO LIST. Membership here decides only
+  // whether the id may travel through the URL, never who may see the page --
+  // adopting '#company-banking' sets rawPage, and gate 2 still converts that to
+  // programs for anyone failing canSeeBanking before it is ever rendered.
+  // Omitting it was the bug: the writer skips ids it does not recognise, so the
+  // previous page's hash stayed in the bar and a refresh went back there.
+  // BANKING_PAGE rather than the literal, so the id cannot drift between the
+  // three gates and this list.
+  'client-relations', BANKING_PAGE, 'settings',
 ];
 
 // "Landing on the list is the honest fallback" is what the note above used to
@@ -450,7 +484,7 @@ const storeTab = p => {
 };
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null }) {
+function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, role=null }) {
   const links = [
     { id:'programs',           label:'Programs' },
     { id:'dashboard',          label:'Insights' },
@@ -464,6 +498,10 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null }) {
     { id:'inventory',          label:'Inventory' },
     { id:'quotes',             label:'Quotes' },
     { id:'codes',              label:'Codes' },
+    // GATE 1 of 3. Directly under Codes, admin and staff only. This one only
+    // hides the link, and a hidden link is not a lock -- the other two gates are
+    // in the shell and are what actually stop the page rendering.
+    ...(canSeeBanking(role) ? [{ id:BANKING_PAGE, label:'Company Banking' }] : []),
     { id:'client-relations',   label:'Client Relations' },
   ];
   const activeFor = { 'sales-orders':['sales-orders','so-detail'], 'orders':['orders','order-detail'] };
@@ -2517,34 +2555,30 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────────
-// TWO TABS, and the split is about ownership. My Account holds what belongs to the
-// person -- their name, their password -- and every role sees it. Company holds
-// configuration that happens to be reached from the same gear and belongs to the
-// business; admin only.
+// THREE TABS, and the split is about ownership. My Account holds what belongs to
+// the person -- their name, their password -- and every role sees it. General
+// Settings holds their own preferences. Company holds configuration that happens to
+// be reached from the same gear and belongs to the business.
 //
-// The admin check is UI INTENT, NOT ENFORCEMENT, the same standing canCreateProducts
-// has. vessl.staff_profiles carries a permissive staff_only policy on ALL commands,
-// so any authenticated staff member can already write any profile row through the
-// API. Hiding the tab is worth doing and is not a security boundary; the boundary
-// would be RLS on the table the tab writes to.
+// TWO TABS AGAIN. Company moved out to its own top-level page, Company Banking,
+// on 2026-09-08. What is left here is what belongs to the PERSON -- their name,
+// their password, their notification preference -- which is why Settings is in
+// UNIVERSAL_PAGES and every role reaches it. Company details and bank details
+// belong to the business, are gated by role, and no longer arrive by way of a
+// per-person page. No role check is needed on this component at all any more.
 function SettingsPage({ role, user, displayName, onDisplayName }) {
-  const isAdmin = role === 'admin';
   const [tab, setTab] = useState('account');
-  // Nobody can land on a tab they cannot see, including through a stale state value:
-  // the render reads isAdmin, not the tab name alone.
-  const showCompany = isAdmin && tab === 'company';
   return (
     <>
       <div style={{display:'flex',gap:'6px',marginBottom:'20px',borderBottom:'1px solid var(--line)'}}>
-        {[['account','My Account'], ['general','General Settings'], ...(isAdmin?[['company','Company']]:[])].map(([id,label])=>(
+        {[['account','My Account'], ['general','General Settings']].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)}
             style={{background:'none',border:'none',borderBottom:'2px solid '+(tab===id?'var(--accent)':'transparent'),
                     color:tab===id?'var(--ink)':'var(--muted)',fontWeight:tab===id?600:500,fontFamily:'inherit',
                     fontSize:'13.5px',padding:'9px 14px',marginBottom:'-1px',cursor:'pointer'}}>{label}</button>
         ))}
       </div>
-      {showCompany ? <CompanySettings />
-        : tab === 'general' ? <GeneralSettings user={user} />
+      {tab === 'general' ? <GeneralSettings user={user} />
         : <MyAccount user={user} displayName={displayName} onDisplayName={onDisplayName} />}
     </>
   );
@@ -2752,13 +2786,27 @@ function GeneralSettings({ user }) {
 // ── Company settings (admin) ─────────────────────────────────────────────────
 // MOVED INTACT from the old KUI Settings page -- same fields, same single-row
 // upsert, same copy. Only its home changed, plus the notice below.
-function CompanySettings() {
+// Every column the form owns. Script 35 dropped ach_info and added the six bank_
+// columns, so this is the whole of kui_settings apart from id and updated_at,
+// which the save supplies itself. The bank half is BUILT FROM BANK_KEYS rather
+// than typed out, so adding a seventh field to lib/bankFields.js reaches the
+// blank shape without a second edit here.
+const BLANK_SETTINGS = {
+  id:1, company_name:'', contact_name:'', email:'', phone:'', office_phone:'', address:'',
+  ...Object.fromEntries(BANK_KEYS.map(k => [k, ''])),
+};
+
+function CompanyBanking() {
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   useEffect(()=>{
+    // .single() reports an error rather than a row when the table is empty, which
+    // is the NORMAL state until somebody saves for the first time. The fallback
+    // is the blank shape, so an empty table renders an empty form rather than a
+    // spinner that never resolves.
     SB.from('kui_settings').select('*').eq('id',1).single().then(({data})=>{
-      setForm(data || { id:1, company_name:'', address:'', contact_name:'', email:'', phone:'', office_phone:'', ach_info:'' });
+      setForm(data || { ...BLANK_SETTINGS });
     });
   },[]);
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -2770,25 +2818,12 @@ function CompanySettings() {
   };
   if (!form) return <div className="loading">Loading...</div>;
   const fields = [['Company name','company_name','King Universal Inc.'],['Contact name','contact_name',''],['Email','email',''],['Phone','phone',''],['Office phone','office_phone','']];
+  // Drives the caption below. THE SHEET USES THE SAME PREDICATE, imported from
+  // the same module, so the promise the form makes and the decision the sheet
+  // takes cannot disagree.
+  const anyBank = hasAnyBankDetail(form);
   return (
     <>
-      {/* SAYS SO OUT LOUD, because the failure is silent in both directions: the
-          load returns no row and falls back to blank defaults, so the form looks
-          untouched rather than broken, and the save reports an error only after
-          somebody has typed a page of bank details into it.
-          vessl.kui_settings does not exist -- checked across every schema and
-          relation kind. printClientSheet in quotes.jsx is its only reader and
-          gates the payment block on settings?.ach_info, so that block has never
-          rendered on a client sheet. The table is a separate, approved piece of
-          work; this notice comes out when it lands. */}
-      <div style={{marginBottom:'20px',padding:'14px 16px',borderRadius:'10px',border:'1px solid #f0d9a8',background:'#fdf6e7'}}>
-        <div style={{fontSize:'12.5px',fontWeight:600,color:'#8a5a00',marginBottom:'4px'}}>Not connected yet</div>
-        <div style={{fontSize:'12.5px',color:'#6b5220',lineHeight:1.55}}>
-          The table behind this form has not been created, so saving will fail and the payment block
-          will not appear on client quote sheets. The form is here ready for it. Nothing else on the
-          quote sheet is affected — it falls back to the company name in the template.
-        </div>
-      </div>
       <div className="section-card" style={{marginBottom:'20px'}}>
         <div className="section-head"><h3>Company Info</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Used on documents sent to clients</span></div>
         <div className="logi-grid">
@@ -2798,12 +2833,28 @@ function CompanySettings() {
           <div className="logi-field" style={{gridColumn:'1 / -1'}}><label>Address</label><textarea className="form-input" rows={2} value={form.address||''} onChange={e=>f('address')(e.target.value)} /></div>
         </div>
       </div>
+      {/* SIX FIELDS, NOT A TEXTAREA, and that is the point of script 35. A blob
+          printed verbatim; six values can be printed as labelled lines with the
+          blank ones skipped, which is what a client sheet needs when only a wire
+          route is known and there is no ACH routing number. Same logi-grid the
+          card above uses, so the two read as one form.
+          The list itself lives in lib/bankFields.js because quotes.jsx prints
+          from it too -- see that file for why a shared module rather than an
+          import between the two. */}
       <div className="section-card" style={{marginBottom:'20px'}}>
-        <div className="section-head"><h3>ACH / Wire Information</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Auto-fills the bottom of client quote sheets</span></div>
-        <div style={{padding:'18px'}}>
-          <label style={{display:'block',fontSize:'11px',letterSpacing:'.04em',textTransform:'uppercase',color:'var(--muted)',marginBottom:'5px'}}>Bank / payment details</label>
-          <textarea className="form-input" rows={7} value={form.ach_info||''} placeholder={"Bank name:\nBeneficiary:\nAccount #:\nRouting / ABA:\nSWIFT:\nBank address:"} onChange={e=>f('ach_info')(e.target.value)} />
-          <p style={{fontSize:'12px',color:'var(--muted)',marginTop:'8px'}}>Leave blank for now if you don't have it — the client sheet just won't show a payment block until this is filled in.</p>
+        <div className="section-head"><h3>ACH / Wire Information</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Prints at the bottom of client quote sheets</span></div>
+        <div className="logi-grid">
+          {BANK_FIELDS.filter(([k])=>k!=='bank_address').map(([k,lab])=>(
+            <div key={k} className="logi-field"><label>{lab}</label>
+              <input className="form-input" value={form[k]||''} onChange={e=>f(k)(e.target.value)} /></div>
+          ))}
+          <div className="logi-field" style={{gridColumn:'1 / -1'}}><label>Bank address</label>
+            <textarea className="form-input" rows={2} value={form.bank_address||''} onChange={e=>f('bank_address')(e.target.value)} /></div>
+        </div>
+        <div style={{padding:'0 18px 16px',fontSize:'12px',color:'var(--muted)'}}>
+          {anyBank
+            ? 'A Payment / Wire Instructions block will print on client quote sheets, showing only the fields filled in above.'
+            : 'Leave blank if you do not have these yet — client quote sheets simply will not show a payment block.'}
         </div>
       </div>
       <div style={{display:'flex',alignItems:'center',gap:'14px'}}>
@@ -8342,7 +8393,14 @@ export default function App() {
   // `page`, and a hook cannot sit after a conditional return. Both lines are
   // pure, so computing them before the guards changes nothing.
   const allowedPages = allowedPagesFor(role);
-  const page = (allowedPages && !allowedPages.includes(rawPage)) ? allowedPages[0] : rawPage;
+  const rawAllowed = (allowedPages && !allowedPages.includes(rawPage)) ? allowedPages[0] : rawPage;
+  // GATE 2 of 3, and it has to be SEPARATE from allowedPages rather than folded
+  // into it. allowedPages only constrains limited_qc; every other role -- an
+  // unrecognised one included -- gets null, meaning unrestricted, so the line
+  // above would happily let #company-banking through. This one asks the positive
+  // question instead, and sends anyone who cannot see the page back to the
+  // default rather than leaving them on a blank screen.
+  const page = (rawAllowed === BANKING_PAGE && !canSeeBanking(role)) ? 'programs' : rawAllowed;
 
   // Adopt the hash on mount, once. An effect rather than a useState initializer
   // because this route is statically prerendered: the server has no window, so a
@@ -8375,13 +8433,21 @@ export default function App() {
   // location the app would refuse to restore. Writing nothing leaves the parent
   // list's own entry in place, which is what a refresh from a detail view should
   // land on and now does.
+  //
+  // ALSO HELD OFF UNTIL roleReady. `page` is computed through the banking gate,
+  // which reads role -- and role is null while the profile lookup is in flight,
+  // so a refresh on #company-banking would compute 'programs' for a moment and
+  // this effect would write that over the perfectly good hash the user arrived
+  // with. It corrects itself when the role lands, but it would also have stored
+  // the wrong tab if the app were closed mid-load. Waiting costs nothing: the
+  // shell renders a loading screen until roleReady anyway.
   useEffect(() => {
-    if (!user || recovery || typeof window === 'undefined') return;
+    if (!user || recovery || !roleReady || typeof window === 'undefined') return;
     if (!HASH_PAGES.includes(page)) return;
     const want = '#' + page;
     if (window.location.hash !== want) window.history.replaceState(null, '', want);
     storeTab(page);
-  }, [page, user, recovery]);
+  }, [page, user, recovery, roleReady]);
 
   if (loading) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
   if (recovery) return <ResetPassword onDone={()=>setRecovery(false)} />;
@@ -8399,7 +8465,7 @@ export default function App() {
   // holds the screen steady for the render in between.
   if (hasProfile === false) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
 
-  const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations'};
+  const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations','company-banking':'Company Banking'};
   const badges = {'client-relations': crUnread, 'shipments': dreqOpen};
 
   return (
@@ -8409,7 +8475,7 @@ export default function App() {
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <div className={'sidebar-backdrop ' + (navOpen?'show':'')} onClick={()=>setNavOpen(false)} />
-      <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} allowedPages={allowedPages} />
+      <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} allowedPages={allowedPages} role={role} />
       <TopBar user={user} displayName={displayName} title="" taskOpen={taskPanelOpen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
       <TaskPanel open={taskPanelOpen} onClose={()=>setTaskPanelOpen(false)} />
       {page==='quotes' ? (
@@ -8444,6 +8510,11 @@ export default function App() {
               onDisplayName is the shell's own setter, so saving a name in My Account
               updates the avatar without a reload. */}
           {page==='settings'         && <SettingsPage role={role} user={user} displayName={displayName} onDisplayName={setDisplayName} />}
+          {/* GATE 3 of 3. Belt and braces over gate 2 -- that one already
+              rewrites the page id, so this can only fire if someone changes that
+              line later. It costs one boolean and it is the gate that actually
+              keeps the component off the screen. */}
+          {page===BANKING_PAGE && canSeeBanking(role) && <CompanyBanking />}
           {page==='client-relations' && <ClientRelations user={user} />}
         </div>
       </div>
