@@ -2227,7 +2227,45 @@ function CreateSOModal({onClose,onCreated}){
         .map(x=>({...base,client_sku:sku?sku+'-'+skuToken(x.e):null,quantity:x.q,size:x.e.label,client_price:sizePriceOf(it,x.e.key)||null}));
     };
     const toIns=items.filter(it=>it.desc.trim()).flatMap(expand);
-    if(toIns.length) await SB.from('sales_order_items').insert(toIns.map(({_quoteId,_tierIdx,...rest})=>({...rest,quote_id:_quoteId||null})));
+    // ── product_id IS WRITTEN HERE, NOT INFERRED LATER ────────────────────────
+    // Until script 39 there was no path that wrote it at all -- 0 of 255 lines
+    // carried one, and revenue could not be attributed to a product by anything
+    // but a string. 39 repaired the history; this is what stops the gap reopening.
+    //
+    // The quote is ALREADY IN HAND. quotes is loaded with select('*'), so the row
+    // this line came from carries its own product_id and no matching is needed --
+    // exactly the pass-1 path in script 39, which is the only one that would still
+    // be right if every SKU were rewritten tomorrow.
+    //
+    // Resolved from _quoteId at the insert rather than threaded through the three
+    // places that seed a line, so a fourth seeding path added later inherits it.
+    const prodForQuote=qid=>{ const q=(quotes||[]).find(x=>x.id===qid); return (q&&q.product_id)||null; };
+    const rows=toIns.map(({_quoteId,_tierIdx,...rest})=>({...rest,quote_id:_quoteId||null,product_id:prodForQuote(_quoteId)}));
+    let inserted=null;
+    if(rows.length){
+      const ins=await SB.from('sales_order_items').insert(rows).select('id,client_sku,description,product_id');
+      inserted=ins.data||null;
+    }
+    // ── LINES WITH NO QUOTE, create-or-link ──────────────────────────────────
+    // A line typed by hand has no quote to resolve through, so it takes the same
+    // route a quote save takes. ensureProductForQuote carries the inactive rule
+    // with it -- it refuses to adopt a retired product and refuses to mint a
+    // duplicate of a retired SKU -- so a NEW sales order line can never do either.
+    //
+    // Historical lines that script 39 pointed at retired products are untouched by
+    // this and stay as they are. That was history; this is new work, and the rule
+    // shipped on 2026-09-09 draws the line in exactly that place.
+    //
+    // Failures are swallowed on purpose. The sales order is already saved and
+    // correct; an unlinked line is a visible state, and an alert here would be
+    // about something the user did not ask for.
+    for(const r of (inserted||[])){
+      if(r.product_id) continue;
+      try{
+        const prod=await ensureProductForQuote(r.client_sku, r.description, { origin:'so-save' });
+        if(prod) await SB.from('sales_order_items').update({product_id:prod.id}).eq('id',r.id).is('product_id',null);
+      }catch(e){}
+    }
     if(linkedPOIds.length) await SB.from('sales_order_pos').insert(linkedPOIds.map(pid=>({sales_order_id:so.id,purchase_order_id:pid})));
     for(const it of toIns){
       if(it._quoteId&&Number(it.client_price)>0){
@@ -2470,7 +2508,21 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
     for(const it of filled){
       const row={description:it.desc.trim(),client_sku:it.sku||null,quantity:Number(it.qty)||null,client_price:Number(it.price)||null,currency:form.currency};
       if(it.id){ await SB.from('sales_order_items').update(row).eq('id',it.id); }
-      else { await SB.from('sales_order_items').insert({...row,sales_order_id:so.id}); }
+      else {
+        // NEW LINE ON AN EXISTING ORDER. Same create-or-link as the create modal,
+        // and the same inactive rule with it. An EXISTING line is only updated --
+        // its product_id is never re-pointed here, because editing a price is not
+        // a statement about which product the line is for. That is the same guard
+        // linkQuoteToProduct makes on the Products page.
+        const ins=await SB.from('sales_order_items').insert({...row,sales_order_id:so.id}).select('id,client_sku,description').single();
+        const made=ins.data;
+        if(made){
+          try{
+            const prod=await ensureProductForQuote(made.client_sku, made.description, { origin:'so-save' });
+            if(prod) await SB.from('sales_order_items').update({product_id:prod.id}).eq('id',made.id).is('product_id',null);
+          }catch(e){}
+        }
+      }
     }
     if(removed.length) await SB.from('sales_order_items').delete().in('id',removed);
     // PO links: safe to replace (junction rows only, no item data)

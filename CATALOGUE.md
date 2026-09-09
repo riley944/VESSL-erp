@@ -531,7 +531,7 @@ of the first group and set nothing at all, losing the rows that were fine.
 
 ## The scripts are the as-run record
 
-`scratchpad/14` through `scratchpad/38` are the scripts as actually executed
+`scratchpad/14` through `scratchpad/41` are the scripts as actually executed
 against production, not drafts. Each carries its measured baseline in the header,
 its guards in the `where` clause rather than in a comment, and a verification
 block that returns exactly one row on success.
@@ -562,6 +562,9 @@ block that returns exactly one row on success.
 | 37 | four imported-twice product pairs retired, renamed and repointed | run 2026-09-08 |
 | 38 | the unreachable `BG09RL-EXW` orphan retired | run 2026-09-08 |
 | 36 | `payment_accounts` + `quotes.payment_account_id` | **written, NOT RUN** |
+| 41 | both order-item `UNIQUE (order_id, product_id)` constraints dropped | run 2026-09-09 |
+| 39 | 231 sales order lines linked to products, in three passes | run 2026-09-09 |
+| 40 | the JON-106 test report moved to the product it describes | run 2026-09-09 |
 | 14 | four remaining PO-line links | **parked, see §6** |
 
 ---
@@ -1288,6 +1291,102 @@ So they were hand-set. Neither column can prove by whom: `origin` was never used
 mark retirement (164 of 165 retired rows carry none), and **`updated_at` is
 advanced on only 2 of 350 product rows**, confirming §4's note that this table
 never maintains it.
+
+---
+
+## Sales orders reach products — 2026-09-09, scripts 41, 39 and 40
+
+Prerequisite work for the lifecycle model in `PLM.md`. **No sales order line linked
+to a product — 0 of 255** — so revenue could not be attributed to a product by
+anything but a string, and the derived lifecycle ended at Delivered.
+
+### 41 — the constraint was wrong, not the script
+
+Script 39 aborted at its first write with `23505` on
+`sales_order_items_sales_order_id_product_id_key`. **`UNIQUE (order_id,
+product_id)` encodes "one line per product per order", and that is false here** —
+sizes, price breaks and split deliveries all legitimately repeat a product.
+
+Twelve rows in four groups collide, and all four are the same shape: one product
+in several sizes on one order. Three carry the size in the `size` column (CHP
+Sweatpants / Sweatshirt / PT Tee, L/M/XL). The fourth, `LL1-380` on SO 119909,
+carries **Small / Medium / Large in the description** with `size` NULL, at 1600 /
+1200 / 800 units and three different client prices.
+
+That fourth group is why the obvious narrower constraint fails. `UNIQUE (…, size)`
+would let it through **only because standard UNIQUE treats NULLs as distinct** —
+and by the same rule would then permit unlimited unsized duplicates, ceasing to
+constrain exactly where it currently works. `NULLS NOT DISTINCT` (available on
+17.6) closes that hole and therefore *still* blocks LL1-380, which would mean
+rewriting prose on issued sales orders to satisfy a constraint already shown to be
+wrong.
+
+**Both constraints dropped.** Nothing depends on them: no `upsert` or `onConflict`
+anywhere targets an order item, and neither the SO form nor the PO document
+assumes one line per product. `id` remains the primary key, so row identity is
+untouched.
+
+**It also clears half of script 14's park.** §5 records this same constraint
+stopping 9 of its rows — three groups of three lines resolving to one product on
+one PO, the identical shape. The other half, *which* product the `-EXW`/`-Landed`
+rows are, is a decision and stays with Kristy.
+
+### 39 — 231 of 255 linked, in three passes of decreasing confidence
+
+| Pass | Rows | Basis |
+|---|---|---|
+| 1 | 49 | `quote_id` → `quotes.product_id`, exact, no string compared |
+| 2 | 78 | `client_sku` matches exactly one selectable product |
+| 3 | 104 | `client_sku` matches exactly one retired product |
+| — | 24 | left alone: 19 ambiguous-retired, 1 ambiguous-selectable, 4 no match |
+
+Each pass has its own check, so one pass over-reaching into another's rows fails
+loudly rather than averaging into a single total.
+
+**Pass 3 links to retired products deliberately. Retirement does not unsell
+history.** These are real past sales of SKUs since taken out of service. Refusing
+them would leave 41% of the table unlinked forever to protect a rule that is about
+*new* work — the same line the inactive-SKU block draws, which leaves 154
+historical quotes editable.
+
+`client_sku` and `description` are snapshots of issued sales orders and were
+asserted unchanged on all 255 rows.
+
+### 40 — a compliance record pointing at the wrong product
+
+SKU `JON-106` exists twice: `61d55187` "Wine Chiller" (**retired**) held the only
+report, while `138427ce` "Wine Container White" (**selectable**) declared `passed`
+and an eFiled date with **no report at all**.
+
+The relink was not taken on the SKU match — attaching a report to the wrong
+product is worse than leaving it detached. **The report names its own subject**:
+`sample_description` reads *"Wine Container White"*, character for character the
+selectable twin's name, asserted by length. `style_ref` is `JON-106`, result
+`pass`, test date 2026-05-28.
+
+Two findings recorded with it. **Both twins carry `efiled_date 2026-08-19`** — one
+filing recorded against two rows for one item. And the eFiled date could only be
+judged once the report was attached; it sits *after* the test date, which is the
+right order.
+
+**`LLF-1617` looked identical from outside and is not.** Neither twin holds a
+report; both declare `passed` with no evidence anywhere. Nothing to relink — a
+question for a person.
+
+### What now writes `product_id` going forward
+
+Two code paths, no trigger. Inferring a product from a string is a guess, and a
+trigger is the wrong place to guess.
+
+- **SO creation** resolves it from the quote already in hand — `quotes` is loaded
+  with `select('*')`, so the row carries its own `product_id`. Resolved at the
+  insert rather than threaded through the three seeding sites, so a fourth added
+  later inherits it.
+- **Lines with no quote** go through `ensureProductForQuote`, which carries the
+  inactive rule with it: a new line can never adopt a retired product nor mint a
+  duplicate of a retired SKU. An existing line's `product_id` is never re-pointed
+  by an edit — editing a price is not a statement about which product a line is
+  for.
 
 ---
 
