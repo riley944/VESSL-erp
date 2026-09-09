@@ -189,6 +189,14 @@ const genSONum = (list=[]) => {
   return pfx+String(nums.length?Math.max(...nums)+1:1).padStart(3,'0');
 };
 const mgnColor = p => p===null?'#94a3b8':p>=25?'#059669':p>=15?'#d97706':'#dc2626';
+// The SO summary's Gross Margin colours by SIGN, not by the 25/15 bands above.
+// A profitable order rendering red -- 11.8% did -- reads as a loss to anyone who
+// has not memorised the thresholds, and that line is the one people check first.
+// Takes the gross DOLLARS: when revenue is 0 the percentage is null but the gross
+// is still a real negative, and both halves of the line share this one colour.
+// mgnColor keeps the bands, deliberately -- the SO card pill and the quote tier
+// tables still use them, where a percentage sits beside a target.
+const grossSignColor = g => g>0?'#059669':g<0?'#dc2626':'#94a3b8';
 const soMetrics = so => {
   const rev = (so.sales_order_items||[]).reduce((a,i)=>a+(Number(i.quantity)||0)*(Number(i.client_price)||0),0);
   const factoryCost = (so.sales_order_pos||[]).reduce((a,l)=>a+((l.purchase_orders?.purchase_order_items)||[]).reduce((b,i)=>b+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0),0);
@@ -1964,7 +1972,7 @@ function SalesOrderDetail({id,navigate}){
           ))}
           <div style={{display:'flex',justifyContent:'space-between',padding:'12px 18px',fontSize:'14px',fontWeight:700,borderTop:'2px solid var(--line-2)',marginTop:'4px'}}>
             <span>Gross Margin</span>
-            <span className="mono" style={{color:mc}}>{gross!==0||cost>0?money(gross,so.currency):'—'}{mgn!==null?'  ('+mgn.toFixed(1)+'%)':''}</span>
+            <span className="mono" style={{color:grossSignColor(gross)}}>{gross!==0||cost>0?money(gross,so.currency):'—'}{mgn!==null?'  ('+mgn.toFixed(1)+'%)':''}</span>
           </div>
         </div>
       </div>
