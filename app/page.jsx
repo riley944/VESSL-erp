@@ -188,15 +188,40 @@ const genSONum = (list=[]) => {
   const nums = list.map(n=>{ const m=(n||'').match(/KUI-SO-\d{4}-(\d+)/i); return m?parseInt(m[1]):0; }).filter(n=>n>0);
   return pfx+String(nums.length?Math.max(...nums)+1:1).padStart(3,'0');
 };
+// ── WHICH FAMILY DOES A NEW MARGIN DISPLAY BELONG TO ────────────────────────
+// Two schemes, and the rule for choosing is what the number MEANS, not where it
+// is on screen.
+//
+//   SALES ORDER surfaces colour by SIGN. An order has shipped or is shipping;
+//   its margin is a FACT, a report of what the order made. The only boundary
+//   that means anything to a fact is zero -- made money, lost money, neither.
+//   Green, red, muted grey. Use grossSignColor / mgnSignColor.
+//
+//   QUOTE surfaces colour by the 25/15 BANDS. A quote margin is a price still
+//   being SET, and the bands are the target it is being set against -- amber
+//   says under target, red says well under, while there is still time to move
+//   the price. Use mgnColor.
+//
+// The bands were on the SO side too, and a real order at 11.8% rendered red --
+// the same colour as a loss, on the number people check first. Nobody set 15% as
+// a floor for a booked order; the threshold was inherited from the quote side,
+// where it belongs.
+//
+// A NEW MARGIN DISPLAY: ask whether the number can still be changed by the
+// person reading it. If yes it is a target and takes the bands. If no it is a
+// result and takes the sign.
+// The band scheme. It has NO CALLER IN THIS FILE as of this commit -- every SO
+// surface moved to the sign, and the quote-side sites each carry their own inline
+// copy of this ladder (ProductDetailModal here, three more in quotes.jsx). Kept as
+// the one written-down definition of the bands, and the thing a new quote-side
+// display should call instead of copying the ternary a fifth time.
 const mgnColor = p => p===null?'#94a3b8':p>=25?'#059669':p>=15?'#d97706':'#dc2626';
-// The SO summary's Gross Margin colours by SIGN, not by the 25/15 bands above.
-// A profitable order rendering red -- 11.8% did -- reads as a loss to anyone who
-// has not memorised the thresholds, and that line is the one people check first.
-// Takes the gross DOLLARS: when revenue is 0 the percentage is null but the gross
-// is still a real negative, and both halves of the line share this one colour.
-// mgnColor keeps the bands, deliberately -- the SO card pill and the quote tier
-// tables still use them, where a percentage sits beside a target.
+// Gross DOLLARS. Zero revenue makes the percentage null while the gross is still
+// a real negative, so the dollars are what keeps a loss red.
 const grossSignColor = g => g>0?'#059669':g<0?'#dc2626':'#94a3b8';
+// The percentage, for the surfaces that show one. Null stays muted rather than
+// borrowing the sign of the dollars -- a tile reading em dash must not read red.
+const mgnSignColor = p => p===null?'#94a3b8':grossSignColor(p);
 const soMetrics = so => {
   const rev = (so.sales_order_items||[]).reduce((a,i)=>a+(Number(i.quantity)||0)*(Number(i.client_price)||0),0);
   const factoryCost = (so.sales_order_pos||[]).reduce((a,l)=>a+((l.purchase_orders?.purchase_order_items)||[]).reduce((b,i)=>b+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0),0);
@@ -1526,7 +1551,7 @@ function SOBadge({status}){
 
 function SOCard({so,onClick}){
   const {rev,cost,mgn}=soMetrics(so);
-  const cl=so.client?.name||'—'; const mc=mgnColor(mgn);
+  const cl=so.client?.name||'—'; const mc=mgnSignColor(mgn);
   return (
     <div className="order-card" onClick={onClick} style={{cursor:'pointer'}}>
       <div className="oc-top">
@@ -1757,7 +1782,7 @@ function SalesOrderDetail({id,navigate}){
   const factoryCost=linkedPos.reduce((a,po)=>a+(po.purchase_order_items||[]).reduce((b,i)=>b+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0),0);
   const addlCost=costs.reduce((a,c)=>a+(Number(c.amount)||0),0);
   const cost=factoryCost+addlCost;
-  const gross=rev-cost; const mgn=rev>0?gross/rev*100:null; const mc=mgnColor(mgn);
+  const gross=rev-cost; const mgn=rev>0?gross/rev*100:null; const mc=mgnSignColor(mgn);
   const cl=so.client?.name||'—';
   const updateStatus=async s=>{await SB.from('sales_orders').update({status:s,updated_at:new Date().toISOString()}).eq('id',id); setSo(prev=>({...prev,status:s}));};
   const saveInvoice=async()=>{ setSavingInv(true); await SB.from('sales_orders').update({invoice_number:invoiceNum.trim()||null,updated_at:new Date().toISOString()}).eq('id',id); setSo(prev=>({...prev,invoice_number:invoiceNum.trim()||null})); setSavingInv(false); };
@@ -1809,7 +1834,7 @@ function SalesOrderDetail({id,navigate}){
         <button className="btn btn-dark btn-sm" onClick={genSO}>Generate Order Confirmation</button>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'12px',marginBottom:'22px'}}>
-        {[{l:'Revenue',v:money(rev,so.currency),c:'var(--ink)',t:'var(--line-2)'},{l:'Total Cost',v:cost>0?money(cost,so.currency):'No POs linked',c:cost>0?'var(--ink)':'var(--muted)',t:'var(--line-2)'},{l:'Gross Margin',v:gross>0?money(gross,so.currency):'—',c:gross>0?'#059669':'var(--muted)',t:gross>0?'#059669':'var(--line-2)'},{l:'Margin %',v:mgn!==null?mgn.toFixed(1)+'%':'—',c:mc,t:mc}].map(t=>(
+        {[{l:'Revenue',v:money(rev,so.currency),c:'var(--ink)',t:'var(--line-2)'},{l:'Total Cost',v:cost>0?money(cost,so.currency):'No POs linked',c:cost>0?'var(--ink)':'var(--muted)',t:'var(--line-2)'},{l:'Gross Margin',v:gross!==0||cost>0?money(gross,so.currency):'—',c:grossSignColor(gross),t:grossSignColor(gross)},{l:'Margin %',v:mgn!==null?mgn.toFixed(1)+'%':'—',c:mc,t:mc}].map(t=>(
           <div key={t.l} className="section-card" style={{padding:'16px 18px',marginBottom:0,borderTop:'3px solid '+t.t}}>
             <div style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.12em',color:'var(--muted)',marginBottom:'8px'}}>{t.l}</div>
             <div style={{fontFamily:'var(--mono)',fontSize:'22px',fontWeight:700,color:t.c,lineHeight:1}}>{t.v}</div>
