@@ -400,22 +400,63 @@ export default function Testing({ userEmail = '' }) {
   //
   // Every list starts with an All row whose value is '' and whose count is the whole
   // catalogue. FilterSelect reads '' as "clear the set", so All is never a member.
+  // ── INACTIVE MEANS NOT FOR NEW WORK ────────────────────────────────────────
+  // Retired products keep their test reports -- that is compliance history and is
+  // never deleted -- but they are not what this page is FOR. It answers what still
+  // needs testing, eFiling and a compliance decision, and a product nobody will
+  // order again needs none of those.
+  //
+  // So every NUMBER on this page counts the selectable catalogue: 185 of 351
+  // today, the other 166 retired. Left as-is the tiles overstated real work --
+  // Compliant read 7 when 2 of those are retired, Pending read 10 when 2 are.
+  // Those numbers drive decisions, so they should not be inflated by rows nobody
+  // can order.
+  //
+  // active is three-state. Only false is retired; NULL means undecided and stays
+  // in, which is the same rule the Products page and the Inventory page use.
+  const selectableProducts = useMemo(()=>products.filter(p=>p.active !== false),[products]);
+
+  // The catalogue-status filter, and the ONE default on this page that is not
+  // "everything". Active and Not Set are ticked on load; an empty selection means
+  // all three, so clearing it is how retired rows come back. Reachable, never the
+  // first thing you see.
+  const [catSel, setCatSel] = useState(['active','notset']);
+  const catKey = p => p.active === false ? 'inactive' : p.active === true ? 'active' : 'notset';
+  const catCounts = useMemo(()=>{
+    const c = { active:0, inactive:0, notset:0 };
+    products.forEach(p=>{ c[catKey(p)]++; });
+    return c;
+  },[products]);
+  // The default is Active + Not Set, so "is this list filtered" cannot just ask
+  // whether the selection is empty -- on this axis empty means MORE rows, not
+  // fewer. Default and empty both count as unfiltered for the badge ProductsView
+  // shows; anything else is a deliberate narrowing.
+  const isDefaultCat = catSel.length === 0
+    || (catSel.length === 2 && catSel.includes('active') && catSel.includes('notset'));
+  const catOptions = useMemo(()=>[
+    { value:'', label:'All catalogue statuses', count:products.length },
+    { value:'active',   label:'Active',   color:'var(--ok)',    count:catCounts.active },
+    { value:'notset',   label:'Not Set',  color:'var(--muted)', count:catCounts.notset },
+    { value:'inactive', label:'Inactive', color:'var(--hot)',   count:catCounts.inactive },
+  ],[catCounts, products.length]);
+
   const countBy = useMemo(()=>{
     const c = {};
     const bump = k => { c[k] = (c[k]||0) + 1; };
-    products.forEach(p=>{
+    // Selectable only, so every dropdown count describes the catalogue in use.
+    selectableProducts.forEach(p=>{
       bump('c:'+complianceKey(p));
       bump('e:'+efilingKey(p));
       bump('b:'+(p.brand_group == null ? 'unclassified' : p.brand_group));
       bump('s:'+(p.product_stage == null ? 'notset' : p.product_stage));
     });
     return c;
-  },[products]);
+  },[selectableProducts]);
   const n = k => countBy[k] || 0;
   // PROD_STATUS carries the colour for each compliance bucket, so the dropdown rows
   // tint the same way the row pills do rather than inventing a second palette.
   const compOptions = useMemo(()=>[
-    { value:'',          label:'All Compliance', count:products.length },
+    { value:'',          label:'All Compliance', count:selectableProducts.length },
     { value:'compliant', label:'Compliant',      count:n('c:compliant'), color:PROD_STATUS.compliant.dot },
     { value:'pending',   label:'Pending',        count:n('c:pending'),   color:PROD_STATUS.pending.dot },
     { value:'issues',    label:'Issues',         count:n('c:issues'),    color:PROD_STATUS.failed.dot },
@@ -425,29 +466,29 @@ export default function Testing({ userEmail = '' }) {
     // simply never offers them.
     { value:'not_required', label:'Not required', count:n('c:not_required'), color:PROD_STATUS.not_required.dot },
     { value:'unset',     label:'Not set',        count:n('c:unset'),     color:PROD_STATUS.not_set.dot },
-  ],[countBy, products.length]);
+  ],[countBy, selectableProducts.length]);
   // Labels from EFILING_LABEL where it has one, so the dropdown, the row button and
   // the tooltip all say the same words. The two that would collide with a compliance
   // label are qualified: "Not set" already means compliance four rows up.
   const efOptions = useMemo(()=>[
-    { value:'',          label:'All eFiling',           count:products.length },
+    { value:'',          label:'All eFiling',           count:selectableProducts.length },
     { value:'filed',     label:EFILING_LABEL.filed,     count:n('e:filed') },
     { value:'unfiled',   label:EFILING_LABEL.unfiled,   count:n('e:unfiled') },
     { value:'notreq',    label:'eFiling not required',  count:n('e:notreq') },
     { value:'undecided', label:'eFiling not set',       count:n('e:undecided') },
-  ],[countBy, products.length]);
+  ],[countBy, selectableProducts.length]);
   const brandOptions = useMemo(()=>[
-    { value:'',             label:'All Brands',   count:products.length },
+    { value:'',             label:'All Brands',   count:selectableProducts.length },
     { value:'merlin',       label:'Merlin',       count:n('b:merlin') },
     { value:'non_merlin',   label:'Non-Merlin',   count:n('b:non_merlin') },
     { value:'unclassified', label:'Unclassified', count:n('b:unclassified') },
-  ],[countBy, products.length]);
+  ],[countBy, selectableProducts.length]);
   const stageOptions = useMemo(()=>[
-    { value:'',           label:'All Stages', count:products.length },
+    { value:'',           label:'All Stages', count:selectableProducts.length },
     { value:'production', label:'Production', count:n('s:production') },
     { value:'sample',     label:'Sample',     count:n('s:sample') },
     { value:'notset',     label:'Not set',    count:n('s:notset') },
-  ],[countBy, products.length]);
+  ],[countBy, selectableProducts.length]);
   // No counts on the windows. They overlap -- 30 ⊂ 60 ⊂ 90 -- so a column of numbers
   // that do not sum to the total reads as an error rather than as nesting, and the
   // caption under the row already carries the coverage figure that matters.
@@ -461,7 +502,7 @@ export default function Testing({ userEmail = '' }) {
   ],[]);
   const clientOptions = useMemo(()=>{
     const byId = new Map();
-    products.forEach(p=>{
+    selectableProducts.forEach(p=>{
       if(!p.client_company_id) return;
       const cur = byId.get(p.client_company_id)
         || { value:p.client_company_id, label:p.client?.name || '(unnamed client)', count:0 };
@@ -469,9 +510,9 @@ export default function Testing({ userEmail = '' }) {
       byId.set(p.client_company_id, cur);
     });
     const named = [...byId.values()].sort((a,b)=>a.label.localeCompare(b.label));
-    const unassigned = products.filter(p=>p.client_company_id == null).length;
+    const unassigned = selectableProducts.filter(p=>p.client_company_id == null).length;
     return [
-      { value:'', label:'All Clients', count:products.length },
+      { value:'', label:'All Clients', count:selectableProducts.length },
       ...named,
       // Its own entry rather than an absence. The six products here are the ones whose
       // SKU names no guide prefix -- they are unresolved, not clientless, and they have
@@ -480,9 +521,9 @@ export default function Testing({ userEmail = '' }) {
     ];
   },[products]);
   const orderCoverage = useMemo(()=>({
-    withOrder: products.filter(p=>ordersByProduct[p.id]).length,
-    total: products.length,
-  }),[products, ordersByProduct]);
+    withOrder: selectableProducts.filter(p=>ordersByProduct[p.id]).length,
+    total: selectableProducts.length,
+  }),[selectableProducts, ordersByProduct]);
 
   // Everything is already in memory from load(), so filtering is a pass over arrays --
   // no query runs on a keystroke. These feed the four VIEWS ONLY: ReportModal's product
@@ -528,7 +569,14 @@ export default function Testing({ userEmail = '' }) {
               // which is what tells you why a search for "Spandex" matched.
               p.composition)
     );
-    // ── Six axes, ANDed. Each is a membership test; none is an exclusion. ──────
+    // ── Seven axes, ANDed. Each is a membership test; none is an exclusion. ────
+    //
+    // CATALOGUE STATUS RUNS FIRST, and it is the only one that starts non-empty.
+    // Active and Not Set are ticked on load, so a fresh page never shows a retired
+    // product -- but clearing the filter, or ticking Inactive, brings them back.
+    // Retired rows are compliance history and stay reachable; they are just not
+    // what this page opens on.
+    if (!isAll(catSel)) list = list.filter(p => inSel(catSel, catKey(p)));
     //
     // Compliance and eFiling both read a KEY FUNCTION -- complianceKey / efilingKey --
     // so the bucket a product is in is decided in one place and the filter, the row
@@ -580,7 +628,7 @@ export default function Testing({ userEmail = '' }) {
     return list;
     // Joined rather than passed raw: each selection is a fresh array identity on every
     // render, which would defeat the memo entirely.
-  }, [products, q, compSel.join(), efSel.join(), brandSel.join(), stageSel.join(), dateSel.join(), clientSel.join(), ordersByProduct]);
+  }, [products, q, compSel.join(), efSel.join(), brandSel.join(), stageSel.join(), dateSel.join(), clientSel.join(), catSel.join(), ordersByProduct]);
   const shownMaterials = useMemo(() => {
     let list = !q ? materials : materials.filter(m =>
       // material_code is the identifier a person actually holds -- database-generated,
@@ -623,15 +671,18 @@ export default function Testing({ userEmail = '' }) {
     matches(q, ...regSearchFields(r))
   ), [regs, q]);
   const shownCount = { products:shownProducts, materials:shownMaterials, reports:shownReports, regs:shownRegs }[tab].length;
-  const totalCount = { products, materials, reports, regs }[tab].length;
+  // The Products badge counts the SELECTABLE catalogue, matching every other
+  // number on this page. The other three tabs are unchanged -- a test report on a
+  // retired product is still a test report.
+  const totalCount = { products: selectableProducts, materials, reports, regs }[tab].length;
 
   // Stored statuses only, matching the table beneath. A product nobody has ruled on
   // counts toward none of the three — the totals are what has been decided, not a
   // partition of every product.
   const counts = {
-    compliant: products.filter(p=>['compliant','passed'].includes(effectiveStatus(p))).length,
-    pending:   products.filter(p=>['pending'].includes(effectiveStatus(p))).length,
-    issues:    products.filter(p=>['failed','expired'].includes(effectiveStatus(p))).length,
+    compliant: selectableProducts.filter(p=>['compliant','passed'].includes(effectiveStatus(p))).length,
+    pending:   selectableProducts.filter(p=>['pending'].includes(effectiveStatus(p))).length,
+    issues:    selectableProducts.filter(p=>['failed','expired'].includes(effectiveStatus(p))).length,
     // Deliberately the same two statuses the 'attention' filter matches (see
     // shownMaterials): the tile navigates straight there, so counting anything that
     // filter excludes produces a number its own destination cannot show. Untested is
@@ -728,8 +779,8 @@ export default function Testing({ userEmail = '' }) {
   // label carries that -- it names the selection rather than a problem -- but it is
   // a different kind of number sitting in a row that was homogeneous, which is worth
   // knowing before reading 271 as 271 problems.
-  const efTileCount = isAll(efSel) ? products.length
-                    : products.filter(p => efSel.includes(efilingKey(p))).length;
+  const efTileCount = isAll(efSel) ? selectableProducts.length
+                    : selectableProducts.filter(p => efSel.includes(efilingKey(p))).length;
   const efTileLabel = isAll(efSel) ? 'eFiling \u00b7 All'
                     : efSel.length === 1 ? (EFILING_LABEL[efSel[0]] || 'eFiling')
                     : 'eFiling \u00b7 ' + efSel.length + ' selected';
@@ -819,6 +870,10 @@ export default function Testing({ userEmail = '' }) {
             {/* Single-select: a client is an identity, not a bucket, and the 13 of
                 them behave nothing like a five-item state list. */}
             <FilterSelect multiple label="All Clients" value={clientSel} onChange={setClientSel} options={clientOptions} />
+            {/* Last in the row because it is the scoping control rather than a
+                question about a product -- and the only one that opens with a
+                selection already made. */}
+            <FilterSelect multiple label="All catalogue statuses" value={catSel} onChange={setCatSel} options={catOptions} />
             {/* The caption is not decoration. Only a fraction of products have a
                 reachable order date, so picking "90 days" and seeing a small number
                 reads as "only this many were ordered in 90 days" -- when the truth is
@@ -856,7 +911,7 @@ export default function Testing({ userEmail = '' }) {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onRename={(p)=>setModal({type:'rename',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!(isAll(compSel) && isAll(efSel) && isAll(brandSel) && isAll(stageSel) && isAll(dateSel) && isAll(clientSel))} ordersByProduct={ordersByProduct} orderFiltered={!isAll(dateSel)} testedByProduct={testedByProduct} />}
+          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onRename={(p)=>setModal({type:'rename',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!(isAll(compSel) && isAll(efSel) && isAll(brandSel) && isAll(stageSel) && isAll(dateSel) && isAll(clientSel) && isDefaultCat)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(dateSel)} testedByProduct={testedByProduct} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
@@ -1030,7 +1085,25 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                   It is last in the line and the line ellipsises, so on a long SKU or a
                   narrow window this is the segment that disappears. That is the right one
                   to lose, and it is 59 rows. */}
-              <div style={{fontSize:'12px',color:'#86868B',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[p.sku, p.cpsc_type || 'No CPSC', ord && ord.last ? 'Last ordered '+fmtDate(ord.last)+' \u00b7 '+ord.count+' order'+(ord.count===1?'':'s') : null].filter(Boolean).join(' \u00b7 ')}</div>
+              {/* CATALOGUE STATUS LEADS THIS LINE, and the position is the point.
+                  Not a fourth line -- the block below says why, this cell is at its
+                  limit and a fourth would ellipsise into something that reads like a
+                  whole answer and is not.
+                  Not appended either. This line truncates from the RIGHT and the
+                  comment above already accepts the order segment as the right thing
+                  to lose; a status appended last would be the piece that disappears
+                  on a long SKU, and it earns its keep precisely when Inactive rows
+                  are in the list, which is when it must not vanish. Leading, it
+                  cannot be truncated at all and the order segment stays the first
+                  casualty exactly as before.
+                  Same three colours as the Products page dot -- green, grey, red for
+                  true, undecided and retired -- so the two pages say one thing. */}
+              <div style={{fontSize:'12px',color:'#86868B',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',display:'flex',alignItems:'center',gap:'5px'}}>
+                <span style={{width:'6px',height:'6px',borderRadius:'50%',flexShrink:0,
+                  background: p.active === false ? 'var(--hot)' : p.active === true ? 'var(--ok)' : 'var(--muted)'}} />
+                <span style={{flexShrink:0}}>{p.active === false ? 'Inactive' : p.active === true ? 'Active' : 'Not set'}</span>
+                <span style={{overflow:'hidden',textOverflow:'ellipsis'}}>{['', p.sku, p.cpsc_type || 'No CPSC', ord && ord.last ? 'Last ordered '+fmtDate(ord.last)+' \u00b7 '+ord.count+' order'+(ord.count===1?'':'s') : null].filter(Boolean).join(' \u00b7 ')}</span>
+              </div>
               {/* Its own line rather than a fourth segment above. That line is already at
                   capacity and truncates; a client appended to it would be the piece that
                   disappears, on the rows where it matters.

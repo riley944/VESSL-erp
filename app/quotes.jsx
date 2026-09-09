@@ -10,7 +10,7 @@ import {
 import { SB } from "@/lib/supabase";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
-import { productByKey, ensureProductForQuote } from "@/lib/products";
+import { productByKey, ensureProductForQuote, skuActivity } from "@/lib/products";
 // sizesForScale is gone from this file: a quote can now carry several scales, and
 // every size here is addressed by the composite key sizesForSelection hands out.
 import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey, storedQtyToMap as qtyMapFrom } from "@/app/components/SizeGrid";
@@ -2348,6 +2348,9 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   // after all, so they call markDirty: the Air/Ocean toggles and picking an HTS
   // code. See setTier and pickHts for why each one is invisible.
   const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
+  // ── INACTIVE MEANS NOT FOR NEW WORK ────────────────────────────────────────
+  // null while unknown or irrelevant; otherwise { known, inactiveOnly }.
+  const [skuState, setSkuState] = useState(null);
   const [f, setF] = useState(() => ({ ...initial, tiers: (initial.tiers && initial.tiers.length ? initial.tiers.map((t) => ({ ...t })) : [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }]) }));
   const [fbTier, setFbTier] = useState(null); // index of tier whose freight builder is open
   const [showClientSug, setShowClientSug] = useState(false);
@@ -2710,7 +2713,40 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   });
   const removeTier = (i) => setF((p) => ({ ...p, tiers: p.tiers.filter((_, idx) => idx !== i) }));
 
+  // Looks the SKU up as it is typed, debounced. Only the ANSWER is stored, never
+  // the in-flight request, and a stale reply cannot overwrite a newer one because
+  // the effect re-runs and clears first.
+  useEffect(() => {
+    const s = (f.sku || '').trim();
+    if (!s) { setSkuState(null); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const a = await skuActivity(s);
+      if (!cancelled) setSkuState(a);
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [f.sku]);
+
+  // BLOCKED, WARNED, OR NEITHER -- and the difference is the whole design.
+  //
+  // A quote is blocked when its SKU is retired AND this is new work: either a
+  // brand-new quote, or an existing one whose SKU is being CHANGED to a retired
+  // code. Both are somebody choosing a retired product now.
+  //
+  // An existing quote that already carried a retired SKU is NOT blocked. 154
+  // quotes are in that state today, from the size-variant merge, and blocking
+  // them would make correcting a price on any of them impossible -- a change made
+  // after the fact, punishing a record for history. It still shows the warning,
+  // because the person should know, but Save stays enabled.
+  const skuRetired = !!(skuState && skuState.known && skuState.inactiveOnly);
+  const skuChanged = (initial.sku || '').trim() !== (f.sku || '').trim();
+  const isNewWork = !initial.id || skuChanged;
+  const skuBlocked = skuRetired && isNewWork;
+
   const handleSave = () => {
+    // Belt and braces over the disabled button: a keyboard submit or a stale
+    // render must not slip past the same rule.
+    if (skuBlocked) return;
     const out = { ...f };
     out.freightDutyUpdatedAt = stamp();
     onSave(out);
@@ -2738,6 +2774,22 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
         <div style={S.modalBody}>
           <FormSection icon={<Box size={15} />} title="Product">
             <Field label="SKU" k="sku" placeholder="Internal SKU" f={f} set={set} />
+            {/* Inline, directly under the field it is about, so it cannot be
+                mistaken for a note about the quote as a whole. Amber when it
+                blocks, muted when it is only telling you what you already have --
+                the same distinction the save button makes. */}
+            {skuRetired && (
+              <div style={{
+                margin: "-4px 0 10px", padding: "9px 12px", borderRadius: 8, fontSize: 12.5, lineHeight: 1.5,
+                background: skuBlocked ? "#FEF3C7" : "#F4F4F6",
+                color: skuBlocked ? "#8a5a00" : "#5A5A5E",
+                border: skuBlocked ? "1px solid #f0d9a8" : "1px solid #E5E5EA",
+              }}>
+                {skuBlocked
+                  ? "This SKU is inactive. Please use an Active or Not Set SKU."
+                  : "This SKU is inactive. It is kept here because this quote already used it — you can still save, but it should not be used for new orders."}
+              </div>
+            )}
             {/* Checkboxes rather than a multi-select or chips. Five fixed options
                 is small enough to show at once, ctrl-clicking a <select multiple>
                 is a trap, and a real checkbox fires a native change event -- so the
@@ -3367,7 +3419,14 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
         </div>
         <div style={S.modalFoot}>
           <button style={S.ghostBtn} onClick={onClose}>Cancel</button>
-          <button style={S.primaryBtn} onClick={handleSave}><Check size={16} /> Save Quote</button>
+          {/* Disabled rather than hidden, and it keeps its label. A button that
+              vanishes leaves somebody hunting for it; one that is visibly refused,
+              with the reason sitting under the SKU field, explains itself. */}
+          <button
+            style={skuBlocked ? { ...S.primaryBtn, opacity: 0.45, cursor: "not-allowed" } : S.primaryBtn}
+            disabled={skuBlocked}
+            title={skuBlocked ? "This SKU is inactive — use an Active or Not Set SKU" : undefined}
+            onClick={handleSave}><Check size={16} /> Save Quote</button>
         </div>
       </div>
     </div>
