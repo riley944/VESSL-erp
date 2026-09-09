@@ -212,6 +212,7 @@ export default function Testing({ userEmail = '' }) {
   const [prodMats, setProdMats] = useState([]);
   const [prodRegs, setProdRegs] = useState([]);
   const [prodOrders, setProdOrders] = useState([]);
+  const [prodSales, setProdSales] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // {type:'material'|'report'|'link', data}
   const [search, setSearch] = useState('');
@@ -240,7 +241,7 @@ export default function Testing({ userEmail = '' }) {
 
   const load = async () => {
     setLoading(true);
-    const [p, m, r, rg, lb, pm, pr, ord] = await Promise.all([
+    const [p, m, r, rg, lb, pm, pr, ord, sold] = await Promise.all([
       // Every column CreateProductModal edits has to be named here. This select is not
       // `*`, so anything left off arrives undefined -- the modal renders that field blank
       // whatever the row holds, and Save writes null, or 0 for the numerics, back over it.
@@ -301,10 +302,14 @@ export default function Testing({ userEmail = '' }) {
       // Filtered to lines that actually resolved to a product: 78 of 196. The other 118
       // carry no product_id and could not be attributed to one anyway.
       SB.from('purchase_order_items').select('product_id,purchase_order_id,po:purchase_orders(order_date)').not('product_id','is',null),
+      // Sales lines became linkable on 2026-09-09 -- script 39 filled 231 of 255,
+      // and the SO write now keeps them filled. Loaded only to answer the
+      // page-level question below; nothing on this page renders a sales order.
+      SB.from('sales_order_items').select('product_id').not('product_id','is',null),
     ]);
     setProducts(p.data||[]); setMaterials(m.data||[]); setReports(r.data||[]);
     setRegs(rg.data||[]); setLabs(lb.data||[]); setProdMats(pm.data||[]); setProdRegs(pr.data||[]);
-    setProdOrders(ord.data||[]);
+    setProdOrders(ord.data||[]); setProdSales(sold.data||[]);
     setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
@@ -415,6 +420,26 @@ export default function Testing({ userEmail = '' }) {
   // active is three-state. Only false is retired; NULL means undecided and stays
   // in, which is the same rule the Products page and the Inventory page use.
   const selectableProducts = useMemo(()=>products.filter(p=>p.active !== false),[products]);
+
+  // ── ONE LINE, NOT THIRTY-TWO BADGES ────────────────────────────────────────
+  // 32 of the 185 selectable products are declared Sample and have already been
+  // ordered or sold. Thirty-two badges all saying the same sentence is noise, and
+  // noise is how a badge stops being read -- so the page says it once and offers
+  // to show them. The per-product panel deliberately omits this case for the same
+  // reason; see LifecyclePanel.
+  //
+  // The number is also the EVIDENCE for the Sample-to-Production proposal in
+  // PLM.md phase 2. Nobody updates product_stage once an order lands, which is
+  // what unassisted declaration produces and why the transition should be offered
+  // rather than waited for.
+  const movedPast = useMemo(()=>{
+    const ordered = new Set(prodOrders.map(r=>r.product_id));
+    const sold    = new Set(prodSales.map(r=>r.product_id));
+    return new Set(selectableProducts
+      .filter(p => p.product_stage === 'sample' && (ordered.has(p.id) || sold.has(p.id)))
+      .map(p => p.id));
+  },[selectableProducts, prodOrders, prodSales]);
+  const [movedOnly, setMovedOnly] = useState(false);
 
   // The catalogue-status filter, and the ONE default on this page that is not
   // "everything". Active and Not Set are ticked on load; an empty selection means
@@ -577,6 +602,9 @@ export default function Testing({ userEmail = '' }) {
     // Retired rows are compliance history and stay reachable; they are just not
     // what this page opens on.
     if (!isAll(catSel)) list = list.filter(p => inSel(catSel, catKey(p)));
+    // Not a filter axis -- a shortcut attached to the page-level line, so it is
+    // not in the dropdown row and does not participate in isDefaultCat.
+    if (movedOnly) list = list.filter(p => movedPast.has(p.id));
     //
     // Compliance and eFiling both read a KEY FUNCTION -- complianceKey / efilingKey --
     // so the bucket a product is in is decided in one place and the filter, the row
@@ -628,7 +656,7 @@ export default function Testing({ userEmail = '' }) {
     return list;
     // Joined rather than passed raw: each selection is a fresh array identity on every
     // render, which would defeat the memo entirely.
-  }, [products, q, compSel.join(), efSel.join(), brandSel.join(), stageSel.join(), dateSel.join(), clientSel.join(), catSel.join(), ordersByProduct]);
+  }, [products, q, compSel.join(), efSel.join(), brandSel.join(), stageSel.join(), dateSel.join(), clientSel.join(), catSel.join(), movedOnly, movedPast, ordersByProduct]);
   const shownMaterials = useMemo(() => {
     let list = !q ? materials : materials.filter(m =>
       // material_code is the identifier a person actually holds -- database-generated,
@@ -832,7 +860,7 @@ export default function Testing({ userEmail = '' }) {
         <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',boxShadow:'inset 0 1px 2px rgba(0,0,0,.05)'}}>
           {TABS.map(([v,l])=>(
             <button key={v} onClick={()=>{setTab(v);setSearch('');}} style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'9px 16px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:tab===v?'#1D1D1F':'transparent',color:tab===v?'#fff':'#5A5A5E',boxShadow:tab===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
-              {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 7px',background:tab===v?'rgba(255,255,255,.22)':'#DCDCE0',color:tab===v?'#fff':'#6A6A6E'}}>{ {products:products.length,materials:materials.length,reports:reports.length,regs:regs.length}[v] }</span>
+              {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 7px',background:tab===v?'rgba(255,255,255,.22)':'#DCDCE0',color:tab===v?'#fff':'#6A6A6E'}}>{ {products:selectableProducts.length,materials:materials.length,reports:reports.length,regs:regs.length}[v] }</span>
             </button>
           ))}
         </div>
@@ -880,6 +908,23 @@ export default function Testing({ userEmail = '' }) {
                 the rest were never checked, because their PO line could not be matched
                 to a product. It stops being needed when coverage improves, and the
                 numbers are live so it will say so. */}
+            <span style={{flexBasis:'100%',height:0}} />
+            {/* THE PAGE-LEVEL EXCEPTION. Stated once with a way to see the rows,
+                rather than as a badge on each of 32 products. It only appears when
+                there is something to say, and the count is live -- it will shrink
+                on its own as the stage gets maintained, and disappear when it is. */}
+            {movedPast.size > 0 && tab === 'products' && (
+              <span style={{flexBasis:'100%',fontSize:'12px',color:'#8a5a00',background:'#FEF3C7',
+                            border:'1px solid #f0d9a8',borderRadius:'8px',padding:'8px 11px',lineHeight:1.5}}>
+                {movedPast.size} {movedPast.size === 1 ? 'product is' : 'products are'} declared
+                {' '}Sample but have already been ordered or sold.{' '}
+                <button onClick={()=>setMovedOnly(v=>!v)}
+                  style={{background:'none',border:'none',padding:0,font:'inherit',color:'#8a5a00',
+                          textDecoration:'underline',cursor:'pointer'}}>
+                  {movedOnly ? 'Show all products' : 'Show them'}
+                </button>
+              </span>
+            )}
             <span style={{flexBasis:'100%',height:0}} />
             <span style={{fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5}}>
               {'Order dates cover '+orderCoverage.withOrder+' of '+orderCoverage.total+' products — the rest have no linked PO line, which is not the same as never ordered.'}

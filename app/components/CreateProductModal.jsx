@@ -4,6 +4,7 @@ import { SB } from '@/lib/supabase';
 import { HtsField, useHtsCodes } from '@/app/components/HtsField';
 import { CodeModal } from '@/app/components/CodeModal';
 import { materialLabel } from '@/lib/materialLabel';
+import { LifecyclePanel } from '@/app/components/LifecyclePanel';
 
 // ── CreateProductModal (create or edit a row in vessl.products) ──────────────
 // Lifted out of page.jsx, where it was unreachable — it rendered only under a
@@ -490,6 +491,20 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
             <div><label>W (cm)</label><input type="number" step="0.1" className="form-input" value={form.cw} onChange={e=>f('cw')(e.target.value)} /></div>
             <div><label>H (cm)</label><input type="number" step="0.1" className="form-input" value={form.ch} onChange={e=>f('ch')(e.target.value)} /></div>
           </div>
+        {/* ── LIFECYCLE, LAST IN THE BODY AND ONLY WHEN EDITING ──────────────
+            A product being CREATED has no lifecycle to show and no id to key on,
+            so the panel is absent rather than empty -- the same reason the order
+            segment on the Testing SKU line renders nothing rather than a
+            placeholder on the 59 rows that have no order.
+
+            It is read-only and adds no field to this form, so it sits after
+            everything editable rather than interrupting it. */}
+        {editing && (
+          <div className="form-block">
+            <div className="form-block-title">Lifecycle</div>
+            <LifecyclePanel product={data} />
+          </div>
+        )}
         </div>
         <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={submit} disabled={saving} style={saving?{opacity:.6,pointerEvents:'none'}:{}}>{saving?'Saving…':(editing?'Save Changes':'Save Product')}</button></div>
       </div>

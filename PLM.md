@@ -76,6 +76,17 @@ historical round the instant the transition happens. Three of the four products
 with linked reports today are already at Production and their round history is
 already unrecoverable for exactly this reason.
 
+**The evidence for that proposal is 32 products.** After Phase 0.5 made Sold
+derivable, 32 of the 185 selectable products are declared `sample` and have
+already been ordered or sold -- up from 3 before, because an order is not the only
+way a product moves past sampling. **Nobody updates `product_stage` once an order
+lands**, which is exactly what unassisted declaration produces and precisely why
+the transition should be OFFERED rather than waited for.
+
+Phase 1 states that number once at page level with a way to see the rows, rather
+than as 32 badges saying the same sentence. It is live, so it shrinks on its own
+as the stage gets maintained and disappears when it is.
+
 ### The Sample to Production proposal, precisely
 
 - **Fires once per NEW passing report.** Not once per render, not once per report

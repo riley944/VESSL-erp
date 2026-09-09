@@ -1390,6 +1390,99 @@ trigger is the wrong place to guess.
 
 ---
 
+## PLM Phase 1 as built — 2026-09-09, the derived lifecycle panel
+
+Read-only, **zero database changes, no new table**. Every event derives from a
+foreign key that already existed.
+
+**`LifecyclePanel` is a standalone component keyed on `product_id`**, embedded in
+the Testing page's product modal — deliberately not written inline, so Phase 2's
+program page embeds the same one rather than a copy. That is the mistake
+`lib/tierCost.js` and `lib/bankFields.js` were each created to undo.
+
+**Where it could NOT go, and why.** There is no product detail view in this app.
+The Products page renders *quotes*, and its `ProductDetailModal` takes
+`quote: initQ` despite the name — one product appears on three rows when three
+quotes name it. The Testing page is the only list whose rows are actually
+products, so its modal is the only product-keyed surface that exists.
+
+**Four queries, on demand at mount.** Quotes, test reports, PO items (with the
+`purchase_orders → shipment_pos → shipments` embed the Inventory page already
+uses) and SO items. For one product that is four indexed lookups; doing it for a
+185-row list would be a fan-out nobody wants, which is why there is no timeline
+column.
+
+### What it shows, measured 2026-09-09
+
+Derived stage across the 185 selectable products — **Phase 0.5 changed this
+materially**, since Sold became reachable:
+
+| Derived stage | Products |
+|---|---|
+| no event at all | 21 |
+| quoted only | 94 (was 125) |
+| quoted and tested | 1 |
+| ordered | 1 |
+| **sold, no PO** | **32** |
+| sold and ordered | 32 |
+| landed | 4 |
+
+**The 21 with nothing get an explicit inventory of absence**, not an empty state —
+"No quote names this product / No test report is linked / It appears on no
+purchase order / It appears on no sales order". These are invisible on the
+Products page because it renders from quotes and they have none, so this panel is
+the first place they can be seen at all; a blank box would repeat the
+invisibility.
+
+**A persistent, non-dismissable testing-coverage line**: 73 of 84 reports are
+unlinked and 71 name SKUs not in the catalogue. Without it, a missing Tested row
+reads as *untested* when it usually means *untracked* — a compliance-shaped
+misreading.
+
+### A correction to what 148c4fc claimed
+
+**That commit message says "The badge reads 185 rather than 351". It did not.**
+The change moved `totalCount`, which only feeds the `n of m` indicator shown while
+searching. The tab badge is a SEPARATE expression built inline from
+`products.length`, and it kept reading 351 for a day while every other number on
+the page read 185.
+
+Fixed here, so the badge now counts the selectable catalogue like the tiles and
+the filter counts. Recorded rather than quietly corrected because the commit
+message is immutable and will keep saying otherwise.
+
+**The lesson is the same one the `n of m` and tile numbers already taught**: a
+page can hold two counts of the same thing built in two places, and changing one
+looks like changing both. Three expressions still read `products.length` on that
+page and all three are correct -- the catalogue-status filter, whose All genuinely
+means all 351, and `ProductsView`, whose `products` prop is already filtered.
+
+### Exception badges ship OFF
+
+`LIFECYCLE_EXCEPTIONS_ENABLED = false`, one constant, no other change needed to
+flip it. The logic is computed regardless so it is exercised rather than sitting
+untested until the day it ships.
+
+They are off because **product identity is a prerequisite**: several
+contradictions are duplicate-product problems in a lifecycle costume. `LLF-1617`
+declares `passed` on *both* twins with a report on neither; `JON-106` needed a
+report relinked rather than a status changed. A badge whose first output is "you
+have two products" teaches people to ignore badges. They switch on once Kristy
+answers LLF-1617, BUC-157 and LL1-1618.
+
+### The 32, and why they are one line rather than 32 badges
+
+32 selectable products are declared `sample` and have already been ordered or
+sold — **up from 3**, because Sold now counts as evidence of moving past sampling.
+Thirty-two badges saying one sentence is noise, and noise is how a badge stops
+being read. The Testing page states it once with a *Show them* toggle; the count
+is live, so it shrinks as the stage gets maintained and disappears when it is.
+
+**That number is also the evidence for Phase 2's Sample-to-Production proposal** —
+nobody updates `product_stage` once an order lands.
+
+---
+
 ## The `x.s` bug — sized PO lines wrote nothing, 21 Aug to 4 Sep
 
 `5c0ad12` (2026-08-21 13:21) replaced the producer in **both** order expansions
