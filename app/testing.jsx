@@ -667,11 +667,85 @@ export default function Testing({ userEmail = '' }) {
   // the button a different feature that happens to sit in the same place.
   //
   // Reads the same helpers the ROW reads -- catKey, effectiveStatus, efilingKey,
-  // testedByProduct, ordersByProduct -- so a cell in the sheet and a cell on screen
-  // cannot disagree. Where the row shows a fallback ('No CPSC'), the sheet shows the
+  // testedByProduct, ordersByProduct -- so a cell in the file and a cell on screen
+  // cannot disagree. Where the row shows a fallback ('No CPSC'), the file shows the
   // same fallback rather than a blank.
+  //
+  // ONE COLUMN LIST, TWO FORMATS. Both writers walk PRODUCT_COLS, so XLSX and CSV
+  // cannot drift -- adding a column here reaches both, and neither can quietly carry a
+  // field the other does not. Each entry is [header, read, kind]; kind is what the two
+  // writers dispatch on, since 'date' means a Date object in one and a yyyy-mm-dd
+  // string in the other.
+  const PRODUCT_COLS = [
+    ['Product name',      p => p.name || ''],
+    ['SKU',               p => p.sku || ''],
+    ['Catalogue status',  p => ({ active:'Active', notset:'Not set', inactive:'Inactive' })[catKey(p)]],
+    ['Client',            p => (p.client && p.client.name) || ''],
+    ['Brand',             p => ({ merlin:'Merlin', non_merlin:'Non-Merlin' })[p.brand_group] || 'Unclassified'],
+    ['Stage',             p => p.product_stage === 'production' ? 'Production'
+                             : p.product_stage === 'sample' ? 'Sample' : 'Not set'],
+    ['Compliance status', p => (PROD_STATUS[effectiveStatus(p) || 'not_set'] || PROD_STATUS.not_set).label],
+    // The row prefers a linked report's date and falls back to the hand-entered one,
+    // because only 4 of 271 products have a linked report at all. Same order here.
+    ['Testing date',      p => testedByProduct[p.id] || p.manual_test_date || null, 'date'],
+    ['eFiling status',    p => EFILING_LABEL[efilingKey(p)] || ''],
+    ['eFiled date',       p => p.efiled_date || null, 'date'],
+    ['CPSC type',         p => p.cpsc_type || 'No CPSC'],
+    ['Materials (count)', p => prodMats.filter(l => l.product_id === p.id).length, 'num'],
+    // Counts LINK rows, not resolved rules -- the row's own comment applies: a link
+    // to a retired rule still counts.
+    ['Rules (count)',     p => prodRegs.filter(l => l.product_id === p.id).length, 'num'],
+    ['Last ordered',      p => (ordersByProduct[p.id] || {}).last || null, 'date'],
+    ['Orders',            p => (ordersByProduct[p.id] || {}).count || 0, 'num'],
+  ];
+
+  // The applied filters, as [label, value] pairs. Shared: sheet 2 of the workbook
+  // prints them as rows, the CSV prints them as its one comment line. One source, so
+  // the two formats cannot describe the same export differently.
+  const activeFilterPairs = () => {
+    const labelsFor = (sel, opts) => sel.length
+      ? sel.map(v => (opts.find(o => String(o.value) === String(v)) || {}).label || String(v)).join(', ')
+      : 'All';
+    const CAT = { active:'Active', notset:'Not set', inactive:'Inactive' };
+    return [
+      ['Search', search.trim() || '(none)'],
+      ['Catalogue status', catSel.length ? catSel.map(v => CAT[v] || v).join(', ') : 'All'],
+      ['Compliance', labelsFor(compSel,  compOptions)],
+      ['eFiling',    labelsFor(efSel,    efOptions)],
+      ['Brand',      labelsFor(brandSel, brandOptions)],
+      ['Stage',      labelsFor(stageSel, stageOptions)],
+      ['Ordered',    labelsFor(dateSel,  dateOptions)],
+      ['Client',     labelsFor(clientSel, clientOptions)],
+      ['Sample but already ordered or sold', movedOnly ? 'Only these' : 'All'],
+    ];
+  };
+
+  const stampToday = () => {
+    const d = new Date();
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  };
+  const download = (blob, filename) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+  };
+
   const [exporting, setExporting] = useState(false);
-  const exportProducts = async () => {
+  const [exportOpen, setExportOpen] = useState(false);
+  // Closes on an outside click or on Escape. Bound only while open, so the page is not
+  // carrying a document-level listener for a menu nobody has opened.
+  useEffect(()=>{
+    if (!exportOpen) return;
+    const onDown = e => { if (!(e.target.closest && e.target.closest('[data-export-menu]'))) setExportOpen(false); };
+    const onKey  = e => { if (e.key === 'Escape') setExportOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return ()=>{ document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  },[exportOpen]);
+
+  const exportXlsx = async () => {
     if (!shownProducts.length) return;
     setExporting(true);
     try {
@@ -679,44 +753,22 @@ export default function Testing({ userEmail = '' }) {
       const wb = new ExcelJS.Workbook();
       wb.creator = 'VESSL'; wb.created = new Date();
 
-      const COLS = [
-        ['Product name',      p => p.name || ''],
-        ['SKU',               p => p.sku || ''],
-        ['Catalogue status',  p => ({ active:'Active', notset:'Not set', inactive:'Inactive' })[catKey(p)]],
-        ['Client',            p => (p.client && p.client.name) || ''],
-        ['Brand',             p => ({ merlin:'Merlin', non_merlin:'Non-Merlin' })[p.brand_group] || 'Unclassified'],
-        ['Stage',             p => p.product_stage === 'production' ? 'Production'
-                                 : p.product_stage === 'sample' ? 'Sample' : 'Not set'],
-        ['Compliance status', p => (PROD_STATUS[effectiveStatus(p) || 'not_set'] || PROD_STATUS.not_set).label],
-        // The row prefers a linked report's date and falls back to the hand-entered one,
-        // because only 4 of 271 products have a linked report at all. Same order here.
-        ['Testing date',      p => excelDate(testedByProduct[p.id] || p.manual_test_date), 'date'],
-        ['eFiling status',    p => EFILING_LABEL[efilingKey(p)] || ''],
-        ['eFiled date',       p => excelDate(p.efiled_date), 'date'],
-        ['CPSC type',         p => p.cpsc_type || 'No CPSC'],
-        ['Materials (count)', p => prodMats.filter(l => l.product_id === p.id).length, 'num'],
-        // Counts LINK rows, not resolved rules -- the row's own comment applies: a link
-        // to a retired rule still counts.
-        ['Rules (count)',     p => prodRegs.filter(l => l.product_id === p.id).length, 'num'],
-        ['Last ordered',      p => excelDate((ordersByProduct[p.id] || {}).last), 'date'],
-        ['Orders',            p => (ordersByProduct[p.id] || {}).count || 0, 'num'],
-      ];
-
       const ws = wb.addWorksheet('Products');
-      ws.addRow(COLS.map(c => c[0]));
-      shownProducts.forEach(p => ws.addRow(COLS.map(c => c[1](p))));
+      ws.addRow(PRODUCT_COLS.map(c => c[0]));
+      // excelDate here and nowhere else: the workbook wants real Date objects, the CSV
+      // wants the yyyy-mm-dd string the column already holds.
+      shownProducts.forEach(p => ws.addRow(PRODUCT_COLS.map(c => c[2] === 'date' ? excelDate(c[1](p)) : c[1](p))));
 
       ws.getRow(1).font = { bold: true };
       ws.views = [{ state: 'frozen', ySplit: 1 }];
-      ws.autoFilter = { from: { row:1, column:1 }, to: { row:1, column:COLS.length } };
+      ws.autoFilter = { from: { row:1, column:1 }, to: { row:1, column:PRODUCT_COLS.length } };
 
-      COLS.forEach((c, i) => {
+      PRODUCT_COLS.forEach((c, i) => {
         const col = ws.getColumn(i + 1);
         if (c[2] === 'date') col.numFmt = 'yyyy-mm-dd';
         if (c[2] === 'num')  col.alignment = { horizontal: 'right' };
         // Sized to the widest thing actually in the column, header included. A date
-        // renders as 10 characters however long its underlying value is, so it is
-        // measured as 10 rather than as the Date object's string form.
+        // renders as 10 characters however long its underlying value is.
         let w = String(c[0]).length;
         shownProducts.forEach(p => {
           const v = c[1](p);
@@ -726,10 +778,8 @@ export default function Testing({ userEmail = '' }) {
         col.width = Math.min(Math.max(w + 3, 9), 48);
       });
 
-      // -- SHEET 2: WHAT THIS FILE IS -------------------------------------------
-      // A count with no provenance is a number somebody will later have to guess at.
-      // This says which filters produced it, so the file can be mailed on without the
-      // covering sentence going missing.
+      // Sheet 2. A count with no provenance is a number somebody has to guess at later,
+      // and the covering email always goes missing before the attachment does.
       const fs2 = wb.addWorksheet('Filters');
       fs2.addRow(['Export', 'King Universal - Testing / Products']);
       fs2.addRow(['Generated', new Date()]);
@@ -737,20 +787,7 @@ export default function Testing({ userEmail = '' }) {
       fs2.addRow(['Products in catalogue', products.length]);
       fs2.addRow([]);
       fs2.addRow(['Filter', 'Applied']);
-      const labelsFor = (sel, opts) => sel.length
-        ? sel.map(v => (opts.find(o => String(o.value) === String(v)) || {}).label || String(v)).join(', ')
-        : 'All';
-      fs2.addRow(['Search', search.trim() || '(none)']);
-      fs2.addRow(['Catalogue status', catSel.length
-        ? catSel.map(v => ({ active:'Active', notset:'Not set', inactive:'Inactive' })[v] || v).join(', ')
-        : 'All']);
-      fs2.addRow(['Compliance', labelsFor(compSel,  compOptions)]);
-      fs2.addRow(['eFiling',    labelsFor(efSel,    efOptions)]);
-      fs2.addRow(['Brand',      labelsFor(brandSel, brandOptions)]);
-      fs2.addRow(['Stage',      labelsFor(stageSel, stageOptions)]);
-      fs2.addRow(['Ordered',    labelsFor(dateSel,  dateOptions)]);
-      fs2.addRow(['Client',     labelsFor(clientSel, clientOptions)]);
-      fs2.addRow(['Sample but already ordered or sold', movedOnly ? 'Only these' : 'All']);
+      activeFilterPairs().forEach(pair => fs2.addRow(pair));
       fs2.getRow(1).font = { bold: true };
       fs2.getRow(6).font = { bold: true };
       fs2.getCell('B2').numFmt = 'yyyy-mm-dd hh:mm';
@@ -758,18 +795,39 @@ export default function Testing({ userEmail = '' }) {
       fs2.getColumn(2).width = 54;
 
       const buf = await wb.xlsx.writeBuffer();
-      const blob = new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const d = new Date();
-      const stamp = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'KUI-Testing-Products-'+stamp+'.xlsx';
-      a.click();
-      setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+      download(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+               'KUI-Testing-Products-'+stampToday()+'.xlsx');
     } catch (e) {
       alert('Could not build the export: '+((e && e.message) || e));
     }
     setExporting(false);
+  };
+
+  // CSV. No engine, no CDN, no await -- it is string building, so it works offline and
+  // returns instantly even when the workbook path would be waiting on a script tag.
+  const exportCsv = () => {
+    if (!shownProducts.length) return;
+    // EVERY field quoted, not just the ones that need it. A conditional quote has to
+    // decide what "needs" means for a product name holding a comma, a quote, a newline
+    // or a leading zero, and that decision is where CSV writers go wrong. Quoting
+    // unconditionally makes the rule trivial: double any internal quote, wrap.
+    const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    // Only the filters actually narrowing anything. Listing nine axes at 'All' would
+    // bury the two that matter in a line nobody reads to the end of.
+    const applied = activeFilterPairs().filter(([, v]) => v !== 'All' && v !== '(none)');
+    const summary = applied.length
+      ? applied.map(([k, v]) => k + ' = ' + v).join(' · ')
+      : 'none - all ' + shownProducts.length + ' products shown';
+    const lines = [];
+    // Quoted, so a comma inside a filter value cannot spill the comment across columns.
+    lines.push(cell('# Filters: ' + summary));
+    lines.push(PRODUCT_COLS.map(c => cell(c[0])).join(','));
+    shownProducts.forEach(p => lines.push(PRODUCT_COLS.map(c => cell(c[1](p))).join(',')));
+    // CRLF and a BOM, both for Excel: without the BOM it reads the file as ANSI and an
+    // accented client name arrives mangled.
+    const csv = '\uFEFF' + lines.join('\r\n') + '\r\n';
+    download(new Blob([csv], { type:'text/csv;charset=utf-8;' }),
+             'KUI-Testing-Products-'+stampToday()+'.csv');
   };
 
   const shownMaterials = useMemo(() => {
@@ -985,15 +1043,38 @@ export default function Testing({ userEmail = '' }) {
         </div>
         {/* Beside the search box because it exports what the search box narrowed to.
             Products only -- the other three tabs have no export, and a button that
-            changed meaning per tab would be worse than one that is absent. */}
+            changed meaning per tab would be worse than one that is absent.
+
+            Styled as "+ Log Test Report" is: this is the one thing on the row that
+            DOES something rather than narrowing something, and the filled pill is how
+            this page already says that. */}
         {tab==='products' && (
-          <button onClick={exportProducts} disabled={exporting || !shownProducts.length}
-            title={shownProducts.length ? 'Download these '+shownProducts.length+' rows as .xlsx' : 'Nothing to export'}
-            style={{border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 14px',fontSize:'13px',
-                    fontWeight:600,background:'#fff',color:shownProducts.length?'#1D1D1F':'#B0B0B4',
-                    cursor:shownProducts.length&&!exporting?'pointer':'default',whiteSpace:'nowrap',fontFamily:'inherit'}}>
-            {exporting ? 'Building\u2026' : 'Export'}
-          </button>
+          <div style={{position:'relative'}} data-export-menu>
+            <button onClick={()=>setExportOpen(v=>!v)} disabled={exporting || !shownProducts.length}
+              aria-haspopup="menu" aria-expanded={exportOpen}
+              title={shownProducts.length ? 'Download these '+shownProducts.length+' rows' : 'Nothing to export'}
+              style={{background:shownProducts.length?'#1D1D1F':'#C7C7CC',color:'#fff',border:'none',
+                      borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,
+                      cursor:shownProducts.length&&!exporting?'pointer':'default',whiteSpace:'nowrap',fontFamily:'inherit'}}>
+              {exporting ? 'Building\u2026' : 'Export'}
+            </button>
+            {exportOpen && (
+              <div role="menu" style={{position:'absolute',top:'calc(100% + 6px)',left:0,zIndex:40,background:'#fff',
+                            border:'1px solid rgba(0,0,0,.08)',borderRadius:'12px',boxShadow:'0 8px 28px rgba(0,0,0,.12)',
+                            minWidth:'196px',overflow:'hidden'}}>
+                {[['Export as XLSX', exportXlsx], ['Export as CSV', exportCsv]].map(([label, run])=>(
+                  <button key={label} role="menuitem" onClick={()=>{ setExportOpen(false); run(); }}
+                    style={{display:'block',width:'100%',textAlign:'left',background:'none',border:'none',
+                            padding:'10px 14px',fontSize:'13px',fontWeight:500,color:'#1D1D1F',
+                            cursor:'pointer',fontFamily:'inherit'}}>{label}</button>
+                ))}
+                {/* Says what is about to be downloaded, at the moment of choosing. */}
+                <div style={{padding:'8px 14px 10px',borderTop:'1px solid #F0F0F2',fontSize:'11px',color:'#8A8A8E'}}>
+                  {shownProducts.length} {shownProducts.length===1?'row':'rows'}, as filtered
+                </div>
+              </div>
+            )}
+          </div>
         )}
         {/* The tiles above stay at totals while the list is filtered. This count makes
             that read as deliberate rather than as the tiles being wrong. */}
