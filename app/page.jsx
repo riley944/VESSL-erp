@@ -4845,8 +4845,21 @@ function Shipments({ onNewShipment, userEmail }) {
   const [openId, setOpenId] = useState(null);
   const [view, setView] = useState('quotes');            // 'quotes' | 'shipments'
   const [tab, setTab] = useState('active');              // shipments sub-tab
-  const [quoteFilter, setQuoteFilter] = useState('');    // '' | draft | awaiting | bidsin | awarded | notselected | archived
-  const [showResolved, setShowResolved] = useState(false);
+  // ── THE FREIGHT QUOTE STATUS FILTER ──────────────────────────────────────
+  // Six pills and a Show-resolved toggle became one multi-select, the same shape
+  // Testing's catalogue filter uses, for the same reason: the pills could only
+  // ever ask one question at a time, and "awarded or not selected" is a thing
+  // somebody wants to see.
+  //
+  // THE DEFAULT IS NON-EMPTY, which is the whole trick. Four of the six are
+  // ticked on load, so resolved rows are out of the way without a second control
+  // governing them -- ticking Not selected or Archived is how you see them, and
+  // that replaces the toggle rather than sitting beside it.
+  //
+  // Empty still means All, per the FilterSelect multi contract -- unticking the
+  // last option widens to everything rather than showing nothing.
+  const QF_DEFAULT = ['draft','awaiting','bidsin','awarded'];
+  const [qSel, setQSel] = useState(QF_DEFAULT);
   const [shipFilter, setShipFilter] = useState('');      // '' | arriving | overdue
   const [search, setSearch] = useState('');
   const [quotes, setQuotes] = useState([]);
@@ -5189,14 +5202,38 @@ function Shipments({ onNewShipment, userEmail }) {
   // the shipment" the same fact; a not-selected RFQ carrying a selected bid would
   // have counted as awarded. drafts was `status!=='sent'`, which script 43 made
   // untenable: archived and not_selected would both have landed in the Draft tile.
+  // ONE bucket per quote, decided in one place. Awaiting and Bids in are the two
+  // derived halves of 'sent' -- the split the pills already drew -- so this is the
+  // only function that knows a sent RFQ is really two states.
+  const qKey = q => q.status==='sent' ? (bidCount(q.id)===0 ? 'awaiting' : 'bidsin')
+                  : q.status==='not_selected' ? 'notselected'
+                  : q.status==='archived' ? 'archived'
+                  : q.status==='awarded' ? 'awarded'
+                  : 'draft';
   const awaiting = quotes.filter(q => q.status==='sent' && bidCount(q.id)===0);
   const bidsIn = quotes.filter(q => q.status==='sent' && bidCount(q.id)>0);
   const awarded = quotes.filter(q => q.status==='awarded');
   const drafts = quotes.filter(q => q.status==='draft');
   const notSelected = quotes.filter(q => q.status==='not_selected');
   const archivedQ = quotes.filter(q => q.status==='archived');
-  // Resolved is not deleted. It is out of the way until asked for.
-  const RESOLVED = ['not_selected','archived'];
+  // The default hides resolved rows, so "is this list narrowed" cannot just ask
+  // whether the selection is empty -- on this axis empty means MORE rows, not
+  // fewer. Default and empty both read as unfiltered; anything else is a
+  // deliberate narrowing. Same rule as Testing's isDefaultCat.
+  const isDefaultQ = qSel.length === 0
+    || (qSel.length === QF_DEFAULT.length && QF_DEFAULT.every(v => qSel.includes(v)));
+
+  // Counts are live and come from the same buckets the tiles read, so a number in
+  // the dropdown and a number on a tile cannot disagree.
+  const quoteStatusOptions = [
+    { value:'',            label:'All statuses',  count:quotes.length },
+    { value:'draft',       label:'Draft',         color:'#B45309', bg:'#FEF3C7', count:drafts.length },
+    { value:'awaiting',    label:'Awaiting bids', color:'#C2410C', bg:'#FFEDD5', count:awaiting.length },
+    { value:'bidsin',      label:'Bids in',       color:'#15803D', bg:'#DCFCE7', count:bidsIn.length },
+    { value:'awarded',     label:'Awarded',       color:'#0A84FF', bg:'#EAF3FE', count:awarded.length },
+    { value:'notselected', label:'Not selected',  color:'#86868B', bg:'#F2F2F4', count:notSelected.length },
+    { value:'archived',    label:'Archived',      color:'#86868B', bg:'#F2F2F4', count:archivedQ.length },
+  ];
 
   const progressOf = (st) => {
     const map = { created:0.06, at_origin_port:0.18, in_transit:0.5, at_transshipment:0.6, at_destination_port:0.82, customs:0.9, out_for_delivery:0.96, delivered:1 };
@@ -5214,17 +5251,8 @@ function Shipments({ onNewShipment, userEmail }) {
       const hay = norm(q.quote_number)+' '+norm((q.client||{}).name)+' '+norm(q.origin)+' '+norm(q.destination)+' '+norm((winnerOf(q.id)||{}).forwarder_name);
       if (!hay.includes(norm(search))) return false;
     }
-    if (quoteFilter==='draft') return q.status==='draft';
-    if (quoteFilter==='awaiting') return q.status==='sent' && bidCount(q.id)===0;
-    if (quoteFilter==='bidsin') return q.status==='sent' && bidCount(q.id)>0;
-    if (quoteFilter==='awarded') return q.status==='awarded';
-    if (quoteFilter==='notselected') return q.status==='not_selected';
-    if (quoteFilter==='archived') return q.status==='archived';
-    // No filter picked. Resolved RFQs are hidden unless asked for -- membership
-    // against a named list, never a NOT, so a status nobody has thought of yet
-    // shows up rather than vanishing.
-    if (!showResolved && RESOLVED.includes(q.status)) return false;
-    return true;
+    // Membership, never a NOT. inSel reads an empty array as All.
+    return inSel(qSel, qKey(q));
   };
   const shownQuotes = quotes.filter(matchQ);
   const matchS = (sp) => {
@@ -5245,9 +5273,9 @@ function Shipments({ onNewShipment, userEmail }) {
     { k:'In transit',    v:activeShips.length,  c:'#1D1D1F', go:()=>{ setView('shipments'); setTab('active'); setShipFilter(''); } , on: view==='shipments'&&shipFilter===''&&tab==='active' },
     { k:'Arriving \u226414d', v:arriving.length, c:'#0A84FF', go:()=>{ setView('shipments'); setTab('active'); setShipFilter(shipFilter==='arriving'?'':'arriving'); }, on: view==='shipments'&&shipFilter==='arriving' },
     { k:'Overdue',       v:overdueShips.length, c:'#FF375F', go:()=>{ setView('shipments'); setTab('active'); setShipFilter(shipFilter==='overdue'?'':'overdue'); }, on: view==='shipments'&&shipFilter==='overdue' },
-    { k:'Awaiting bids', v:awaiting.length,     c:'#FF9F0A', go:()=>{ setView('quotes'); setQuoteFilter(quoteFilter==='awaiting'?'':'awaiting'); }, on: view==='quotes'&&quoteFilter==='awaiting' },
-    { k:'Bids in',       v:bidsIn.length,       c:'#30D158', go:()=>{ setView('quotes'); setQuoteFilter(quoteFilter==='bidsin'?'':'bidsin'); }, on: view==='quotes'&&quoteFilter==='bidsin' },
-    { k:'Awarded',       v:awarded.length,      c:'#0A84FF', go:()=>{ setView('quotes'); setQuoteFilter(quoteFilter==='awarded'?'':'awarded'); }, on: view==='quotes'&&quoteFilter==='awarded' },
+    { k:'Awaiting bids', v:awaiting.length,     c:'#FF9F0A', go:()=>{ setView('quotes'); setQSel(prev => (prev.length===1 && prev[0]==='awaiting') ? QF_DEFAULT : ['awaiting']); }, on: view==='quotes'&&qSel.length===1&&qSel[0]==='awaiting' },
+    { k:'Bids in',       v:bidsIn.length,       c:'#30D158', go:()=>{ setView('quotes'); setQSel(prev => (prev.length===1 && prev[0]==='bidsin') ? QF_DEFAULT : ['bidsin']); }, on: view==='quotes'&&qSel.length===1&&qSel[0]==='bidsin' },
+    { k:'Awarded',       v:awarded.length,      c:'#0A84FF', go:()=>{ setView('quotes'); setQSel(prev => (prev.length===1 && prev[0]==='awarded') ? QF_DEFAULT : ['awarded']); }, on: view==='quotes'&&qSel.length===1&&qSel[0]==='awarded' },
   ];
 
   return (
@@ -5305,17 +5333,19 @@ function Shipments({ onNewShipment, userEmail }) {
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={view==='quotes'?'Search quotes, clients, routes\u2026':'Search shipments, vessels, refs\u2026'} style={{width:'100%',border:'none',borderRadius:'980px',padding:'10px 15px 10px 38px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
         </div>
         {view==='quotes' && (
-          <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
-            {[['','All',quotes.length],['draft','Draft',drafts.length],['awaiting','Awaiting',awaiting.length],['bidsin','Bids in',bidsIn.length],['awarded','Awarded',awarded.length],['notselected','Not selected',notSelected.length],['archived','Archived',archivedQ.length]].map(([v,l,ct])=>(
-              <button key={v||'all'} onClick={()=>setQuoteFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:quoteFilter===v?'#1D1D1F':'#fff',color:quoteFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l+' '+String(ct)}</button>
-            ))}
-            {/* Resolved rows are hidden from the unfiltered list, not from the app.
-                The two pills above reach them directly at any time; this only governs
-                what All shows, which is where they would otherwise pile up. */}
-            {(notSelected.length + archivedQ.length) > 0 && quoteFilter==='' && (
-              <button onClick={()=>setShowResolved(v=>!v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'1px solid rgba(0,0,0,.1)',cursor:'pointer',background:showResolved?'#EAF3FE':'#fff',color:showResolved?'#0A84FF':'#5A5A5E'}}>
-                {showResolved ? 'Hide resolved' : 'Show resolved ('+(notSelected.length+archivedQ.length)+')'}
-              </button>
+          <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
+            {/* Right of the search bar, with Import reply beside it. One control
+                where six pills and a toggle used to sit. */}
+            <FilterSelect multiple label="All statuses" value={qSel} onChange={setQSel} options={quoteStatusOptions} />
+            {/* The default HIDES ROWS, which no other filter on this page does, so
+                the list would otherwise be short with nothing saying why. isDefaultQ
+                is what separates the two readings -- on load it names the reason,
+                and once somebody has narrowed it deliberately the count alone is
+                the answer. */}
+            {shownQuotes.length !== quotes.length && (
+              <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>
+                {shownQuotes.length+' of '+quotes.length}{(isDefaultQ && !search) ? ' · resolved hidden' : ''}
+              </span>
             )}
             <button onClick={()=>setShowBidImport(true)} style={{display:'inline-flex',alignItems:'center',gap:'6px',fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'1px dashed rgba(0,0,0,.18)',cursor:'pointer',background:'transparent',color:'#4A4A4E'}}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
