@@ -35,9 +35,25 @@ export const LIFECYCLE_STAGES = [
 // relinked rather than a status changed.
 //
 // A badge whose first output is "you have two products" teaches people to ignore
-// badges. So the timeline ships first and this turns on once Kristy has answered
-// LLF-1617, BUC-157 and LL1-1618. Flip to true, no other change.
-export const LIFECYCLE_EXCEPTIONS_ENABLED = false;
+// badges. So the timeline shipped first and this turned on once Kristy had
+// answered LLF-1617, BUC-157 and LL1-1618.
+//
+// ON since 2026-09-10. All three were settled:
+//   LLF-1617  script 37 retired the twin holding no quote; one row is active.
+//   BUC-157   script 42 moved the PO line and retired the duplicate.
+//   LL1-1618  renamed by hand to LL1-1618 Green and LL1-1618 Pink, both kept.
+//
+// MEASURED BEFORE FLIPPING, which is the point of the gate rather than a
+// formality: across 184 selectable products, ONE fires a badge -- LLW-1388,
+// declared Production with no purchase order and no sales order, which is the row
+// Phase 0.5 flagged for exactly this. The ordered-or-sold-but-never-quoted rule
+// fires on nothing, because scripts 39 and 14 linked the orders that would have
+// tripped it.
+//
+// One badge on 184 products is the outcome the gate was for. If a future change
+// makes these fire on dozens, that is the signal to narrow the rule rather than
+// to hide the badge -- see the two classes deleted below for the precedent.
+export const LIFECYCLE_EXCEPTIONS_ENABLED = true;
 
 const fmt = d => {
   if (!d) return null;

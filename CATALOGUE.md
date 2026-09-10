@@ -1671,6 +1671,53 @@ report relinked rather than a status changed. A badge whose first output is "you
 have two products" teaches people to ignore badges. They switch on once Kristy
 answers LLF-1617, BUC-157 and LL1-1618.
 
+**ON since 2026-09-10.** All three identity questions closed:
+
+| | how | result |
+|---|---|---|
+| `LLF-1617` | script 37 | twin holding no quote retired; one active row, 2 quotes |
+| `BUC-157` | script 42 | PO line moved to `ab86a997`, `c8f3d2d2` retired, 0 refs left |
+| `LL1-1618` | renamed by hand | `LL1-1618 Green` + `LL1-1618 Pink`, both kept, 0 bare `LL1-1618` left |
+
+**Measured before flipping, which is what the gate was for rather than a
+formality.** Across **184 selectable products, exactly one fires a badge** —
+`LLW-1388`, declared Production with no purchase order and no sales order, which
+is the row Phase 0.5 had already flagged for precisely this. The
+ordered-or-sold-but-never-quoted rule fires on **nothing**, because scripts 39
+and 14 linked the orders that would have tripped it.
+
+One badge on 184 products is the outcome the gate existed to guarantee. If a
+later change makes these fire on dozens, that is the signal to narrow the rule,
+not to hide the badge — the two deleted classes are the precedent.
+
+### Scripts 42 and 14, as run — 2026-09-10
+
+Both `z0` on rehearsal and commit.
+
+**42** moved PO line `3b753125` from `c8f3d2d2` to `ab86a997`, then retired
+`c8f3d2d2` — the second product found unreachable from the Products page, after
+the `BG09RL` orphan. It failed its first rehearsal outright:
+
+```
+ERROR 42804: UNION types text and vessl.order_status cannot be matched
+```
+
+`a3` read `purchase_orders.status`, which is an **enum**. Every branch of a
+`UNION ALL` must agree on a type and `want` is always a text literal, so an
+uncast `got` takes down the whole statement — no rows, no `z0`, no verification
+at all, and nothing naming the branch but a line number. **preflight.py gained
+rule 7 for it:** every `got` sub-select must carry `::text`, `string_agg` or a
+`||`. The first version of that rule passed the very bug it was written for,
+because it exempted any `got` containing a quote and that branch's WHERE holds a
+`'…'::uuid`; caught by reintroducing the bug and checking the rule failed.
+
+**14** linked the four costing-basis PO lines and then **nulled their
+`product_sku` snapshots**, so `product_id` is set on all four and every issued
+document prints exactly what it printed before. Three of those POs are
+`in_production` and one is `shipped`; the stamp would have put `BGRHJC-Landed` or
+`BGLHAC-EXW` in front of a factory, which is a costing basis, not a code they
+have any use for. Verified after commit: 4 linked, 4 snapshots still NULL.
+
 ### The 32, and why they are one line rather than 32 badges
 
 32 selectable products are declared `sample` and have already been ordered or
