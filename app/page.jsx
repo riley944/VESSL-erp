@@ -9,6 +9,9 @@ import Testing from '@/app/testing';
 import Pricing from '@/app/pricing';
 import Programs from '@/app/programs';
 import { FilterSelect } from '@/app/components/FilterSelect';
+// A sales order or purchase order line for a client IS a program starting.
+// See lib/programs.js -- idempotent by the unique constraint, never updates.
+import { ensurePrograms } from '@/lib/programs';
 import { SizeGrid, sizesForSelection, toScaleList, skuToken, storedQtyToMap } from '@/app/components/SizeGrid';
 // The SAME cost model the quote editor uses. This page carried a hand-written copy
 // that had drifted on both the mold divisor and the duty term; see lib/tierCost.js.
@@ -2351,6 +2354,15 @@ function CreateSOModal({onClose,onCreated}){
         try{const {data:q}=await SB.from('quotes').select('tiers').eq('id',it._quoteId).single();if(q){const ts=Array.isArray(q.tiers)?[...q.tiers]:(q.tiers?JSON.parse(q.tiers):[]);if(ts[it._tierIdx]&&(!Number(ts[it._tierIdx].client)||Number(ts[it._tierIdx].client)===0)){ts[it._tierIdx]={...ts[it._tierIdx],client:it.client_price};await SB.from('quotes').update({tiers:ts}).eq('id',it._quoteId);}}}catch(e){}
       }
     }
+    // ── PROGRAMS ────────────────────────────────────────────────────────────
+    // Read the lines back rather than reusing `inserted`. The create-or-link loop
+    // above sets product_id on lines that arrived without one, so the rows in
+    // memory are already stale by here -- and those are exactly the lines whose
+    // program would otherwise be missed.
+    try{
+      const {data:finalItems}=await SB.from('sales_order_items').select('product_id').eq('sales_order_id',so.id);
+      await ensurePrograms((finalItems||[]).map(r=>[r.product_id, form.clientId]));
+    }catch(e){}
     setLoading(false); onCreated(so.id);
   };
   return (
@@ -2593,12 +2605,16 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
         // its product_id is never re-pointed here, because editing a price is not
         // a statement about which product the line is for. That is the same guard
         // linkQuoteToProduct makes on the Products page.
-        const ins=await SB.from('sales_order_items').insert({...row,sales_order_id:so.id}).select('id,client_sku,description').single();
+        const ins=await SB.from('sales_order_items').insert({...row,sales_order_id:so.id}).select('id,client_sku,description,product_id').single();
         const made=ins.data;
+        // The pair may only exist after ensureProductForQuote below, so this runs
+        // again there; both calls are no-ops when the program already exists.
+        if(made&&made.product_id) { try{ await ensurePrograms([[made.product_id, so.client_company_id]]); }catch(e){} }
         if(made){
           try{
             const prod=await ensureProductForQuote(made.client_sku, made.description, { origin:'so-save' });
             if(prod) await SB.from('sales_order_items').update({product_id:prod.id}).eq('id',made.id).is('product_id',null);
+            if(prod) await ensurePrograms([[prod.id, so.client_company_id]]);
           }catch(e){}
         }
       }
@@ -3745,6 +3761,14 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
         if(e1 && /description/i.test(e1.message)) await SB.from('purchase_order_items').insert({...base,purchase_order_id:po.id});
       }
     }
+    // A purchase order line for a client is that client's program too. prodId is
+    // the form's product picker, so an unpicked line simply names no program --
+    // ensurePrograms drops a null pair rather than inventing one.
+    //
+    // form.clientId, NOT po.client_company_id. This modal can change the client,
+    // and po holds the value from before the edit -- using it would open the
+    // program under whoever the order used to belong to.
+    try{ await ensurePrograms(valid.map(it=>[it.prodId||null, form.clientId||null])); }catch(e){}
     // delete only rows the user explicitly removed
     const keepIds=valid.filter(it=>it.id).map(it=>it.id);
     const removed=(initialItems||[]).map(it=>it.id).filter(Boolean).filter(oid=>!keepIds.includes(oid));
@@ -6707,6 +6731,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       }
     }
     if (failed.length) alert('PO created, but '+failed.length+' line item(s) failed:\n'+failed[0]);
+    try{ await ensurePrograms(valid.map(it=>[it.prodId||null, po.client_company_id])); }catch(e){}
     onCreated(po.id);
   };
 

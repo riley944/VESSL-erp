@@ -8,6 +8,7 @@ import { LifecyclePanel } from '@/app/components/LifecyclePanel';
 // the awarded tile and the awarded filter ended up disagreeing about who won a
 // shipment. lib/lifecycle.js owns the rules; this file owns the fetching.
 import { LIFECYCLE_STAGES, LIFECYCLE_LABELS, fmt, deriveEvents, reachedStages, CLIENT_OF } from '@/lib/lifecycle';
+import { ensurePrograms, pairsFromRecords } from '@/lib/programs';
 
 // ── PROGRAMS. A program is a PRODUCT FOR A CLIENT. ──────────────────────────
 // Phase 2A. Five stages are DERIVED from that client's own records and are not
@@ -52,6 +53,7 @@ export default function Programs({ userEmail }) {
   const [showArchived, setShowArchived] = useState(false);
   const [openId, setOpenId] = useState(null);
   const [saving, setSaving] = useState(null);
+  const [sweeping, setSweeping] = useState(false);
 
   const load = async () => {
     setLoad(true); setErr('');
@@ -165,6 +167,47 @@ export default function Programs({ userEmail }) {
     ...LIFECYCLE_STAGES.map(([v,l]) => ({ value:v, label:l, color:CHIP[v].fg, bg:CHIP[v].bg, count:counts[v]||0 })),
   ]), [counts, enriched]);
 
+  // ── THE SWEEP ─────────────────────────────────────────────────────────────
+  // The live paths create a program as the work happens, so this is a backstop
+  // rather than the mechanism -- for pairs that appeared before those paths
+  // shipped, and for anything written straight to the database.
+  //
+  // IT ONLY CREATES. It never archives and never un-archives, per the phase 2A
+  // decision: a program somebody archived by hand must not be resurrected by a
+  // background rule, and un-retiring a product must not silently reopen work.
+  //
+  // Reads the records FRESH rather than reusing what the page loaded, because
+  // the whole point is catching what the page has not seen. Then it subtracts
+  // what already exists, so it can report an exact number instead of a shrug --
+  // "added 0" is a real answer and worth being able to trust.
+  const sweep = async () => {
+    setSweeping(true);
+    try {
+      const pairs = await pairsFromRecords();
+      const have = new Set(rows.map(r => r.product_id + '|' + r.client_company_id));
+      const missing = [];
+      const seen = new Set();
+      for (const [pid, cid] of pairs) {
+        const k = pid + '|' + cid;
+        if (have.has(k) || seen.has(k)) continue;
+        seen.add(k);
+        missing.push([pid, cid]);
+      }
+      if (!missing.length) {
+        window._toast?.('Nothing to add — every pair already has a program', 'ok');
+        setSweeping(false);
+        return;
+      }
+      const { error } = await ensurePrograms(missing);
+      if (error) { alert('Could not add programs: ' + error.message); setSweeping(false); return; }
+      window._toast?.('Added ' + missing.length + ' ' + (missing.length===1?'program':'programs'), 'ok');
+      await load();
+    } catch (e) {
+      alert('Sweep failed: ' + (e && e.message ? e.message : e));
+    }
+    setSweeping(false);
+  };
+
   const setDeclared = async (r, value) => {
     setSaving(r.id);
     const patch = { declared_stage: value || null, updated_at: new Date().toISOString() };
@@ -209,6 +252,14 @@ export default function Programs({ userEmail }) {
             {showArchived ? 'Hide archived' : 'Show archived (' + archivedCount + ')'}
           </button>
         )}
+        <div style={{flex:1}} />
+        <button onClick={sweep} disabled={sweeping}
+          title="Create programs for any product and client pair the records prove but the list is missing"
+          style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'7px 13px',
+                  cursor:sweeping?'default':'pointer',border:'1px solid rgba(0,0,0,.1)',
+                  fontFamily:'inherit',background:'#fff',color:sweeping?'#B0B0B4':'#5A5A5E'}}>
+          {sweeping ? 'Checking…' : 'Sync from records'}
+        </button>
         {shown.length !== enriched.length && (
           <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>
             {shown.length} of {enriched.length}

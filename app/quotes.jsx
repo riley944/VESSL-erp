@@ -8,6 +8,7 @@ import {
 // The SBQ import went with the htscodes fetch -- that was this file's last use of it.
 // lib/supabaseQuotes still exists; page.jsx and pricing.jsx both import it.
 import { SB } from "@/lib/supabase";
+import { ensurePrograms } from "@/lib/programs";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
 import { productByKey, ensureProductForQuote, skuActivity } from "@/lib/products";
@@ -1217,44 +1218,57 @@ function Platform({ session }) {
 }
 
 // ---------- expanded detail ----------
-// ── PROGRAM CREATION IS OFF WHILE PROGRAMS IS REBUILT ─────────────────────
-// This wrote the OLD programs shape -- quote_id, product, sku, client, factory,
-// stage 'sampling', sample_round -- plus a four-task sampling checklist. Script
-// 48 replaces that table with product x client, where five of the nine stages
-// are DERIVED from records rather than stored, and program_tasks leaves phase 2A
-// altogether.
+// ── MARK WON STARTS THE PROGRAM ───────────────────────────────────────────
+// Restored in step 3, writing the NEW shape -- product_id and client_company_id,
+// both of which the quote row now carries. The old version wrote free-text
+// product, sku, client and factory plus a nine-value stage and a four-task
+// checklist; none of that exists any more, and the stages it used to set by hand
+// are now read from records.
 //
-// So this comes out BEFORE the script runs, not after. Left in place it would
-// insert columns that no longer exist the moment 48 commits, and this button
-// sits in the quote detail that gets used every day.
+// IT READS THE QUOTE ROW RATHER THAN THE CARD. The card object is a UI shape
+// assembled at load, and whether it carries product_id and client_company_id is
+// an implementation detail that has changed before. One indexed lookup by id
+// gets what the database actually holds, at the moment the button is pressed.
 //
-// The button stays visible and inert rather than disappearing. It is how a quote
-// becomes a program, and a control that vanishes teaches people the feature was
-// removed -- which is not what happened.
-//
-// PUT BACK IN STEP 3, writing product_id and client_company_id, both of which
-// the quote now carries. There is nothing to migrate here -- the old table held
-// one row.
+// NO DOUBLE-CREATE CHECK, because there cannot be a double. The unique
+// constraint on (product_id, client_company_id) makes ensurePrograms idempotent,
+// so pressing this twice is a no-op rather than a second program -- and it never
+// updates, so it cannot resurrect one somebody archived.
 function MarkWonButton({ q }) {
-  const [state, setState] = useState('idle');   // idle | explained
-  const busy = false;
+  const [busy, setBusy] = useState(false);
+  const [state, setState] = useState('idle');   // idle | done | cannot
 
   const start = async () => {
-    setState('explained');
-    setTimeout(()=>setState('idle'), 6000);
+    setBusy(true);
+    try {
+      const { data: row, error } = await SB.from('quotes')
+        .select('product_id,client_company_id').eq('id', q.id).single();
+      if (error) { alert('Could not read the quote: ' + error.message); setBusy(false); return; }
+      // A quote with no product or no resolved client names no program. Saying so
+      // beats creating half a row -- 3 quotes carry a client the catalogue has no
+      // company for, and those are a known question rather than a bug here.
+      if (!row || !row.product_id || !row.client_company_id) {
+        setState('cannot'); setBusy(false); setTimeout(()=>setState('idle'), 6000); return;
+      }
+      const { error: pErr } = await ensurePrograms([[row.product_id, row.client_company_id]]);
+      if (pErr) { alert('Could not start the program: ' + pErr.message); setBusy(false); return; }
+      setState('done'); setBusy(false); setTimeout(()=>setState('idle'), 5000);
+    } catch (e) {
+      alert('Something went wrong: ' + (e && e.message ? e.message : e)); setBusy(false);
+    }
   };
 
-  const label = state==='explained'
-    ? 'Programs are being rebuilt — back shortly'
-    : 'Mark won · start program';
-  const bg = state==='explained' ? '#fef3e2' : '#f2f2f4';
-  const col = state==='explained' ? '#b45309' : '#8a8a8e';
+  const label = state==='done'   ? 'Program ready — see Programs'
+    : state==='cannot' ? 'Needs a product and a client first'
+    : busy ? 'Starting…' : 'Mark won · start program';
+  const bg = state==='done' ? '#e7f5ec' : state==='cannot' ? '#fef3e2' : '#0f7d43';
+  const col = state==='done' ? '#2f7d52' : state==='cannot' ? '#b45309' : '#fff';
 
   return (
     <button
-      style={{ display:'inline-flex', alignItems:'center', gap:7, background:bg, border:'1px solid '+(state==='idle'?'#e0e0e4':'transparent'), color:col, borderRadius:10, padding:'9px 16px', fontSize:13.5, fontWeight:600, cursor:'pointer' }}
-      onClick={start}
-      title="Program creation is paused while the Programs page is rebuilt"
+      style={{ display:'inline-flex', alignItems:'center', gap:7, background:bg, border:'1px solid '+(state==='idle'?'#0f7d43':'transparent'), color:col, borderRadius:10, padding:'9px 16px', fontSize:13.5, fontWeight:600, cursor:'pointer' }}
+      onClick={start} disabled={busy}
+      title="Mark this quote won and start its program"
     >
       <CheckCircle2 size={15} /> {label}
     </button>
