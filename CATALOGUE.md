@@ -627,6 +627,33 @@ The digest needed no change: `rfq_digest_rows()` already filters `status = 'sent
 **and** `not exists (bid)`, so resolved RFQs drop out on status alone. It returns
 **0 rows today** against 11 last week, because all six now carry a bid.
 
+### The badge that survived the sweep — same day
+
+Four awarded RFQs shipped wearing a **DRAFT** badge. The pill carried the old
+rule written as a binary rather than with a `!==`:
+
+```js
+q.status==='sent' ? 'Sent' : 'Draft'
+```
+
+A grep for `status !== 'sent'` finds nothing here. **The bug class is "everything
+else falls into the last branch", and it has two spellings** — only one of which
+a `!==` sweep catches.
+
+It is a keyed map now (`RFQ_PILL`), so a status added later renders as itself, and
+anything unrecognised falls through to its raw value in grey — visible and wrong
+rather than invisible and wrong.
+
+**The same ordering bug sat in the bids band**, and was worse. It tested `bc>0`
+before status, so a not-selected RFQ holding a bid — which is every one of them,
+that being the point of keeping them — read *"1 bid in — compare & select"*,
+inviting a decision already made. The branches written for resolved RFQs were
+unreachable on exactly the rows they were for. Status is tested first now, with
+the bid count still shown beside it.
+
+Both were found by looking at the rendered card, not by grep. Neither would have
+failed a build.
+
 See the §6 board for the backups question this opened.
 
 ---

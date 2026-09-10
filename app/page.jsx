@@ -4804,6 +4804,28 @@ const newQuoteNumber = () => 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase
 
 // userEmail follows Programs' precedent rather than re-reading the session: the
 // shell already has it, and responded_by must record who actually answered.
+// ── THE RFQ STATUS PILL ─────────────────────────────────────────────────────
+// A MAP, not a ternary, and that is the whole point. The pill used to read
+//
+//     q.status==='sent' ? 'Sent' : 'Draft'
+//
+// which is the same "everything else is a draft" rule script 43 removed from the
+// tiles, written as a binary instead of with a !== -- so it survived the sweep and
+// four awarded RFQs went on wearing a DRAFT badge.
+//
+// Keyed lookup means a status added tomorrow renders AS ITSELF rather than being
+// absorbed into whichever branch happens to be last. Anything unrecognised falls
+// through to the raw value in muted grey -- visible and wrong, which is what you
+// want, rather than invisible and wrong.
+const RFQ_PILL = {
+  draft:        { label:'Draft',        color:'#B45309', bg:'#FEF3C7' },
+  sent:         { label:'Sent',         color:'#0A84FF', bg:'#EAF3FE' },
+  awarded:      { label:'Awarded',      color:'#15803D', bg:'#DCFCE7' },
+  not_selected: { label:'Not selected', color:'#86868B', bg:'#F2F2F4' },
+  archived:     { label:'Archived',     color:'#86868B', bg:'#F2F2F4' },
+};
+const rfqPill = st => RFQ_PILL[st] || { label:(st||'unknown'), color:'#86868B', bg:'#F2F2F4' };
+
 function Shipments({ onNewShipment, userEmail }) {
   const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
@@ -5329,7 +5351,9 @@ function Shipments({ onNewShipment, userEmail }) {
               <div key={q.id} style={{background:'#fff',borderRadius:'18px',padding:'18px 19px 14px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',display:'flex',flexDirection:'column',gap:'12px'}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'10px'}}>
                   <span style={{fontFamily:'var(--mono)',fontSize:'13px',fontWeight:700,color:'#1D1D1F'}}>{q.quote_number}</span>
-                  <span style={{fontSize:'10.5px',fontWeight:700,borderRadius:'980px',padding:'3px 10px',color:q.status==='sent'?'#0A84FF':'#B45309',background:q.status==='sent'?'#EAF3FE':'#FEF3C7',textTransform:'uppercase',letterSpacing:'.04em'}}>{q.status==='sent'?'Sent':'Draft'}</span>
+                  {(()=>{ const pill = rfqPill(q.status); return (
+                    <span style={{fontSize:'10.5px',fontWeight:700,borderRadius:'980px',padding:'3px 10px',color:pill.color,background:pill.bg,textTransform:'uppercase',letterSpacing:'.04em',whiteSpace:'nowrap'}}>{pill.label}</span>
+                  ); })()}
                 </div>
                 <div>
                   <div style={{fontSize:'15px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.014em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{(q.client||{}).name||'\u2014'}</div>
@@ -5341,18 +5365,25 @@ function Shipments({ onNewShipment, userEmail }) {
                   <span style={{fontSize:'11.5px',fontWeight:500,color:'#5A5A5E',background:'#F5F5F7',borderRadius:'7px',padding:'3px 9px'}}>{Number(q.total_cbm||0).toFixed(1)+' CBM'}</span>
                 </div>
                 {/* bids band */}
-                <button onClick={()=>setBidsQuote(q)} style={{textAlign:'left',border:'none',cursor:'pointer',borderRadius:'12px',padding:'11px 13px',background:w?'#EAF3FE':bc>0?'#F0FDF4':'#F5F5F7'}}>
-                  {w ? (
+                <button onClick={()=>setBidsQuote(q)} style={{textAlign:'left',border:'none',cursor:'pointer',borderRadius:'12px',padding:'11px 13px',background:(q.status==='not_selected'||q.status==='archived')?'#F5F5F7':w?'#EAF3FE':bc>0?'#F0FDF4':'#F5F5F7'}}>
+                  {/* RESOLVED FIRST. This chain used to test bc>0 before status, so a
+                      not-selected RFQ holding a bid -- which is every one of them,
+                      that is the point of keeping them -- rendered "1 bid in, compare
+                      & select" and invited a decision already made. Status now wins,
+                      and the bid stays visible beside it because bids being readable
+                      on a losing RFQ is the whole reason it was kept. */}
+                  {(q.status==='not_selected' || q.status==='archived') ? (
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'8px'}}>
+                      <span style={{fontSize:'12.5px',fontWeight:600,color:'#86868B'}}>{q.status==='archived'?'Archived \u2014 kept for reference':'Not selected \u2014 kept for reference'}</span>
+                      {bc>0 && <span style={{fontSize:'12px',fontWeight:700,color:'#86868B',fontVariantNumeric:'tabular-nums',flexShrink:0}}>{String(bc)+' bid'+(bc===1?'':'s')}</span>}
+                    </div>
+                  ) : w ? (
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'8px'}}>
                       <span style={{fontSize:'12.5px',fontWeight:700,color:'#0A84FF',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{'\u2713 '+(w.forwarder_name||'Selected')}</span>
                       <span style={{fontSize:'12.5px',fontWeight:800,color:'#1D1D1F',fontVariantNumeric:'tabular-nums',flexShrink:0}}>{money0(eff)}<span style={{fontSize:'10px',fontWeight:600,color:'#86868B'}}>/ctr</span></span>
                     </div>
                   ) : bc>0 ? (
                     <span style={{fontSize:'12.5px',fontWeight:700,color:'#15803D'}}>{String(bc)+' bid'+(bc===1?'':'s')+' in \u2014 compare & select'}</span>
-                  ) : q.status==='not_selected' ? (
-                    <span style={{fontSize:'12.5px',fontWeight:600,color:'#86868B'}}>Not selected — kept for reference</span>
-                  ) : q.status==='archived' ? (
-                    <span style={{fontSize:'12.5px',fontWeight:600,color:'#86868B'}}>Archived — kept for reference</span>
                   ) : q.status==='sent' ? (
                     <span style={{fontSize:'12.5px',fontWeight:600,color:'#86868B'}}>Awaiting forwarder replies…</span>
                   ) : (
