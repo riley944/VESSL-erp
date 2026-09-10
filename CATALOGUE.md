@@ -527,6 +527,20 @@ of the first group and set nothing at all, losing the rows that were fine.
   the built SHA must equal `origin/main`. A mismatch is a fault, never a
   configured skip.
 
+- **Backups — Riley's call, and there is now a loss to point at.** Raised
+  2026-09-10. **No such item existed in these notes before today**; it is opened
+  here because the RFQ cascade below is the first confirmed data loss with nothing
+  to restore from.
+
+  What is known: there is no audit or history table in `vessl`, and no
+  application-level soft delete outside what was just built for RFQs. Whether
+  Supabase PITR is enabled on this project, at what retention, and who can trigger
+  a restore, is **not something these notes can answer** — it is a dashboard
+  setting on Riley's account. That question is the item.
+
+  Until it is answered, the working assumption has to be that **a `DELETE` is
+  final**, which is the assumption the RFQ archive change was built on.
+
 - **`order_costs` cannot say whether a cost is billed to the client.** Raised
   2026-09-10 building the order confirmation's totals block, which was specified to
   carry "any additional cost lines the SO carries".
@@ -550,6 +564,70 @@ of the first group and set nothing at all, losing the rows that were fine.
   exists, the constant is the honest answer — one switch for all rows, defaulting
   to the safe one. **Do not flip it as a shortcut**; a wrong total on a client
   document is worse than a missing line.
+
+---
+
+## Six RFQs and their bids cascaded away — 2026-09-10, script 43
+
+**Confirmed data loss, unrecoverable.** Found while investigating Kristy's ask to
+keep losing bids instead of deleting them.
+
+### The count
+
+The 2026-09-08 census recorded **12 sent RFQs, 11 with no bid**. Measured
+2026-09-10: **6 rows**, every one `sent`, and `forwarder_bids` holds **6 rows**,
+one per surviving RFQ. Six RFQs went in between.
+
+`forwarder_bids_shipment_quote_id_fkey` is **`ON DELETE CASCADE`**, so each delete
+took that RFQ's bids with it. The confirm said only *"This cannot be undone"* — it
+never named a bid count, so there was nothing on screen to suggest a delete was
+also destroying quoted prices. There is no audit table. Nothing can say what those
+bids were.
+
+Kristy also **entered four bids on 9 September, 18:42–19:07**, so recording and
+deleting were happening in the same sitting. This is not carelessness; it is a UI
+that offered one button for "tidy this away" and made it the destructive one.
+
+### What was wrong underneath it
+
+**"Awarded" was never a status.** `page.jsx` derived it from
+`forwarder_bids.selected`:
+
+```js
+const awarded = quotes.filter(q => !!winnerOf(q.id));   // winnerOf = the selected bid
+```
+
+So *"we picked this forwarder's bid"* and *"this forwarder won the shipment"* were
+the same bit. With no way to record an outcome on the RFQ itself, deleting the
+losers was the **only** way to make the list read correctly — the interface was
+asking for it. Script 43 makes `status` the truth; `selected` stays the bid-level
+fact, and both are written together in `awardRfq`.
+
+**Nothing said which RFQs were one shipment.** No `shipment_id`; `po_id` NULL on
+all six. The three Dallas rows are provably one shipment — same client, same
+route text, 20GP, 500 cartons, 10.85 CBM, created inside 2m26s — but only by
+inference.
+
+**And inference would have been wrong.** `FQ-UZCK0` carries origin `Shenyang`
+while `FQ-D1RQV` carries `Shenyang, China`, and **those two are different
+shipments**. A rule keyed on route text would have joined them, or missed a real
+trio the day somebody typed a comma. Hence a real `rfq_group_id` column, written
+when an RFQ is duplicated — which is already how one shipment gets quoted three
+times — and NULL meaning *not grouped* rather than a guess. `markWinner` on an
+ungrouped RFQ says so and changes nothing else.
+
+### What now stops it
+
+Delete survives only for a draft that was **never sent and holds no bids**;
+`deleteQuote` re-checks both before firing. Everything else archives. **The
+cascade is still on the FK** — this is a UI that no longer reaches it, not a
+schema fix, and a future caller could still walk into it.
+
+The digest needed no change: `rfq_digest_rows()` already filters `status = 'sent'`
+**and** `not exists (bid)`, so resolved RFQs drop out on status alone. It returns
+**0 rows today** against 11 last week, because all six now carry a bid.
+
+See the §6 board for the backups question this opened.
 
 ---
 

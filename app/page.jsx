@@ -4823,7 +4823,8 @@ function Shipments({ onNewShipment, userEmail }) {
   const [openId, setOpenId] = useState(null);
   const [view, setView] = useState('quotes');            // 'quotes' | 'shipments'
   const [tab, setTab] = useState('active');              // shipments sub-tab
-  const [quoteFilter, setQuoteFilter] = useState('');    // '' | draft | awaiting | bidsin | awarded
+  const [quoteFilter, setQuoteFilter] = useState('');    // '' | draft | awaiting | bidsin | awarded | notselected | archived
+  const [showResolved, setShowResolved] = useState(false);
   const [shipFilter, setShipFilter] = useState('');      // '' | arriving | overdue
   const [search, setSearch] = useState('');
   const [quotes, setQuotes] = useState([]);
@@ -4851,10 +4852,124 @@ function Shipments({ onNewShipment, userEmail }) {
       .order('created_at',{ascending:false});
     setQuotes(data||[]);
   };
-  const deleteQuote = async (id) => {
-    const { error } = await SB.from('shipment_quotes').delete().eq('id',id);
+  // ── OUTCOMES ARE WRITTEN IN ONE PLACE ────────────────────────────────────
+  // STATUS IS THE TRUTH about who won. forwarder_bids.selected stays a different
+  // fact -- which of THIS RFQ's bids we are using -- and the two answer different
+  // questions, so both are written here together rather than one being derived
+  // from the other. Before script 43 the tiles read `awarded` off winnerOf(), so
+  // "who won the shipment" and "which bid we picked" were the same bit; a bid
+  // selected on a losing RFQ would have shown it as awarded.
+  //
+  // Every path that decides an outcome calls these -- the card button, the bids
+  // modal, and the apply-to-quote flow -- so a fourth cannot appear without
+  // touching this comment.
+  //
+  // Siblings are set FIRST, target included, then the target is raised to
+  // awarded. Written that way so there is no `neq` on the group update -- the
+  // house rule is explicit equality in filters, and an order that never needs an
+  // exclusion is better than one that needs a safe one.
+  const awardRfq = async (quote, bidId) => {
+    if (bidId) {
+      await SB.from('forwarder_bids').update({ selected:false }).eq('shipment_quote_id', quote.id);
+      await SB.from('forwarder_bids').update({ selected:true }).eq('id', bidId);
+    }
+    const now = new Date().toISOString();
+    // NULL group means the RFQ has no known siblings. Nothing is inferred from
+    // route text -- see script 43 for why two Shenyang rows are not one shipment.
+    if (quote.rfq_group_id) {
+      const { error } = await SB.from('shipment_quotes')
+        .update({ status:'not_selected', updated_at:now })
+        .eq('rfq_group_id', quote.rfq_group_id).eq('status','sent');
+      if (error) { alert('Could not set the other RFQs: '+error.message); return false; }
+    }
+    const { error } = await SB.from('shipment_quotes')
+      .update({ status:'awarded', updated_at:now }).eq('id', quote.id);
+    if (error) { alert('Could not mark the winner: '+error.message); return false; }
+    return true;
+  };
+
+  // Undo. Puts the whole group back to sent and leaves forwarder_bids.selected
+  // exactly as it was -- undoing the AWARD is not the same as un-picking the best
+  // bid from a forwarder, and that comparison is work nobody should lose to a
+  // misclick on the wrong card.
+  const unawardRfq = async (quote) => {
+    const now = new Date().toISOString();
+    if (quote.rfq_group_id) {
+      await SB.from('shipment_quotes').update({ status:'sent', updated_at:now })
+        .eq('rfq_group_id', quote.rfq_group_id).eq('status','not_selected');
+    }
+    const { error } = await SB.from('shipment_quotes')
+      .update({ status:'sent', updated_at:now }).eq('id', quote.id);
+    if (error) { alert('Could not undo: '+error.message); return; }
+    await reloadQuotes(); await reloadBids();
+    window._toast?.('Award undone \u2014 back to awaiting', 'ok');
+  };
+
+  const markWinner = async (q) => {
+    const mine = bids.filter(b=>b.shipment_quote_id===q.id);
+    // Only auto-select when there is exactly one bid and no choice to make. With
+    // several, the pick belongs in the compare modal, and awarding without one
+    // leaves the card saying awarded with no price -- so say so instead.
+    const sole = mine.length === 1 && !mine[0].selected ? mine[0].id : null;
+    const sibs = q.rfq_group_id
+      ? quotes.filter(x=>x.rfq_group_id===q.rfq_group_id && x.status==='sent' && x.id!==q.id).length
+      : 0;
+    const note = q.rfq_group_id
+      ? (sibs ? '\n\nThe other '+sibs+' RFQ'+(sibs===1?'':'s')+' for this shipment will be marked not selected.' : '')
+      : '\n\nThis RFQ is not grouped with any other, so nothing else changes. Duplicating an RFQ is what groups it.';
+    if (!window.confirm('Mark '+(q.quote_number||'this RFQ')+' as the winner?'+note)) return;
+    if (!(await awardRfq(q, sole))) return;
+    await reloadQuotes(); await reloadBids();
+    window._toast?.('Awarded'+(sibs?' \u00b7 '+sibs+' marked not selected':''), 'ok');
+  };
+
+  const markNotSelected = async (q) => {
+    const { error } = await SB.from('shipment_quotes')
+      .update({ status:'not_selected', updated_at:new Date().toISOString() }).eq('id', q.id);
+    if (error) { alert('Could not update: '+error.message); return; }
+    await reloadQuotes();
+    window._toast?.('Marked not selected', 'ok');
+  };
+
+  const reopenRfq = async (q) => {
+    const { error } = await SB.from('shipment_quotes')
+      .update({ status:'sent', updated_at:new Date().toISOString() }).eq('id', q.id);
+    if (error) { alert('Could not reopen: '+error.message); return; }
+    await reloadQuotes();
+    window._toast?.('Back to awaiting', 'ok');
+  };
+
+  // ── ARCHIVE REPLACES DELETE FOR ANYTHING SENT ────────────────────────────
+  // forwarder_bids_shipment_quote_id_fkey is ON DELETE CASCADE, so a delete takes
+  // the bids with it silently. That already happened -- six RFQs and their bids
+  // went between 8 and 10 September and there is no audit table to recover from.
+  // See the CATALOGUE finding.
+  //
+  // The cascade is still there; the UI simply never reaches it with anything
+  // attached. Delete survives only for a draft that was never sent AND holds no
+  // bids, and the confirm names the bid count so the number is on screen at the
+  // moment of the decision rather than in a help page.
+  const archiveQuote = async (q) => {
+    if (!window.confirm('Archive '+(q.quote_number||'this RFQ')+'?\n\nIt stays readable, with its bids, under Show resolved.')) return;
+    const { error } = await SB.from('shipment_quotes')
+      .update({ status:'archived', updated_at:new Date().toISOString() }).eq('id', q.id);
+    if (error) { alert('Could not archive: '+error.message); return; }
+    await reloadQuotes();
+    window._toast?.('Archived', 'ok');
+  };
+
+  const deleteQuote = async (q) => {
+    const n = bids.filter(b=>b.shipment_quote_id===q.id).length;
+    if (q.sent_at || n > 0) {
+      alert('This RFQ cannot be deleted.\n\n'
+        + (q.sent_at ? 'It has been sent to a forwarder' : 'It holds '+n+' bid'+(n===1?'':'s'))
+        + ', and deleting would destroy '+(n?('its '+n+' bid'+(n===1?'':'s')):'the record of that')+'.\n\nArchive it instead.');
+      return;
+    }
+    if (!window.confirm('Delete '+(q.quote_number||'this draft')+'?\n\nNever sent, 0 bids attached. This cannot be undone.')) return;
+    const { error } = await SB.from('shipment_quotes').delete().eq('id',q.id);
     if (error) { alert('Could not delete: '+error.message); return; }
-    setQuotes(prev=>prev.filter(q=>q.id!==id));
+    setQuotes(prev=>prev.filter(x=>x.id!==q.id));
   };
   // Same shape as duplicateQuote in app/quotes.jsx: rebuild the row from the source,
   // replace the identifying field, plain insert, reload, toast.
@@ -4880,8 +4995,25 @@ function Shipments({ onNewShipment, userEmail }) {
   // Columns are listed rather than spread from the row: the fetched object carries
   // joined client and forwarder objects, which are not columns and would be rejected,
   // and id / created_at / updated_at have to come from their defaults.
+  // DUPLICATING IS WHAT CREATES A GROUP, because duplicating is already how one
+  // shipment gets quoted by three forwarders -- see the note above. The source
+  // gets a group id if it has none, and the copy inherits it, so the trio that
+  // exists in Kristy's head exists in the column too and markWinner has something
+  // to key on. Script 43 backfilled the one trio already in the data.
   const duplicateQuote = async (q) => {
+    let gid = q.rfq_group_id || null;
+    if (!gid) {
+      gid = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : null;
+      if (gid) {
+        const { error: gErr } = await SB.from('shipment_quotes')
+          .update({ rfq_group_id: gid, updated_at:new Date().toISOString() }).eq('id', q.id);
+        // A failure here is not fatal -- the copy is still worth making, it just
+        // will not be grouped, and markWinner will say so rather than guess.
+        if (gErr) { gid = null; }
+      }
+    }
     const { error } = await SB.from('shipment_quotes').insert({
+      rfq_group_id: gid,
       quote_number: newQuoteNumber(),
       client_company_id: q.client_company_id, forwarder_company_id: null,
       po_id: q.po_id,
@@ -5030,10 +5162,19 @@ function Shipments({ onNewShipment, userEmail }) {
   const doneShips = rows.filter(s => TERMINAL.includes((s.status||'').toLowerCase()) || s.actual_arrival);
   const arriving = activeShips.filter(s => { const d=etaDays(s.estimated_arrival); return d!==null && d>=0 && d<=14; });
   const overdueShips = activeShips.filter(s => { const d=etaDays(s.estimated_arrival); return d!==null && d<0; });
+  // Every bucket keys on STATUS now. awarded was `!!winnerOf(q.id)` -- the bid
+  // flag -- which made "we picked this forwarder's bid" and "this forwarder won
+  // the shipment" the same fact; a not-selected RFQ carrying a selected bid would
+  // have counted as awarded. drafts was `status!=='sent'`, which script 43 made
+  // untenable: archived and not_selected would both have landed in the Draft tile.
   const awaiting = quotes.filter(q => q.status==='sent' && bidCount(q.id)===0);
-  const bidsIn = quotes.filter(q => bidCount(q.id)>0 && !winnerOf(q.id));
-  const awarded = quotes.filter(q => !!winnerOf(q.id));
-  const drafts = quotes.filter(q => q.status!=='sent');
+  const bidsIn = quotes.filter(q => q.status==='sent' && bidCount(q.id)>0);
+  const awarded = quotes.filter(q => q.status==='awarded');
+  const drafts = quotes.filter(q => q.status==='draft');
+  const notSelected = quotes.filter(q => q.status==='not_selected');
+  const archivedQ = quotes.filter(q => q.status==='archived');
+  // Resolved is not deleted. It is out of the way until asked for.
+  const RESOLVED = ['not_selected','archived'];
 
   const progressOf = (st) => {
     const map = { created:0.06, at_origin_port:0.18, in_transit:0.5, at_transshipment:0.6, at_destination_port:0.82, customs:0.9, out_for_delivery:0.96, delivered:1 };
@@ -5051,10 +5192,16 @@ function Shipments({ onNewShipment, userEmail }) {
       const hay = norm(q.quote_number)+' '+norm((q.client||{}).name)+' '+norm(q.origin)+' '+norm(q.destination)+' '+norm((winnerOf(q.id)||{}).forwarder_name);
       if (!hay.includes(norm(search))) return false;
     }
-    if (quoteFilter==='draft') return q.status!=='sent';
+    if (quoteFilter==='draft') return q.status==='draft';
     if (quoteFilter==='awaiting') return q.status==='sent' && bidCount(q.id)===0;
-    if (quoteFilter==='bidsin') return bidCount(q.id)>0 && !winnerOf(q.id);
-    if (quoteFilter==='awarded') return !!winnerOf(q.id);
+    if (quoteFilter==='bidsin') return q.status==='sent' && bidCount(q.id)>0;
+    if (quoteFilter==='awarded') return q.status==='awarded';
+    if (quoteFilter==='notselected') return q.status==='not_selected';
+    if (quoteFilter==='archived') return q.status==='archived';
+    // No filter picked. Resolved RFQs are hidden unless asked for -- membership
+    // against a named list, never a NOT, so a status nobody has thought of yet
+    // shows up rather than vanishing.
+    if (!showResolved && RESOLVED.includes(q.status)) return false;
     return true;
   };
   const shownQuotes = quotes.filter(matchQ);
@@ -5137,9 +5284,17 @@ function Shipments({ onNewShipment, userEmail }) {
         </div>
         {view==='quotes' && (
           <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
-            {[['','All',quotes.length],['draft','Draft',drafts.length],['awaiting','Awaiting',awaiting.length],['bidsin','Bids in',bidsIn.length],['awarded','Awarded',awarded.length]].map(([v,l,ct])=>(
+            {[['','All',quotes.length],['draft','Draft',drafts.length],['awaiting','Awaiting',awaiting.length],['bidsin','Bids in',bidsIn.length],['awarded','Awarded',awarded.length],['notselected','Not selected',notSelected.length],['archived','Archived',archivedQ.length]].map(([v,l,ct])=>(
               <button key={v||'all'} onClick={()=>setQuoteFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:quoteFilter===v?'#1D1D1F':'#fff',color:quoteFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l+' '+String(ct)}</button>
             ))}
+            {/* Resolved rows are hidden from the unfiltered list, not from the app.
+                The two pills above reach them directly at any time; this only governs
+                what All shows, which is where they would otherwise pile up. */}
+            {(notSelected.length + archivedQ.length) > 0 && quoteFilter==='' && (
+              <button onClick={()=>setShowResolved(v=>!v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'1px solid rgba(0,0,0,.1)',cursor:'pointer',background:showResolved?'#EAF3FE':'#fff',color:showResolved?'#0A84FF':'#5A5A5E'}}>
+                {showResolved ? 'Hide resolved' : 'Show resolved ('+(notSelected.length+archivedQ.length)+')'}
+              </button>
+            )}
             <button onClick={()=>setShowBidImport(true)} style={{display:'inline-flex',alignItems:'center',gap:'6px',fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'1px dashed rgba(0,0,0,.18)',cursor:'pointer',background:'transparent',color:'#4A4A4E'}}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
               Import reply
@@ -5194,6 +5349,10 @@ function Shipments({ onNewShipment, userEmail }) {
                     </div>
                   ) : bc>0 ? (
                     <span style={{fontSize:'12.5px',fontWeight:700,color:'#15803D'}}>{String(bc)+' bid'+(bc===1?'':'s')+' in \u2014 compare & select'}</span>
+                  ) : q.status==='not_selected' ? (
+                    <span style={{fontSize:'12.5px',fontWeight:600,color:'#86868B'}}>Not selected — kept for reference</span>
+                  ) : q.status==='archived' ? (
+                    <span style={{fontSize:'12.5px',fontWeight:600,color:'#86868B'}}>Archived — kept for reference</span>
                   ) : q.status==='sent' ? (
                     <span style={{fontSize:'12.5px',fontWeight:600,color:'#86868B'}}>Awaiting forwarder replies…</span>
                   ) : (
@@ -5217,9 +5376,48 @@ function Shipments({ onNewShipment, userEmail }) {
                   <button title="Duplicate" aria-label={'Duplicate freight quote '+(q.quote_number||'')} onClick={()=>duplicateQuote(q)} style={{background:'none',border:'none',cursor:'pointer',padding:'5px',borderRadius:'7px',color:'#C7C7CC',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#1D1D1F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
                   </button>
-                  <button title="Delete quote" onClick={()=>{ if(window.confirm('Delete freight quote '+q.quote_number+'? This cannot be undone.')) deleteQuote(q.id); }} style={{background:'none',border:'none',cursor:'pointer',padding:'5px',borderRadius:'7px',color:'#C7C7CC',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
-                  </button>
+                  {/* OUTCOME. Only on a sent RFQ -- a quote nobody has sent cannot
+                      have won or lost -- and on an awarded one it becomes the undo. */}
+                  {q.status==='sent' && (
+                    <button title="Mark this forwarder as the winner" onClick={()=>markWinner(q)}
+                      style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 12px',fontSize:'12px',fontWeight:600,color:'#0A84FF',cursor:'pointer'}}>
+                      Mark winner
+                    </button>
+                  )}
+                  {q.status==='sent' && (
+                    <button title="Mark this RFQ as not selected" onClick={()=>markNotSelected(q)}
+                      style={{background:'none',border:'none',padding:'7px 8px',fontSize:'12px',fontWeight:600,color:'#86868B',cursor:'pointer'}}>
+                      Not selected
+                    </button>
+                  )}
+                  {q.status==='awarded' && (
+                    <button title="Undo the award and put this shipment back to awaiting" onClick={()=>unawardRfq(q)}
+                      style={{background:'none',border:'none',padding:'7px 8px',fontSize:'12px',fontWeight:600,color:'#86868B',cursor:'pointer'}}>
+                      Undo award
+                    </button>
+                  )}
+                  {(q.status==='not_selected' || q.status==='archived') && (
+                    <button title="Put this RFQ back to awaiting" onClick={()=>reopenRfq(q)}
+                      style={{background:'none',border:'none',padding:'7px 8px',fontSize:'12px',fontWeight:600,color:'#86868B',cursor:'pointer'}}>
+                      Reopen
+                    </button>
+                  )}
+                  {/* ARCHIVE, NOT DELETE, for anything ever sent or holding a bid.
+                      forwarder_bids cascades on delete, so the trash can here used to
+                      take the bids with it -- which is what cost six RFQs and their
+                      bids this week. The cascade stays; this button no longer reaches
+                      it. Delete survives only for a never-sent draft with nothing
+                      attached, and deleteQuote re-checks both before it fires. */}
+                  {(q.sent_at || bc>0) ? (
+                    <button title="Archive quote" onClick={()=>archiveQuote(q)} style={{background:'none',border:'none',cursor:'pointer',padding:'5px',borderRadius:'7px',color:'#C7C7CC',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#0A84FF';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
+                      {/* lucide archive, drawn inline like every other icon here */}
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg>
+                    </button>
+                  ) : (
+                    <button title="Delete draft" onClick={()=>deleteQuote(q)} style={{background:'none',border:'none',cursor:'pointer',padding:'5px',borderRadius:'7px',color:'#C7C7CC',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -5395,7 +5593,7 @@ function Shipments({ onNewShipment, userEmail }) {
       {quoteModal && <ShipmentQuoteModal data={quoteModal==='new'?null:quoteModal} onClose={()=>setQuoteModal(null)} onSaved={()=>{setQuoteModal(null);reloadQuotes();}} />}
       {rfqQuote && <ForwarderRFQModal quote={rfqQuote} onClose={()=>setRfqQuote(null)} onSent={()=>{setRfqQuote(null); reloadQuotes();}} />}
       {showBidImport && <ImportBidsModal quotes={quotes} onClose={()=>setShowBidImport(false)} onApplied={()=>{setShowBidImport(false); reloadBids();}} />}
-      {bidsQuote && <BidsCompareModal quote={bidsQuote} bids={bids.filter(b=>b.shipment_quote_id===bidsQuote.id)} onClose={()=>setBidsQuote(null)} onDeleted={reloadBids} />}
+      {bidsQuote && <BidsCompareModal quote={bidsQuote} bids={bids.filter(b=>b.shipment_quote_id===bidsQuote.id)} onClose={()=>setBidsQuote(null)} onDeleted={async()=>{ await reloadBids(); await reloadQuotes(); }} onAward={awardRfq} />}
     </div>
   );
 }
@@ -5807,7 +6005,7 @@ function ImportBidsModal({ quotes, onClose, onApplied }) {
 // ── Apply a winning bid into the product quote's freight builder ─────────────
 const APPLY_CAPS = { '20GP':32, '40GP':58, '40HQ':68, '45HQ':83 };
 
-function ApplyBidModal({ bid, shipQuote, onClose, onDone }) {
+function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
   // Its one control is a <select>, which fires change, so events alone cover it.
   const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   const [pq, setPq] = useState([]);           // product quotes from the quotes DB
@@ -5875,9 +6073,10 @@ function ApplyBidModal({ bid, shipQuote, onClose, onDone }) {
         freight_duty_updated_by: 'Bid — '+(bid.forwarder_name||'forwarder'),
       }).eq('id', chosen.id);
       if (error) { alert('Could not update the quote: '+error.message); setBusy(false); return; }
-      // applying implies selecting the winner
-      await SB.from('forwarder_bids').update({ selected:false }).eq('shipment_quote_id', shipQuote.id);
-      await SB.from('forwarder_bids').update({ selected:true }).eq('id', bid.id);
+      // Applying a bid to a quote IS deciding the outcome, so it awards the RFQ
+      // rather than only flipping the bid flag -- otherwise this path and the card
+      // button would leave the same shipment in two different states.
+      await onAward?.(shipQuote, bid.id);
       onDone && onDone();
     } catch (e) {
       alert('Something went wrong: '+(e&&e.message?e.message:e));
@@ -5930,7 +6129,7 @@ function ApplyBidModal({ bid, shipQuote, onClose, onDone }) {
   );
 }
 
-function BidsCompareModal({ quote, bids, onClose, onDeleted }) {
+function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
   // A viewer -- no controls at all, so it closes silently. ApplyBidModal opens
   // from here but renders outside this card, so it never joins this snapshot.
   const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
@@ -5941,9 +6140,10 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted }) {
   const best = sorted.length ? bidEffective(sorted[0],ctType) : 0;
   const money = v => '$'+Number(v).toLocaleString(undefined,{maximumFractionDigits:0});
   const del = async (id) => { if(!window.confirm('Remove this bid?')) return; await SB.from('forwarder_bids').delete().eq('id',id); onDeleted&&onDeleted(); };
+  // Picking the winner among several bids is the same decision the card button
+  // makes, so it takes the same route -- status and the bid flag, written together.
   const selectWinner = async (b) => {
-    await SB.from('forwarder_bids').update({ selected:false }).eq('shipment_quote_id', quote.id);
-    await SB.from('forwarder_bids').update({ selected:true }).eq('id', b.id);
+    await onAward?.(quote, b.id);
     onDeleted&&onDeleted();
   };
   return (
@@ -5995,7 +6195,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted }) {
           })}
         </div>
       </div>
-      {applyBid && <ApplyBidModal bid={applyBid} shipQuote={quote} onClose={()=>setApplyBid(null)} onDone={()=>{ setApplyBid(null); onDeleted&&onDeleted(); alert('Applied. The product quote\'s freight build-up now carries '+(applyBid.forwarder_name||'the bid')+"'s awarded costs."); }} />}
+      {applyBid && <ApplyBidModal bid={applyBid} shipQuote={quote} onClose={()=>setApplyBid(null)} onAward={onAward} onDone={()=>{ setApplyBid(null); onDeleted&&onDeleted(); alert('Applied. The product quote\'s freight build-up now carries '+(applyBid.forwarder_name||'the bid')+"'s awarded costs."); }} />}
     </div>
   );
 }
