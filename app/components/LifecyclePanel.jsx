@@ -1,6 +1,12 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { SB } from '@/lib/supabase';
+// THE DERIVATION LIVES IN lib/lifecycle.js, not here. The Programs list has to
+// derive the same stages from bulk queries rather than four-per-product, and
+// "fetch differently" must not become "decide differently" -- that is how the
+// awarded tile and the awarded filter ended up disagreeing. This component now
+// fetches for one product and hands the rows over.
+import { LIFECYCLE_STAGES, fmt, deriveEvents, deriveExceptions, anyEvent } from '@/lib/lifecycle';
 
 // ── The derived lifecycle for one product ────────────────────────────────────
 // Read-only. Nothing here writes, and Phase 1 adds no table and no column -- every
@@ -18,14 +24,6 @@ import { SB } from '@/lib/supabase';
 // product-to-PO-to-shipment embed, so they cost nothing extra. Doing any of this
 // for a list would be a fan-out nobody wants; for one product it is four indexed
 // lookups against keys that already exist.
-export const LIFECYCLE_STAGES = [
-  ['quoted',    'Quoted'],
-  ['tested',    'Tested'],
-  ['ordered',   'Ordered'],
-  ['sold',      'Sold'],
-  ['shipped',   'Shipped'],
-  ['delivered', 'Delivered'],
-];
 
 // ── The exception badges are OFF ─────────────────────────────────────────────
 // Deliberately, and this constant is the whole switch. PLM.md records product
@@ -55,11 +53,6 @@ export const LIFECYCLE_STAGES = [
 // to hide the badge -- see the two classes deleted below for the precedent.
 export const LIFECYCLE_EXCEPTIONS_ENABLED = true;
 
-const fmt = d => {
-  if (!d) return null;
-  try { return new Date(d).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' }); }
-  catch { return String(d); }
-};
 
 export function LifecyclePanel({ product, exceptionsEnabled = LIFECYCLE_EXCEPTIONS_ENABLED }) {
   const [state, setState] = useState({ loading:true, ev:null, err:null });
@@ -101,87 +94,17 @@ export function LifecyclePanel({ product, exceptionsEnabled = LIFECYCLE_EXCEPTIO
   if (state.loading) return <div style={{padding:'14px 0',fontSize:'13px',color:'#86868B'}}>Reading lifecycle…</div>;
   if (state.err) return <div style={{padding:'14px 0',fontSize:'13px',color:'var(--hot)'}}>Could not read the lifecycle — {state.err}</div>;
 
-  const { quotes, reports, poItems, soItems } = state.ev;
-
-  // Every shipment this product reached, through its purchase orders.
-  const ships = poItems.flatMap(i => ((i.purchase_orders || {}).shipment_pos || [])
-    .map(sp => sp.shipments).filter(Boolean));
-  // ── FIRST IS THE MILESTONE, LATEST IS THE RECENCY ─────────────────────────
-  // The headline date on each row stays the FIRST occurrence, because that is when
-  // the product reached that stage and it never changes. The subtitle carries the
-  // latest, because "quoted in March" and "quoted again last week" are different
-  // facts and only one of them is a milestone.
-  //
-  // ISO date strings sort lexically, so a plain sort is correct here and does not
-  // need Date parsing -- the same reason the timeline reads dates as strings
-  // throughout.
-  const datesOf = (arr, pick) => arr.map(pick).filter(Boolean).sort();
-  const firstOf = (arr, pick) => datesOf(arr, pick)[0] || null;
-  const lastOf  = (arr, pick) => { const d = datesOf(arr, pick); return d.length ? d[d.length - 1] : null; };
-  // Appended only when there is a SECOND event AND it lands on a different day.
-  // Two quotes raised the same afternoon would otherwise print the headline date
-  // twice, which reads as a bug rather than as recency.
-  const withLatest = (text, arr, pick) => {
-    if (arr.length < 2) return text;
-    const first = firstOf(arr, pick), last = lastOf(arr, pick);
-    return (last && last !== first) ? text + ' · latest ' + fmt(last) : text;
-  };
-
-  const uniqSorted = xs => [...new Set(xs.filter(Boolean))].sort();
-  const shipDates = {
-    dep: uniqSorted(ships.map(s => s.actual_departure)),
-    arr: uniqSorted(ships.map(s => s.actual_arrival)),
-  };
-
-  const events = {
-    quoted:    quotes.length    ? { on: firstOf(quotes, q => q.quote_date || q.created_at), n: quotes.length,
-                                    detail: withLatest(quotes.length + (quotes.length === 1 ? ' quote' : ' quotes'),
-                                                       quotes, q => q.quote_date || q.created_at) } : null,
-    tested:    reports.length   ? { on: firstOf(reports, r => r.test_date || r.issue_date), n: reports.length,
-                                    detail: withLatest(reports.length + (reports.length === 1 ? ' report' : ' reports')
-                                            + (reports.some(r => r.overall_result === 'pass') ? ', passing' : ''),
-                                                       reports, r => r.test_date || r.issue_date) } : null,
-    ordered:   poItems.length   ? { on: firstOf(poItems, i => (i.purchase_orders || {}).issued_at || (i.purchase_orders || {}).order_date),
-                                    n: poItems.length, detail: withLatest(poItems.length + ' purchase order '
-                                            + (poItems.length === 1 ? 'line' : 'lines'),
-                                            poItems, i => (i.purchase_orders || {}).issued_at || (i.purchase_orders || {}).order_date) } : null,
-    sold:      soItems.length   ? { on: firstOf(soItems, i => (i.sales_orders || {}).order_date),
-                                    n: soItems.length, detail: withLatest(soItems.length + ' sales order '
-                                            + (soItems.length === 1 ? 'line' : 'lines'),
-                                            soItems, i => (i.sales_orders || {}).order_date) } : null,
-    // Same rule as the four above, on DISTINCT dates rather than rows. A product
-    // with two PO lines in one shipment is one shipping event, not two, and the
-    // embed returns the shipment once per line -- so counting rows here would
-    // report a second departure that never happened.
-    shipped:   shipDates.dep.length ? { on: shipDates.dep[0], n: shipDates.dep.length,
-                                        detail: shipDates.dep.length > 1
-                                          ? shipDates.dep.length + ' shipments · latest '
-                                            + fmt(shipDates.dep[shipDates.dep.length - 1]) : null } : null,
-    delivered: shipDates.arr.length ? { on: shipDates.arr[0], n: shipDates.arr.length,
-                                        detail: shipDates.arr.length > 1
-                                          ? shipDates.arr.length + ' arrivals · latest '
-                                            + fmt(shipDates.arr[shipDates.arr.length - 1]) : null } : null,
-  };
-
-  const anyEvent = LIFECYCLE_STAGES.some(([k]) => events[k]);
-
-  // ── EXCEPTIONS, computed always, rendered only behind the flag ─────────────
-  // Computed regardless so switching the constant needs no other change, and so
-  // the logic is exercised rather than sitting untested until the day it ships.
-  const exceptions = [];
-  if (product.product_stage === 'production' && !events.ordered && !events.sold)
-    exceptions.push('Declared Production, but there is no purchase order and no sales order.');
-  // COMPLIANT-WITH-NO-REPORT AND eFILED-WITH-NO-REPORT ARE NOT EXCEPTIONS HERE,
-  // and both were removed rather than hidden on 2026-09-09. Declared compliance is
-  // trusted at KUI, and 73 of 84 reports will stay unlinked for a long time --
-  // 71 of them name SKUs the catalogue does not hold. A badge that fires on most
-  // of the catalogue for a reason nobody accepts is worse than no badge, because
-  // it teaches people to dismiss the two below that do mean something.
-  if ((events.ordered || events.sold) && !events.quoted)
-    exceptions.push('Has been ordered or sold, but no quote points at it.');
-  // The sample-already-moved case is DELIBERATELY NOT HERE. It applies to 32 of
-  // 185 products, and 32 badges saying the same thing is noise -- the Testing page
-  // states it once, at page level, with a filter. See PLM.md.
+  // One call, one set of rules. state.ev is already the four row sets keyed the
+  // way deriveEvents wants them, so it goes straight in -- the destructure that
+  // used to sit here fed the inline derivation and has nothing left to feed.
+  // Shape is unchanged -- { on, n, detail } per stage -- so everything below
+  // renders exactly as it did.
+  const events = deriveEvents(state.ev);
+  const reached = anyEvent(events);
+  // Computed regardless of the flag, so turning it on needs no other change and
+  // the rules are exercised rather than sitting untested. The two classes that
+  // were DELETED rather than hidden are documented at the function.
+  const exceptions = deriveExceptions(product, events);
 
   return (
     <div style={{marginTop:'6px'}}>
@@ -205,7 +128,7 @@ export function LifecyclePanel({ product, exceptionsEnabled = LIFECYCLE_EXCEPTIO
         </div>
       )}
 
-      {!anyEvent ? (
+      {!reached ? (
         /* NOT AN EMPTY STATE. An explicit inventory of what is absent, because
            these 21 products are invisible on the Products page -- it renders from
            quotes and they have none -- so this panel is the first place they can

@@ -169,6 +169,26 @@ A program is **product x client**. Derived stages come from that client's own
 records: Quoted, Ordered, Shipped, Delivered, Sold. **Two declared stages only** --
 **Inquiry** and **Sampling** -- set manually, which is what Jenn does today.
 
+### There is no stage ladder in 2A, and the reason is a finding
+
+**Sold normally precedes Ordered.** At KUI a *sales order* is the client buying
+from us and a *purchase order* is us buying from the factory, so the real
+sequence is Quoted → **Sold** → **Ordered** → Shipped → Delivered — not the order
+this document lists them in, which is presentation only.
+
+Found 2026-09-10 while planning the Programs list filter. Deciding "what stage is
+this program at" would have meant committing to a sequence, and the obvious
+reading of the list above is wrong.
+
+**So 2A has no current stage and no ladder.** Every stage a program has reached
+renders as its own chip, and the filter asks **"has reached X"** rather than "is
+at X". Counts therefore **overlap** — a program that is quoted, sold and ordered
+appears under all three. That is the same shape as the existing `Ordered · Any`
+date filter on Shipments, which is documented as a union for the same reason.
+
+`lib/lifecycle.js` carries this note at `LIFECYCLE_STAGES`, so anyone tempted to
+treat the array as an order finds out there.
+
 **Explicitly out of 2A:** no round counting, and **no automatic Sample to
 Production proposal**. The transition stays a manual flip; the page-level line
 naming the 32 products already ordered or sold is the prompt, and a prompt someone
