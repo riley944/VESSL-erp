@@ -1771,6 +1771,43 @@ move **53 → 54** of 184. A one-line script with its own wants, not an edit to 
 
 ---
 
+## Script 47, as run — 2026-09-10, the last line a script can link
+
+`z0` on rehearsal and commit. One line: `f873c442`, `Blue Bottle Bubble Bath`,
+qty 45,000 on purchase order `1302600279256` (`in_production`) → **`LLW-1545`**.
+
+Verified after: **170 linked, 84 unlinked**, Ordered coverage **53 → 54** of 184,
+the line reads `LLW-1545` and still prints **`(null)`** — snapshot blanked for the
+third time, same reason as scripts 14 and 45. `b4` covered the second line on that
+same purchase order; the stamped total across the table is unchanged at 94.
+
+**It applied pass 1's rule rather than hand-picking a pair.** `a2` asserted
+exactly one product in the catalogue carries that name and `a3` asserted it is the
+selectable `LLW-1545` — without those, it would only have been an assertion that a
+pairing looked right.
+
+### The linking work is finished
+
+**84 lines remain and no script can reduce that number.** They are the three
+groups below, and every one of them needs a decision rather than a rule:
+
+| group | lines | why a script cannot |
+|---|---|---|
+| BucketGolf configuration variants | 70 | several *selectable* products share each name |
+| retired-only matches | 8 | two retired rows each, no survivor to pick |
+| size rows on PO 51426 | 6 | live parents carry different product names |
+
+The arc, for the record — **94 of 254 linked** when script 14 was measured (the
+figure in the §6 board above), **170 now**, across scripts 14 (+4), 45 (+71) and
+47 (+1).
+
+And the number that matters more: **stamped `product_sku` was 94 then and is 94
+now.** Seventy-six purchase order lines gained a product without one character
+changing on any already issued document. That is the invariant those three
+scripts were built around, and it held across all of them.
+
+---
+
 ## The 85 purchase order lines script 45 will not link — questions for Kristy
 
 Written 2026-09-10 alongside script 45, which links 71 of 156. These are the
