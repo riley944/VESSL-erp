@@ -1690,6 +1690,134 @@ One badge on 184 products is the outcome the gate existed to guarantee. If a
 later change makes these fire on dozens, that is the signal to narrow the rule,
 not to hide the badge — the two deleted classes are the precedent.
 
+## Script 45, as run — 2026-09-10, purchase order lines reach products
+
+`z0` on rehearsal and commit. **71 of 156 unlinked lines linked**, in two passes.
+Verified live afterwards: 169 linked, 85 unlinked, Ordered coverage **37 → 53** of
+184 selectable products.
+
+### It could not reuse script 39's ladder
+
+Script 39's Pass 1 was worth 49 rows and needed no matching at all — the sales
+order line already carried `quote_id`, and the quote carried `product_id`. **No
+such column exists on `purchase_order_items`**, and `master_sku`, `vpn`,
+`pack_sku` and `baby_sku` are **empty on all 156** unlinked lines. Description is
+the only signal, so the confidence ladder had to come from *match quality*:
+
+- **Pass 1, 60 lines** — the description matches exactly one product in the whole
+  catalogue, and it is selectable. Nothing to choose between.
+- **Pass 2, 11 lines** — several products carry the name, exactly one is
+  selectable, the rest retired. Script 39's Pass 3 in reverse: there it took a
+  retired match because no live one existed; here it takes the live one because
+  the twins are history.
+
+Case never mattered — 0 of 156 resolve differently case-sensitively, and `a5`
+proves it rather than assuming it.
+
+### Every one of them was an issued document
+
+**156 of 156 sat on non-draft POs. Zero drafts.** And all 156 carried
+`product_sku` NULL, so they printed no SKU at all. `trg_poi_stamp_product_sku` is
+`BEFORE INSERT OR UPDATE OF product_id`, so every link would have put a SKU in
+front of a factory that had never seen one — script 14's problem at 18× the
+scale, and it took the same answer: **link, then null the snapshot.** Net effect
+is `product_id` on 71 lines and not one printed document changed.
+
+### 71 lines, but only 16 new products
+
+The 71 reach **17 distinct products, 16 of them new to Ordered** — most of those
+lines are sizes and repeats of the same product on the same purchase order. Worth
+remembering when a line count is used as a proxy for coverage: it moved coverage
+by 16, and still leaves **131 of 184 products with no linked purchase order**.
+
+---
+
+## The 85 purchase order lines script 45 will not link — questions for Kristy
+
+Written 2026-09-10 alongside script 45, which links 71 of 156. These are the
+other 85, in three groups, none of which a text rule can settle.
+
+### 70 ambiguous — BucketGolf configuration variants
+
+**17 distinct descriptions.** Several *selectable* products carry each name, so
+there is no survivor to pick the way script 45 pass 2 picks one.
+
+| description | lines | selectable matches |
+|---|---|---|
+| `tee box` | 9 | **9** |
+| `6 hole set (2 right clubs)` | 8 | 2 |
+| `9 hole set (2 right clubs)` | 7 | 2 |
+| `9 hole set (4 right clubs)` | 6 | 2 |
+| `6 hole set (no clubs)` | 5 | 2 |
+| `9 hole set (no clubs)` | 5 | 2 |
+| `toddler right-handed club` | 4 | 2 |
+| `3 hole set (2 right clubs)` | 4 | 2 |
+| `6 hole set (3 right, 1 left club)` | 4 | 2 |
+| `9 hole set (3 right, 1 left club)` | 4 | 2 |
+| `junior left-handed club` | 3 | 2 |
+| `6 hole set (1 right, 1 left club)` | 2 | 2 |
+| `bundle box` | 2 | 2 |
+| `set of 6 balls` | 2 | 2 |
+| `3 hole set (no clubs)` | 2 | 2 |
+| `3 hole set (1 right, 1 left club)` | 2 | 2 |
+| `6 hole set (4 right clubs)` | 1 | 2 |
+
+**`tee box` matches nine selectable products on its own.** These read as
+configuration variants of one product family sold as separate catalogue rows —
+the same question the BG09RL costing bases raised, and Kristy has already decided
+*that* one in favour of separate products. **The question here is narrower: which
+row did each PO line mean?** No text rule answers it, and guessing puts a
+factory purchase order against the wrong product.
+
+### 8 that match only retired products
+
+Two retired rows each, so pass 2 has no single survivor to choose.
+
+`bg06rr` · `junior left handed club` · `junior right handed club` ·
+`set of 6 fusion balls` — 2 lines each.
+
+Note `junior left handed club` here versus `junior left-handed club` above: **the
+hyphen is the only difference**, and it decides whether a line lands in the
+ambiguous group or this one. That is worth Kristy seeing, because it says these
+are the same product entered twice under two spellings.
+
+### 7 that match no product *name* — and only one is really missing
+
+All three descriptions sit on **in_production** purchase orders. First written up
+as "no product exists"; **that was wrong for all three**, and the three are not
+even the same problem as each other. Corrected 2026-09-10 after Matt identified
+`Blue Bottle Bubble Bath` as `LLW-1545`.
+
+| description | lines | what actually exists | shape |
+|---|---|---|---|
+| `Blue Bottle Bubble Bath` | 1 | **`LLW-1545`, selectable** — named `LLW-1545␣␣␣␣␣Blue Bottle Bubble Bath` | **naming** — script 46 |
+| `Mock Neck "Parke" Ville, White` | 5 | five **retired** `LHS-183 - <size>` rows carry the name behind a prefix; live parent `LHS-183` is named *Mock neck fleece* | size rows |
+| `White Aviator Nation Applique Tee` | 1 | one **retired** row `LHS-152 - Small`; live parent `LHS-152` is named *Aviator Nation Crew, White* and already holds 3 linked lines | size rows |
+
+**The naming case is a real pattern, not a one-off.** 31 products have a `name`
+that begins with their own `sku` — 11 selectable, 20 retired. A product named
+`LLW-1545␣␣␣␣␣Blue Bottle Bubble Bath` is not named `Blue Bottle Bubble Bath`, so
+it matches nothing and *looks* missing while sitting in the catalogue. Script 46
+strips the prefix from the 11 selectable ones. It unlocks **exactly one** PO line;
+the other ten are included because one latent fault with eleven instances should
+not be fixed one visible instance at a time.
+
+**The other six are the size-row question, and a name cleanup does not help
+them** — proven, not assumed. Even after stripping prefixes, `Mock Neck` matches
+five *retired* rows (ambiguous-retired, which script 45 leaves alone by design)
+and `Aviator Tee` matches one *retired* row (still not a selectable match). In
+both cases the **live parent carries a different product name**, so linking the
+lines to it is a judgement about what the line meant, not a text fix.
+
+**For Kristy, the question is:** did PO 51426 order the `LHS-183` mock neck and
+the `LHS-152` aviator tee — in which case the live parents should absorb these
+six lines — or are the retired size rows the real products and the parents
+something else? Quantities on the five Mock Neck lines are 10, 2, 6, 15, 15 with
+**no `size` value on any of them**, so the sizes cannot be recovered from the
+lines themselves.
+
+---
+
 ### Scripts 42 and 14, as run — 2026-09-10
 
 Both `z0` on rehearsal and commit.
