@@ -317,6 +317,37 @@ function KULogo({ height = 40, dark = false }) {
 }
 const KU_LOGO_PRINT = "/logo.png";
 
+// ── THE PRINT LOGO HAS TO TRAVEL AS BYTES ───────────────────────────────────
+// Both print paths below write their HTML into an about:blank window. A relative
+// src like "/logo.png" resolves against about:blank, not against the app origin,
+// so it fetches nothing -- which is why the logo has been missing from printed
+// quote sheets. Fetched here and inlined as a data URI instead, which is
+// self-contained and prints.
+//
+// Cached in a module-level variable because a user printing six quotes should
+// fetch 83KB once, not six times. The empty string is a REAL cached value meaning
+// "asked, and it failed" -- hence the === null test rather than a falsy one, so a
+// failed fetch does not retry on every print.
+let _kuLogoUri = null;
+async function kuLogoDataUri() {
+  if (_kuLogoUri !== null) return _kuLogoUri;
+  try {
+    const res = await fetch(KU_LOGO_PRINT);
+    if (res.ok) {
+      const blob = await res.blob();
+      _kuLogoUri = await new Promise((ok, no) => {
+        const fr = new FileReader();
+        fr.onload = () => ok(fr.result);
+        fr.onerror = no;
+        fr.readAsDataURL(blob);
+      });
+      return _kuLogoUri;
+    }
+  } catch (e) {}
+  _kuLogoUri = "";
+  return _kuLogoUri;
+}
+
 // ---------- DB <-> form mapping ----------
 // size_price_deltas rides on the quote, not the tier — one set applies across every
 // tier. Stored as an array of records, non-zero entries only ([{size,delta}]); held
@@ -1723,7 +1754,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
         )}
         <MarkWonButton q={q} />
         <FreightQuoteButton q={q} cbmPerCarton={cbm} />
-        <button style={S.printBtn} onClick={() => printQuote(q)}><Printer size={15} /> Print this quote</button>
+        <button style={S.printBtn} onClick={() => { printQuote(q).catch(e => console.error('print failed:', e)); }}><Printer size={15} /> Print this quote</button>
       </div>
     </div>
   );
@@ -1778,7 +1809,16 @@ function TasksPanel({ tasks, userEmail, onToggle, onDelete, onClose, onJump }) {
 }
 
 // ---------- print a single quote ----------
-function printQuote(q) {
+// async because the logo is fetched and inlined -- see kuLogoDataUri.
+//
+// THE WINDOW IS OPENED ON THE FIRST LINE, BEFORE ANY await. window.open only
+// survives a popup blocker while the user gesture is still on the stack, and an
+// await hands the stack back -- so opening it after the logo fetch would get the
+// print window blocked. Same order generate() and genSO use, for the same reason.
+async function printQuote(q) {
+  const w = window.open("", "_blank");
+  if (w) w.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating quote sheet…</body>');
+  const logoImg = await kuLogoDataUri();
   const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const cbm = (Number(q.cartonL) * Number(q.cartonW) * Number(q.cartonH)) / 1000000;
   const tierRows = (q.tiers || []).map((t, idx) => {
@@ -1850,7 +1890,7 @@ function printQuote(q) {
     <div class="sheet">
       <div class="head">
         <div class="mark">
-          <img src="${KU_LOGO_PRINT}" alt="King Universal" class="logoimg" />
+          ${logoImg ? `<img src="${logoImg}" alt="King Universal" class="logoimg" />` : ""}
           <div class="brandsub">Product Development &amp; Sourcing</div>
         </div>
         <div class="docmeta">
@@ -1891,8 +1931,7 @@ function printQuote(q) {
     </div>
     <script>window.onload = function(){ setTimeout(function(){ window.print(); }, 250); }</script>
   </body></html>`;
-  const w = window.open("", "_blank");
-  if (w) { w.document.write(html); w.document.close(); }
+  if (w) { w.document.open(); w.document.write(html); w.document.close(); }
 }
 
 // ---------- payment block ----------
@@ -1923,7 +1962,7 @@ function bankBlock(settings) {
 }
 
 // ---------- client-safe sheet ----------
-function printClientSheet(clientName, quotesArr, settings, vendor) {
+function printClientSheet(clientName, quotesArr, settings, vendor, logoImg) {
   const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const productBlocks = quotesArr.map((q) => {
     const rows = (q.tiers || [])
@@ -1980,7 +2019,7 @@ function printClientSheet(clientName, quotesArr, settings, vendor) {
     <div class="sheet">
       <div class="head">
         <div class="mark">
-          <img src="${KU_LOGO_PRINT}" alt="King Universal" class="logoimg" />
+          ${logoImg ? `<img src="${logoImg}" alt="King Universal" class="logoimg" />` : ""}
           <div class="brandsub">Product Development &amp; Sourcing</div>
         </div>
         <div class="docmeta">
@@ -2027,7 +2066,8 @@ function SendToClientModal({ clients, onClose }) {
     try { const { data } = await SB.from('kui_settings').select('*').eq('id',1).single(); settings = data; } catch(e){}
     let vendor = null;
     try { const { data } = await SB.from('companies').select('vendor_number').eq('type','client').ilike('name',chosenClient||'').limit(1); vendor = (data&&data[0])?data[0].vendor_number:null; } catch(e){}
-    const html = printClientSheet(chosenClient, pickedQuotes, settings, vendor);
+    const logoImg = await kuLogoDataUri();
+    const html = printClientSheet(chosenClient, pickedQuotes, settings, vendor, logoImg);
     if (win) {
       win.document.open(); win.document.write(html); win.document.close();
       setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 400);

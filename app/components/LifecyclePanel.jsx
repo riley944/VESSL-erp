@@ -155,10 +155,12 @@ export function LifecyclePanel({ product, exceptionsEnabled = LIFECYCLE_EXCEPTIO
   const exceptions = [];
   if (product.product_stage === 'production' && !events.ordered && !events.sold)
     exceptions.push('Declared Production, but there is no purchase order and no sales order.');
-  if (['compliant','passed'].includes(product.compliance_status) && !events.tested)
-    exceptions.push('Declared ' + product.compliance_status + ', but no test report is linked to this product.');
-  if (product.efiled_date && !events.tested)
-    exceptions.push('Carries an eFiled date of ' + fmt(product.efiled_date) + ', but no test report is linked.');
+  // COMPLIANT-WITH-NO-REPORT AND eFILED-WITH-NO-REPORT ARE NOT EXCEPTIONS HERE,
+  // and both were removed rather than hidden on 2026-09-09. Declared compliance is
+  // trusted at KUI, and 73 of 84 reports will stay unlinked for a long time --
+  // 71 of them name SKUs the catalogue does not hold. A badge that fires on most
+  // of the catalogue for a reason nobody accepts is worse than no badge, because
+  // it teaches people to dismiss the two below that do mean something.
   if ((events.ordered || events.sold) && !events.quoted)
     exceptions.push('Has been ordered or sold, but no quote points at it.');
   // The sample-already-moved case is DELIBERATELY NOT HERE. It applies to 32 of

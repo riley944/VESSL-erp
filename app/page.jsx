@@ -1787,11 +1787,49 @@ function SalesOrderDetail({id,navigate}){
   const updateStatus=async s=>{await SB.from('sales_orders').update({status:s,updated_at:new Date().toISOString()}).eq('id',id); setSo(prev=>({...prev,status:s}));};
   const saveInvoice=async()=>{ setSavingInv(true); await SB.from('sales_orders').update({invoice_number:invoiceNum.trim()||null,updated_at:new Date().toISOString()}).eq('id',id); setSo(prev=>({...prev,invoice_number:invoiceNum.trim()||null})); setSavingInv(false); };
 
-  const genSO = () => {
+  const genSO = async () => {
     const win = window.open('', '_blank');
     if (win) win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating order confirmation…</body>');
+    // THE LETTERHEAD IS NOW DATA, so it has to be fetched before the document is
+    // built. Same read the quote sheet does, same tolerance: a missing row or a
+    // failed read leaves settings null and buildSODoc falls back to the literal
+    // company name, which is what printed before this was wired up at all.
+    let settings = null;
+    try { const { data } = await SB.from('kui_settings').select('*').eq('id',1).single(); settings = data; } catch(e){}
+    // ── THE LOGO HAS TO TRAVEL AS BYTES ──────────────────────────────────────
+    // The document is written into an about:blank window, so a relative src like
+    // "/logo.png" resolves against about:blank and fetches nothing. Fetched here
+    // and passed as a data URI instead, which is self-contained and prints.
+    //
+    // NOT the LOGO_WHITE constant the sidebar uses -- that is the white colourway
+    // for a dark sidebar and would print invisibly on white paper. public/logo.png
+    // is the same crown-globe mark in black, which is the one for paper.
+    //
+    // Read at full resolution rather than downscaled: 83KB inlines to about 111KB
+    // of data URI, which costs nothing in a print window and keeps the mark crisp
+    // at print DPI, where a 40px-tall CSS box is roughly 125 device pixels.
+    let logo = '';
+    try {
+      const res = await fetch('/logo.png');
+      if (res.ok) {
+        const blob = await res.blob();
+        logo = await new Promise((ok,no)=>{ const fr=new FileReader(); fr.onload=()=>ok(fr.result); fr.onerror=no; fr.readAsDataURL(blob); });
+      }
+    } catch(e){}
+    // "Contact if the SO has one" -- a sales order has no contact column, so this
+    // is the CLIENT COMPANY's primary contact, which is the only contact the data
+    // model can offer. See the note in buildSODoc's Bill to block.
+    let contact = null;
+    if (so.client_company_id) {
+      try {
+        const { data } = await SB.from('contacts').select('full_name,email,phone,is_primary')
+          .eq('company_id', so.client_company_id).order('is_primary',{ascending:false}).limit(1);
+        contact = (data && data[0]) || null;
+      } catch(e){}
+    }
     const docData = {
       so_ref: so.client_po_number || so.so_number || id.slice(0,8).toUpperCase(),
+      so_number: so.so_number || id.slice(0,8).toUpperCase(),
       client_po: so.client_po_number || '',
       currency: so.currency || 'USD',
       client_name: so.client?.name || '',
@@ -1803,6 +1841,11 @@ function SalesOrderDetail({id,navigate}){
       shipping_method: so.shipping_method || '',
       ship_to: so.delivery_address || '',
       notes: so.notes || '',
+      settings, contact, logo,
+      // Passed so the totals block can render them; buildSODoc keeps them OFF by
+      // default because these are KUI's costs, not the client's. See the note on
+      // SHOW_ORDER_COSTS there before turning them on.
+      costs: costs.map(c => ({ kind:c.kind, note:c.note, amount:c.amount })),
       lines: items.map(it => ({
         description: it.description || it.products?.name || '—',
         sku: it.client_sku || it.products?.sku || '',
@@ -1813,7 +1856,10 @@ function SalesOrderDetail({id,navigate}){
       })),
     };
     const html = buildSODoc(docData);
-    if (win) { win.document.open(); win.document.write(html); win.document.close(); setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 500); }
+    // 900ms, not 500. The document paginates itself on load and waits on webfont
+    // metrics before it does -- printing mid-pagination would print the unpaginated
+    // flow, which is one very long page with no footers.
+    if (win) { win.document.open(); win.document.write(html); win.document.close(); setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 900); }
     else {
       const url = URL.createObjectURL(new Blob([html],{type:'text/html'}));
       const a = document.createElement('a'); a.href=url; a.download='Order-'+(so.client_po_number||id)+'.html';
@@ -7606,106 +7652,304 @@ function buildFreightDoc(q, clientName, forwarderName) {
     +'</div></body></html>';
 }
 
+// The terms paragraph and acceptance line were removed on review 2026-09-10;
+// see the note in buildSODoc's flow where they used to sit.
+
+
 // ── Sales Order / Order Confirmation document (client-facing — CLIENT PRICES ONLY) ──
+//
+// PRINT MODEL. @page margin is 0, so Chrome prints no header or footer of its own
+// -- no "about:blank", no browser date stamp, no URL. Everything inside the paper
+// edge is ours, which means the page margin has to be ours too: each .sheet is a
+// literal 816x1056px (8.5x11in at 96dpi) with 48px of padding standing in for the
+// half-inch margin.
+//
+// PAGE N OF M IS PAGINATED IN JAVASCRIPT, deliberately. The CSS way -- @page
+// margin boxes with counter(page) -- is not implemented in Chrome, and a
+// position:fixed footer repeats on every sheet but cannot know its own number. So
+// the document lays itself out: blocks are measured into fixed-height sheets, the
+// items table splits across sheets with its header repeated, and only once the
+// sheet count is known are the footers stamped. It waits on document.fonts.ready
+// first, because Inter arriving late would change every height it just measured.
 function buildSODoc(d) {
   const cur = d.currency || 'USD';
   const m = (n) => n==null ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:cur,minimumFractionDigits:2,maximumFractionDigits:2}).format(n);
   const fd = s => { if(!s) return '—'; const dt=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(dt)?'—':dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
   const fn = n => n==null ? '—' : new Intl.NumberFormat('en-US').format(n);
+  // EVERY interpolated value goes through this. The old document dropped client
+  // name, ship-to, notes and line descriptions into the markup raw, so a company
+  // named with an ampersand printed &amp; and anything angle-bracketed could break
+  // the page outright.
+  const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const nl = s => esc(s).replace(/\n/g,'<br>');
+  const dash = v => { const t=(v==null?'':String(v)).trim(); return t===''?'—':esc(t); };
+  const st = d.settings || {};
+  const coName = (st.company_name||'').trim() || 'King Universal Inc.';
+  const soNo = d.so_number || d.so_ref || '';
   const subtotal = (d.lines||[]).reduce((a,l)=>a+(Number(l.line_amount)||0),0);
+  const totalQty = (d.lines||[]).reduce((a,l)=>a+(Number(l.quantity)||0),0);
 
-  const lines = (d.lines||[]).map((l,i) => {
-    const size = l.size || '';
-    const bg = i % 2 === 0 ? '#fff' : '#f9fafb';
-    return '<tr style="background:'+bg+'">'
-      +'<td style="padding:15px 18px;vertical-align:top;border-bottom:1px solid #e5e7eb;">'
-        +'<div style="font-size:15px;font-weight:600;color:#0f172a;">'+(l.description||'—')+'</div>'
-        +(size?'<div style="margin-top:6px;"><span style="display:inline-block;background:#eef1f6;border:1px solid #e5e7eb;border-radius:5px;padding:3px 9px;font-size:13px;font-weight:700;color:#0c1322;letter-spacing:.04em;">Size '+size+'</span></div>':'')
-        +(l.sku?'<div style="font-size:11.5px;color:#6b7280;font-family:monospace;margin-top:4px;"><span style="color:#9ca3af;">SKU</span> '+l.sku+'</div>':'')
+  // ── LINE GROUPING, and the rule it follows ────────────────────────────────
+  // Sizes are separate sales_order_items rows. The client does not want four rows
+  // saying the same product; they want one row with the split beneath it. So rows
+  // collapse into one when the DESCRIPTION, SKU and UNIT PRICE all match, and the
+  // sizes become "S 400 · M 600 · L 300".
+  //
+  // UNIT PRICE IS PART OF THE KEY DELIBERATELY. Two sizes at different prices are
+  // two different commercial lines, and merging them would print one price for
+  // quantities that were not sold at it. Those stay as separate rows, each with
+  // its own single-size breakdown, which is correct if slightly repetitive.
+  const groups = [];
+  const byKey = {};
+  (d.lines||[]).forEach(l => {
+    const key = (l.description||'') + ' ' + (l.sku||'') + ' ' + String(Number(l.client_price)||0);
+    let g = byKey[key];
+    if (!g) { g = byKey[key] = { description:l.description||'—', sku:l.sku||'', client_price:l.client_price, quantity:0, line_amount:0, sizes:[] }; groups.push(g); }
+    g.quantity += Number(l.quantity)||0;
+    g.line_amount += Number(l.line_amount)||0;
+    if (l.size) g.sizes.push({ size:l.size, qty:Number(l.quantity)||0 });
+  });
+
+  const lines = groups.map(g => {
+    const breakdown = g.sizes.length ? g.sizes.map(s => esc(s.size)+' '+fn(s.qty)).join(' · ') : '';
+    return '<tr>'
+      +'<td style="padding:10px 10px 10px 0;vertical-align:top;border-bottom:1px solid #e5e7eb;">'
+        +'<div style="font-size:13px;font-weight:600;color:#111827;line-height:1.35;">'+esc(g.description)+'</div>'
+        +(g.sku?'<div class="mono" style="font-size:11px;color:#6b7280;margin-top:3px;letter-spacing:.02em;">'+esc(g.sku)+'</div>':'')
+        +(breakdown?'<div class="mono" style="font-size:11px;color:#4b5563;margin-top:3px;">'+breakdown+'</div>':'')
       +'</td>'
-      +'<td style="padding:15px 14px;text-align:center;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:16px;font-weight:700;color:#0f172a;font-family:monospace;">'+fn(l.quantity)+'</td>'
-      // THE UNIT PRICE CELL ON A DOCUMENT THE CLIENT RECEIVES. unitPrice, not
-      // the local m(): m() is fixed at 2dp and would print $0.18 for a bag that
-      // costs $0.1778, understating the price on the customer's own order
-      // confirmation. The line-amount cell below keeps m() -- that is money owed.
-      +'<td style="padding:15px 14px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;font-family:monospace;">'+unitPrice(l.client_price,cur)+'</td>'
-      +'<td style="padding:15px 18px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:15px;font-weight:700;color:#0f172a;font-family:monospace;">'+m(l.line_amount)+'</td>'
+      +'<td class="mono" style="padding:10px 10px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:13px;color:#111827;white-space:nowrap;">'+fn(g.quantity)+'</td>'
+      // unitPrice, not m(): m() is fixed at 2dp and would print $0.18 for a bag
+      // that costs $0.1778, understating the price on the client's own order
+      // confirmation. The amount cell keeps m() -- that is money owed.
+      +'<td class="mono" style="padding:10px 10px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;white-space:nowrap;">'+unitPrice(g.client_price,cur)+'</td>'
+      +'<td class="mono" style="padding:10px 0 10px 10px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:13px;font-weight:600;color:#111827;white-space:nowrap;">'+m(g.line_amount)+'</td>'
       +'</tr>';
   }).join('');
 
-  const termBoxes = [
-    ['Order Date', fd(d.order_date)],
-    d.cargo_ready_date ? ['Cargo Ready Date', fd(d.cargo_ready_date)] : null,
-    d.indc_date ? ['In-DC Date', fd(d.indc_date)] : null,
-    d.cancel_date ? ['Cancel Date', fd(d.cancel_date)] : null,
-    ['Payment Terms', d.payment_terms||'—'],
-    d.shipping_method ? ['Shipping Method', d.shipping_method] : null,
-  ].filter(Boolean).map(([l,v]) =>
-    '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;">'
-    +'<div style="font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;">'+l+'</div>'
-    +'<div style="font-size:15px;font-weight:600;color:#0f172a;">'+v+'</div>'
+  const LBL = 'font-size:9.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;';
+  const cell = (l,v) => '<div style="border-right:1.5px solid #b8bfc9;border-bottom:1.5px solid #b8bfc9;padding:10px 12px;">'
+    +'<div style="'+LBL+'">'+l+'</div>'
+    +'<div style="font-size:13.5px;color:#111827;margin-top:4px;line-height:1.3;">'+v+'</div></div>';
+
+  // ── LETTERHEAD CONTACT LINES ──────────────────────────────────────────────
+  // Blank fields are SKIPPED here rather than dashed. A dash is right in the
+  // details grid, where a missing cargo-ready date is information; it is wrong in
+  // a letterhead, where an em dash where the phone number goes just looks broken.
+  // NOTE: kui_settings has no website column, so the website line the layout calls
+  // for cannot be filled. The slot is here and commented rather than faked.
+  // TWO LINES, NOT FOUR. The address is flattened onto one line and the ways to
+  // reach a person onto the next, so the block reads as a letterhead rule rather
+  // than as a stack of fields. A stored address with its own line breaks would
+  // otherwise print four ragged lines under a 40px logo and swamp it.
+  const addrLine = (st.address||'').trim().split(/\n+/).map(x=>x.trim()).filter(Boolean).join(', ');
+  const reachLine = [st.phone, st.office_phone, st.email]
+    .map(x=>(x||'').trim()).filter(Boolean).join('  ·  ');
+  // (st.website||'').trim() -- no kui_settings column; slot left commented, not faked.
+  const headLines = [addrLine, reachLine].filter(Boolean).map(esc).join('<br>');
+
+  // ── BILL TO ───────────────────────────────────────────────────────────────
+  // A sales order stores no contact of its own, so this is the client company's
+  // primary contact. STRUCTURED AS A LIST OF LINES on purpose: when stored client
+  // addresses land (Kristy's queued feature) they become extra entries in this
+  // array and nothing else on the page has to move.
+  const billLines = [
+    d.client_name ? '<div style="font-size:13.5px;font-weight:600;color:#111827;">'+esc(d.client_name)+'</div>' : '',
+    d.contact && d.contact.full_name ? '<div>'+esc(d.contact.full_name)+'</div>' : '',
+    d.contact && d.contact.email ? '<div>'+esc(d.contact.email)+'</div>' : '',
+    d.contact && d.contact.phone ? '<div>'+esc(d.contact.phone)+'</div>' : '',
+    // stored billing address lines slot in here
+  ].filter(Boolean).join('');
+
+  const party = (label, inner) => '<div style="flex:1;min-width:0;">'
+    +'<div style="'+LBL+'margin-bottom:5px;">'+label+'</div>'
+    +'<div style="font-size:13px;color:#374151;line-height:1.55;">'+(inner||'—')+'</div></div>';
+
+  const footL = esc(coName+' · Order confirmation '+soNo);
+
+  // ── e. ADDITIONAL COST LINES, AND WHY THE SWITCH IS OFF ───────────────────
+  // order_costs is INTERNAL COST, not a charge to the client. The margin summary
+  // on this same screen SUBTRACTS every one of these rows from revenue -- they are
+  // what KUI pays, which is why they lower the margin rather than raise the
+  // invoice. The table today holds 5 rows, all kind 'freight', $6,760 to $10,000.
+  //
+  // Printing them between Subtotal and Order total on the CLIENT's confirmation
+  // would do two things nobody wants: show the client what KUI pays to move the
+  // goods, and state an Order total up to $10,000 above what the client actually
+  // owes, which is the sum of the client prices they agreed to.
+  //
+  // So the rendering is built and wired and the switch is off. If some of these
+  // are genuinely passed through and billed on, this is the one line to flip --
+  // but the right fix is then a per-cost "billable" flag, because today the table
+  // cannot tell a cost KUI absorbs from one it passes on.
+  const SHOW_ORDER_COSTS = false;
+  const extraCosts = SHOW_ORDER_COSTS ? (d.costs||[]) : [];
+  const costLines = extraCosts.map(c =>
+    '<div style="display:flex;justify-content:space-between;font-size:12.5px;color:#4b5563;padding:4px 0;">'
+    +'<span>'+esc(String(c.kind||'Other').replace(/^./,ch=>ch.toUpperCase()))+(c.note?' · '+esc(c.note):'')+'</span>'
+    +'<span class="mono">'+m(Number(c.amount)||0)+'</span></div>').join('');
+  const orderTotal = subtotal + extraCosts.reduce((a,c)=>a+(Number(c.amount)||0),0);
+
+  // (the acceptance line's "Questions or changes" half lived here; removed with
+  //  the rest of g on review 2026-09-10)
+
+  const flow =
+    // a. LETTERHEAD. Logo, then a two-line address/contact block beneath it; the
+    //    document title on the right, set larger than anything else on the sheet
+    //    so the eye lands on WHAT THIS IS before it reads a single field. The rule
+    //    closes the block. No panel, no fill -- the logo is the only mark.
+    //
+    //    THE LOGO IS AN <img> ON A DATA URI, never a path. See genSO for why a
+    //    relative src cannot work here.
+    //
+    //    Text fallback when the logo did not load, so a failed fetch degrades to
+    //    the company name rather than to an anonymous sheet.
+     '<div>'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:28px;">'
+        +'<div style="min-width:0;">'
+          +(d.logo
+            ? '<img src="'+d.logo+'" alt="'+esc(coName)+'" style="height:40px;width:auto;display:block;">'
+            : '<div style="font-size:21px;font-weight:700;letter-spacing:-.015em;color:#0c1322;line-height:1.1;">'+esc(coName)+'</div>')
+          +(headLines?'<div style="margin-top:11px;font-size:10.5px;color:#4b5563;line-height:1.6;">'+headLines+'</div>':'')
+        +'</div>'
+        +'<div style="text-align:right;white-space:nowrap;">'
+          +'<div style="font-size:16px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#0c1322;line-height:1.1;">Order confirmation</div>'
+          +'<div class="mono" style="font-size:14px;color:#374151;margin-top:7px;">'+esc(soNo)+'</div>'
+        +'</div>'
+      +'</div>'
+      +'<div style="height:1.5px;background:#0c1322;margin-top:15px;"></div>'
     +'</div>'
-  ).join('');
+
+    // b. BILL TO / SHIP TO
+    +'<div style="display:flex;gap:32px;margin-top:20px;">'
+      +party('Bill to', billLines)
+      +party('Ship to', d.ship_to ? nl(d.ship_to) : '')
+    +'</div>'
+
+    // c. ORDER DETAILS, 4 x 2. Empty cells dash rather than sit blank, so a gap
+    //    reads as "not set" instead of as a rendering fault.
+    +'<div style="margin-top:20px;border-top:1.5px solid #b8bfc9;border-left:1.5px solid #b8bfc9;display:grid;grid-template-columns:repeat(4,1fr);">'
+      +cell('Client PO', dash(d.client_po))
+      +cell('Order date', fd(d.order_date))
+      +cell('Cargo ready', fd(d.cargo_ready_date))
+      +cell('In DC (INDC)', fd(d.indc_date))
+      +cell('Payment terms', dash(d.payment_terms))
+      +cell('Shipping method', dash(d.shipping_method))
+      // Cancel date, not currency. The currency already reads on the order total
+      // line, and a cancel date printed nowhere is a date the client never agreed
+      // to -- the one field here with a deadline attached to it.
+      +cell('Cancel date', fd(d.cancel_date))
+      // A sales order has no created_by column, so the creating user cannot be
+      // named. This is the KUI contact from settings, which is the fallback the
+      // layout allows for.
+      +cell('Your contact', dash(st.contact_name))
+    +'</div>'
+
+    // d. LINE ITEMS. data-table marks it splittable -- the paginator moves rows
+    //    one at a time and repeats this thead on every continuation sheet.
+    +'<div data-table="1" style="margin-top:22px;">'
+      +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;">'
+        +'<colgroup><col><col style="width:74px"><col style="width:92px"><col style="width:100px"></colgroup>'
+        +'<thead><tr>'
+          +'<th style="'+LBL+'text-align:left;padding:0 10px 6px 0;border-bottom:1px solid #0c1322;">Description</th>'
+          +'<th style="'+LBL+'text-align:right;padding:0 10px 6px;border-bottom:1px solid #0c1322;">Qty</th>'
+          +'<th style="'+LBL+'text-align:right;padding:0 10px 6px;border-bottom:1px solid #0c1322;">Unit price</th>'
+          +'<th style="'+LBL+'text-align:right;padding:0 0 6px 10px;border-bottom:1px solid #0c1322;">Amount</th>'
+        +'</tr></thead>'
+        +'<tbody>'+lines+'</tbody>'
+      +'</table>'
+    +'</div>'
+
+    // e. TOTALS. Subtotal, then any additional cost lines, then the order total
+    //    under a rule. Kept in one block so a signature-adjacent total cannot be
+    //    orphaned from its own subtotal by a page break.
+    +'<div style="display:flex;justify-content:flex-end;margin-top:14px;">'
+      +'<div style="width:290px;">'
+        +'<div style="display:flex;justify-content:space-between;font-size:12.5px;color:#4b5563;padding:4px 0;">'
+          +'<span>Total units</span><span class="mono">'+fn(totalQty)+'</span></div>'
+        +'<div style="display:flex;justify-content:space-between;font-size:12.5px;color:#4b5563;padding:4px 0;">'
+          +'<span>Subtotal</span><span class="mono">'+m(subtotal)+'</span></div>'
+        +costLines
+        +'<div style="display:flex;justify-content:space-between;align-items:baseline;border-top:1.5px solid #0c1322;margin-top:6px;padding-top:8px;">'
+          +'<span style="font-size:13px;font-weight:600;color:#111827;">Order total '+esc(cur)+'</span>'
+          +'<span class="mono" style="font-size:17px;font-weight:700;color:#0c1322;">'+m(orderTotal)+'</span></div>'
+      +'</div>'
+    +'</div>'
+
+    // NOTES. The order's own notes, above the boilerplate -- what is true of THIS
+    // order should be read before what is true of every order.
+    +(d.notes?'<div style="margin-top:24px;">'
+      +'<div style="'+LBL+'margin-bottom:5px;">Notes</div>'
+      +'<div style="font-size:12.5px;color:#374151;line-height:1.6;">'+nl(d.notes)+'</div></div>':'');
+
+    // f + g (terms paragraph, acceptance line) WERE BUILT AND THEN REMOVED on
+    // review 2026-09-10 -- not needed on this document. The wording and the
+    // signature line are in git history if they are ever wanted back; nothing is
+    // left commented out here because a dead block invites someone to re-enable
+    // copy that no one has approved.
 
   return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-+'<title>Order Confirmation — '+(d.client_po||d.so_ref||'')+'</title>'
-+'<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">'
-+'<style>*{box-sizing:border-box;margin:0;padding:0;}html,body{font-family:\'Inter\',system-ui,sans-serif;font-size:14px;color:#0f172a;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact;}.page{max-width:820px;margin:0 auto;padding:48px;}@media print{@page{size:A4;margin:20mm;}.page{padding:0;max-width:none;}}</style>'
-+'</head><body><div class="page">'
-
-// Header
-+'<div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:28px;border-bottom:3px solid #0c1322;margin-bottom:32px;">'
-  +'<div>'
-    +'<div style="font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#64748b;margin-bottom:8px;">King Universal Inc.</div>'
-    +'<div style="font-size:34px;font-weight:800;color:#0c1322;letter-spacing:-.02em;line-height:1;">Order Confirmation</div>'
-  +'</div>'
-  +'<div style="text-align:right;">'
-    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;">PO Reference</div>'
-    +'<div style="font-size:24px;font-weight:700;color:#0c1322;font-family:\'JetBrains Mono\',monospace;">'+(d.client_po||d.so_ref||'—')+'</div>'
-    +'<div style="font-size:12px;color:#94a3b8;margin-top:4px;">Confirmed '+fd(d.order_date)+'</div>'
-  +'</div>'
-+'</div>'
-
-// Client banner
-+(d.client_name?'<div style="background:linear-gradient(135deg,#0c1322 0%,#1e3a5f 100%);border-radius:12px;padding:18px 24px;margin-bottom:28px;">'
-  +'<div style="font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.5);margin-bottom:4px;">Prepared For</div>'
-  +'<div style="font-size:20px;font-weight:700;color:#fff;">'+d.client_name+'</div>'
-+'</div>':'')
-
-// Ship-to address
-+(d.ship_to?'<div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px;margin-bottom:28px;">'
-  +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:8px;">Ship To</div>'
-  +'<div style="font-size:14px;color:#0f172a;line-height:1.7;">'+d.ship_to.replace(/\n/g,'<br>')+'</div>'
-+'</div>':'')
-
-// Terms
-+'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:32px;">'+termBoxes+'</div>'
-
-// Line items
-+'<div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;margin-bottom:28px;">'
-  +'<div style="background:#0c1322;padding:14px 18px;display:grid;grid-template-columns:1fr 80px 120px 130px;gap:8px;">'
-    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);">Description</div>'
-    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);text-align:center;">Qty</div>'
-    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);text-align:right;">Unit Price</div>'
-    +'<div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);text-align:right;">Amount</div>'
-  +'</div>'
-  +'<table style="width:100%;border-collapse:collapse;"><tbody>'+lines+'</tbody></table>'
-+'</div>'
-
-// Total
-+'<div style="display:flex;justify-content:flex-end;margin-bottom:40px;">'
-  +'<div style="width:300px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:18px 22px;">'
-    +'<div style="display:flex;justify-content:space-between;padding:14px 0 0;"><span style="font-size:17px;font-weight:700;color:#0f172a;">Order Total '+cur+'</span><span style="font-size:20px;font-weight:800;color:#0c1322;font-family:\'JetBrains Mono\',monospace;">'+m(subtotal)+'</span></div>'
-  +'</div>'
-+'</div>'
-
-// Notes
-+(d.notes?'<div style="margin-bottom:32px;"><div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;">Notes</div><div style="font-size:13.5px;color:#374151;line-height:1.6;">'+d.notes+'</div></div>':'')
-
-// Footer
-+'<div style="padding-top:24px;border-top:1px solid #e5e7eb;text-align:center;font-size:12px;color:#94a3b8;">Thank you for your business · King Universal Inc.</div>'
-
-+'</div></body></html>';
++'<title>'+esc(coName.replace(/\s*(Inc\.?|LLC)\s*$/i,'').trim()||'King Universal')+' — Order Confirmation '+esc(soNo)+'</title>'
++'<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">'
++'<style>'
++'*{box-sizing:border-box;margin:0;padding:0;}'
++"html,body{font-family:'Inter',system-ui,sans-serif;color:#111827;background:#eef1f5;-webkit-print-color-adjust:exact;print-color-adjust:exact;}"
++".mono{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;}"
+// 816x1056 = 8.5x11in at 96dpi. The 48px padding IS the page margin, because
+// @page has none -- that is what keeps Chrome's own header and footer off.
++'.sheet{width:816px;height:1056px;background:#fff;margin:0 auto;position:relative;padding:48px 48px 0;overflow:hidden;}'
++'.sbody{height:926px;overflow:hidden;}'
++'.sfoot{position:absolute;left:48px;right:48px;bottom:30px;display:flex;justify-content:space-between;align-items:baseline;'
+  +'border-top:1px solid #e5e7eb;padding-top:7px;font-size:8.5px;color:#6b7280;letter-spacing:.02em;}'
+// Measured off-screen at the exact width of .sbody, so heights taken here are the
+// heights the content will have once it is moved in.
++'#flow{position:absolute;left:-10000px;top:0;width:720px;}'
++'@media screen{.sheet{box-shadow:0 1px 5px rgba(15,23,42,.16);margin-bottom:20px;}#out{padding:20px 0;}}'
++'@media print{@page{size:letter;margin:0;}html,body{background:#fff;}#out{padding:0;}'
+  +'.sheet{box-shadow:none;margin:0;break-after:page;page-break-after:always;}'
+  +'.sheet:last-child{break-after:auto;page-break-after:auto;}}'
++'</style></head><body>'
++'<div id="flow" data-footl="'+footL+'">'+flow+'</div><div id="out"></div>'
++'<script>(function(){'
++'var H=926;'
++'var flow=document.getElementById("flow"),out=document.getElementById("out"),fl=flow.getAttribute("data-footl");'
++'function sheet(){var s=document.createElement("div");s.className="sheet";'
+  +'var b=document.createElement("div");b.className="sbody";s.appendChild(b);'
+  +'var f=document.createElement("div");f.className="sfoot";'
+  +'f.innerHTML=\'<span></span><span class="pn"></span>\';f.firstChild.textContent=fl;'
+  +'s.appendChild(f);out.appendChild(s);return b;}'
++'function run(){'
+  +'var body=sheet(),blocks=[].slice.call(flow.children);'
+  +'blocks.forEach(function(b){'
+    +'if(b.getAttribute("data-table")==="1"){'
+      // The table is rebuilt on each sheet from a clone, so the header repeats.
+      +'var rows=[].slice.call(b.querySelectorAll("tbody tr"));'
+      +'var sh=b.cloneNode(true);sh.querySelector("tbody").innerHTML="";'
+      +'body.appendChild(sh);'
+      +'if(body.scrollHeight>H){sh.parentNode.removeChild(sh);body=sheet();body.appendChild(sh);}'
+      +'var tb=sh.querySelector("tbody");'
+      +'rows.forEach(function(r){'
+        +'tb.appendChild(r);'
+        +'if(body.scrollHeight>H){tb.removeChild(r);'
+          +'var ns=b.cloneNode(true);ns.querySelector("tbody").innerHTML="";'
+          +'body=sheet();body.appendChild(ns);tb=ns.querySelector("tbody");tb.appendChild(r);}'
+      +'});'
+    +'}else{'
+      +'body.appendChild(b);'
+      // One retry only. A block taller than a whole sheet would loop forever
+      // otherwise; it gets its own sheet and is allowed to clip.
+      +'if(body.scrollHeight>H){body.removeChild(b);body=sheet();body.appendChild(b);}'
+    +'}'
+  +'});'
+  +'flow.parentNode.removeChild(flow);'
+  +'var s=out.querySelectorAll(".sheet");'
+  +'for(var i=0;i<s.length;i++){s[i].querySelector(".pn").textContent="Page "+(i+1)+" of "+s.length;}'
++'}'
+// Fonts first. Inter landing after measurement would reflow every height and the
+// page breaks would fall in the wrong places.
++'if(document.fonts&&document.fonts.ready){document.fonts.ready.then(run).catch(run);}else{run();}'
++'})();<\/script>'
++'</body></html>';
 }
 function ConfirmModal({ title, message, confirmLabel='Delete', danger=true, onConfirm, onCancel }) {
   // Verified: zero controls, so both snapshots are "0", they compare equal, and

@@ -527,6 +527,102 @@ of the first group and set nothing at all, losing the rows that were fine.
   the built SHA must equal `origin/main`. A mismatch is a fault, never a
   configured skip.
 
+- **`order_costs` cannot say whether a cost is billed to the client.** Raised
+  2026-09-10 building the order confirmation's totals block, which was specified to
+  carry "any additional cost lines the SO carries".
+
+  The table is `id, sales_order_id, kind, amount, currency, note, created_at` — no
+  billable flag. Every consumer treats these as **KUI's own cost**: `soMetrics`
+  adds them to `cost`, and the Cost & Margin Summary renders each with a `−`
+  prefix, subtracting from revenue. Today it holds 5 rows, all `kind = 'freight'`,
+  $6,760 to $10,000.
+
+  So printing them on the client's confirmation would show the client what KUI
+  pays to move the goods **and** state an order total up to $10,000 above what the
+  client owes. `buildSODoc` renders them behind `SHOW_ORDER_COSTS`, **off**, with
+  the measured proof in its header: the same fixture totals $3,252.80 off and
+  $10,012.80 on.
+
+  **Decided 2026-09-10: it stays off** — these are KUI's costs, not the client's.
+  The future item is the flag itself: a per-cost boolean (`billable_to_client`, or
+  a `kind` that means "pass-through") so a freight charge genuinely rebilled can
+  appear on the confirmation while an absorbed one cannot. Until that column
+  exists, the constant is the honest answer — one switch for all rows, defaulting
+  to the safe one. **Do not flip it as a shortcut**; a wrong total on a client
+  document is worse than a missing line.
+
+---
+
+## The order confirmation, rebuilt — 2026-09-10
+
+`buildSODoc` replaced end to end. Reviewed on localhost across four rounds; what
+follows is what the rounds decided, not the first draft.
+
+### Chrome will not give you `Page N of M`
+
+`@page { size: letter; margin: 0 }` is what removes Chrome's own header and footer
+— the `about:blank` URL, the date stamp. Once it is zero, the page margin has to be
+ours: each `.sheet` is a literal 816×1056px (8.5×11in at 96dpi) with 48px padding.
+
+**Then the footer becomes the hard part.** `@page` margin boxes with
+`counter(page)` are not implemented in Chrome, and a `position:fixed` footer
+repeats on every sheet but cannot know its own number. So **the document
+paginates itself in JavaScript**: blocks are measured into fixed-height sheets,
+the items table splits row by row with its `thead` re-cloned onto each
+continuation sheet, and footers are stamped only once the sheet count is known. It
+waits on `document.fonts.ready` first — Inter arriving late would move every break
+it had just measured. The parent's print delay went 500ms → 900ms to match.
+
+### A relative image src cannot work in an `about:blank` window
+
+The logo is fetched and inlined as a **data URI**. `/logo.png` resolves against
+`about:blank`, not against the app origin, so it fetches nothing.
+
+**This was a live bug in the quote sheets**, found while fixing the order
+confirmation: `printQuote` and `printClientSheet` both wrote `<img src="/logo.png">`
+into their popups, so every printed quote sheet has been missing its logo. Both now
+take a data URI from a shared cached `kuLogoDataUri()`, and drop the `<img>`
+entirely when it cannot be loaded rather than printing a broken-image glyph on a
+client document.
+
+Two traps worth keeping:
+
+- **Not `LOGO_WHITE`** (`page.jsx:105`, what the sidebar uses). That is the white
+  colourway for a dark sidebar and prints invisibly on paper. `public/logo.png` is
+  the same crown-globe mark in black.
+- **`window.open` must precede the `await`.** Making `printQuote` async put the
+  fetch before its `window.open`, which hands the stack back and loses the user
+  gesture — popup blockers then kill the print window. Caught before commit; the
+  window is now opened on the first line, as `generate()` and `genSO` already did.
+
+### What the document does not say
+
+- **`order_costs` is not printed.** See the §6 board entry — internal cost, and the
+  measured proof that printing it would overstate the client's total by $6,760.
+- **A terms paragraph and an acceptance/signature line were built and then cut** on
+  review. Not commented out: a dead block invites someone to re-enable copy nobody
+  has approved. Both are in git history.
+- **Currency has no grid cell** — it reads on the order total line, and the cell it
+  would have taken went to **Cancel date**, the one field there with a deadline.
+- **No website line.** `kui_settings` has no such column; the slot is commented
+  rather than faked.
+- **`sales_orders` has no `created_by`**, so "Your contact" is
+  `kui_settings.contact_name`, and Bill to carries the *client company's* primary
+  contact because a sales order stores no contact of its own.
+
+### Line grouping merges sizes, but only at one price
+
+Rows collapse when description, SKU **and unit price** all match, and the sizes
+become `S 400 · M 600 · L 300`. Unit price is in the key deliberately — two sizes
+at different prices are two commercial lines, and merging them would print one
+price for quantities not sold at it.
+
+### Escaping
+
+The old document interpolated client name, ship-to, notes and line descriptions
+raw. A client named with an ampersand printed `&amp;`, and anything
+angle-bracketed could break the page. Everything goes through `esc` now.
+
 ---
 
 ## The scripts are the as-run record

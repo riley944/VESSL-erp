@@ -139,6 +139,64 @@ ignore badges. That makes the parked questions -- costing-basis identity
 (script 14), the remaining duplicate-SKU groups, and Kristy's three product
 decisions -- prerequisites of Phase 1 rather than parallel work.
 
+## Decisions taken 2026-09-09 from the answered questions
+
+**Identity, settled.**
+
+- **LL1-1618** — two different products sharing one SKU. The pink colourway becomes
+  **LL1-1617**, the green keeps LL1-1618, both Active. `LL1-1617` was checked and
+  is completely free: zero rows in products (any case or spacing), quotes, PO lines
+  and SO lines. Not to be confused with `LLF-1617`, which exists twice.
+- **BUC-157** — the same product entered twice. Script 42 repoints its one PO line
+  to `ab86a997` and retires `c8f3d2d2`. `c8f3d2d2` is the **second product found
+  to be invisible on the Products page** because it carries no quote, after the
+  BG09RL orphan.
+- **Costing bases are SEPARATE products.** `-EXW`, `-Landed`, `-USA` and `-INT`
+  each identify a product. This un-parks the second half of script 14.
+- **Koozie** parked, being asked.
+- **The 71 unlinked historical reports** are imported data that may be cleared
+  later. The coverage line stays as written.
+
+**Exception badges, narrowed.** "Compliant or eFiled with no linked report" is
+**not an exception at KUI** — declared compliance is trusted, and reports will not
+be linked for a long time. Both classes are dropped from the panel entirely rather
+than hidden, because a rule nobody believes is worse than no rule. Two remain:
+production-declared-but-never-ordered-or-sold, and ordered-or-sold-but-never-quoted.
+
+## Phase 2A — reduced scope
+
+A program is **product x client**. Derived stages come from that client's own
+records: Quoted, Ordered, Shipped, Delivered, Sold. **Two declared stages only** --
+**Inquiry** and **Sampling** -- set manually, which is what Jenn does today.
+
+**Explicitly out of 2A:** no round counting, and **no automatic Sample to
+Production proposal**. The transition stays a manual flip; the page-level line
+naming the 32 products already ordered or sold is the prompt, and a prompt someone
+acts on is worth more than a proposal they dismiss.
+
+**Sample approval is assumed per product**, not per client. Q7 came back blank, so
+this is an assumption carried forward rather than an answer -- recorded here so it
+is confirmed rather than discovered.
+
+## Phase 2B — minimal
+
+Keep the spreadsheet round trip. **Give `expected_ship_date` a column** so the
+import stops crushing it into prose. No portal.
+
+## Phase 3 — deferred, with a precondition
+
+**Gates are deferred until products carry `requires_testing` and
+`requires_efiling` flags.** `efiling_required` exists; there is no testing flag. A
+gate that blocks production on a missing test, for a product that never needed
+testing, would be wrong on most of the catalogue.
+
+Queues land **in-app first**; the weekly email is optional and follows the RFQ
+digest pattern if it happens.
+
+**A future question, recorded not answered:** quoting before sampling is normal
+here, so the stage order is not strictly sequential. The model must not assume a
+product passes through Sampling before being Quoted.
+
 ## Assumptions to confirm
 
 1. **Sample approval is per product, not per client.** If two clients each approve
