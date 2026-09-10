@@ -6,7 +6,7 @@ import { SB } from '@/lib/supabase';
 // "fetch differently" must not become "decide differently" -- that is how the
 // awarded tile and the awarded filter ended up disagreeing. This component now
 // fetches for one product and hands the rows over.
-import { LIFECYCLE_STAGES, fmt, deriveEvents, deriveExceptions, anyEvent } from '@/lib/lifecycle';
+import { LIFECYCLE_STAGES, fmt, deriveEvents, deriveExceptions, anyEvent, scopeToClient } from '@/lib/lifecycle';
 
 // ── The derived lifecycle for one product ────────────────────────────────────
 // Read-only. Nothing here writes, and Phase 1 adds no table and no column -- every
@@ -54,7 +54,11 @@ import { LIFECYCLE_STAGES, fmt, deriveEvents, deriveExceptions, anyEvent } from 
 export const LIFECYCLE_EXCEPTIONS_ENABLED = true;
 
 
-export function LifecyclePanel({ product, exceptionsEnabled = LIFECYCLE_EXCEPTIONS_ENABLED }) {
+// clientId scopes the panel to ONE client, which is what a program needs -- a
+// program is product x client, and showing another client dates on it would be
+// wrong rather than merely noisy. Absent, the panel behaves exactly as before and
+// reports the product across every client.
+export function LifecyclePanel({ product, clientId = null, exceptionsEnabled = LIFECYCLE_EXCEPTIONS_ENABLED }) {
   const [state, setState] = useState({ loading:true, ev:null, err:null });
   const pid = product && product.id;
 
@@ -68,15 +72,15 @@ export function LifecyclePanel({ product, exceptionsEnabled = LIFECYCLE_EXCEPTIO
         // the shipment junction -- so they are one query returning both dates
         // rather than two walking the same four tables.
         const [q, t, poi, soi] = await Promise.all([
-          SB.from('quotes').select('id,quote_date,created_at,client').eq('product_id', pid)
+          SB.from('quotes').select('id,quote_date,created_at,client,client_company_id').eq('product_id', pid)
             .order('created_at', { ascending:true }),
           SB.from('test_reports').select('id,test_date,issue_date,expiry_date,overall_result,report_number')
             .eq('product_id', pid).order('test_date', { ascending:true }),
           SB.from('purchase_order_items')
-            .select('id,quantity,purchase_orders(id,order_number,order_date,issued_at,status,shipment_pos(shipments(actual_departure,actual_arrival,status)))')
+            .select('id,quantity,purchase_orders(id,order_number,order_date,issued_at,status,client_company_id,shipment_pos(shipments(actual_departure,actual_arrival,status)))')
             .eq('product_id', pid),
           SB.from('sales_order_items')
-            .select('id,quantity,sales_orders(id,so_number,order_date,status)')
+            .select('id,quantity,sales_orders(id,so_number,order_date,status,client_company_id)')
             .eq('product_id', pid),
         ]);
         if (cancelled) return;
@@ -94,16 +98,20 @@ export function LifecyclePanel({ product, exceptionsEnabled = LIFECYCLE_EXCEPTIO
   if (state.loading) return <div style={{padding:'14px 0',fontSize:'13px',color:'#86868B'}}>Reading lifecycle…</div>;
   if (state.err) return <div style={{padding:'14px 0',fontSize:'13px',color:'var(--hot)'}}>Could not read the lifecycle — {state.err}</div>;
 
-  // One call, one set of rules. state.ev is already the four row sets keyed the
-  // way deriveEvents wants them, so it goes straight in -- the destructure that
-  // used to sit here fed the inline derivation and has nothing left to feed.
-  // Shape is unchanged -- { on, n, detail } per stage -- so everything below
-  // renders exactly as it did.
-  const events = deriveEvents(state.ev);
+  // SCOPE FIRST, DERIVE SECOND, one set of rules for both. The queries stay keyed
+  // on product_id and the client filter happens here -- see scopeToClient for why
+  // that beats an embed filter. With no clientId, scopeToClient returns state.ev
+  // untouched and this is exactly the Phase 1 behaviour.
+  const scoped = scopeToClient(state.ev, clientId);
+  const events = deriveEvents(scoped);
   const reached = anyEvent(events);
   // Computed regardless of the flag, so turning it on needs no other change and
-  // the rules are exercised rather than sitting untested. The two classes that
-  // were DELETED rather than hidden are documented at the function.
+  // the rules stay exercised. The two classes DELETED rather than hidden are
+  // documented at deriveExceptions.
+  //
+  // READS THE SCOPED EVENTS on purpose. Ordered-or-sold-but-never-quoted is a
+  // question about THIS client relationship, and answering it from another
+  // client orders would make the badge say something nobody can act on.
   const exceptions = deriveExceptions(product, events);
 
   return (
@@ -119,6 +127,14 @@ export function LifecyclePanel({ product, exceptionsEnabled = LIFECYCLE_EXCEPTIO
         and 71 of those name SKUs that are not in the catalogue. A missing Tested row below
         may mean untracked rather than untested.
       </div>
+
+      {clientId && (
+        <div style={{background:'#F4F4F6',border:'1px solid #E5E5EA',borderRadius:'8px',
+                     padding:'8px 12px',marginBottom:'14px',fontSize:'11.5px',color:'#5A5A5E',lineHeight:1.5}}>
+          Quoted, Ordered, Sold, Shipped and Delivered below are for this client only.
+          Tested is product-wide — a test report belongs to the product, not to a client.
+        </div>
+      )}
 
       {exceptionsEnabled && exceptions.length > 0 && (
         <div style={{background:'#FEF3C7',border:'1px solid #f0d9a8',borderRadius:'8px',
