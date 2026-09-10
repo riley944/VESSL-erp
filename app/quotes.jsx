@@ -1217,51 +1217,44 @@ function Platform({ session }) {
 }
 
 // ---------- expanded detail ----------
+// ── PROGRAM CREATION IS OFF WHILE PROGRAMS IS REBUILT ─────────────────────
+// This wrote the OLD programs shape -- quote_id, product, sku, client, factory,
+// stage 'sampling', sample_round -- plus a four-task sampling checklist. Script
+// 48 replaces that table with product x client, where five of the nine stages
+// are DERIVED from records rather than stored, and program_tasks leaves phase 2A
+// altogether.
+//
+// So this comes out BEFORE the script runs, not after. Left in place it would
+// insert columns that no longer exist the moment 48 commits, and this button
+// sits in the quote detail that gets used every day.
+//
+// The button stays visible and inert rather than disappearing. It is how a quote
+// becomes a program, and a control that vanishes teaches people the feature was
+// removed -- which is not what happened.
+//
+// PUT BACK IN STEP 3, writing product_id and client_company_id, both of which
+// the quote now carries. There is nothing to migrate here -- the old table held
+// one row.
 function MarkWonButton({ q }) {
-  const [busy, setBusy] = useState(false);
-  const [state, setState] = useState('idle'); // idle | done | exists
+  const [state, setState] = useState('idle');   // idle | explained
+  const busy = false;
 
   const start = async () => {
-    setBusy(true);
-    try {
-      // don't double-create: look for an existing program on this quote
-      const { data: existing } = await SB.from('programs').select('id').eq('quote_id', q.id).limit(1);
-      if (existing && existing.length) { setState('exists'); setBusy(false); setTimeout(()=>setState('idle'),4000); return; }
-
-      const { data: prog, error } = await SB.from('programs').insert({
-        quote_id: q.id, quote_sku: q.sku || null,
-        product: q.product || null, sku: q.sku || null,
-        client: q.client || null, factory: q.factory || null,
-        client_email: q.clientEmail || null, client_contact: q.clientContact || null,
-        factory_email: q.factoryEmail || null, factory_contact: q.factoryContact || null,
-        stage: 'sampling',
-        owner: 'emily@kinguniversal.com',
-        master_sample_included: null, sample_round: 1,
-      }).select('id').single();
-      if (error) { alert('Could not start program: ' + error.message); setBusy(false); return; }
-
-      // seed the Sampling stage checklist
-      const SAMPLING = ['Request sample from factory','Sample received from factory','Sample sent to client','Client feedback received'];
-      await SB.from('program_tasks').insert(SAMPLING.map((task,i)=>({
-        program_id: prog.id, stage: 'sampling', task, owner: 'emily@kinguniversal.com', blocker: 'none', sort_order: i,
-      })));
-      setState('done'); setBusy(false); setTimeout(()=>setState('idle'),5000);
-    } catch (e) {
-      alert('Something went wrong: ' + (e && e.message ? e.message : e)); setBusy(false);
-    }
+    setState('explained');
+    setTimeout(()=>setState('idle'), 6000);
   };
 
-  const label = state==='done' ? 'Program started — see Programs tab'
-    : state==='exists' ? 'Program already exists'
-    : busy ? 'Starting…' : 'Mark won · start program';
-  const bg = state==='done' ? '#e7f5ec' : state==='exists' ? '#fef3e2' : '#0f7d43';
-  const col = state==='done' ? '#2f7d52' : state==='exists' ? '#b45309' : '#fff';
+  const label = state==='explained'
+    ? 'Programs are being rebuilt — back shortly'
+    : 'Mark won · start program';
+  const bg = state==='explained' ? '#fef3e2' : '#f2f2f4';
+  const col = state==='explained' ? '#b45309' : '#8a8a8e';
 
   return (
     <button
-      style={{ display:'inline-flex', alignItems:'center', gap:7, background:bg, border:'1px solid '+(state==='idle'?'#0f7d43':'transparent'), color:col, borderRadius:10, padding:'9px 16px', fontSize:13.5, fontWeight:600, cursor:'pointer' }}
-      onClick={start} disabled={busy}
-      title="Mark this quote won and create its lifecycle program"
+      style={{ display:'inline-flex', alignItems:'center', gap:7, background:bg, border:'1px solid '+(state==='idle'?'#e0e0e4':'transparent'), color:col, borderRadius:10, padding:'9px 16px', fontSize:13.5, fontWeight:600, cursor:'pointer' }}
+      onClick={start}
+      title="Program creation is paused while the Programs page is rebuilt"
     >
       <CheckCircle2 size={15} /> {label}
     </button>

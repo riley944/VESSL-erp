@@ -83,15 +83,18 @@ export function RenameSkuModal({ product, updatedBy = null, initialNewSku = null
         .select('id,client_sku,description,sales_orders(so_number,status)')
         .eq('client_sku', product.sku);
 
-      // Two queries rather than one .or(): a SKU is free text and can contain
-      // the commas and parentheses PostgREST's or-filter grammar uses.
-      let pg = [];
-      if (oldSku) {
-        const a = await SB.from('programs').select('id,product,sku,quote_sku,stage').eq('sku', product.sku);
-        const b = await SB.from('programs').select('id,product,sku,quote_sku,stage').eq('quote_sku', product.sku);
-        const ids = new Set();
-        for (const r of [...(a.data||[]), ...(b.data||[])]) { if (!ids.has(r.id)) { ids.add(r.id); pg.push(r); } }
-      }
+      // PROGRAMS ARE NOT SEARCHED WHILE THE TABLE IS REBUILT.
+      //
+      // This read programs.sku and programs.quote_sku, two free-text columns
+      // script 48 removes -- the new table identifies a program by product_id,
+      // so a SKU rename cannot strand it and there is nothing here to fix up.
+      //
+      // Kept as an empty list rather than deleted, so the checklist section and
+      // its counts keep their shape and step 3 is a one-line restore if the new
+      // table ever needs a row touching. It does not today.
+      //
+      // The old table held ONE row, so nothing is being skipped in practice.
+      const pg = [];
 
       if (dead) return;
       const t = {};
