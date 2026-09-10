@@ -1732,6 +1732,45 @@ by 16, and still leaves **131 of 184 products with no linked purchase order**.
 
 ---
 
+## Script 46, as run — 2026-09-10, names that began with their own SKU
+
+`z0` on rehearsal and commit. **11 selectable product names stripped**, 20 retired
+ones deliberately untouched. Verified after: 0 selectable rows still carry the
+prefix, 20 retired ones still do, and `LLW-1545` now reads `Blue Bottle Bubble
+Bath`.
+
+Found because Matt recognised `Blue Bottle Bubble Bath` — written up here as a
+missing product — as `LLW-1545`, whose *name* carried its own SKU. **31 products
+had the pattern.** A product named `LLW-1545␣␣␣␣␣Blue Bottle Bubble Bath` is not
+named `Blue Bottle Bubble Bath`, so it matches nothing and looks missing while
+sitting in the catalogue.
+
+### Literals, not a regular expression
+
+The new names are eleven written-out strings. Computing them would need a
+backslash character class, or a POSIX class carrying colons, and collapsing runs
+of spaces would need a two-space literal — **all three are barred by the transport
+rules**, each for a reason that has already cost a rehearsal. Eleven literals are
+reviewable on sight and guarded by `id` plus the exact old `length(name)`.
+
+Preflight caught three real faults on this file's first run, including `b4`
+selecting a bare `p.sku` — **rule 7 doing its job one script after it was added**
+for exactly that.
+
+### It links nothing by itself
+
+`c3` asserts that: unlinked lines are unchanged at 85. Script 46 only makes one
+line *resolvable*.
+
+**The follow-up is a re-run of script 45's logic, and script 45 cannot be re-run
+as written** — its wants are the measured literals `60`, `11`, `71`, `85` and
+`37 to 53`, so a second run fails at `a0` rather than doing nothing, which is the
+guard behaving correctly. Re-measured after 46: pass 1 now resolves **1** line
+(`Blue Bottle Bubble Bath` → `LLW-1545`), pass 2 resolves 0, and coverage would
+move **53 → 54** of 184. A one-line script with its own wants, not an edit to 45.
+
+---
+
 ## The 85 purchase order lines script 45 will not link — questions for Kristy
 
 Written 2026-09-10 alongside script 45, which links 71 of 156. These are the
