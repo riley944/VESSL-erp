@@ -7713,24 +7713,24 @@ function buildSODoc(d) {
   const lines = groups.map(g => {
     const breakdown = g.sizes.length ? g.sizes.map(s => esc(s.size)+' '+fn(s.qty)).join(' · ') : '';
     return '<tr>'
-      +'<td style="padding:10px 10px 10px 0;vertical-align:top;border-bottom:1px solid #e5e7eb;">'
-        +'<div style="font-size:13px;font-weight:600;color:#111827;line-height:1.35;">'+esc(g.description)+'</div>'
-        +(g.sku?'<div class="mono" style="font-size:11px;color:#6b7280;margin-top:3px;letter-spacing:.02em;">'+esc(g.sku)+'</div>':'')
-        +(breakdown?'<div class="mono" style="font-size:11px;color:#4b5563;margin-top:3px;">'+breakdown+'</div>':'')
+      +'<td style="padding:12px 10px 12px 0;vertical-align:top;border-bottom:1px solid #e5e7eb;">'
+        +'<div style="font-size:14px;font-weight:600;color:#111827;line-height:1.35;">'+esc(g.description)+'</div>'
+        +(g.sku?'<div class="mono" style="font-size:11.5px;color:#6b7280;margin-top:4px;letter-spacing:.02em;">'+esc(g.sku)+'</div>':'')
+        +(breakdown?'<div class="mono" style="font-size:11.5px;color:#4b5563;margin-top:4px;">'+breakdown+'</div>':'')
       +'</td>'
-      +'<td class="mono" style="padding:10px 10px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:13px;color:#111827;white-space:nowrap;">'+fn(g.quantity)+'</td>'
+      +'<td class="mono" style="padding:12px 10px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#111827;white-space:nowrap;">'+fn(g.quantity)+'</td>'
       // unitPrice, not m(): m() is fixed at 2dp and would print $0.18 for a bag
       // that costs $0.1778, understating the price on the client's own order
       // confirmation. The amount cell keeps m() -- that is money owed.
-      +'<td class="mono" style="padding:10px 10px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;white-space:nowrap;">'+unitPrice(g.client_price,cur)+'</td>'
-      +'<td class="mono" style="padding:10px 0 10px 10px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:13px;font-weight:600;color:#111827;white-space:nowrap;">'+m(g.line_amount)+'</td>'
+      +'<td class="mono" style="padding:12px 10px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;white-space:nowrap;">'+unitPrice(g.client_price,cur)+'</td>'
+      +'<td class="mono" style="padding:12px 0 12px 10px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;font-weight:600;color:#111827;white-space:nowrap;">'+m(g.line_amount)+'</td>'
       +'</tr>';
   }).join('');
 
-  const LBL = 'font-size:9.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;';
-  const cell = (l,v) => '<div style="border-right:1.5px solid #b8bfc9;border-bottom:1.5px solid #b8bfc9;padding:10px 12px;">'
+  const LBL = 'font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;';
+  const cell = (l,v) => '<div style="border-right:2px solid #6b7280;border-bottom:2px solid #6b7280;padding:12px 14px;">'
     +'<div style="'+LBL+'">'+l+'</div>'
-    +'<div style="font-size:13.5px;color:#111827;margin-top:4px;line-height:1.3;">'+v+'</div></div>';
+    +'<div style="font-size:14px;color:#111827;margin-top:5px;line-height:1.3;">'+v+'</div></div>';
 
   // ── LETTERHEAD CONTACT LINES ──────────────────────────────────────────────
   // Blank fields are SKIPPED here rather than dashed. A dash is right in the
@@ -7754,7 +7754,7 @@ function buildSODoc(d) {
   // addresses land (Kristy's queued feature) they become extra entries in this
   // array and nothing else on the page has to move.
   const billLines = [
-    d.client_name ? '<div style="font-size:13.5px;font-weight:600;color:#111827;">'+esc(d.client_name)+'</div>' : '',
+    d.client_name ? '<div style="font-size:15px;font-weight:600;color:#111827;">'+esc(d.client_name)+'</div>' : '',
     d.contact && d.contact.full_name ? '<div>'+esc(d.contact.full_name)+'</div>' : '',
     d.contact && d.contact.email ? '<div>'+esc(d.contact.email)+'</div>' : '',
     d.contact && d.contact.phone ? '<div>'+esc(d.contact.phone)+'</div>' : '',
@@ -7763,7 +7763,7 @@ function buildSODoc(d) {
 
   const party = (label, inner) => '<div style="flex:1;min-width:0;">'
     +'<div style="'+LBL+'margin-bottom:5px;">'+label+'</div>'
-    +'<div style="font-size:13px;color:#374151;line-height:1.55;">'+(inner||'—')+'</div></div>';
+    +'<div style="font-size:14px;color:#374151;line-height:1.55;">'+(inner||'—')+'</div></div>';
 
   const footL = esc(coName+' · Order confirmation '+soNo);
 
@@ -7785,7 +7785,7 @@ function buildSODoc(d) {
   const SHOW_ORDER_COSTS = false;
   const extraCosts = SHOW_ORDER_COSTS ? (d.costs||[]) : [];
   const costLines = extraCosts.map(c =>
-    '<div style="display:flex;justify-content:space-between;font-size:12.5px;color:#4b5563;padding:4px 0;">'
+    '<div style="display:flex;justify-content:space-between;font-size:13.5px;color:#4b5563;padding:5px 0;">'
     +'<span>'+esc(String(c.kind||'Other').replace(/^./,ch=>ch.toUpperCase()))+(c.note?' · '+esc(c.note):'')+'</span>'
     +'<span class="mono">'+m(Number(c.amount)||0)+'</span></div>').join('');
   const orderTotal = subtotal + extraCosts.reduce((a,c)=>a+(Number(c.amount)||0),0);
@@ -7808,27 +7808,27 @@ function buildSODoc(d) {
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:28px;">'
         +'<div style="min-width:0;">'
           +(d.logo
-            ? '<img src="'+d.logo+'" alt="'+esc(coName)+'" style="height:40px;width:auto;display:block;">'
+            ? '<img src="'+d.logo+'" alt="'+esc(coName)+'" style="height:46px;width:auto;display:block;">'
             : '<div style="font-size:21px;font-weight:700;letter-spacing:-.015em;color:#0c1322;line-height:1.1;">'+esc(coName)+'</div>')
-          +(headLines?'<div style="margin-top:11px;font-size:10.5px;color:#4b5563;line-height:1.6;">'+headLines+'</div>':'')
+          +(headLines?'<div style="margin-top:13px;font-size:11.5px;color:#4b5563;line-height:1.6;">'+headLines+'</div>':'')
         +'</div>'
         +'<div style="text-align:right;white-space:nowrap;">'
-          +'<div style="font-size:16px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#0c1322;line-height:1.1;">Order confirmation</div>'
-          +'<div class="mono" style="font-size:14px;color:#374151;margin-top:7px;">'+esc(soNo)+'</div>'
+          +'<div style="font-size:18px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#0c1322;line-height:1.1;">Order confirmation</div>'
+          +'<div class="mono" style="font-size:15px;color:#374151;margin-top:8px;">'+esc(soNo)+'</div>'
         +'</div>'
       +'</div>'
-      +'<div style="height:1.5px;background:#0c1322;margin-top:15px;"></div>'
+      +'<div style="height:2px;background:#0c1322;margin-top:18px;"></div>'
     +'</div>'
 
     // b. BILL TO / SHIP TO
-    +'<div style="display:flex;gap:32px;margin-top:20px;">'
+    +'<div style="display:flex;gap:36px;margin-top:30px;">'
       +party('Bill to', billLines)
       +party('Ship to', d.ship_to ? nl(d.ship_to) : '')
     +'</div>'
 
     // c. ORDER DETAILS, 4 x 2. Empty cells dash rather than sit blank, so a gap
     //    reads as "not set" instead of as a rendering fault.
-    +'<div style="margin-top:20px;border-top:1.5px solid #b8bfc9;border-left:1.5px solid #b8bfc9;display:grid;grid-template-columns:repeat(4,1fr);">'
+    +'<div style="margin-top:30px;border-top:2px solid #6b7280;border-left:2px solid #6b7280;display:grid;grid-template-columns:repeat(4,1fr);">'
       +cell('Client PO', dash(d.client_po))
       +cell('Order date', fd(d.order_date))
       +cell('Cargo ready', fd(d.cargo_ready_date))
@@ -7847,7 +7847,7 @@ function buildSODoc(d) {
 
     // d. LINE ITEMS. data-table marks it splittable -- the paginator moves rows
     //    one at a time and repeats this thead on every continuation sheet.
-    +'<div data-table="1" style="margin-top:22px;">'
+    +'<div data-table="1" style="margin-top:30px;">'
       +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;">'
         +'<colgroup><col><col style="width:74px"><col style="width:92px"><col style="width:100px"></colgroup>'
         +'<thead><tr>'
@@ -7863,24 +7863,24 @@ function buildSODoc(d) {
     // e. TOTALS. Subtotal, then any additional cost lines, then the order total
     //    under a rule. Kept in one block so a signature-adjacent total cannot be
     //    orphaned from its own subtotal by a page break.
-    +'<div style="display:flex;justify-content:flex-end;margin-top:14px;">'
-      +'<div style="width:290px;">'
-        +'<div style="display:flex;justify-content:space-between;font-size:12.5px;color:#4b5563;padding:4px 0;">'
+    +'<div style="display:flex;justify-content:flex-end;margin-top:20px;">'
+      +'<div style="width:310px;">'
+        +'<div style="display:flex;justify-content:space-between;font-size:13.5px;color:#4b5563;padding:5px 0;">'
           +'<span>Total units</span><span class="mono">'+fn(totalQty)+'</span></div>'
-        +'<div style="display:flex;justify-content:space-between;font-size:12.5px;color:#4b5563;padding:4px 0;">'
+        +'<div style="display:flex;justify-content:space-between;font-size:13.5px;color:#4b5563;padding:5px 0;">'
           +'<span>Subtotal</span><span class="mono">'+m(subtotal)+'</span></div>'
         +costLines
         +'<div style="display:flex;justify-content:space-between;align-items:baseline;border-top:1.5px solid #0c1322;margin-top:6px;padding-top:8px;">'
-          +'<span style="font-size:13px;font-weight:600;color:#111827;">Order total '+esc(cur)+'</span>'
-          +'<span class="mono" style="font-size:17px;font-weight:700;color:#0c1322;">'+m(orderTotal)+'</span></div>'
+          +'<span style="font-size:14px;font-weight:600;color:#111827;">Order total '+esc(cur)+'</span>'
+          +'<span class="mono" style="font-size:18px;font-weight:700;color:#0c1322;">'+m(orderTotal)+'</span></div>'
       +'</div>'
     +'</div>'
 
     // NOTES. The order's own notes, above the boilerplate -- what is true of THIS
     // order should be read before what is true of every order.
-    +(d.notes?'<div style="margin-top:24px;">'
-      +'<div style="'+LBL+'margin-bottom:5px;">Notes</div>'
-      +'<div style="font-size:12.5px;color:#374151;line-height:1.6;">'+nl(d.notes)+'</div></div>':'');
+    +(d.notes?'<div style="margin-top:30px;">'
+      +'<div style="'+LBL+'margin-bottom:6px;">Notes</div>'
+      +'<div style="font-size:14px;color:#374151;line-height:1.6;">'+nl(d.notes)+'</div></div>':'');
 
     // f + g (terms paragraph, acceptance line) WERE BUILT AND THEN REMOVED on
     // review 2026-09-10 -- not needed on this document. The wording and the
