@@ -7710,12 +7710,17 @@ function buildSODoc(d) {
     if (l.size) g.sizes.push({ size:l.size, qty:Number(l.quantity)||0 });
   });
 
+  // Declared above the line-items map because that map now uses it for the SKU
+  // label -- const is block-scoped and not value-hoisted, so a later
+  // declaration would throw on the first row rendered.
+  const LBL = 'font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;';
   const lines = groups.map(g => {
     const breakdown = g.sizes.length ? g.sizes.map(s => esc(s.size)+' '+fn(s.qty)).join(' · ') : '';
     return '<tr>'
       +'<td style="padding:12px 10px 12px 0;vertical-align:top;border-bottom:1px solid #e5e7eb;">'
         +'<div style="font-size:14px;font-weight:600;color:#111827;line-height:1.35;">'+esc(g.description)+'</div>'
-        +(g.sku?'<div class="mono" style="font-size:11.5px;color:#6b7280;margin-top:4px;letter-spacing:.02em;">'+esc(g.sku)+'</div>':'')
+        +(g.sku?'<div style="margin-top:5px;"><span style="'+LBL+'">SKU</span>'
+        +'<span class="mono" style="font-size:11.5px;color:#6b7280;letter-spacing:.02em;margin-left:7px;">'+esc(g.sku)+'</span></div>':'')
         +(breakdown?'<div class="mono" style="font-size:11.5px;color:#4b5563;margin-top:4px;">'+breakdown+'</div>':'')
       +'</td>'
       +'<td class="mono" style="padding:12px 10px;text-align:right;vertical-align:top;border-bottom:1px solid #e5e7eb;font-size:14px;color:#111827;white-space:nowrap;">'+fn(g.quantity)+'</td>'
@@ -7727,7 +7732,6 @@ function buildSODoc(d) {
       +'</tr>';
   }).join('');
 
-  const LBL = 'font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;';
   const cell = (l,v) => '<div style="border-right:2px solid #6b7280;border-bottom:2px solid #6b7280;padding:12px 14px;">'
     +'<div style="'+LBL+'">'+l+'</div>'
     +'<div style="font-size:14px;color:#111827;margin-top:5px;line-height:1.3;">'+v+'</div></div>';
@@ -7851,10 +7855,10 @@ function buildSODoc(d) {
       +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;">'
         +'<colgroup><col><col style="width:74px"><col style="width:92px"><col style="width:100px"></colgroup>'
         +'<thead><tr>'
-          +'<th style="'+LBL+'text-align:left;padding:0 10px 6px 0;border-bottom:1px solid #0c1322;">Description</th>'
-          +'<th style="'+LBL+'text-align:right;padding:0 10px 6px;border-bottom:1px solid #0c1322;">Qty</th>'
-          +'<th style="'+LBL+'text-align:right;padding:0 10px 6px;border-bottom:1px solid #0c1322;">Unit price</th>'
-          +'<th style="'+LBL+'text-align:right;padding:0 0 6px 10px;border-bottom:1px solid #0c1322;">Amount</th>'
+          +'<th style="'+LBL+'text-align:left;padding:0 10px 8px 0;border-bottom:2px solid #0c1322;">Description</th>'
+          +'<th style="'+LBL+'text-align:right;padding:0 10px 8px;border-bottom:2px solid #0c1322;">Qty</th>'
+          +'<th style="'+LBL+'text-align:right;padding:0 10px 8px;border-bottom:2px solid #0c1322;">Unit price</th>'
+          +'<th style="'+LBL+'text-align:right;padding:0 0 8px 10px;border-bottom:2px solid #0c1322;">Amount</th>'
         +'</tr></thead>'
         +'<tbody>'+lines+'</tbody>'
       +'</table>'
@@ -7875,6 +7879,12 @@ function buildSODoc(d) {
           +'<span class="mono" style="font-size:18px;font-weight:700;color:#0c1322;">'+m(orderTotal)+'</span></div>'
       +'</div>'
     +'</div>'
+
+    // SIGN-OFF. Centred under the totals, carried over from the document this
+    //   replaced -- it was the one line of the old footer worth keeping, and a
+    //   confirmation that ends on a number alone reads like an invoice.
+    +'<div style="margin-top:28px;text-align:center;font-size:12px;color:#6b7280;">'
+      +'Thank you for your business · '+esc(coName)+'</div>'
 
     // NOTES. The order's own notes, above the boilerplate -- what is true of THIS
     // order should be read before what is true of every order.
