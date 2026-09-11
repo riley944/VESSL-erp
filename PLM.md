@@ -179,10 +179,39 @@ reasoning inverts.
 
 **What changed is the scope, not the argument.** The no-ladder decision rested
 entirely on Sold and Ordered having no fixed order. **The pipeline stops before
-both of them.** `Inquiry → Quoted → Sampling → Tested` is unambiguous: you cannot
-sample what was never inquired about, and testing follows a sample. The
-ambiguity that killed the first attempt now sits on the far side of *complete*,
-where this ladder never reaches.
+both of them.** `Quoted → Sampling → Tested` is unambiguous: you sample what you
+have quoted, and testing follows a sample. The ambiguity that killed the first
+attempt now sits on the far side of *complete*, where this ladder never reaches.
+
+### Inquiry was built and dropped the same day — 2026-09-11
+
+The ladder shipped as `Inquiry → Quoted → Sampling → Tested`, with a *Start a
+program* action to create one, because **Inquiry was otherwise unreachable** — a
+program only existed once a quote, order or test report named the pair, and
+Inquiry is the stage *before* any record exists.
+
+**Dropped hours later, and the reason is the better one: Inquiry is not
+observable.** There is no record of a client asking about a product, so the stage
+could only ever be somebody remembering to type it — and a stage that depends on
+being remembered is a stage that will be wrong, silently, in the direction of
+looking emptier than reality. **The quote is the real entry point**, and a quote
+leaves a record.
+
+Removed with **0 rows ever declared**, so nothing was stranded. The *Start a
+program* action went with it: without Inquiry it created a program with no stage,
+which no column could show.
+
+**`vessl.programs` still permits `'inquiry'` in
+`programs_declared_stage_check`.** Narrowing it to `'sampling'` alone is a later
+script — cheap, but a schema change earns its own rehearsal, and with 0 rows
+carrying the value nothing is at risk meanwhile. Until then the constraint is
+wider than the app, which is the safe direction for a CHECK to be wrong in.
+
+**What survived the reversal, deliberately:** quote save now creates the program,
+and `quotes.client_company_id` is resolved on every save. Both were built
+alongside Inquiry and neither depended on it — the first is what makes the quote
+a real entry point, and the second was a live gap found on the way (script 48
+backfilled the column and nothing was maintaining it).
 
 So there are two facts, not a correction of one:
 
