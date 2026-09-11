@@ -658,6 +658,10 @@ const useToast = () => React.useContext(ToastCtx);
 
 // ── Task Panel ────────────────────────────────────────────────────────────────
 function TaskPanel({ open, onClose }) {
+  // A slide-over rather than a modal -- there is no backdrop to click -- so the x
+  // is the only way out, and the half-typed task in the box below is the work it
+  // would take with it.
+  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   const [tasks, setTasks] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
@@ -679,10 +683,10 @@ function TaskPanel({ open, onClose }) {
   };
   const open_ = tasks.filter(t=>!t.done).length;
   return (
-    <div className={'task-panel ' + (open?'open':'')}>
+    <div className={'task-panel ' + (open?'open':'')} ref={cardRef}>
       <div className="task-panel-head">
         <h3>Tasks {open_>0?'('+open_+' open)':''}</h3>
-        <button className="task-panel-close" onClick={onClose}>×</button>
+        <button className="task-panel-close" onClick={guardedClose}>×</button>
       </div>
       <div className="task-list">
         {loading ? <div className="task-empty">Loading…</div> :

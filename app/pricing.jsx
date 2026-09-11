@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from "react";
 import { SB } from "@/lib/supabase";
 import { SBQ } from "@/lib/supabaseQuotes";
+import { useDirtyGuard } from '@/app/components/ModalGuard';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const money = (n, d=2) => (n==null||isNaN(n)) ? '—' : '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
@@ -408,6 +409,7 @@ function InvoiceModal({ companies, quotes, onClose, onSaved }) {
   const [lines, setLines] = useState([{ category:'ocean_freight', description:'', amount:'' }]);
   const [rows, setRows] = useState([{ sku:'', description:'', units:'', cbm:'' }]);
   const [saving, setSaving] = useState(false);
+  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   const set = k => e => setF(p=>({...p,[k]:e.target.value}));
   const forwarders = (companies||[]).filter(c=>['carrier','freight_forwarder'].includes(c.type));
 
@@ -466,9 +468,9 @@ function InvoiceModal({ companies, quotes, onClose, onSaved }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div className="modal-box modal-lg">
-        <div className="modal-head"><h3>Log Freight Invoice</h3><button className="modal-close" onClick={onClose}>×</button></div>
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
+      <div className="modal-box modal-lg" ref={cardRef}>
+        <div className="modal-head"><h3>Log Freight Invoice</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
           <div className="form-row-3">
             <div><label style={lbl}>Invoice #</label><input style={inp} value={f.number} onChange={set('number')} /></div>

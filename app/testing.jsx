@@ -23,7 +23,7 @@ import { loadExcelJS, excelDate } from "@/lib/excel";
 import { isSelectableProduct } from "@/app/components/ProductCpscRules";
 import { materialLabel } from "@/lib/materialLabel";
 import { matches, normalizeTerm } from "@/lib/textFilter";
-import { Overlay } from '@/app/components/ModalGuard';
+import { Overlay, useMarkDirty } from '@/app/components/ModalGuard';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const fmtDate = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
@@ -2086,10 +2086,32 @@ function EfilingModal({ product, onClose, onSaved }) {
   );
 }
 
-function LinkModal({ product, materials, existing, onClose, onSaved }) {
+// SPLIT so the body can reach markDirty. The provider lives INSIDE Overlay, so a
+// hook called in the component that renders <Overlay> sits above it -- and
+// useMarkDirty's default is a silent no-op, so that mistake would not announce
+// itself. The body has to be a child.
+function LinkModal(props) {
+  return (
+    <Overlay onClose={props.onClose}>
+      <LinkModalBody {...props} />
+    </Overlay>
+  );
+}
+
+// THE ONE MODAL IN THIS FILE THE SNAPSHOT CANNOT SEE. Material selection is a Set
+// rendered as a styled div -- a fake checkbox that changes border and background
+// -- so no input, textarea or select holds it anywhere. snapshot() returns "0" on
+// both sides, the click fires no input event, and ticking ten materials then
+// clicking the backdrop used to close silently and lose all ten.
+//
+// This is the case detector 3 exists for, and the only one in this file that
+// needs it: ReportModal's add and remove line change the CONTROL COUNT, and
+// EfilingModal's clear-date writes an input value, so both are already caught.
+function LinkModalBody({ product, materials, existing, onClose, onSaved }) {
+  const markDirty = useMarkDirty();
   const [sel,setSel]=useState(new Set(existing.map(e=>e.material_id)));
   const [saving,setSaving]=useState(false);
-  const toggle=id=>setSel(p=>{ const n=new Set(p); n.has(id)?n.delete(id):n.add(id); return n; });
+  const toggle=id=>{ markDirty(); setSel(p=>{ const n=new Set(p); n.has(id)?n.delete(id):n.add(id); return n; }); };
   // A material added from here is held locally until the parent reloads, which happens
   // on save. Deduped by id in case that reload lands while this is still mounted.
   const [added,setAdded]=useState([]);
@@ -2104,6 +2126,9 @@ function LinkModal({ product, materials, existing, onClose, onSaved }) {
   const onAdded=(row)=>{
     setAdding(false);
     if(!row) return;
+    // Two state changes, neither of them in a control: the new material joins the
+    // list as another styled button, and it arrives ticked.
+    markDirty();
     setAdded(p=>[...p, row]);
     setSel(p=>{ const n=new Set(p); n.add(row.id); return n; });
   };
@@ -2159,7 +2184,7 @@ function LinkModal({ product, materials, existing, onClose, onSaved }) {
     } finally { setSaving(false); }
   };
   return (
-    <Overlay onClose={onClose}>
+    <>
       {adding && <AddMaterialModal onClose={()=>setAdding(false)} onSaved={onAdded} />}
       <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'4px'}}>Materials in {product.sku||product.name}</div>
       {/* The old line said the product's compliance status is derived from these. It is
@@ -2196,7 +2221,7 @@ function LinkModal({ product, materials, existing, onClose, onSaved }) {
         <button onClick={onClose} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',color:'#4A4A4E'}}>Cancel</button>
         <button onClick={save} disabled={saving} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',opacity:saving?0.6:1}}>{saving?'Saving…':'Save'}</button>
       </div>
-    </Overlay>
+    </>
   );
 }
 

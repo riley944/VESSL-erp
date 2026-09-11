@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { SB } from '@/lib/supabase';
 import { HtsField, useHtsCodes } from '@/app/components/HtsField';
 import { CodeModal } from '@/app/components/CodeModal';
+import { useDirtyGuard } from '@/app/components/ModalGuard';
 import { materialLabel } from '@/lib/materialLabel';
 import { LifecyclePanel } from '@/app/components/LifecyclePanel';
 
@@ -94,6 +95,11 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
   // link. Falls back to the raw id if the join came back empty, so a broken link shows
   // as something rather than as "not set".
   const [saving, setSaving] = useState(false);
+  // The ref goes on .modal-box, the card -- not the overlay. CodeModal is rendered
+  // as a SIBLING of the box (see the comment at the overlay below), so its inputs
+  // are not inside this node at all and never reach the snapshot; the
+  // data-modal-card ownership rule would exclude them anyway.
+  const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
   // The DB hands numbers back as numbers; every box here is a string.
   const s = v => (v === null || v === undefined ? '' : String(v));
   const [form, setForm] = useState({
@@ -228,7 +234,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
     onCreated();
   };
   return (
-    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       {/* Sibling of the modal box, not a child of modal-body -- that is overflow-y:auto
           and would be a scroll container wrapping a fixed-position overlay. This is the
           arrangement the quote form already uses. It needs no stopPropagation: its own
@@ -236,8 +242,8 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
           product draft underneath survives. CodeModal is zIndex 300 against this
           overlay's 100, so it stacks on top without help. */}
       {addingCode && <CodeModal data={addingCode} onClose={()=>setAddingCode(null)} onSaved={onCodeAdded} />}
-      <div className="modal-box">
-        <div className="modal-head"><h3>{editing?'Edit Product':'New Product'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
+      <div className="modal-box" ref={cardRef}>
+        <div className="modal-head"><h3>{editing?'Edit Product':'New Product'}</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
           {/* A datalist gives no visual cue that suggestions exist, so the chevron and
               the hint are what make it findable. The input still accepts anything —
@@ -454,7 +460,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
               {form.shipsTo.map(c=>(
                 <span key={c} style={{display:'inline-flex',alignItems:'center',gap:'6px',background:'#F0F0F2',borderRadius:'980px',padding:'4px 6px 4px 11px',fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',fontFamily:'var(--mono)'}}>
                   {c}
-                  <button type="button" onClick={()=>setForm(p=>({...p, shipsTo:p.shipsTo.filter(x=>x!==c)}))} title={'Remove '+c} aria-label={'Remove '+c}
+                  <button type="button" onClick={()=>{markDirty(); setForm(p=>({...p, shipsTo:p.shipsTo.filter(x=>x!==c)}));}} title={'Remove '+c} aria-label={'Remove '+c}
                     style={{width:'16px',height:'16px',borderRadius:'50%',border:'none',background:'#DCDCE0',color:'#5A5A5E',fontSize:'12px',lineHeight:1,cursor:'pointer',padding:0}}>×</button>
                 </span>
               ))}
