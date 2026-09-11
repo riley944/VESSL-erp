@@ -232,17 +232,17 @@ export default function Programs({ userEmail }) {
 
   return (
     <div style={{padding:'26px 30px 60px'}}>
-      <div style={{display:'flex',alignItems:'baseline',gap:'12px',flexWrap:'wrap',marginBottom:'6px'}}>
+      {/* Centred, and the count on its own line beneath. The description
+          paragraph that sat here is gone -- the columns and their placeholders
+          already say what the board is, and a paragraph nobody rereads after the
+          first visit is a paragraph that only costs vertical space above the
+          thing people came for. */}
+      <div style={{textAlign:'center',marginBottom:'18px'}}>
         <h1 style={{fontSize:'26px',fontWeight:700,letterSpacing:'-.02em',color:'#1D1D1F',margin:0}}>Product Life Management</h1>
-        <span style={{fontSize:'13px',color:'#86868B'}}>
+        <div style={{fontSize:'13px',color:'#86868B',marginTop:'5px'}}>
           {board.length} in the pipeline · {done.length} complete
-        </span>
+        </div>
       </div>
-      <p style={{margin:'0 0 16px',fontSize:'12.5px',color:'#8A8A8E',lineHeight:1.55,maxWidth:'760px'}}>
-        Everything before the first order. A program leaves the board the moment a purchase
-        order or sales order names it — nothing to close by hand. Quoted and Tested are read
-        from records; Inquiry and Sampling are yours to set.
-      </p>
 
       <div style={{display:'flex',gap:'6px',marginBottom:'16px'}}>
         {[['board','Pipeline',board.length],['completed','Completed',done.length]].map(([v,l,n])=>(
