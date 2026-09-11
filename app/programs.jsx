@@ -39,6 +39,19 @@ const COL = {
 
 const norm = t => (t || '').toLowerCase();
 
+// compliance_status = 'not_required' is a DELIBERATE STATEMENT, and rare: 17 of
+// 352 products carry it, against 291 still sitting at 'tbd'. Somebody decided
+// testing does not apply to this product, which is a different thing from nobody
+// having got to it yet -- and the ladder cannot show the difference by greying a
+// rung, because grey already means "not done".
+//
+// So the rung is REMOVED rather than marked n/a. An n/a rung still occupies a
+// step and still reads as an unmet gate; four rungs where one can never be
+// reached is a ladder that can never be finished. Three rungs that can all be
+// reached is the honest shape. The badge and the note say why it is missing, so
+// the absence is never a silent one.
+const testingNotRequired = product => (product || {}).compliance_status === 'not_required';
+
 // ── NOTES ON A PROGRAM ──────────────────────────────────────────────────────
 // APPEND ONLY, and not merely by convention -- authenticated holds SELECT and
 // INSERT on vessl.program_notes and nothing else. UPDATE and DELETE were never
@@ -162,6 +175,8 @@ function ProgramLadder({ r }) {
   const testedOn = (ev.tested || {}).on || null;
   const tested   = !!ev.tested || p.compliance_status === 'passed';
 
+  const noTest = testingNotRequired(p);
+
   const rows = [
     { key:'quoted',   label:'Quoted',   hit:!!ev.quoted, on:(ev.quoted||{}).on || null,
       detail:(ev.quoted||{}).detail || null,
@@ -169,10 +184,11 @@ function ProgramLadder({ r }) {
     { key:'sampling', label:'Sampling', hit:sampling, on:null,
       detail:sampling ? 'Product stage is ' + p.product_stage : null,
       empty:'Product is not marked Sample or Production.' },
-    { key:'tested',   label:'Tested',   hit:tested, on:testedOn,
+    // Dropped entirely when testing does not apply -- see testingNotRequired.
+    ...(noTest ? [] : [{ key:'tested', label:'Tested', hit:tested, on:testedOn,
       detail:ev.tested ? ((ev.tested||{}).detail || null)
                        : (tested ? 'Compliance status is passed' : null),
-      empty:'No test report, and compliance is not marked passed.' },
+      empty:'No test report, and compliance is not marked passed.' }]),
     // Ordered / Sold / Ordered & Sold when complete; when not, the row names
     // BOTH WAYS OUT, because either one completes the program and promising a
     // purchase order that may never come would be the same error as the fixed
@@ -185,6 +201,13 @@ function ProgramLadder({ r }) {
 
   return (
     <div style={{marginTop:'14px',display:'flex',flexDirection:'column',gap:'1px'}}>
+      {noTest && (
+        <div style={{fontSize:'11.5px',color:'#5A5A5E',background:'#F4F4F6',border:'1px solid #E5E5EA',
+                     borderRadius:'8px',padding:'8px 11px',marginBottom:'10px',lineHeight:1.5}}>
+          This product&rsquo;s compliance status is <strong style={{fontWeight:600}}>Not required</strong>,
+          so no test report is expected and the Tested step is not shown.
+        </div>
+      )}
       {rows.map((row, i) => (
         <div key={row.key} style={{display:'flex',gap:'11px',alignItems:'flex-start',
                                    padding:'9px 0',borderTop:i?'1px solid #F2F2F4':'none'}}>
@@ -262,6 +285,7 @@ export default function Programs({ userEmail }) {
   const [search, setSearch] = useState('');
   const [stageSel, setStageSel] = useState([]);
   const [openId, setOpenId] = useState(null);
+  const [showRetired, setShowRetired] = useState(false);
   const [sweeping, setSweeping] = useState(false);
 
   const load = async () => {
@@ -343,7 +367,18 @@ export default function Programs({ userEmail }) {
   }, [rows, buckets]);
 
   const board = useMemo(() => enriched.filter(r => r.onBoard), [enriched]);
-  const done  = useMemo(() => enriched.filter(r => !r.onBoard), [enriched]);
+  // COMPLETED MEANS COMPLETED. The tab was everything not on the board, which
+  // quietly bundled 52 RETIRED PRODUCTS THAT WERE NEVER ORDERED in with 192 real
+  // completions and called the total 244. A retired product that never sold is
+  // not a finished program -- it is a program that stopped -- and counting the
+  // two together overstates the finished work by 27 percent.
+  //
+  // They are still reachable, because they are the only record that the pair
+  // existed at all, but behind a toggle that is off by default.
+  const finished = useMemo(() => enriched.filter(r => r.complete), [enriched]);
+  const history  = useMemo(() => enriched.filter(r => !r.onBoard && !r.complete), [enriched]);
+  const done     = useMemo(() => showRetired ? finished.concat(history) : finished,
+                           [finished, history, showRetired]);
 
   const counts = useMemo(() => {
     const c = {}; PIPELINE_STAGES.forEach(([k]) => { c[k] = 0; });
@@ -405,6 +440,14 @@ export default function Programs({ userEmail }) {
           <div style={{fontFamily:'var(--mono)',fontSize:'11.5px',fontWeight:700,color:'#1D1D1F'}}>{p.sku || '—'}</div>
           <div style={{fontSize:'12.5px',color:'#1D1D1F',marginTop:'2px',lineHeight:1.35}}>{p.name || '—'}</div>
           <div style={{fontSize:'11.5px',color:'#5A5A5E',marginTop:'4px'}}>{(r.client||{}).name || '—'}</div>
+          {testingNotRequired(p) && (
+            <div style={{marginTop:'5px'}}>
+              <span style={{fontSize:'9.5px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',
+                            color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 7px'}}>
+                Testing not required
+              </span>
+            </div>
+          )}
           {/* THE WHOLE LINE GOES when there is no date, rather than degrading to
               a dash or a zero -- both of those read as a measurement. Sampling
               never has one, and Tested only has one when a report rather than a
@@ -437,12 +480,12 @@ export default function Programs({ userEmail }) {
       <div style={{textAlign:'center',marginBottom:'18px'}}>
         <h1 style={{fontSize:'26px',fontWeight:700,letterSpacing:'-.02em',color:'#1D1D1F',margin:0}}>Product Life Management</h1>
         <div style={{fontSize:'13px',color:'#86868B',marginTop:'5px'}}>
-          {board.length} in the pipeline · {done.length} complete
+          {board.length} in the pipeline · {finished.length} complete
         </div>
       </div>
 
       <div style={{display:'flex',gap:'6px',marginBottom:'16px'}}>
-        {[['board','Pipeline',board.length],['completed','Completed',done.length]].map(([v,l,n])=>(
+        {[['board','Pipeline',board.length],['completed','Completed',finished.length]].map(([v,l,n])=>(
           <button key={v} onClick={()=>{setTab(v);setOpenId(null);}}
             style={{fontSize:'12.5px',fontWeight:600,borderRadius:'980px',padding:'7px 14px',border:'none',
                     cursor:'pointer',fontFamily:'inherit',
@@ -522,6 +565,15 @@ export default function Programs({ userEmail }) {
           </p>
         </>
       ) : (
+        <>
+        <div style={{display:'flex',justifyContent:'flex-end',marginBottom:'9px'}}>
+          <label style={{display:'inline-flex',alignItems:'center',gap:'7px',fontSize:'12px',
+                         color:'#5A5A5E',cursor:'pointer',fontFamily:'inherit'}}>
+            <input type="checkbox" checked={showRetired} onChange={e=>setShowRetired(e.target.checked)}
+              style={{cursor:'pointer'}} />
+            Show {history.length} retired, never ordered
+          </label>
+        </div>
         <div style={{background:'#fff',borderRadius:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',overflow:'hidden'}}>
           {shownDone.length === 0 ? (
             <div style={{padding:'44px 24px',textAlign:'center',fontSize:'13.5px',color:'#86868B'}}>Nothing here.</div>
@@ -538,6 +590,10 @@ export default function Programs({ userEmail }) {
                   <span style={{fontSize:'11.5px',color:'#8A8A8E',minWidth:'150px'}}>
                     {r.complete ? r.completedBy + ' ' + fmt(r.completedOn) : 'Product retired'}
                   </span>
+                  {testingNotRequired(p) && (
+                    <span style={{fontSize:'10px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',
+                                  color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 8px'}}>No testing</span>
+                  )}
                   {r.retired && (
                     <span style={{fontSize:'10px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',
                                   color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 8px'}}>History</span>
@@ -548,6 +604,7 @@ export default function Programs({ userEmail }) {
             );
           })}
         </div>
+        </>
       )}
     </div>
   );
