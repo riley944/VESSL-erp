@@ -2,14 +2,17 @@
 import { useState, useEffect, useMemo } from 'react';
 import { SB } from '@/lib/supabase';
 import { FilterSelect } from '@/app/components/FilterSelect';
-import { LifecyclePanel } from '@/app/components/LifecyclePanel';
+// Overlay, not a hand-rolled backdrop. It carries useDirtyGuard, so a typed note
+// is protected from a backdrop click by importing this and nothing else -- which
+// is precisely why the guard was put there rather than in each modal.
+import { Overlay } from '@/app/components/ModalGuard';
 // ONE DERIVATION, shared with the panel. This page fetches differently -- in bulk,
 // for every program at once -- but it must not DECIDE differently, which is how
 // the awarded tile and the awarded filter ended up disagreeing about who won a
 // shipment. lib/lifecycle.js owns the rules; this file owns the fetching.
 import {
   PIPELINE_STAGES, fmt, deriveEvents,
-  isComplete, currentStage, stageEnteredAt, daysSince, CLIENT_OF,
+  isComplete, currentStage, stageEnteredAt, daysSince, CLIENT_OF, completionOf,
 } from '@/lib/lifecycle';
 import { ensurePrograms, pairsFromRecords } from '@/lib/programs';
 
@@ -36,6 +39,208 @@ const COL = {
 
 const norm = t => (t || '').toLowerCase();
 
+// ── NOTES ON A PROGRAM ──────────────────────────────────────────────────────
+// APPEND ONLY, and not merely by convention -- authenticated holds SELECT and
+// INSERT on vessl.program_notes and nothing else. UPDATE and DELETE were never
+// granted by script 48, so an edit control would fail at the database even if
+// somebody built one. There is no edit control and no delete control here, and
+// the grants are what make that a guarantee rather than a promise.
+//
+// Newest first, because the last thing said is the thing being caught up on.
+function ProgramNotes({ programId, userEmail }) {
+  const [notes, setNotes] = useState(null);
+  const [text, setText]   = useState('');
+  const [busy, setBusy]   = useState(false);
+  const [err, setErr]     = useState('');
+
+  const load = async () => {
+    const { data, error } = await SB.from('program_notes')
+      .select('id,author,source,note,created_at')
+      .eq('program_id', programId)
+      .order('created_at', { ascending:false });
+    if (error) { setErr(error.message); setNotes([]); return; }
+    setNotes(data || []);
+  };
+  useEffect(()=>{ setNotes(null); load(); }, [programId]);
+
+  const add = async () => {
+    const body = text.trim();
+    if (!body) return;
+    setBusy(true); setErr('');
+    const { error } = await SB.from('program_notes').insert({
+      program_id: programId,
+      author: userEmail || null,
+      // Distinguishes a person typing from anything a later import might write.
+      source: 'manual',
+      note: body,
+    });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setText('');
+    await load();
+  };
+
+  const when = iso => {
+    if (!iso) return '';
+    try { return new Date(iso).toLocaleString('en-US',
+      { year:'numeric', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }); }
+    catch { return String(iso); }
+  };
+
+  return (
+    <div style={{marginTop:'16px',paddingTop:'14px',borderTop:'1px solid #ECECEE'}}>
+      <div style={{fontSize:'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',
+                   color:'#86868B',marginBottom:'9px'}}>Notes</div>
+
+      <textarea value={text} onChange={e=>setText(e.target.value)} rows={2}
+        placeholder="Add a note — it cannot be edited or deleted afterwards"
+        style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 11px',
+                fontSize:'13px',fontFamily:'inherit',outline:'none',resize:'vertical',
+                background:'#fff',boxSizing:'border-box'}} />
+      <div style={{display:'flex',alignItems:'center',gap:'10px',marginTop:'7px'}}>
+        <button onClick={add} disabled={busy || !text.trim()}
+          style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 14px',border:'none',
+                  fontFamily:'inherit',cursor:busy||!text.trim()?'default':'pointer',
+                  background:text.trim()?'#1D1D1F':'#E5E5EA',color:text.trim()?'#fff':'#A0A0A4'}}>
+          {busy ? 'Adding…' : 'Add note'}
+        </button>
+        {err && <span style={{fontSize:'11.5px',color:'var(--hot)'}}>{err}</span>}
+      </div>
+
+      {notes === null ? (
+        <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'12px'}}>Reading notes…</div>
+      ) : notes.length === 0 ? (
+        <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'12px'}}>No notes yet.</div>
+      ) : (
+        <div style={{marginTop:'12px',display:'flex',flexDirection:'column',gap:'9px'}}>
+          {notes.map(n => (
+            <div key={n.id} style={{background:'#fff',border:'1px solid #ECECEE',borderRadius:'10px',padding:'9px 11px'}}>
+              <div style={{fontSize:'13px',color:'#1D1D1F',lineHeight:1.5,whiteSpace:'pre-wrap'}}>{n.note}</div>
+              <div style={{fontSize:'11px',color:'#A0A0A4',marginTop:'5px'}}>
+                {n.author || 'unknown'} · {when(n.created_at)}
+                {n.source && n.source !== 'manual' ? ' · ' + n.source : ''}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The card-open and row-open views are the SAME view, which is the point -- a
+// completed program reads exactly as it did on the board, minus what happened
+// after it completed. stopAfter carries the completion date, so an incomplete
+// program passes null and sees its whole lifecycle.
+// ── THE CARD LADDER: QUOTED, SAMPLING, TESTED, COMPLETION ───────────────────
+// FOUR ROWS, and deliberately not the six-stage LifecyclePanel. PLM is the
+// pre-order pipeline, so Shipped and Delivered are not late stages of a program
+// -- they are logistics, and they belong to the shipment.
+//
+// The fourth row is THE COMPLETION EVENT rather than a fixed "Ordered", because
+// a fixed label was measured and found wrong most of the time. Of 192 completed
+// programs, 106 -- 55 percent -- were sold and never ordered: an Ordered row
+// would have sat empty and greyed on more than half the Completed tab, on
+// programs that are finished. 110 completed on a sales order, 82 on a purchase
+// order, and 41 have both on the SAME DAY, which is too many to settle by an
+// arbitrary pick, so those name both.
+//
+// Rendered from what the board already holds. The page bulk-fetches quotes, PO
+// lines, SO lines and reports for every program at once, so the card needs no
+// query of its own and opens instantly -- which is why it no longer uses
+// LifecyclePanel, whose four per-product queries would be a round trip on every
+// open of data already in hand.
+function ProgramLadder({ r }) {
+  const ev = r.events || {};
+  const p  = r.products || {};
+
+  // Sampling MIRRORS THE BOARD exactly -- the product stage, not a declaration.
+  // There is no date behind it (product_stage carries no timestamp), so the row
+  // shows no date rather than a dash pretending to be one.
+  const sampling = p.product_stage === 'sample' || p.product_stage === 'production';
+  // Tested likewise: a report gives a date, a passed compliance flag does not.
+  const testedOn = (ev.tested || {}).on || null;
+  const tested   = !!ev.tested || p.compliance_status === 'passed';
+
+  const rows = [
+    { key:'quoted',   label:'Quoted',   hit:!!ev.quoted, on:(ev.quoted||{}).on || null,
+      detail:(ev.quoted||{}).detail || null,
+      empty:'No quote names this product for this client.' },
+    { key:'sampling', label:'Sampling', hit:sampling, on:null,
+      detail:sampling ? 'Product stage is ' + p.product_stage : null,
+      empty:'Product is not marked Sample or Production.' },
+    { key:'tested',   label:'Tested',   hit:tested, on:testedOn,
+      detail:ev.tested ? ((ev.tested||{}).detail || null)
+                       : (tested ? 'Compliance status is passed' : null),
+      empty:'No test report, and compliance is not marked passed.' },
+    // Ordered / Sold / Ordered & Sold when complete; when not, the row names
+    // BOTH WAYS OUT, because either one completes the program and promising a
+    // purchase order that may never come would be the same error as the fixed
+    // label this replaces.
+    { key:'done',     label:r.complete ? r.completedBy : 'Ordered or sold',
+      hit:r.complete, on:r.completedOn,
+      detail:r.complete ? 'This program left the pipeline here.' : null,
+      empty:'Not yet ordered or sold.' },
+  ];
+
+  return (
+    <div style={{marginTop:'14px',display:'flex',flexDirection:'column',gap:'1px'}}>
+      {rows.map((row, i) => (
+        <div key={row.key} style={{display:'flex',gap:'11px',alignItems:'flex-start',
+                                   padding:'9px 0',borderTop:i?'1px solid #F2F2F4':'none'}}>
+          <div style={{width:'9px',height:'9px',borderRadius:'50%',marginTop:'4px',flexShrink:0,
+                       background:row.hit?'#1D1D1F':'#E5E5EA'}} />
+          <div style={{minWidth:0,flex:1}}>
+            <div style={{display:'flex',justifyContent:'space-between',gap:'10px',alignItems:'baseline'}}>
+              <span style={{fontSize:'13px',fontWeight:600,color:row.hit?'#1D1D1F':'#A0A0A4'}}>{row.label}</span>
+              {/* No date is not the same as no event: Sampling never has one and
+                  a passed compliance flag carries none, so the slot stays empty
+                  rather than printing a dash that reads as missing data. */}
+              {row.on && <span style={{fontSize:'12px',color:'#5A5A5E',fontVariantNumeric:'tabular-nums'}}>{fmt(row.on)}</span>}
+            </div>
+            <div style={{fontSize:'11.5px',color:row.hit?'#5A5A5E':'#B0B0B4',marginTop:'2px',lineHeight:1.45}}>
+              {row.hit ? (row.detail || '') : row.empty}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// A POPUP, NOT AN INLINE EXPANSION, and the notes box is why the guard matters.
+//
+// Overlay dismisses on a backdrop click, and every other modal in the app accepts
+// that because a half-filled form is recoverable. A note is not -- it is prose
+// somebody just wrote and cannot get back. useDirtyGuard watches input events
+// inside the card, so typed-but-unsaved text turns the backdrop click into a
+// confirm instead of a dismissal. Nothing here has to arrange that beyond using
+// Overlay.
+function ProgramDetail({ r, userEmail, onClose }) {
+  const p = r.products || {};
+  return (
+    <Overlay onClose={onClose} maxWidth={640}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'12px',marginBottom:'4px'}}>
+        <div style={{minWidth:0}}>
+          <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:700,color:'#1D1D1F'}}>{p.sku || '—'}</div>
+          <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.01em',marginTop:'2px'}}>{p.name || '—'}</div>
+          <div style={{fontSize:'13px',color:'#5A5A5E',marginTop:'3px'}}>{(r.client||{}).name || '—'}</div>
+        </div>
+        <button onClick={onClose} aria-label="Close"
+          style={{background:'none',border:'none',fontSize:'22px',lineHeight:1,color:'#A0A0A4',
+                  cursor:'pointer',padding:'0 2px',fontFamily:'inherit'}}>×</button>
+      </div>
+      {/* No banners here. The testing-coverage caveat and the one-client note
+          earn their place on the Testing page, where the panel is all there is;
+          on a card the header already names the client, and a standing caveat
+          about catalogue coverage is not what somebody opened a program to read.
+          A card-view removal -- LifecyclePanel still shows both. */}
+      <ProgramLadder r={r} />
+      <ProgramNotes programId={r.id} userEmail={userEmail} />
+    </Overlay>
+  );
+}
+
 export default function Programs({ userEmail }) {
   const [rows, setRows]   = useState([]);
   const [ev, setEv]       = useState(null);
@@ -45,7 +250,6 @@ export default function Programs({ userEmail }) {
   const [search, setSearch] = useState('');
   const [stageSel, setStageSel] = useState([]);
   const [openId, setOpenId] = useState(null);
-  const [saving, setSaving] = useState(null);
   const [sweeping, setSweeping] = useState(false);
 
   const load = async () => {
@@ -53,8 +257,8 @@ export default function Programs({ userEmail }) {
     try {
       const [p, q, poi, soi, tr] = await Promise.all([
         SB.from('programs')
-          .select('id,product_id,client_company_id,declared_stage,declared_stage_at,expected_ship_date,archived,'
-                + 'products(id,sku,name,active),client:companies!client_company_id(id,name)')
+          .select('id,product_id,client_company_id,expected_ship_date,archived,'
+                + 'products(id,sku,name,active,product_stage,compliance_status),client:companies!client_company_id(id,name)')
           .order('created_at', { ascending:true }),
         SB.from('quotes').select('product_id,client_company_id,quote_date,created_at').not('product_id','is',null),
         SB.from('purchase_order_items')
@@ -101,8 +305,11 @@ export default function Programs({ userEmail }) {
         reports: buckets.reports[String(r.product_id)] || [],
       });
       const complete = isComplete(events);
-      const stage = currentStage(events, r.declared_stage);
-      const since = stageEnteredAt(stage, events, r.declared_stage_at);
+      // The PRODUCT decides Sampling and Tested now, so the product row goes in
+      // rather than a per-program declaration. since is null for Sampling always,
+      // and for Tested when compliance rather than a report put it there.
+      const stage = currentStage(events, r.products);
+      const since = stageEnteredAt(stage, events);
       // Retired products never sit on the board, however incomplete they are --
       // nobody is going to quote a product that is out of the catalogue.
       const retired = (r.products || {}).active === false;
@@ -111,11 +318,13 @@ export default function Programs({ userEmail }) {
       // exactly why this takes the minimum rather than assuming Sold leads.
       // Null for a retired-but-never-ordered program, which sorts last rather
       // than pretending to a date.
-      const sOn = (events.sold || {}).on || null;
-      const oOn = (events.ordered || {}).on || null;
-      const completedOn = [sOn, oOn].filter(Boolean).sort()[0] || null;
-      // Which one it was, so the row can name it rather than guess from presence.
-      const completedBy = !completedOn ? null : (completedOn === sOn ? 'Sold' : 'Ordered');
+      // completionOf carries the measurement: 106 of 192 completed programs were
+      // SOLD AND NEVER ORDERED, and 41 have both on the same day. Deciding the
+      // name here rather than at each render is what stops those 41 being called
+      // Sold on the row and Ordered in the ladder.
+      const done_ = completionOf(events);
+      const completedOn = done_ ? done_.on : null;
+      const completedBy = done_ ? done_.label : null;
       return { ...r, events, complete, stage, since, days: daysSince(since), retired,
                completedOn, completedBy, onBoard: !complete && !retired };
     });
@@ -147,22 +356,9 @@ export default function Programs({ userEmail }) {
 
   const stageOptions = useMemo(() => ([
     { value:'', label:'All stages', count:board.length },
-    ...PIPELINE_STAGES.map(([v,l,kind]) => ({
-      value:v, label:l + (kind==='declared' ? ' · declared' : ''),
-      color:COL[v].fg, bg:COL[v].bg, count:counts[v]||0 })),
+    ...PIPELINE_STAGES.map(([v,l]) => ({
+      value:v, label:l, color:COL[v].fg, bg:COL[v].bg, count:counts[v]||0 })),
   ]), [counts, board.length]);
-
-  const setDeclared = async (r, value) => {
-    setSaving(r.id);
-    // declared_stage_at is NOT written here. trg_programs_declared_stage_at
-    // stamps it, so the page cannot forget and neither can any other writer.
-    const { data, error } = await SB.from('programs')
-      .update({ declared_stage: value || null, updated_at: new Date().toISOString() })
-      .eq('id', r.id).select('declared_stage,declared_stage_at').single();
-    setSaving(null);
-    if (error) { alert('Could not save: ' + error.message); return; }
-    setRows(prev => prev.map(x => x.id === r.id ? { ...x, ...data } : x));
-  };
 
   const sweep = async () => {
     setSweeping(true);
@@ -188,7 +384,6 @@ export default function Programs({ userEmail }) {
   if (err) return <div style={{padding:'28px 30px',color:'var(--hot)',fontSize:'14px'}}>Could not read programs — {err}</div>;
 
   const Card = ({ r }) => {
-    const open = openId === r.id;
     const p = r.products || {};
     return (
       <div style={{background:'#fff',borderRadius:'12px',boxShadow:'0 1px 2px rgba(0,0,0,.06)',marginBottom:'8px',overflow:'hidden'}}>
@@ -198,41 +393,30 @@ export default function Programs({ userEmail }) {
           <div style={{fontFamily:'var(--mono)',fontSize:'11.5px',fontWeight:700,color:'#1D1D1F'}}>{p.sku || '—'}</div>
           <div style={{fontSize:'12.5px',color:'#1D1D1F',marginTop:'2px',lineHeight:1.35}}>{p.name || '—'}</div>
           <div style={{fontSize:'11.5px',color:'#5A5A5E',marginTop:'4px'}}>{(r.client||{}).name || '—'}</div>
-          <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'6px',display:'flex',gap:'8px',flexWrap:'wrap'}}>
-            {/* days is null when a stage was declared before script 49 existed.
-                Saying so beats printing a zero that reads like a fact. */}
-            <span>{r.days == null ? 'just now' : r.days === 0 ? 'today' : r.days + 'd in stage'}</span>
-            {r.since && <span>· since {fmt(r.since)}</span>}
-          </div>
+          {/* THE WHOLE LINE GOES when there is no date, rather than degrading to
+              a dash or a zero -- both of those read as a measurement. Sampling
+              never has one, and Tested only has one when a report rather than a
+              compliance flag put it there. */}
+          {r.since && (
+            <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'6px',display:'flex',gap:'8px',flexWrap:'wrap'}}>
+              <span>{r.days === 0 ? 'today' : r.days + 'd in stage'}</span>
+              <span>· since {fmt(r.since)}</span>
+            </div>
+          )}
           {r.events.quoted && r.stage !== 'quoted' && (
             <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'2px'}}>Quoted {fmt(r.events.quoted.on)}</div>
           )}
         </button>
-        <div style={{padding:'0 13px 11px',display:'flex',gap:'6px',alignItems:'center'}} onClick={e=>e.stopPropagation()}>
-          <select value={r.declared_stage || ''} disabled={saving===r.id}
-            onChange={e=>setDeclared(r, e.target.value)}
-            aria-label={'Declared stage for ' + (p.sku||'this program')}
-            style={{border:'1px solid rgba(0,0,0,.1)',borderRadius:'7px',padding:'4px 6px',fontSize:'11.5px',
-                    fontWeight:600,background:'#fff',fontFamily:'inherit',
-                    color:r.declared_stage?'#1D1D1F':'#8A8A8E',width:'100%'}}>
-            {/* Sampling is the only declared stage. Inquiry was dropped before
-                anyone declared one -- it is not observable, and the quote is the
-                real entry point. */}
-            <option value="">Not declared</option>
-            <option value="sampling">Sampling</option>
-          </select>
-        </div>
-        {open && (
-          <div style={{padding:'2px 13px 14px',borderTop:'1px solid #F5F5F7',background:'#FCFCFD'}}>
-            <LifecyclePanel product={r.products} clientId={r.client_company_id} />
-          </div>
-        )}
+
       </div>
     );
   };
 
+  const openRow = enriched.find(x => x.id === openId) || null;
+
   return (
     <div style={{padding:'26px 30px 60px'}}>
+      {openRow && <ProgramDetail r={openRow} userEmail={userEmail} onClose={()=>setOpenId(null)} />}
       {/* Centred, and the count on its own line beneath. The description
           paragraph that sat here is gone -- the columns and their placeholders
           already say what the board is, and a paragraph nobody rereads after the
@@ -280,14 +464,14 @@ export default function Programs({ userEmail }) {
           {/* Tiles first, the original dashboard shape. They read the WHOLE board
               rather than the filtered view, so narrowing never makes a total lie. */}
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:'10px',marginBottom:'18px'}}>
-            {PIPELINE_STAGES.map(([k,l,kind])=>(
+            {PIPELINE_STAGES.map(([k,l,src])=>(
               <button key={k} onClick={()=>setStageSel(stageSel.length===1&&stageSel[0]===k?[]:[k])}
                 style={{background:'#fff',borderRadius:'14px',padding:'14px 16px',textAlign:'left',cursor:'pointer',
                         fontFamily:'inherit',border:'none',borderTop:'3px solid '+COL[k].bar,
                         boxShadow:stageSel.length===1&&stageSel[0]===k?'0 0 0 2px '+COL[k].fg:'0 1px 3px rgba(0,0,0,.05)'}}>
                 <div style={{fontSize:'22px',fontWeight:700,color:'#1D1D1F',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{counts[k]||0}</div>
                 <div style={{fontSize:'11.5px',color:'#5A5A5E',marginTop:'6px'}}>{l}</div>
-                <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'2px'}}>{kind}</div>
+                <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'2px'}}>{src}</div>
               </button>
             ))}
           </div>
@@ -306,8 +490,10 @@ export default function Programs({ userEmail }) {
                     <div style={{border:'1px dashed #E5E5EA',borderRadius:'12px',padding:'16px 13px',
                                  fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5}}>
                       {k==='sampling'
-                        ? 'Nothing declared here yet. Set a card to Sampling and it moves.'
-                        : 'Nothing has reached ' + l + '.'}
+                        ? 'No product here is marked Sample or Production.'
+                        : k==='tested'
+                        ? 'Nothing here has a test report or a passed compliance status.'
+                        : 'Nothing has reached Quoted.'}
                     </div>
                   ) : inCol.map(r => <Card key={r.id} r={r} />)}
                 </div>
@@ -317,8 +503,10 @@ export default function Programs({ userEmail }) {
           {/* Cards cannot be dragged, and a board that looks draggable but is not
               owes an explanation rather than a shrug. */}
           <p style={{margin:'18px 0 0',fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.55,maxWidth:'720px'}}>
-            Cards are not dragged. Quoted and Tested move when a quote or a test report appears;
-            Sampling moves when you set it on the card.
+            Cards are not dragged, and nothing here is set on the card. Quoted follows the
+            quote; Sampling follows the product&rsquo;s Sample or Production stage; Tested follows a
+            test report or a passed compliance status. Change the product on Testing and the card
+            moves on its own.
           </p>
         </>
       ) : (
@@ -327,7 +515,6 @@ export default function Programs({ userEmail }) {
             <div style={{padding:'44px 24px',textAlign:'center',fontSize:'13.5px',color:'#86868B'}}>Nothing here.</div>
           ) : shownDone.map((r,i) => {
             const p = r.products || {};
-            const open = openId === r.id;
             return (
               <div key={r.id} style={{borderTop:i>0?'1px solid #F5F5F7':'none'}}>
                 <button onClick={()=>setOpenId(open?null:r.id)}
@@ -344,11 +531,7 @@ export default function Programs({ userEmail }) {
                                   color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 8px'}}>History</span>
                   )}
                 </button>
-                {open && (
-                  <div style={{padding:'2px 18px 16px',borderTop:'1px solid #F5F5F7',background:'#FCFCFD'}}>
-                    <LifecyclePanel product={r.products} clientId={r.client_company_id} />
-                  </div>
-                )}
+
               </div>
             );
           })}

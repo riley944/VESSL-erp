@@ -58,7 +58,13 @@ export const LIFECYCLE_EXCEPTIONS_ENABLED = true;
 // program is product x client, and showing another client dates on it would be
 // wrong rather than merely noisy. Absent, the panel behaves exactly as before and
 // reports the product across every client.
-export function LifecyclePanel({ product, clientId = null, exceptionsEnabled = LIFECYCLE_EXCEPTIONS_ENABLED }) {
+//
+// clientId HAS NO CALLER TODAY: the PLM card that used it now renders its own
+// four-row ladder from data the board already holds, so the card opens with no
+// queries at all. Kept because the capability is correct and tested, and the next
+// program-shaped view will want it -- flagged so it is not mistaken for live use.
+export function LifecyclePanel({ product, clientId = null,
+                                exceptionsEnabled = LIFECYCLE_EXCEPTIONS_ENABLED }) {
   const [state, setState] = useState({ loading:true, ev:null, err:null });
   const pid = product && product.id;
 
