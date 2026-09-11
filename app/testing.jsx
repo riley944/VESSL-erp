@@ -23,6 +23,7 @@ import { loadExcelJS, excelDate } from "@/lib/excel";
 import { isSelectableProduct } from "@/app/components/ProductCpscRules";
 import { materialLabel } from "@/lib/materialLabel";
 import { matches, normalizeTerm } from "@/lib/textFilter";
+import { Overlay } from '@/app/components/ModalGuard';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const fmtDate = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
@@ -1683,11 +1684,6 @@ function ReportsView({ reports, onEdit, onDelete, searching, term, filtered }) {
 }
 
 // ── MODALS ───────────────────────────────────────────────────────────────────
-const Overlay = ({children,onClose}) => (
-  <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.42)',backdropFilter:'blur(2px)',zIndex:200,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'40px 16px',overflowY:'auto'}}>
-    <div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:'18px',boxShadow:'0 12px 48px rgba(0,0,0,.2)',width:'100%',maxWidth:'560px',padding:'24px'}}>{children}</div>
-  </div>
-);
 const inp = {width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'10px 12px',fontSize:'14px',outline:'none',fontFamily:'inherit',boxSizing:'border-box'};
 const lbl = {display:'block',fontSize:'11px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'6px'};
 // ToastProvider in page.jsx publishes this global and wraps every page, so it works

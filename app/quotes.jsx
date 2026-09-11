@@ -1473,7 +1473,7 @@ function FreightBuilder({ tier, form, onClose, onApply }) {
               Tier {tierQty ? tierQty.toLocaleString() : "—"} units · EXW {exw ? `$${exw.toFixed(2)}` : "—"}{unitsPerHQ > 0 ? ` · ~${unitsPerHQ.toLocaleString()} units fit a 40'HQ (from carton data)` : ""}
             </div>
           </div>
-          <button onClick={onClose} style={{ background: "#f2f4f8", border: "none", borderRadius: "50%", width: 28, height: 28, fontSize: 15, color: "#6a7488", cursor: "pointer", flexShrink: 0 }}>×</button>
+          <button onClick={guardedClose} style={{ background: "#f2f4f8", border: "none", borderRadius: "50%", width: 28, height: 28, fontSize: 15, color: "#6a7488", cursor: "pointer", flexShrink: 0 }}>×</button>
         </div>
 
         {/* preset quick-adds */}
@@ -1839,7 +1839,7 @@ function TasksPanel({ tasks, userEmail, onToggle, onDelete, onClose, onJump }) {
       <div ref={cardRef} style={{ ...S.modal, maxWidth: 620 }} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
           <h2 style={S.modalTitle}>Tasks</h2>
-          <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
+          <button style={S.iconBtn} onClick={guardedClose}><X size={18} /></button>
         </div>
         <div style={{ padding: "0 26px", display: "flex", gap: 8, borderBottom: "1px solid #e7eaf0" }}>
           <button style={{ ...S.taskTab, ...(tab === "mine" ? S.taskTabOn : {}) }} onClick={() => setTab("mine")}>My Tasks ({mine.filter((t) => !t.done).length})</button>
@@ -2136,7 +2136,7 @@ function SendToClientModal({ clients, onClose }) {
           {/* modalTitle stays serif for our own wording and switches to sans the
               moment it is holding a client name instead. */}
           <h2 style={step === "client" ? S.modalTitle : { ...S.modalTitle, fontFamily: SANS }}>{step === "client" ? "Send Quote Sheet" : chosenClient}</h2>
-          <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
+          <button style={S.iconBtn} onClick={guardedClose}><X size={18} /></button>
         </div>
         <div style={{ padding: "20px 26px 24px", maxHeight: "62vh", overflowY: "auto" }}>
           {step === "client" && (
@@ -2218,7 +2218,7 @@ function DirectoryPanel({ onClose, contacts, factories, clientRecords, quoteClie
       <div ref={cardRef} style={{ ...S.modal, maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
           <h2 style={openClient ? { ...S.modalTitle, fontFamily: SANS } : S.modalTitle}>{openClient ? openClient : "Directory"}</h2>
-          <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
+          <button style={S.iconBtn} onClick={guardedClose}><X size={18} /></button>
         </div>
         {!openClient && (
           <div style={{ padding: "0 26px", display: "flex", gap: 8, borderBottom: "1px solid #e7eaf0" }}>
@@ -2857,7 +2857,7 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
       <div ref={cardRef} style={S.modal} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
           <h2 style={S.modalTitle}>{initial.id ? "Edit Quote" : "New Quote"}</h2>
-          <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
+          <button style={S.iconBtn} onClick={guardedClose}><X size={18} /></button>
         </div>
         <div style={S.modalBody}>
           <FormSection icon={<Box size={15} />} title="Product">

@@ -51,6 +51,21 @@ const MESSAGE = 'You have unsaved changes in this form.\n\nDiscard them and clos
 const MarkDirtyContext = createContext(() => {});
 export const useMarkDirty = () => useContext(MarkDirtyContext);
 
+// The close button has the same problem the backdrop has, reached by a different
+// button: it discards whatever is typed, silently. Overlay held guardedClose to
+// itself and handed children only onClose, so every card's own close control
+// bypassed the guard the Overlay was there to provide.
+//
+// Same idiom as markDirty above rather than a new prop on Overlay: a header
+// button is usually several components deep in the card, and threading a prop
+// through each one is the plumbing this context exists to avoid.
+//
+// The default is onClose-less on purpose -- a no-op would make a close button
+// silently stop working outside an Overlay, which is worse than not having the
+// hook. Used outside one it returns null and the call site keeps its own onClose.
+const GuardedCloseContext = createContext(null);
+export const useGuardedClose = () => useContext(GuardedCloseContext);
+
 // NESTED MODALS. A modal opened from inside another one is often a DOM
 // DESCENDANT of the outer card even though it paints on top of it: quotes.jsx
 // renders FreightBuilder inside QuoteForm's card at zIndex 1300. Without the
@@ -169,7 +184,9 @@ export function Overlay({
           ...cardStyle,
         }}
       >
-        <MarkDirtyContext.Provider value={markDirty}>{children}</MarkDirtyContext.Provider>
+        <GuardedCloseContext.Provider value={guardedClose}>
+          <MarkDirtyContext.Provider value={markDirty}>{children}</MarkDirtyContext.Provider>
+        </GuardedCloseContext.Provider>
       </div>
     </div>
   );

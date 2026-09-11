@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { SB } from '@/lib/supabase';
+import { Overlay } from '@/app/components/ModalGuard';
 
 // ── AddMaterialModal (create one vessl.materials row) ────────────────────────
 // The "+ Add material" target, mirroring what CodeModal is to HtsField: it writes
@@ -44,11 +45,6 @@ const lbl = {display:'block',fontSize:'11px',fontWeight:600,textTransform:'upper
 // a failure here has to look like one.
 const toast = (msg, type) => { if (typeof window !== 'undefined') window._toast?.(msg, type); };
 
-const Overlay = ({children,onClose}) => (
-  <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(20,20,30,.4)',backdropFilter:'blur(2px)',zIndex:300,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'40px 16px',overflowY:'auto'}}>
-    <div onClick={e=>e.stopPropagation()} style={{...card,width:'100%',maxWidth:'520px',padding:'24px'}}>{children}</div>
-  </div>
-);
 
 export function AddMaterialModal({ seed = '', onClose, onSaved }) {
   const [name,setName] = useState(seed || '');
@@ -93,7 +89,7 @@ export function AddMaterialModal({ seed = '', onClose, onSaved }) {
   };
 
   return (
-    <Overlay onClose={onClose}>
+    <Overlay onClose={onClose} backdrop="rgba(20,20,30,.4)" maxWidth={520} cardStyle={card}>
       <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'6px'}}>New material</div>
       <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>The unit that gets tested, and that products inherit compliance from.</div>
       <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>

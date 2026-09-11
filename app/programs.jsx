@@ -5,7 +5,7 @@ import { FilterSelect } from '@/app/components/FilterSelect';
 // Overlay, not a hand-rolled backdrop. It carries useDirtyGuard, so a typed note
 // is protected from a backdrop click by importing this and nothing else -- which
 // is precisely why the guard was put there rather than in each modal.
-import { Overlay } from '@/app/components/ModalGuard';
+import { Overlay, useGuardedClose } from '@/app/components/ModalGuard';
 // ONE DERIVATION, shared with the panel. This page fetches differently -- in bulk,
 // for every program at once -- but it must not DECIDE differently, which is how
 // the awarded tile and the awarded filter ended up disagreeing about who won a
@@ -217,16 +217,28 @@ function ProgramLadder({ r }) {
 // confirm instead of a dismissal. Nothing here has to arrange that beyond using
 // Overlay.
 function ProgramDetail({ r, userEmail, onClose }) {
-  const p = r.products || {};
   return (
     <Overlay onClose={onClose} maxWidth={640}>
+      <ProgramCard r={r} userEmail={userEmail} />
+    </Overlay>
+  );
+}
+
+// Split out so the x can read guardedClose from context. The provider lives
+// INSIDE Overlay, so a hook called in ProgramDetail would sit above it and get
+// the default -- the close button has to be a child to be guarded.
+function ProgramCard({ r, userEmail }) {
+  const p = r.products || {};
+  const guardedClose = useGuardedClose();
+  return (
+    <>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'12px',marginBottom:'4px'}}>
         <div style={{minWidth:0}}>
           <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:700,color:'#1D1D1F'}}>{p.sku || '—'}</div>
           <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.01em',marginTop:'2px'}}>{p.name || '—'}</div>
           <div style={{fontSize:'13px',color:'#5A5A5E',marginTop:'3px'}}>{(r.client||{}).name || '—'}</div>
         </div>
-        <button onClick={onClose} aria-label="Close"
+        <button onClick={guardedClose} aria-label="Close"
           style={{background:'none',border:'none',fontSize:'22px',lineHeight:1,color:'#A0A0A4',
                   cursor:'pointer',padding:'0 2px',fontFamily:'inherit'}}>×</button>
       </div>
@@ -237,7 +249,7 @@ function ProgramDetail({ r, userEmail, onClose }) {
           A card-view removal -- LifecyclePanel still shows both. */}
       <ProgramLadder r={r} />
       <ProgramNotes programId={r.id} userEmail={userEmail} />
-    </Overlay>
+    </>
   );
 }
 

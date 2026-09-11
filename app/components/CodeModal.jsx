@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { SB } from '@/lib/supabase';
+import { Overlay } from '@/app/components/ModalGuard';
 
 // ── CodeModal (create or edit one vessl.htscodes row) ────────────────────────
 // Extracted from app/codes.jsx so the quote form can offer "+ Add code" without
@@ -25,11 +26,6 @@ const lbl = {display:'block',fontSize:'11px',fontWeight:600,textTransform:'upper
 // works from a modal opened anywhere in the shell without prop plumbing.
 const toast = (msg, type) => { if (typeof window !== 'undefined') window._toast?.(msg, type); };
 
-const Overlay = ({children,onClose}) => (
-  <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(20,20,30,.4)',backdropFilter:'blur(2px)',zIndex:300,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'40px 16px',overflowY:'auto'}}>
-    <div onClick={e=>e.stopPropagation()} style={{...card,width:'100%',maxWidth:'520px',padding:'24px'}}>{children}</div>
-  </div>
-);
 
 export function CodeModal({ data, canDelete = false, onClose, onSaved, onDeleted }) {
   const editing = !!(data && data.id);
@@ -169,7 +165,7 @@ export function CodeModal({ data, canDelete = false, onClose, onSaved, onDeleted
     onSaved(row);
   };
   return (
-    <Overlay onClose={onClose}>
+    <Overlay onClose={onClose} backdrop="rgba(20,20,30,.4)" maxWidth={520} cardStyle={card}>
       <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'6px'}}>{editing?'Edit code':'New code'}</div>
       <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'18px'}}>A tariff classification quotes can be filed against.</div>
       <div style={{display:'flex',flexDirection:'column',gap:'14px'}}>

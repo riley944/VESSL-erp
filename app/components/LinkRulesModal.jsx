@@ -3,6 +3,7 @@ import { useState, useMemo } from 'react';
 import { SB } from '@/lib/supabase';
 import { matches, normalizeTerm } from '@/lib/textFilter';
 import { CERT_PILL, regSearchFields } from '@/app/components/RegulationsList';
+import { Overlay } from '@/app/components/ModalGuard';
 
 // ── LinkRulesModal (product ↔ vessl.regulations, via product_regulations) ────
 // Launched from the product row on the Testing page, beside Materials, because
@@ -26,11 +27,6 @@ import { CERT_PILL, regSearchFields } from '@/app/components/RegulationsList';
 const inp = {width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'10px 12px',fontSize:'14px',outline:'none',fontFamily:'inherit',boxSizing:'border-box'};
 const toast = (msg, type) => { if (typeof window !== 'undefined') window._toast?.(msg, type); };
 
-const Overlay = ({children,onClose}) => (
-  <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.42)',backdropFilter:'blur(2px)',zIndex:300,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'40px 16px',overflowY:'auto'}}>
-    <div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:'18px',boxShadow:'0 12px 48px rgba(0,0,0,.2)',width:'100%',maxWidth:'620px',padding:'24px'}}>{children}</div>
-  </div>
-);
 
 // The same three CreateProductModal offers, because both write products.cpsc_type and
 // a value one accepts that the other does not would be invisible until someone hit it.
@@ -258,7 +254,7 @@ export function LinkRulesModal({ product, regs, existing, onClose, onSaved }) {
 
   const label = product.sku || product.name || 'this product';
   return (
-    <Overlay onClose={onClose}>
+    <Overlay onClose={onClose} maxWidth={620}>
       <div style={{fontSize:'18px',fontWeight:700,color:'#1A1A1C',marginBottom:'4px'}}>CPSC rules for {label}</div>
       <div style={{fontSize:'12.5px',color:'#8A8A8E',marginBottom:'14px'}}>Link the rules this product has to be certified against.</div>
 

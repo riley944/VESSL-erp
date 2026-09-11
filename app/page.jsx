@@ -2127,7 +2127,7 @@ function QuotePickerModal({ onPick, onClose, priceField='client' }){
   return (
     <div className="modal-overlay" style={{zIndex:11000}} onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box" style={{maxWidth:'560px'}}>
-        <div className="modal-head"><h3>{picked?'Pick a quantity tier':'Add product from catalog'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>{picked?'Pick a quantity tier':'Add product from catalog'}</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
           {!picked ? (
             <>
@@ -2410,7 +2410,7 @@ function CreateSOModal({onClose,onCreated}){
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       {showPicker && <QuotePickerModal priceField="client" onPick={onPickItem} onClose={()=>setShowPicker(false)} />}
       <div ref={cardRef} className="modal-box" style={{maxWidth:'680px'}}>
-        <div className="modal-head"><h3>New Sales Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>New Sales Order</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
 
           <div className="qp-toggle">
@@ -2676,7 +2676,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       {showPicker && <QuotePickerModal priceField="client" onPick={onPickItem} onClose={()=>setShowPicker(false)} />}
       <div ref={cardRef} className="modal-box" style={{maxWidth:'680px'}}>
-        <div className="modal-head"><h3>{'Edit '+(so.client_po_number||so.so_number)}</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>{'Edit '+(so.client_po_number||so.so_number)}</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>SO Number</label><input className="form-input" style={{fontFamily:'var(--mono)'}} value={form.num} onChange={e=>f('num')(e.target.value)} /></div>
@@ -3821,7 +3821,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     {showPicker && <QuotePickerModal priceField="landed" onPick={onPickPOItem} onClose={()=>setShowPicker(false)} />}
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box modal-lg">
-        <div className="modal-head"><h3>Edit Purchase Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>Edit Purchase Order</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>PO Number *</label><input className="form-input" value={form.num} onChange={e=>f('num')(e.target.value)} /></div>
@@ -4175,7 +4175,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
             <span style={{width:'34px',height:'34px',borderRadius:'9px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'12px',fontWeight:600,fontFamily:'var(--mono)',color:'#0b1120',background:col}}>{initials(co.name)}</span>
             <h3 style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{co.name}</h3>
           </div>
-          <button className="modal-close" onClick={onClose}>×</button>
+          <button className="modal-close" onClick={guardedClose}>×</button>
         </div>
         <div className="modal-body">
           {!edit ? (
@@ -4781,7 +4781,7 @@ function ProductDetailModal({quote:initQ, userEmail='', onClose, onCreatePO}){
             <span style={{width:'36px',height:'36px',borderRadius:'9px',background:companyColor(q.client||''),display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,color:'#fff',flexShrink:0}}>{initials(q.client||'?')}</span>
             <div><div style={{fontWeight:700,fontSize:'16px',color:'var(--ink)'}}>{q.product||'Product'}</div><div style={{fontSize:'12px',color:'var(--muted)'}}>{q.client||'—'}{q.factory?' · '+q.factory:''}{q.sku?' · '+q.sku:''}</div></div>
           </div>
-          <button className="modal-close" onClick={onClose}>×</button>
+          <button className="modal-close" onClick={guardedClose}>×</button>
         </div>
         <div className="modal-body">
           {!editing ? (
@@ -6280,7 +6280,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
             <div style={{fontSize:'17px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.015em'}}>Forwarder quotes</div>
             <div style={{fontSize:'13px',color:'#8A8A8E',marginTop:'3px'}}>{(quote.quote_number||'')+' \u00b7 '+(quote.origin||'?')+' \u2192 '+(quote.destination||'?')+' \u00b7 '+String(ct)+' \u00d7 '+ctType}</div>
           </div>
-          <button onClick={onClose} style={{background:'#F2F2F6',border:'none',borderRadius:'50%',width:'28px',height:'28px',fontSize:'15px',color:'#5A5A5E',cursor:'pointer'}}>×</button>
+          <button onClick={guardedClose} style={{background:'#F2F2F6',border:'none',borderRadius:'50%',width:'28px',height:'28px',fontSize:'15px',color:'#5A5A5E',cursor:'pointer'}}>×</button>
         </div>
         <div style={{padding:'14px 24px 20px'}}>
           {sorted.length===0 && <div style={{fontSize:'13.5px',color:'#8A8A8E',textAlign:'center',padding:'26px 0'}}>No bids yet. Send the RFQ, then import the replies as they come back.</div>}
@@ -6374,7 +6374,7 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
     <>
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box">
-        <div className="modal-head"><h3>{linkedPO?.order_number || s?.shipment_number || 'Shipment'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>{linkedPO?.order_number || s?.shipment_number || 'Shipment'}</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         {!s ? <div className="modal-body">Loading…</div> : (
         <div className="modal-body">
           <div className="form-row-2">
@@ -6781,7 +6781,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     {showPicker && <QuotePickerModal priceField="landed" onPick={onPickPOItem} onClose={()=>setShowPicker(false)} />}
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box modal-lg">
-        <div className="modal-head"><h3>New Purchase Order</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>New Purchase Order</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
 
           {/* mode toggle */}
@@ -7138,7 +7138,7 @@ function CreateCompanyModal({ onClose, onCreated }) {
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box">
-        <div className="modal-head"><h3>New Company</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>New Company</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>Company Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
@@ -7206,7 +7206,7 @@ function CreateShipmentModal({ onClose, onCreated }) {
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box">
-        <div className="modal-head"><h3>New Shipment</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>New Shipment</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>Shipment # *</label><input className="form-input" value={form.number} onChange={e=>f('number')(e.target.value)} /></div>
@@ -7722,7 +7722,7 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box modal-lg">
-        <div className="modal-head"><h3>{editing?'Edit Freight Quote':'New Freight Quote'}</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>{editing?'Edit Freight Quote':'New Freight Quote'}</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
 
           {/* mode toggle — identical pattern to New PO. Hidden on edit along with both
@@ -8351,7 +8351,7 @@ function NewThreadModal({ options, initialCompanyId, onClose, onCreated }) {
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box" style={{maxWidth:'440px'}}>
-        <div className="modal-head"><h3>New Conversation</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>New Conversation</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
           <div className="form-row">
             <label>Client *</label>

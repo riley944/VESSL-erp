@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { SB } from '@/lib/supabase';
+import { Overlay } from '@/app/components/ModalGuard';
 
 // ── RegModal (create, edit or delete one vessl.regulations row) ──────────────
 // Extracted from app/testing.jsx so the Codes page can offer the same editor
@@ -21,11 +22,6 @@ const lbl = {display:'block',fontSize:'11px',fontWeight:600,textTransform:'upper
 const hint = {textTransform:'none',letterSpacing:0,fontWeight:400,color:'#A0A0A4'};
 const toast = (msg, type) => { if (typeof window !== 'undefined') window._toast?.(msg, type); };
 
-const Overlay = ({children,onClose}) => (
-  <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.42)',backdropFilter:'blur(2px)',zIndex:300,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'40px 16px',overflowY:'auto'}}>
-    <div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:'18px',boxShadow:'0 12px 48px rgba(0,0,0,.2)',width:'100%',maxWidth:'560px',padding:'24px'}}>{children}</div>
-  </div>
-);
 
 // The four values vessl.regulations.certificate_required accepts, plus the empty
 // case. A <select> rather than a text box because the column carries a CHECK
