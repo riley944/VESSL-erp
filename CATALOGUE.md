@@ -1771,6 +1771,166 @@ move **53 → 54** of 184. A one-line script with its own wants, not an edit to 
 
 ---
 
+## Scripts 50 and 51, as run — 2026-09-11
+
+Both `z0` on rehearsal and commit, `51-after-commit-checks` `z0` and rolled back
+as designed.
+
+### 50 — the Koozie, and the last SKU-less product
+
+Product `78dffbc0`, *Koozie with magnet*, had carried `sku` NULL since it was
+created — the last open item from the 8 September duplicate census.
+
+**Kristy had already done half of it.** She set the quote's SKU to `STC-016` on
+Thursday at 15:55, the save landed, and the follow-on rename died against a table
+script 48 had renamed eight minutes earlier (see below). So 50 wrote **one
+column**, and `b3` asserted the quote still read what she typed rather than
+touching it.
+
+Verified from outside afterwards: the product reads `STC-016`, exactly one row in
+the catalogue holds it, the one quote is hers, zero PO lines and zero SO lines
+carry it — **and `products` now has 0 rows with a NULL sku.**
+
+### 51 — `rename_product_sku` had been broken for a day
+
+**Every SKU rename failed**, whatever SKU it started from. The function read
+`programs.sku` and `programs.quote_sku` in three statements and script 48 had
+replaced that table with one carrying neither column. plpgsql plans a statement
+when it first *executes*, and all three executed even with an empty
+`p_program_ids` — an empty `unnest` yields no rows, but the planner still has to
+resolve the columns.
+
+It landed at **Apply**, not at open: step 1 had removed the modal's client-side
+`programs` query, so the checklist loaded perfectly and the failure arrived after
+somebody had ticked their boxes. Nobody had renamed a SKU since 48, which is the
+only reason it went unnoticed.
+
+**`p_program_ids` stays in the signature, ignored.**
+`RenameSkuModal.jsx:116` is the only call site in the repo — grepped, and the
+only other RPC anywhere in the app is `rfq_digest_rows`. PostgREST resolves a
+function by *argument names*, so dropping the parameter would break that call
+outright, and keeping both signatures would make it ambiguous. It is vestigial,
+and it should be dropped **together with the client**, never one alone.
+
+**The grant was tightened while the function was open.** `EXECUTE` had been held
+by `PUBLIC` since it was created, and `anon` inherits `PUBLIC` — the same default
+script 21 found on the digest function. Smaller exposure here, since this
+function is not `SECURITY DEFINER` and RLS still applied, but **`CREATE OR
+REPLACE` preserves grants**, so the default would have survived the repair
+untouched. Now `anon` false, `authenticated` true, `PUBLIC` none.
+
+**The proof is a rename that actually happened.** 51's own checks are a text
+search over the definition, which cannot tell you the function still works.
+`51-after-commit-checks` creates a throwaway product, renames it **through the
+RPC** rather than by a raw UPDATE that would pass either way, then checks what
+the function *reported* and what the table *holds* as two separate things — a
+report claiming a change nobody made is the failure that pair exists to catch.
+The row is deleted explicitly **and** the transaction rolls back.
+
+### Two checks that were wrong while the repair was right
+
+Worth recording because both failed a correct script, which is the expensive kind
+of wrong:
+
+**`b1` read its own explanation.** It asserted the repaired function no longer
+mentions the programs table by searching `pg_get_functiondef` — and
+`pg_get_functiondef` returns comments along with code, so the tombstone comment
+saying what had been removed satisfied the search. The near miss is worse than it
+looks: the qualified name is a **prefix of the legacy table name**, so a comment
+politely referring to the renamed table would have tripped it too.
+
+**`b4` wanted types where the catalogue renders names.**
+`pg_get_function_identity_arguments` returns `p_product_id uuid, …`, not
+`uuid, …`.
+
+**`b7` was added** to assert nothing `unnest`s `p_program_ids` — the signature
+contains the parameter name, so searching for the name alone proves nothing about
+whether it is read.
+
+**preflight gained rule 9:** *no absence check its own body satisfies*. It finds
+every `position('X' in pg_get_…def(…)) = 0` and fails if `X` also appears inside
+a dollar-quoted body in the same file. **Polarity is the whole point** — a check
+asserting a string is *present* normally wants it in the body, and 51 has three
+of those; only the `= 0` form can be defeated this way. Verified against both the
+original bug and the `programs_legacy` near miss.
+
+Two earlier rules were earned the same day, both by narrowing checks that were
+too broad rather than by bending scripts to satisfy them: `:=` is exempt from the
+colon rule, and that rule now flags `:identifier` rather than any colon at all —
+51's plpgsql body is full of error messages that read like English.
+
+---
+
+## A schema rename broke a colleague's tab — 2026-09-10, 15:55
+
+Kristy reported *"column does not exist"* saving a quote edit on Thursday
+afternoon. Reconstructed from timestamps, and **the two things she reported this
+morning turned out to be the same event.**
+
+### The timeline, to the minute
+
+| time (ET) | what |
+|---|---|
+| **15:36:53** | `c7ecbe2` pushed — step 1, which removes every read of the old `programs` columns |
+| **15:37:25** | that deploy READY |
+| **15:47:00** | **script 48 commits** — `programs` renamed to `programs_legacy`, a new table in its place |
+| **15:55:57** | Kristy saves the Koozie quote, setting its SKU to `STC-016`. `updated_by` is her address |
+| ~16:03 | she reports the error |
+
+**Her tab was loaded before 15:37 and never refreshed**, so it was running the
+pre-step-1 bundle — which still asked `programs` for `sku`, `quote_sku`, `product`
+and `stage`. Script 48 had replaced that table eight minutes earlier, and the new
+one has none of those columns.
+
+**The fix was already deployed 18 minutes before she hit the bug.** Shipping the
+code first is what made the window 18 minutes instead of open-ended — but a
+deploy does nothing for a tab that is already open.
+
+### Her edit did save
+
+`quotes.sku` reads `STC-016`. The quote UPDATE succeeded; what failed was the
+SKU-propagation step *after* it — a SKU change opens `RenameSkuModal`, whose
+preflight queried `programs.sku`. She saw an error and reasonably assumed nothing
+had been saved.
+
+**The product still has `sku` NULL**, because the rename died before touching it.
+Script 50 finishes the job she started.
+
+### The rule this earns
+
+**A schema rename needs a "refresh your browser" heads-up to anyone working.**
+Three deploy-ordering steps were planned and followed precisely so the code would
+never write to a shape that no longer existed — and it still broke, because the
+plan accounted for *deployed code* and not for *running code*. A browser tab is a
+deployment nobody tracks.
+
+For the next rename: post in the channel before running the script, not after.
+The window is however long somebody's tab has been open, which on this team is
+routinely hours.
+
+### And a live bug it uncovered: `rename_product_sku` is broken
+
+Not Kristy's error — a second one, found while checking whether the modal could
+give the Koozie its SKU.
+
+**The function still reads `vessl.programs.sku` and `vessl.programs.quote_sku`**
+in three statements: the program-ownership guard and the two final `return query`
+blocks. Script 48 dropped both columns. Verified directly —
+`select 1 from vessl.programs x where x.sku = 'probe'` returns **42703, column
+x.sku does not exist**.
+
+plpgsql plans a statement when it first executes, and those statements execute
+even with an empty `p_program_ids` array, so **every SKU rename now fails**,
+whatever SKU it starts from. Nobody has renamed one since 48, which is why it has
+gone unnoticed.
+
+Step 1 removed the modal's *client-side* `programs` query, so its preflight loads
+fine and the failure lands at Apply — after the person has ticked their
+checklist. **Needs its own script to strip the three program references**; the
+whole `p_program_ids` parameter has nothing left to address.
+
+---
+
 ## Script 47, as run — 2026-09-10, the last line a script can link
 
 `z0` on rehearsal and commit. One line: `f873c442`, `Blue Bottle Bubble Bath`,
