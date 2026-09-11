@@ -169,6 +169,55 @@ A program is **product x client**. Derived stages come from that client's own
 records: Quoted, Ordered, Shipped, Delivered, Sold. **Two declared stages only** --
 **Inquiry** and **Sampling** -- set manually, which is what Jenn does today.
 
+### REVERSED 2026-09-11 — the pipeline does have a ladder
+
+The section below stands as written **for the six-stage lifecycle**, and the
+panel still renders those six as unordered chips. But Riley's revamp narrowed the
+board to the **pre-order pipeline** — a program on a selectable product with no
+purchase order line and no sales order line, ever — and inside that scope the
+reasoning inverts.
+
+**What changed is the scope, not the argument.** The no-ladder decision rested
+entirely on Sold and Ordered having no fixed order. **The pipeline stops before
+both of them.** `Inquiry → Quoted → Sampling → Tested` is unambiguous: you cannot
+sample what was never inquired about, and testing follows a sample. The
+ambiguity that killed the first attempt now sits on the far side of *complete*,
+where this ladder never reaches.
+
+So there are two facts, not a correction of one:
+
+- **Six-stage lifecycle — no order.** `LIFECYCLE_STAGES`, chips, "has reached".
+- **Four-stage pipeline — ordered.** `PIPELINE_STAGES`, columns, current stage =
+  furthest reached.
+
+Both live in `lib/lifecycle.js` with the reason at each.
+
+**Complete is derived, never stored.** `isComplete` reads the same `ordered` /
+`sold` events the panel derives. A stored flag would need writing at five call
+sites and would be wrong the first time one was missed. `archived` keeps its
+separate meaning: the product is retired.
+
+**The single-value wrinkle, accepted.** `declared_stage` holds *one* value, so a
+program declared Sampling carries no Inquiry record and never will.
+Furthest-reached resolves it — Sampling outranks Quoted, so a sampled-and-quoted
+program sits in Sampling and its Quoted date still shows on the card. The
+alternative was two boolean columns to record something nobody has asked to know.
+
+**Where the board stands on the day it shipped:** 90 in the pipeline — **89
+Quoted, 1 Tested, 0 Inquiry, 0 Sampling** — and 244 complete. Three empty columns
+are the expected state, not a fault: `declared_stage` was NULL on all 334 rows,
+because the declaring only became possible the day before. The empty columns are
+the prompt.
+
+**Phase 2B has moved off PLM.** The factory update sheet is a post-PO artefact —
+by the time a factory reports progress the program has already left this board —
+so the round trip belongs on the purchase order or shipment side. The disabled
+buttons are gone from the page rather than sitting there implying otherwise.
+`programs.expected_ship_date`, `factory_status`, `factory_pct` and
+`factory_reported_at` remain in the table, unused for now.
+
+---
+
 ### There is no stage ladder in 2A, and the reason is a finding
 
 **Sold normally precedes Ordered.** At KUI a *sales order* is the client buying

@@ -48,12 +48,58 @@ html,body{height:100%;overflow:hidden;font-family:var(--sans);font-size:14px;col
 .login-note{color:var(--muted);font-size:12.5px;margin-top:12px;line-height:1.5;}
 
 /* ── SHELL (CSS Grid — sidebar & topbar never scroll) ───── */
+/* THE WIDTH IS A VARIABLE so one value drives the grid column, and collapsing is
+   a class on the shell rather than a second copy of the layout. 240px, not 220,
+   because "Product Life Management" needs 164px at weight 600 and the label only
+   gets width minus 16 margin, 24 padding, 16 icon and 9 gap -- 175px at 240. */
 .app-shell{
+  --sb-w:240px;
   display:grid;
-  grid-template-columns:220px 1fr;
+  grid-template-columns:var(--sb-w) 1fr;
   grid-template-rows:54px 1fr;
   height:100dvh;
   overflow:hidden;}
+
+/* ── COLLAPSED RAIL ────────────────────────────────────────
+   56px, icons only. The labels are not display:none -- they are clipped by the
+   rail, so the accessible name of every button survives for a screen reader and
+   for the tooltip. A hidden label would leave eleven unnamed buttons. */
+.app-shell.sb-collapsed{--sb-w:56px;}
+.sb-collapsed .nav-link{padding:9px 0;justify-content:center;gap:0;margin:1px 4px;width:calc(100% - 8px);}
+.sb-collapsed .nav-link .sb-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
+.sb-collapsed .sb-section{text-align:center;padding:14px 0 5px;font-size:8px;letter-spacing:.12em;}
+.sb-collapsed .sb-brand{padding:16px 8px 14px;justify-content:center;}
+.sb-collapsed .sb-logo-img{max-width:34px;}
+/* The badge cannot sit beside a hidden label, so it becomes a corner dot. The
+   count goes with it -- a two-digit number does not fit a 56px rail, and the
+   dot still says "there is something here", which is what the rail is for. */
+.sb-collapsed .sb-badge{position:absolute;top:5px;right:7px;min-width:8px;width:8px;height:8px;
+  padding:0;border-radius:50%;font-size:0;line-height:0;overflow:hidden;}
+
+/* TOOLTIP, drawn from the label the rail already clips. It escapes the sidebar,
+   so the sidebar cannot be an overflow container while collapsed -- .sb-scroll
+   keeps scrolling vertically and lets x spill. */
+.sb-collapsed .sb-scroll{overflow-x:visible;}
+.sb-collapsed .nav-link{position:relative;}
+.sb-collapsed .nav-link::after{
+  content:attr(data-label);
+  position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%);
+  background:#1D1D1F;color:#fff;font-size:12px;font-weight:500;white-space:nowrap;
+  padding:5px 9px;border-radius:7px;pointer-events:none;opacity:0;
+  transition:opacity .12s;z-index:200;box-shadow:0 2px 10px rgba(0,0,0,.18);}
+.sb-collapsed .nav-link:hover::after,
+.sb-collapsed .nav-link:focus-visible::after{opacity:1;}
+
+/* The toggle sits below the links, on its own rail line. */
+.sb-toggle{
+  flex-shrink:0;display:flex;align-items:center;gap:9px;width:calc(100% - 16px);margin:4px 8px 10px;
+  padding:9px 12px;border:none;background:transparent;border-radius:var(--r-sm);
+  color:var(--faint);font-size:12px;font-weight:500;cursor:pointer;font-family:inherit;
+  text-align:left;transition:.12s;}
+.sb-toggle:hover{color:var(--ink-2);background:var(--soft);}
+.sb-toggle .ic{width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;}
+.sb-collapsed .sb-toggle{justify-content:center;gap:0;padding:9px 0;margin:4px 4px 10px;width:calc(100% - 8px);}
+.sb-collapsed .sb-toggle .sb-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);}
 
 /* ── SIDEBAR (grid col 1, rows 1-2) ───────────────────── */
 .sidebar{
@@ -342,7 +388,19 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
     grid-template-columns:1fr;
     grid-template-rows:54px 1fr;}
 
-  /* Sidebar becomes off-canvas drawer */
+  /* Sidebar becomes off-canvas drawer. THE RAIL DOES NOT APPLY HERE -- a drawer
+     that opens 56px wide would be a worse drawer, and the grid column is not in
+     play once the sidebar is fixed. Collapsing is a desktop affordance. */
+  .app-shell.sb-collapsed{--sb-w:240px;}
+  .sb-collapsed .nav-link{padding:9px 12px;justify-content:flex-start;gap:9px;margin:1px 8px;width:calc(100% - 16px);}
+  .sb-collapsed .nav-link .sb-label{position:static;width:auto;height:auto;clip-path:none;overflow:visible;}
+  .sb-collapsed .nav-link::after{content:none;}
+  .sb-collapsed .sb-brand{padding:20px 20px 18px;justify-content:flex-start;}
+  .sb-collapsed .sb-logo-img{max-width:152px;}
+  .sb-collapsed .sb-section{text-align:left;padding:18px 16px 5px;font-size:9px;letter-spacing:.2em;}
+  .sb-collapsed .sb-badge{position:static;width:auto;height:18px;min-width:18px;padding:0 5px;
+    border-radius:9px;font-size:10.5px;line-height:1;overflow:visible;}
+  .sb-collapsed .sb-toggle{display:none;}
   .sidebar{
     position:fixed;top:0;left:0;bottom:0;width:264px;max-width:84vw;
     grid-column:unset;grid-row:unset;

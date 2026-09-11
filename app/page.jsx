@@ -532,10 +532,28 @@ const storeTab = p => {
   try { window.localStorage.setItem(TAB_KEY, p); } catch (e) {}
 };
 
+// ── The sidebar rail, remembered the same way ─────────────────────────────
+// localStorage, wrapped the same way and for the same reasons -- it throws
+// rather than returning null when storage is unavailable, and a browser that
+// cannot store a preference should still render the app expanded.
+//
+// NOT the hash. The hash carries WHERE YOU ARE, which is worth putting in a URL
+// somebody might share or bookmark; how wide their sidebar is, is not.
+const RAIL_KEY = 'vessl.sidebar';
+const railFromStore = () => {
+  if (typeof window === 'undefined') return false;
+  try { return window.localStorage.getItem(RAIL_KEY) === 'collapsed'; }
+  catch (e) { return false; }
+};
+const storeRail = v => {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(RAIL_KEY, v ? 'collapsed' : 'expanded'); } catch (e) {}
+};
+
 // ── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, role=null }) {
+function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, role=null, collapsed=false, onToggleRail=null }) {
   const links = [
-    { id:'programs',           label:'Programs' },
+    { id:'programs',           label:'Product Life Management' },
     { id:'dashboard',          label:'Insights' },
     { id:'sales-orders',       label:'Sales Orders' },
     { id:'orders',             label:'Purchase Orders' },
@@ -563,9 +581,14 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, rol
       <div className="sb-scroll">
         <div className="sb-section">Workspace</div>
         {shownLinks.map(l => (
-          <button key={l.id} className={'nav-link '+((activeFor[l.id]||[l.id]).includes(page)?'active':'')} onClick={()=>navigate(l.id)}>
+          /* data-label feeds the collapsed tooltip, and the label span stays in
+             the DOM rather than being removed -- clipped, so every button keeps
+             an accessible name on the rail. title is deliberately NOT set: it
+             would double up with the CSS tooltip on hover. */
+          <button key={l.id} data-label={l.label}
+            className={'nav-link '+((activeFor[l.id]||[l.id]).includes(page)?'active':'')} onClick={()=>navigate(l.id)}>
             <span className="ic">{Ic[l.id]}</span>
-            <span style={{flex:1}}>{l.label}</span>
+            <span className="sb-label" style={{flex:1}}>{l.label}</span>
             {badges[l.id]>0 && <span className="sb-badge">{badges[l.id]>99?'99+':badges[l.id]}</span>}
           </button>
         ))}
@@ -574,6 +597,24 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, rol
           existed only to hold it. Settings is reached from the avatar menu now --
           one door, and the one that already had no role check on it. Its CSS went
           with it: .sb-bottom and both .sb-settings rules had no other user. */}
+      {/* Below the links rather than above, so collapsing does not move the thing
+          the pointer is already on. Hidden entirely on the mobile drawer, where a
+          56px rail would be a worse drawer than the one it replaced. */}
+      {onToggleRail && (
+        <button className="sb-toggle" onClick={onToggleRail}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          data-label={collapsed ? 'Expand' : 'Collapse'}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+          <span className="ic">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+              style={{transform: collapsed ? 'rotate(180deg)' : 'none', transition:'transform .16s'}}>
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+          </span>
+          <span className="sb-label" style={{flex:1}}>Collapse</span>
+        </button>
+      )}
     </aside>
   );
 }
@@ -8951,6 +8992,22 @@ export default function App() {
   const [crUnread, setCrUnread] = useState(0);
   const [dreqOpen, setDreqOpen] = useState(0);
 
+  // ── The sidebar rail ──────────────────────────────────────────────────────
+  // UP HERE WITH THE OTHER HOOKS, and that is not a style preference. App has
+  // seven early returns below -- loading, recovery, blocked, no user, not staff,
+  // role not ready, no profile -- so a hook declared after them runs on some
+  // renders and not others. React counts hooks by call order, and the first
+  // render that takes a different path throws "Rendered more hooks than during
+  // the previous render". Every hook in this component must sit above the first
+  // conditional return.
+  //
+  // FALSE ON FIRST RENDER, then corrected in an effect. Reading localStorage
+  // during render would make the server and the client disagree about the first
+  // paint, which is a hydration error rather than a preference.
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  useEffect(()=>{ setRailCollapsed(railFromStore()); },[]);
+  const toggleRail = () => setRailCollapsed(v => { const n = !v; storeRail(n); return n; });
+
   const navigate = (p, pr={}) => { setRawPage(p); setParams(pr); setNavOpen(false); };
 
   // Look up the signed-in user's staff role. Anything that isn't a clean hit on
@@ -9139,14 +9196,16 @@ export default function App() {
   const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations','company-banking':'KUI Banking'};
   const badges = {'client-relations': crUnread, 'shipments': dreqOpen};
 
+
   return (
     <ToastProvider>
-    <div className="app-shell">
+    <div className={'app-shell' + (railCollapsed ? ' sb-collapsed' : '')}>
       <button className="mobile-menu-btn" aria-label="Open menu" onClick={()=>setNavOpen(true)}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <div className={'sidebar-backdrop ' + (navOpen?'show':'')} onClick={()=>setNavOpen(false)} />
-      <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} allowedPages={allowedPages} role={role} />
+      <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} allowedPages={allowedPages} role={role}
+               collapsed={railCollapsed} onToggleRail={toggleRail} />
       <TopBar user={user} displayName={displayName} title="" taskOpen={taskPanelOpen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
       <TaskPanel open={taskPanelOpen} onClose={()=>setTaskPanelOpen(false)} />
       {page==='quotes' ? (
