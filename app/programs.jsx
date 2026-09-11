@@ -387,7 +387,7 @@ export default function Programs({ userEmail }) {
     const p = r.products || {};
     return (
       <div style={{background:'#fff',borderRadius:'12px',boxShadow:'0 1px 2px rgba(0,0,0,.06)',marginBottom:'8px',overflow:'hidden'}}>
-        <button onClick={()=>setOpenId(open?null:r.id)}
+        <button onClick={()=>setOpenId(openId===r.id?null:r.id)}
           style={{display:'block',width:'100%',textAlign:'left',background:'none',border:'none',
                   padding:'11px 13px',cursor:'pointer',fontFamily:'inherit'}}>
           <div style={{fontFamily:'var(--mono)',fontSize:'11.5px',fontWeight:700,color:'#1D1D1F'}}>{p.sku || '—'}</div>
@@ -517,7 +517,7 @@ export default function Programs({ userEmail }) {
             const p = r.products || {};
             return (
               <div key={r.id} style={{borderTop:i>0?'1px solid #F5F5F7':'none'}}>
-                <button onClick={()=>setOpenId(open?null:r.id)}
+                <button onClick={()=>setOpenId(openId===r.id?null:r.id)}
                   style={{display:'flex',width:'100%',textAlign:'left',background:'none',border:'none',gap:'12px',
                           padding:'11px 18px',cursor:'pointer',fontFamily:'inherit',alignItems:'center',flexWrap:'wrap'}}>
                   <span style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:700,color:'#1D1D1F',minWidth:'110px'}}>{p.sku || '—'}</span>
