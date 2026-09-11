@@ -939,7 +939,48 @@ function Platform({ session }) {
       // matches -- a quote implies a product, and nothing else was making them.
       if (!savedRow.product_id) {
         const p = await ensureProductForQuote(savedRow.sku, savedRow.product, { origin: "quote-save", updatedBy: userEmail });
-        if (p) { try { await supabase.from("quotes").update({ product_id: p.id }).eq("id", savedRow.id).is("product_id", null); } catch (e) {} }
+        if (p) {
+          try { await supabase.from("quotes").update({ product_id: p.id }).eq("id", savedRow.id).is("product_id", null); } catch (e) {}
+          savedRow = { ...savedRow, product_id: p.id };
+        }
+      }
+
+      // ── THE CLIENT LINK, RESOLVED ON EVERY SAVE ───────────────────────────
+      // quotes.client is free text and client_company_id is the real link.
+      // Script 48 backfilled 328 of 331, but NOTHING WAS MAINTAINING IT -- the
+      // save payload never mentioned the column, so the next quote saved would
+      // have been the first of a new gap. Caught before it drifted: the newest
+      // quote predates that script.
+      //
+      // Resolved on every save rather than only when null, because the client
+      // text can be EDITED. A quote moved from one client to another would
+      // otherwise keep pointing at the first one, which is worse than pointing
+      // at nobody.
+      //
+      // Exactly one match, or NULL. Zero matches and several matches are both
+      // "cannot be trusted", and NULL is what the rest of the app reads as not
+      // resolved -- the 3 quotes naming Legal and Legoland New York sit there
+      // today and are a known question for Kristy.
+      try {
+        const name = (savedRow.client || "").trim();
+        let cid = null;
+        if (name) {
+          const { data: hits } = await supabase.from("companies").select("id").ilike("name", name);
+          if (hits && hits.length === 1) cid = hits[0].id;
+        }
+        if (cid !== (savedRow.client_company_id || null)) {
+          await supabase.from("quotes").update({ client_company_id: cid }).eq("id", savedRow.id);
+          savedRow = { ...savedRow, client_company_id: cid };
+        }
+      } catch (e) {}
+
+      // A QUOTE IS THE PROGRAM STARTING, so the board shows it now rather than
+      // waiting for Mark won or a Sync. Idempotent by the unique constraint, and
+      // it never updates -- so re-saving a quote cannot disturb a declared stage
+      // or resurrect an archived program. A quote missing either id names no
+      // program and is skipped in silence; the save already succeeded.
+      if (savedRow.product_id && savedRow.client_company_id) {
+        try { await ensurePrograms([[savedRow.product_id, savedRow.client_company_id]]); } catch (e) {}
       }
       // Ask on the OLD key -- renamed, or a different product? Kristy's words on
       // why any of this exists: "if I have to update information on multiple

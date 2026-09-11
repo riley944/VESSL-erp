@@ -37,6 +37,124 @@ const COL = {
 
 const norm = t => (t || '').toLowerCase();
 
+// ── STARTING A PROGRAM BY HAND ──────────────────────────────────────────────
+// Without this, Inquiry is UNREACHABLE. Every other stage arrives with a record
+// -- a quote, an order, a test report -- and a program only exists once one of
+// those names the pair. But Inquiry is the stage BEFORE any record exists, which
+// is exactly why it has to be declared, and there was no way to declare it on a
+// program that could not yet be created.
+//
+// NO QUOTE REQUIRED, and that is the point. A client asking about a product is
+// the beginning of the work, and pricing it is a later step that may never
+// happen.
+function StartProgramModal({ onClose, onCreated }) {
+  const [products, setProducts] = useState([]);
+  const [clients, setClients]   = useState([]);
+  const [pid, setPid] = useState('');
+  const [cid, setCid] = useState('');
+  const [q, setQ]     = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr]   = useState('');
+
+  useEffect(() => {
+    (async () => {
+      const [pr, co] = await Promise.all([
+        // SELECTABLE ONLY. A retired product is not something anyone is starting
+        // new work on, and the board would not show the program anyway.
+        SB.from('products').select('id,sku,name,active').order('sku'),
+        SB.from('companies').select('id,name').eq('type','client').order('name'),
+      ]);
+      setProducts((pr.data || []).filter(x => x.active !== false));
+      setClients(co.data || []);
+    })();
+  }, []);
+
+  const shown = useMemo(() => {
+    if (!q) return products.slice(0, 60);
+    const n = norm(q);
+    return products.filter(x => (norm(x.sku) + ' ' + norm(x.name)).includes(n)).slice(0, 60);
+  }, [products, q]);
+
+  const create = async () => {
+    if (!pid || !cid) return;
+    setBusy(true); setErr('');
+    // Inserted directly rather than through ensurePrograms, because this needs to
+    // SET a declared stage and ensurePrograms deliberately never updates. A pair
+    // that already has a program is reported rather than silently ignored -- the
+    // person is trying to start something and deserves to know it exists.
+    const { error } = await SB.from('programs')
+      .insert({ product_id: pid, client_company_id: cid, declared_stage: 'inquiry' });
+    setBusy(false);
+    if (error) {
+      setErr(/duplicate|unique/i.test(error.message)
+        ? 'That product already has a program for that client. Find it on the board or under Completed.'
+        : error.message);
+      return;
+    }
+    onCreated();
+  };
+
+  const chosen = products.find(x => x.id === pid);
+
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal-box" style={{maxWidth:'520px'}}>
+        <div className="modal-head"><h3>Start a program</h3><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-body">
+          <p style={{margin:'0 0 16px',fontSize:'12.5px',color:'#8A8A8E',lineHeight:1.55}}>
+            For a product a client has asked about before there is a quote. It starts at
+            Inquiry and moves on its own once a quote, an order or a test report names it.
+          </p>
+
+          <label style={{display:'block',fontSize:'11px',fontWeight:600,textTransform:'uppercase',
+                         letterSpacing:'.06em',color:'#86868B',marginBottom:'5px'}}>Client</label>
+          <select className="form-input" value={cid} onChange={e=>setCid(e.target.value)} style={{marginBottom:'16px'}}>
+            <option value="">Pick a client…</option>
+            {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+
+          <label style={{display:'block',fontSize:'11px',fontWeight:600,textTransform:'uppercase',
+                         letterSpacing:'.06em',color:'#86868B',marginBottom:'5px'}}>Product</label>
+          <input className="form-input" value={q} onChange={e=>{setQ(e.target.value);setPid('');}}
+            placeholder="Search by SKU or name…" style={{marginBottom:'8px'}} />
+          <div style={{maxHeight:'210px',overflowY:'auto',border:'1px solid rgba(0,0,0,.08)',borderRadius:'10px'}}>
+            {shown.length === 0 ? (
+              <div style={{padding:'14px',fontSize:'12.5px',color:'#A0A0A4'}}>No selectable product matches.</div>
+            ) : shown.map(x => (
+              <button key={x.id} onClick={()=>setPid(x.id)}
+                style={{display:'block',width:'100%',textAlign:'left',border:'none',cursor:'pointer',
+                        fontFamily:'inherit',padding:'8px 11px',
+                        background:pid===x.id?'#EAF3FE':'transparent'}}>
+                <span style={{fontFamily:'var(--mono)',fontSize:'11.5px',fontWeight:700,color:'#1D1D1F'}}>{x.sku || '—'}</span>
+                <span style={{fontSize:'12.5px',color:'#5A5A5E',marginLeft:'8px'}}>{x.name || '—'}</span>
+              </button>
+            ))}
+          </div>
+          {/* 60 is a render cap, not a filter. Saying so stops a missing product
+              reading as "not in the catalogue" when it is simply further down. */}
+          {!q && products.length > 60 && (
+            <div style={{fontSize:'11px',color:'#A0A0A4',marginTop:'6px'}}>
+              Showing 60 of {products.length}. Search to narrow.
+            </div>
+          )}
+          {err && <div style={{marginTop:'12px',fontSize:'12.5px',color:'var(--hot)',lineHeight:1.5}}>{err}</div>}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-dark" onClick={create} disabled={!pid || !cid || busy}>
+            {busy ? 'Starting…' : 'Start at Inquiry'}
+          </button>
+        </div>
+        {chosen && cid && (
+          <div style={{padding:'0 22px 16px',fontSize:'11.5px',color:'#8A8A8E'}}>
+            {chosen.sku} for {(clients.find(c=>c.id===cid)||{}).name}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Programs({ userEmail }) {
   const [rows, setRows]   = useState([]);
   const [ev, setEv]       = useState(null);
@@ -48,6 +166,7 @@ export default function Programs({ userEmail }) {
   const [openId, setOpenId] = useState(null);
   const [saving, setSaving] = useState(null);
   const [sweeping, setSweeping] = useState(false);
+  const [starting, setStarting] = useState(false);
 
   const load = async () => {
     setLoad(true); setErr('');
@@ -232,6 +351,8 @@ export default function Programs({ userEmail }) {
 
   return (
     <div style={{padding:'26px 30px 60px'}}>
+      {starting && <StartProgramModal onClose={()=>setStarting(false)}
+        onCreated={async()=>{ setStarting(false); await load(); window._toast?.('Program started at Inquiry','ok'); }} />}
       {/* Centred, and the count on its own line beneath. The description
           paragraph that sat here is gone -- the columns and their placeholders
           already say what the board is, and a paragraph nobody rereads after the
@@ -265,6 +386,11 @@ export default function Programs({ userEmail }) {
           <FilterSelect multiple label="All stages" value={stageSel} onChange={setStageSel} options={stageOptions} />
         )}
         <div style={{flex:1}} />
+        <button onClick={()=>setStarting(true)}
+          style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'7px 14px',border:'none',
+                  cursor:'pointer',fontFamily:'inherit',background:'#1D1D1F',color:'#fff'}}>
+          Start a program
+        </button>
         <button onClick={sweep} disabled={sweeping}
           title="Create programs for any product and client pair the records prove but the list is missing"
           style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'7px 13px',
