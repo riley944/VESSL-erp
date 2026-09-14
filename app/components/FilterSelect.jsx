@@ -23,7 +23,16 @@ const PANEL_MAX = 380;
 //
 // Single-select is untouched by all of it: multiple defaults false, and the Client
 // filter still passes a string and gets a string back.
-export function FilterSelect({ label, value, onChange, options = [], multiple = false }){
+// `ordered` changes what the collapsed button says in multi mode: instead of
+// "2 selected" it names the chosen options IN THE ORDER THEY WERE TICKED,
+// "CRD earliest, Newest SO".
+//
+// That is only worth doing where the order MEANS something. For Clients and
+// Statuses it does not -- a set of four clients has no first -- and naming them
+// all would overflow the button, which is why counting is the default. For a
+// sort the order is the whole point: it is the priority, and a control that hid
+// it behind "2 selected" would be hiding the thing being chosen.
+export function FilterSelect({ label, value, onChange, options = [], multiple = false, ordered = false }){
   const [open,   setOpen]   = useState(false);
   const [active, setActive] = useState(-1);
   const [pos,    setPos]    = useState(null);
@@ -57,6 +66,9 @@ export function FilterSelect({ label, value, onChange, options = [], multiple = 
   const btnLabel = !multiple ? (selected ? selected.label : label)
                  : chosen.length === 0 ? label
                  : chosen.length === 1 ? chosen[0].label
+                 // sel, not chosen: chosen is in OPTIONS order, and the whole
+                 // point here is the order they were picked in.
+                 : ordered ? sel.map(v=>(options.find(o=>o.value===v)||{}).label).filter(Boolean).join(', ')
                  : chosen.length + ' selected';
 
   const place = useCallback(()=>{

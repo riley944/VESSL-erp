@@ -304,7 +304,7 @@ function distinctClients(rows){
   const m={}; (rows||[]).forEach(p=>{ const c=poClient(p); if(c) m[c]=(m[c]||0)+1; });
   return Object.entries(m).sort((a,b)=>a[0].localeCompare(b[0]));
 }
-const PO_CARD_SELECT = 'id,order_number,client_po_number,status,production_pct,order_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
+const PO_CARD_SELECT = 'id,order_number,client_po_number,status,order_date,cargo_ready_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
 
 function OrderCard({ p, navigate, onStatus }){
   const client = poClient(p), factory = poFactory(p);
@@ -331,7 +331,24 @@ function OrderCard({ p, navigate, onStatus }){
         </div>
       </div>
       <div className="po-card-foot">
-        <span className="po-card-meta">{fmtDate(p.order_date)}{itemCount>0?' · '+itemCount+' item'+(itemCount!==1?'s':''):''}</span>
+        {/* CRD, NOT the order date, because this is the date people scan the
+            grid FOR -- Kristy was opening cards one at a time to find it.
+            order_date told them almost nothing here: the list sorts by
+            created_at, and a batch of 11 POs entered on one day carries that
+            day as its order date, so the top of the grid read as one date
+            repeated.
+
+            NO FALLBACK TO requested_ship_date, even though the PO detail view
+            does exactly that. A ship date shown under a CRD label is the kind
+            of quiet wrong that costs more than a blank: 35 of 68 POs have a
+            CRD and 40 have a requested ship date, so the fallback would put a
+            confident wrong date on cards that genuinely have no CRD. */}
+        <span className="po-card-meta">
+          {p.cargo_ready_date
+            ? 'CRD '+fmtDate(p.cargo_ready_date)
+            : <span style={{color:'var(--faint)'}}>No CRD</span>}
+          {itemCount>0?' · '+itemCount+' item'+(itemCount!==1?'s':''):''}
+        </span>
         {onStatus
           ? <select className="po-card-select" value={p.status} onClick={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();onStatus(p.id,e.target.value);}}>{SO_STATUSES.map(s=><option key={s} value={s}>{(SO_SM[s]?.label)||s.replace(/_/g,' ')}</option>)}</select>
           : <span className="po-card-meta">Ship {fmtDate(p.requested_ship_date)}</span>}
@@ -548,6 +565,47 @@ const railFromStore = () => {
 const storeRail = v => {
   if (typeof window === 'undefined') return;
   try { window.localStorage.setItem(RAIL_KEY, v ? 'collapsed' : 'expanded'); } catch (e) {}
+};
+
+// ── The Sales Orders sort and CRD filter, remembered the same way ──────────
+// NO FILTER ON ANY PAGE PERSISTED BEFORE THIS. Every one of them -- client,
+// status, search, here and on Purchase Orders, Testing and Quotes -- is a plain
+// useState that dies when the page unmounts, so walking to an order and back
+// has always reset the screen. Kristy asked for these two to survive that.
+//
+// Same wrapped-localStorage idiom as TAB_KEY and RAIL_KEY above rather than a
+// new one: it throws instead of returning null when storage is unavailable, and
+// a browser that cannot remember a sort should still render the page.
+//
+// localStorage and not sessionStorage, to match the two above -- a home-screen
+// re-launch is a new session, which is exactly when a remembered choice is worth
+// having.
+const SO_SORT_KEY = 'vessl.so.sort';
+const SO_CRD_KEY  = 'vessl.so.crd';
+// Unrecognised values fall back to the default rather than being trusted: the
+// stored string is whatever was in localStorage, which is not necessarily
+// something this build still understands.
+const SO_SORTS = ['newest', 'oldest', 'crd_asc', 'crd_desc'];
+// Opposites. Ticking one side unticks the other, because no ordering can be both
+// ascending and descending on the same key -- a control that allowed both would
+// have to silently drop one, and the one it dropped would be a guess.
+const SO_SORT_OPPOSITE = { newest:'oldest', oldest:'newest', crd_asc:'crd_desc', crd_desc:'crd_asc' };
+const SO_CRDS  = ['has', 'none'];
+const readStore = (key, allowed, dflt) => {
+  if (typeof window === 'undefined') return dflt;
+  try { const v = window.localStorage.getItem(key); return allowed.includes(v) ? v : dflt; }
+  catch (e) { return dflt; }
+};
+const writeStore = (key, v) => {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(key, v); } catch (e) {}
+};
+// The multi version. '' round-trips as [] -- an empty selection is All, which is
+// the membership contract FilterSelect already keeps for Clients and Statuses.
+const readStoreSet = (key, allowed) => {
+  if (typeof window === 'undefined') return [];
+  try { return (window.localStorage.getItem(key) || '').split(',').filter(x => allowed.includes(x)); }
+  catch (e) { return []; }
 };
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
@@ -1597,6 +1655,9 @@ function SOBadge({status}){
   return <span style={{display:'inline-flex',alignItems:'center',padding:'3px 9px',borderRadius:'20px',fontSize:'10px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',background:m.bg,color:m.color,whiteSpace:'nowrap'}}>{m.label}</span>;
 }
 
+// UNUSED. Defined here and rendered nowhere -- the Sales Orders grid builds its
+// cards inline in SalesOrders below. Left as it was rather than updated, so it
+// does not look like a live surface that has been kept in step.
 function SOCard({so,onClick}){
   const {rev,cost,mgn}=soMetrics(so);
   const cl=so.client?.name||'—'; const mc=mgnSignColor(mgn);
@@ -1634,16 +1695,75 @@ function SalesOrders({navigate}){
   const [search,setSearch]=useState('');
   const [statusF,setStatusF]=useState([]);
   const [clientF,setClientF]=useState([]);
+  // Lazy initialisers: localStorage is read once on mount rather than on every
+  // render, and never during the server pass.
+  // Never empty. Nothing stored, a stored value this build no longer knows, or
+  // unticking the last option all land on Newest SO rather than on no sort --
+  // there is no such thing as an unsorted list on screen.
+  const [sortBy,setSortByRaw]=useState(()=>{
+    const v=readStoreSet(SO_SORT_KEY, SO_SORTS);
+    return v.length ? v : ['newest'];
+  });
+  const [crdF,setCrdFRaw]=useState(()=>readStoreSet(SO_CRD_KEY, SO_CRDS));
+  // The incoming array is whatever FilterSelect built by appending or removing
+  // one value, so selection order is already priority order. All this adds is the
+  // exclusivity: drop the opposite of anything newly present.
+  const setSortBy=next=>{
+    const added=(next||[]).filter(v=>!sortBy.includes(v));
+    const drop=new Set(added.map(v=>SO_SORT_OPPOSITE[v]).filter(Boolean));
+    const cleaned=(next||[]).filter(v=>!drop.has(v));
+    const final=cleaned.length ? cleaned : ['newest'];
+    setSortByRaw(final); writeStore(SO_SORT_KEY, final.join(','));
+  };
+  const setCrdF  =v=>{ setCrdFRaw(v);   writeStore(SO_CRD_KEY,  (v||[]).join(',')); };
   const [showCreate,setShowCreate]=useState(false);
   const load=async()=>{ setLoading(true); const {data}=await SB.from('sales_orders').select('*,client:companies!client_company_id(id,name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(unit_price,quantity))),order_costs(amount,kind)').order('created_at',{ascending:false}); setRows(data||[]); setLoading(false); };
   useEffect(()=>{ load(); },[]);
   const clients=[...new Set(rows.map(r=>r.client?.name).filter(Boolean))].sort();
-  const shown=rows.filter(r=>{
+  const preCrd=rows.filter(r=>{
     if(!inSel(statusF,r.status)) return false;
     if(!inSel(clientF,r.client?.name)) return false;
     if(search){ const q=search.toLowerCase(); return (r.so_number||'').toLowerCase().includes(q)||(r.client_po_number||'').toLowerCase().includes(q)||(r.client?.name||'').toLowerCase().includes(q); }
     return true;
   });
+  const shownUnsorted=preCrd.filter(r=>inSel(crdF, r.cargo_ready_date ? 'has' : 'none'));
+
+  // NO-CRD ORDERS GO LAST AS A GROUP, never interleaved and never read as date
+  // zero. 26 of 68 sales orders have no CRD, so a comparator that treated a
+  // missing date as the epoch would pile them all at the front of "earliest
+  // first" -- the exact orders that cannot be earliest, in the slot that claims
+  // they are.
+  //
+  // Within that group the existing order is kept, which is what makes this
+  // stable: Array.prototype.sort is required to be stable, so returning 0 leaves
+  // the two rows as the fetch ordered them (created_at descending).
+  // ONE COMPARATOR PER KEY, applied in the order they were ticked: the first
+  // decides, and the next only speaks when the first calls it a tie.
+  //
+  // UNDATED LAST LIVES INSIDE THE CRD COMPARATOR, not outside the chain. So when
+  // a CRD sort is primary the no-CRD orders fall to the bottom of the whole list,
+  // and when it is a tie-breaker they fall to the bottom of each tie group. Both
+  // are the same rule -- a missing date never compares as a date -- rather than
+  // two rules that could disagree.
+  const CMP = {
+    newest:  (a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')),
+    oldest:  (a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')),
+    crd_asc: (a,b)=>{ const A=a.cargo_ready_date,B=b.cargo_ready_date;
+                      if(!A&&!B) return 0; if(!A) return 1; if(!B) return -1;
+                      return A.localeCompare(B); },
+    crd_desc:(a,b)=>{ const A=a.cargo_ready_date,B=b.cargo_ready_date;
+                      if(!A&&!B) return 0; if(!A) return 1; if(!B) return -1;
+                      return B.localeCompare(A); },
+  };
+  // Nothing ticked is Newest SO -- the same ordering the query already returns,
+  // so the default still sorts nothing.
+  const sortKeys = sortBy.length ? sortBy : ['newest'];
+  const shown = sortKeys.length===1 && sortKeys[0]==='newest' ? shownUnsorted
+              : [...shownUnsorted].sort((a,b)=>{
+                  for(const k of sortKeys){ const c=(CMP[k]||(()=>0))(a,b); if(c) return c; }
+                  return 0;
+                });
+
   const totals=shown.reduce((a,so)=>{ const m=soMetrics(so); return {rev:a.rev+m.rev,cost:a.cost+m.cost,n:a.n+1}; },{rev:0,cost:0,n:0});
   const totalMgn=totals.rev>0?(totals.rev-totals.cost)/totals.rev*100:null;
   const totalUnits = shown.reduce((a,so)=>a+(so.sales_order_items||[]).reduce((b,i)=>b+(Number(i.quantity)||0),0),0);
@@ -1654,6 +1774,28 @@ function SalesOrders({navigate}){
   const statusOptions = [
     { value:'', label:'All Statuses' },
     ...SO_STATUSES.map(s=>{ const m=SO_SM[s]; return { value:s, label:(m&&m.label)||s.replace(/_/g,' '), color:m&&m.color, bg:m&&m.bg }; }),
+  ];
+  // Counted off the OTHER filters, not off shown, so the numbers do not collapse
+  // to "n and 0" the moment a CRD option is picked.
+  const crdOptions = [
+    { value:'',     label:'All CRD', count:preCrd.length },
+    { value:'has',  label:'Has CRD', count:preCrd.filter(r=>r.cargo_ready_date).length },
+    { value:'none', label:'No CRD',  count:preCrd.filter(r=>!r.cargo_ready_date).length },
+  ];
+  // Multi, and the ORDER of the ticks is the priority -- first is the primary
+  // sort, the rest are tie-breakers. Opposites are mutually exclusive, handled in
+  // setSortBy rather than here.
+  // Single-select: FilterSelect takes a string and hands one back when multiple
+  // is absent, which is what the Client filter already relies on.
+  const sortOptions = [
+    // NO ALL ROW. The other three controls have one because an empty filter is a
+    // real state -- All Clients narrows nothing. An empty SORT is not a state:
+    // the list is always in some order, so there is nothing for All to mean here
+    // that Newest SO does not already say.
+    { value:'newest',   label:'Newest SO' },
+    { value:'oldest',   label:'Oldest SO' },
+    { value:'crd_asc',  label:'CRD earliest' },
+    { value:'crd_desc', label:'CRD latest' },
   ];
   return (
     <div className="db-wrap" style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
@@ -1706,6 +1848,8 @@ function SalesOrders({navigate}){
           <FilterSelect multiple label="All Clients" value={clientF} onChange={setClientF} options={clientOptions} />
         )}
         <FilterSelect multiple label="All Statuses" value={statusF} onChange={setStatusF} options={statusOptions} />
+        <FilterSelect multiple label="All CRD" value={crdF} onChange={setCrdF} options={crdOptions} />
+        <FilterSelect multiple ordered label="Newest SO" value={sortBy} onChange={setSortBy} options={sortOptions} />
       </div>
 
       {/* Orders — distinct 2-col card grid */}
@@ -1748,9 +1892,21 @@ function SalesOrders({navigate}){
                       <div style={{fontSize:'10px',color:'#A0A0A4',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:'2px'}}>Units</div>
                       <div style={{fontSize:'14px',fontWeight:600,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{fmtNum(units)}</div>
                     </div>
+                    {/* CRD, NOT the order date. This is the slot people scan the
+                        grid for -- Kristy was opening cards one at a time to find
+                        it -- and order_date said little here: a batch of 11 sales
+                        orders entered on one day carries that day as its order
+                        date, so the grid read as one date repeated.
+
+                        cargo_ready_date ONLY. No fallback to required_ship_date,
+                        matching the PO card: a ship date under a CRD label is the
+                        kind of quiet wrong that costs more than a blank. 26 of 68
+                        sales orders have no CRD and will say so. */}
                     <div style={{textAlign:'center'}}>
-                      <div style={{fontSize:'10px',color:'#A0A0A4',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:'2px'}}>Ordered</div>
-                      <div style={{fontSize:'13px',fontWeight:500,color:'#4A4A4E'}}>{so.order_date?fmtDateShort(so.order_date):'—'}</div>
+                      <div style={{fontSize:'10px',color:'#A0A0A4',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:'2px'}}>CRD</div>
+                      <div style={{fontSize:'13px',fontWeight:500,color:so.cargo_ready_date?'#4A4A4E':'#B0B0B4'}}>
+                        {so.cargo_ready_date?fmtDateShort(so.cargo_ready_date):'No CRD'}
+                      </div>
                     </div>
                     <div style={{textAlign:'right'}}>
                       <div style={{fontSize:'10px',color:'#A0A0A4',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:'2px'}}>Value</div>
@@ -3102,10 +3258,25 @@ function Orders({ navigate }) {
   const load = async () => {
     setLoading(true);
     let { data, error } = await SB.from('purchase_orders').select(PO_CARD_SELECT).order('created_at',{ascending:false});
-    // Fallback: if client_po_number isn't recognized by the schema cache yet, retry without it
+    // Fallback for a column the schema cache has not caught up with yet.
+    //
+    // IT SAYS SO NOW. Silently degrading is how a 400 went unnoticed for months:
+    // the primary select named production_pct, which exists in no table in this
+    // database, so PostgREST rejected every request and this path rendered the
+    // whole grid -- dropping client_po_number, so cards showed internal numbers
+    // where client PO numbers belong, and nobody had any reason to suspect it.
+    // A fallback that hides the failure it exists to survive is worse than no
+    // fallback at all.
+    //
+    // It also carries the same columns the primary does, so the degraded render
+    // differs in behaviour rather than in content.
     if (error) {
-      const fallback = 'id,order_number,status,order_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
+      console.error('[Orders] Primary purchase_orders select failed — rendering from the reduced fallback query. '
+                  + 'Cards may be missing fields. PostgREST said:', error.message, error);
+      window._toast?.('Purchase orders loaded on a reduced query — check the console', 'err');
+      const fallback = 'id,order_number,client_po_number,status,order_date,cargo_ready_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
       const retry = await SB.from('purchase_orders').select(fallback).order('created_at',{ascending:false});
+      if (retry.error) console.error('[Orders] Fallback select failed too:', retry.error.message, retry.error);
       data = retry.data;
     }
     setRows(data||[]);
