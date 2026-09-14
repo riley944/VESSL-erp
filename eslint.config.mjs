@@ -18,8 +18,31 @@ export default [
       ecmaVersion: 'latest',
       sourceType: 'module',
       parserOptions: { ecmaFeatures: { jsx: true } },
+      // Declared by hand rather than pulled from the `globals` package, to keep
+      // this config dependency-free. Everything here is something the app really
+      // uses; anything missing shows up as a no-undef error naming it, which is
+      // a one-line fix rather than a mystery.
+      globals: Object.fromEntries([
+        'window','document','navigator','location','history','screen',
+        'console','fetch','Headers','Request','Response','FormData','Blob','File','FileReader',
+        'URL','URLSearchParams','AbortController','TextEncoder','TextDecoder',
+        'localStorage','sessionStorage','indexedDB',
+        'setTimeout','clearTimeout','setInterval','clearInterval','queueMicrotask',
+        'requestAnimationFrame','cancelAnimationFrame',
+        'alert','confirm','prompt','atob','btoa','structuredClone','crypto',
+        'Image','Audio','Event','CustomEvent','MutationObserver','ResizeObserver','IntersectionObserver',
+        'Element','HTMLElement','Node','DOMParser','getComputedStyle',
+        'process','Buffer','globalThis','React',
+      ].map(k => [k, 'readonly'])),
     },
     rules: {
+      // THE SIBLING RULE, and the one that catches the other half of this class.
+      // no-restricted-globals catches a deleted local that resolves to a real
+      // browser global; no-undef catches a reference that resolves to nothing at
+      // all -- which is how a row marker shipped reading orderedIds inside a
+      // component that never received it. It threw at render, on a tab nobody
+      // had opened yet, rather than at build.
+      'no-undef': 'error',
       'no-restricted-globals': ['error',
         { name: 'open',   message: 'window.open. Did you mean a local named open? Rename the local or write window.open explicitly.' },
         { name: 'close',  message: 'window.close. Did you mean a local? Rename it or write window.close explicitly.' },

@@ -217,6 +217,7 @@ export default function Testing({ userEmail = '' }) {
   const [prodRegs, setProdRegs] = useState([]);
   const [prodOrders, setProdOrders] = useState([]);
   const [prodSales, setProdSales] = useState([]);
+  const [prodQuotes, setProdQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // {type:'material'|'report'|'link', data}
   const [search, setSearch] = useState('');
@@ -245,7 +246,7 @@ export default function Testing({ userEmail = '' }) {
 
   const load = async () => {
     setLoading(true);
-    const [p, m, r, rg, lb, pm, pr, ord, sold] = await Promise.all([
+    const [p, m, r, rg, lb, pm, pr, ord, sold, qt] = await Promise.all([
       // Every column CreateProductModal edits has to be named here. This select is not
       // `*`, so anything left off arrives undefined -- the modal renders that field blank
       // whatever the row holds, and Save writes null, or 0 for the numerics, back over it.
@@ -310,10 +311,11 @@ export default function Testing({ userEmail = '' }) {
       // and the SO write now keeps them filled. Loaded only to answer the
       // page-level question below; nothing on this page renders a sales order.
       SB.from('sales_order_items').select('product_id').not('product_id','is',null),
+      SB.from('quotes').select('product_id').not('product_id','is',null),
     ]);
     setProducts(p.data||[]); setMaterials(m.data||[]); setReports(r.data||[]);
     setRegs(rg.data||[]); setLabs(lb.data||[]); setProdMats(pm.data||[]); setProdRegs(pr.data||[]);
-    setProdOrders(ord.data||[]); setProdSales(sold.data||[]);
+    setProdOrders(ord.data||[]); setProdSales(sold.data||[]); setProdQuotes(qt.data||[]);
     setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
@@ -449,6 +451,35 @@ export default function Testing({ userEmail = '' }) {
   // "everything". Active and Not Set are ticked on load; an empty selection means
   // all three, so clearing it is how retired rows come back. Reachable, never the
   // first thing you see.
+  // ── ORDERED IS DERIVED, AND SITS BESIDE active RATHER THAN REPLACING IT ──
+  // active means a person decided this is in service. Ordered means somebody
+  // actually bought it. They are different questions, and script 52 reconciled
+  // the flag against the orders once precisely so that the two could stop being
+  // confused with each other -- collapsing them now would undo that.
+  //
+  // Three states, and they partition: a product has PO lines, or it has none but
+  // has been quoted, or it has neither. 86 / 250 / 16 today.
+  const orderedIds = useMemo(()=>new Set(prodOrders.map(r=>r.product_id)),[prodOrders]);
+  const quotedIds  = useMemo(()=>new Set(prodQuotes.map(r=>r.product_id)),[prodQuotes]);
+  const orderStateOf = p => orderedIds.has(p.id) ? 'ordered'
+                    : quotedIds.has(p.id)  ? 'notordered'
+                    : 'neverused';
+  const orderCounts = useMemo(()=>{
+    const c = { ordered:0, notordered:0, neverused:0 };
+    products.forEach(p=>{ c[orderStateOf(p)]++; });
+    return c;
+  },[products, orderedIds, quotedIds]);
+  // Empty is All, like every other multi filter on this page. No default
+  // narrowing: this is a new axis and hiding rows behind it on first load would
+  // be a surprise, not a convenience.
+  const [orderSel, setOrderSel] = useState([]);
+  const orderOptions = useMemo(()=>[
+    { value:'', label:'All order states', count:products.length },
+    { value:'ordered',    label:'Ordered',        color:'var(--ok)',    count:orderCounts.ordered },
+    { value:'notordered', label:'Not yet ordered', color:'var(--muted)', count:orderCounts.notordered },
+    { value:'neverused',  label:'Never used',     color:'var(--muted)', count:orderCounts.neverused },
+  ],[orderCounts, products.length]);
+
   const [catSel, setCatSel] = useState(['active','notset']);
   const catKey = p => p.active === false ? 'inactive' : p.active === true ? 'active' : 'notset';
   const catCounts = useMemo(()=>{
@@ -606,6 +637,7 @@ export default function Testing({ userEmail = '' }) {
     // Retired rows are compliance history and stay reachable; they are just not
     // what this page opens on.
     if (!isAll(catSel)) list = list.filter(p => inSel(catSel, catKey(p)));
+    if (!isAll(orderSel)) list = list.filter(p => inSel(orderSel, orderStateOf(p)));
     // Not a filter axis -- a shortcut attached to the page-level line, so it is
     // not in the dropdown row and does not participate in isDefaultCat.
     if (movedOnly) list = list.filter(p => movedPast.has(p.id));
@@ -660,7 +692,7 @@ export default function Testing({ userEmail = '' }) {
     return list;
     // Joined rather than passed raw: each selection is a fresh array identity on every
     // render, which would defeat the memo entirely.
-  }, [products, q, compSel.join(), efSel.join(), brandSel.join(), stageSel.join(), dateSel.join(), clientSel.join(), catSel.join(), movedOnly, movedPast, ordersByProduct]);
+  }, [products, q, compSel.join(), efSel.join(), brandSel.join(), stageSel.join(), dateSel.join(), clientSel.join(), catSel.join(), orderSel.join(), movedOnly, movedPast, ordersByProduct]);
   // -- EXPORT WHAT IS ON SCREEN -----------------------------------------------
   // shownProducts, NOT products and not selectableProducts. The whole point is that
   // Jenn narrows the table first and exports that -- search, all seven filter axes and
@@ -708,9 +740,11 @@ export default function Testing({ userEmail = '' }) {
       ? sel.map(v => (opts.find(o => String(o.value) === String(v)) || {}).label || String(v)).join(', ')
       : 'All';
     const CAT = { active:'Active', notset:'Not set', inactive:'Inactive' };
+    const USE = { ordered:'Ordered', notordered:'Not yet ordered', neverused:'Never used' };
     return [
       ['Search', search.trim() || '(none)'],
       ['Catalogue status', catSel.length ? catSel.map(v => CAT[v] || v).join(', ') : 'All'],
+    ['Order state', orderSel.length ? orderSel.map(v => USE[v] || v).join(', ') : 'All'],
       ['Compliance', labelsFor(compSel,  compOptions)],
       ['eFiling',    labelsFor(efSel,    efOptions)],
       ['Brand',      labelsFor(brandSel, brandOptions)],
@@ -1111,6 +1145,7 @@ export default function Testing({ userEmail = '' }) {
                 question about a product -- and the only one that opens with a
                 selection already made. */}
             <FilterSelect multiple label="All catalogue statuses" value={catSel} onChange={setCatSel} options={catOptions} />
+            <FilterSelect multiple label="All order states" value={orderSel} onChange={setOrderSel} options={orderOptions} />
             {/* The caption is not decoration. Only a fraction of products have a
                 reachable order date, so picking "90 days" and seeing a small number
                 reads as "only this many were ordered in 90 days" -- when the truth is
@@ -1165,7 +1200,7 @@ export default function Testing({ userEmail = '' }) {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onRename={(p)=>setModal({type:'rename',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!(isAll(compSel) && isAll(efSel) && isAll(brandSel) && isAll(stageSel) && isAll(dateSel) && isAll(clientSel) && isDefaultCat)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(dateSel)} testedByProduct={testedByProduct} />}
+          {tab==='products'  && <ProductsView products={shownProducts} orderState={orderStateOf} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onRename={(p)=>setModal({type:'rename',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!(isAll(compSel) && isAll(efSel) && isAll(brandSel) && isAll(stageSel) && isAll(dateSel) && isAll(clientSel) && isDefaultCat)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(dateSel)} testedByProduct={testedByProduct} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
@@ -1244,7 +1279,7 @@ export default function Testing({ userEmail = '' }) {
 // └───────────────────────────────────────────────────────────────────────────┘
 const PROD_COLS = 'minmax(200px,660px) 170px 130px 140px 340px';
 
-function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onRename, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false, testedByProduct = {} }) {
+function ProductsView({ products, prodMats, prodRegs, productStatus, orderState = () => null, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onRename, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false, testedByProduct = {} }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
   // well exist, it just does not match.
   // The order filters get their own empty copy. "Nothing in this filter" would be read as
@@ -1356,6 +1391,13 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, onLink, onL
                 <span style={{width:'6px',height:'6px',borderRadius:'50%',flexShrink:0,
                   background: p.active === false ? 'var(--hot)' : p.active === true ? 'var(--ok)' : 'var(--muted)'}} />
                 <span style={{flexShrink:0}}>{p.active === false ? 'Inactive' : p.active === true ? 'Active' : 'Not set'}</span>
+                {(() => { const st = orderState(p); if (!st) return null; return (<>
+                  <span style={{flexShrink:0,color:'#C7C7CC'}}>&middot;</span>
+                  <span style={{flexShrink:0,fontWeight:st==='ordered'?600:400,
+                                color:st==='ordered'?'#1A1A1C':'#A0A0A4'}}>
+                    {st==='ordered' ? 'Ordered' : st==='notordered' ? 'Not yet ordered' : 'Never used'}
+                  </span>
+                </>); })()}
                 <span style={{overflow:'hidden',textOverflow:'ellipsis'}}>{['', p.sku, p.cpsc_type || 'No CPSC', ord && ord.last ? 'Last ordered '+fmtDate(ord.last)+' \u00b7 '+ord.count+' order'+(ord.count===1?'':'s') : null].filter(Boolean).join(' \u00b7 ')}</span>
               </div>
               {/* Its own line rather than a fourth segment above. That line is already at
