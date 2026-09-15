@@ -12,7 +12,7 @@ import { Overlay, useGuardedClose } from '@/app/components/ModalGuard';
 // shipment. lib/lifecycle.js owns the rules; this file owns the fetching.
 import {
   PIPELINE_STAGES, fmt, deriveEvents,
-  isComplete, currentStage, stageEnteredAt, daysSince, CLIENT_OF, completionOf,
+  isComplete, currentStage, stageEnteredAt, daysSince, CLIENT_OF, completionOf, PICK,
 } from '@/lib/lifecycle';
 import { ensurePrograms, pairsFromRecords } from '@/lib/programs';
 
@@ -193,9 +193,18 @@ function ProgramLadder({ r }) {
     // BOTH WAYS OUT, because either one completes the program and promising a
     // purchase order that may never come would be the same error as the fixed
     // label this replaces.
-    { key:'done',     label:r.complete ? r.completedBy : 'Ordered or sold',
-      hit:r.complete, on:r.completedOn,
-      detail:r.complete ? 'This program left the pipeline here.' : null,
+    // Ordered or sold for ANOTHER client reads as one line -- "Ordered for
+    // <client> . date" or "Sold to <client> . date" -- the same words as the
+    // archived row, so the date moves into the label.
+    { key:'done',     label:!r.complete ? 'Ordered or sold'
+                           : r.elsewhere ? r.completedBy + ' · ' + fmt(r.completedOn)
+                           : r.completedBy,
+      hit:r.complete, on:r.elsewhere ? null : r.completedOn,
+      detail:!r.complete ? null
+            : r.elsewhere ? (r.elsewhereKind === 'so'
+                ? 'This product was sold to another client, so the program left the pipeline.'
+                : 'This product was ordered for another client, so the program left the pipeline.')
+            : 'This program left the pipeline here.',
       empty:'Not yet ordered or sold.' },
   ];
 
@@ -281,7 +290,7 @@ export default function Programs({ userEmail }) {
   const [ev, setEv]       = useState(null);
   const [loading, setLoad]= useState(true);
   const [err, setErr]     = useState('');
-  const [tab, setTab]     = useState('board');      // board | completed
+  const [tab, setTab]     = useState('board');      // board | archived
   const [search, setSearch] = useState('');
   const [stageSel, setStageSel] = useState([]);
   const [openId, setOpenId] = useState(null);
@@ -298,10 +307,10 @@ export default function Programs({ userEmail }) {
           .order('created_at', { ascending:true }),
         SB.from('quotes').select('product_id,client_company_id,quote_date,created_at').not('product_id','is',null),
         SB.from('purchase_order_items')
-          .select('product_id,purchase_orders(order_date,issued_at,client_company_id,shipment_pos(shipments(actual_departure,actual_arrival)))')
+          .select('product_id,purchase_orders(order_date,issued_at,client_company_id,client:companies!client_company_id(name),shipment_pos(shipments(actual_departure,actual_arrival)))')
           .not('product_id','is',null),
         SB.from('sales_order_items')
-          .select('product_id,sales_orders(order_date,client_company_id)')
+          .select('product_id,sales_orders(order_date,client_company_id,client:companies!client_company_id(name))')
           .not('product_id','is',null),
         // Product-wide on purpose -- a test report has no client, and testing is
         // not repeated per client. The panel says the same thing on screen.
@@ -327,7 +336,29 @@ export default function Programs({ userEmail }) {
     ev.poItems.forEach(r => { const c = CLIENT_OF.poLine(r); if (c) add(poItems, key(r.product_id, c), r); });
     ev.soItems.forEach(r => { const c = CLIENT_OF.soLine(r); if (c) add(soItems, key(r.product_id, c), r); });
     ev.reports.forEach(r => add(reports, String(r.product_id), r));
-    return { key, quotes, poItems, soItems, reports };
+
+    // THE PRODUCT HAS BEEN ORDERED OR SOLD, FOR ANYONE. A linked purchase order
+    // line or sales order line, any client -- including an order with no client
+    // on it. Kept as the EARLIEST such line per product, for the date and the
+    // client the archived row names.
+    //
+    // Compared by calendar day, for the reason completionOf gives: PICK.poLine
+    // prefers issued_at, a timestamp, over order_date, a plain date, and as
+    // strings a timestamp sorts after the bare date it shares a day with. On the
+    // same day the purchase order wins -- POs are considered first, and a sale
+    // replaces one only when it is strictly earlier.
+    const firstOrder = {};
+    const consider = (r, kind, on, rel) => {
+      if (!on) return;
+      const k = String(r.product_id);
+      const cur = firstOrder[k];
+      if (!cur || String(on).slice(0, 10) < String(cur.on).slice(0, 10)) {
+        firstOrder[k] = { kind, on, client: ((r[rel] || {}).client || {}).name || null };
+      }
+    };
+    ev.poItems.forEach(r => consider(r, 'po', PICK.poLine(r), 'purchase_orders'));
+    ev.soItems.forEach(r => consider(r, 'so', PICK.soLine(r), 'sales_orders'));
+    return { key, quotes, poItems, soItems, reports, firstOrder };
   }, [ev]);
 
   const enriched = useMemo(() => {
@@ -340,7 +371,20 @@ export default function Programs({ userEmail }) {
         soItems: buckets.soItems[k] || [],
         reports: buckets.reports[String(r.product_id)] || [],
       });
-      const complete = isComplete(events);
+      // A PROGRAM LEAVES THE PIPELINE when its own client ordered or sold it --
+      // or when its PRODUCT has been ordered or sold for anyone. The second exit
+      // exists because the per-client test missed real orders placed under a
+      // sibling company record: LLF-1617 sat in the pipeline for Legoland while
+      // Legoland Florida had already ordered it and been sold it.
+      //
+      // Sales count as well as purchase orders, so a product already sold to
+      // any client is not treated as new. That currently also archives BUC-138,
+      // whose only sale is a test order on ZZTESTER; it returns to the pipeline
+      // when that test data goes.
+      const ownComplete = isComplete(events);
+      const firstOrder = buckets.firstOrder[String(r.product_id)] || null;
+      const elsewhere = !ownComplete && !!firstOrder;
+      const complete = ownComplete || elsewhere;
       // The PRODUCT decides Sampling and Tested now, so the product row goes in
       // rather than a per-program declaration. since is null for Sampling always,
       // and for Tested when compliance rather than a report put it there.
@@ -359,9 +403,17 @@ export default function Programs({ userEmail }) {
       // name here rather than at each render is what stops those 41 being called
       // Sold on the row and Ordered in the ladder.
       const done_ = completionOf(events);
-      const completedOn = done_ ? done_.on : null;
-      const completedBy = done_ ? done_.label : null;
-      return { ...r, events, complete, stage, since, days: daysSince(since), retired,
+      // An order under this program's own client always wins, because that is
+      // this program's own event. Only when there is none does the product-level
+      // order supply the date and the name.
+      const completedOn = done_ ? done_.on : (elsewhere ? firstOrder.on : null);
+      const completedBy = done_ ? done_.label
+                        : !elsewhere ? null
+                        : firstOrder.kind === 'po'
+                          ? (firstOrder.client ? 'Ordered for ' + firstOrder.client : 'Ordered, no client on the PO')
+                          : (firstOrder.client ? 'Sold to ' + firstOrder.client : 'Sold, no client on the SO');
+      return { ...r, events, complete, elsewhere, elsewhereKind: elsewhere ? firstOrder.kind : null,
+               stage, since, days: daysSince(since), retired,
                completedOn, completedBy, onBoard: !complete && !retired };
     });
   }, [rows, buckets]);
@@ -480,12 +532,12 @@ export default function Programs({ userEmail }) {
       <div style={{textAlign:'center',marginBottom:'18px'}}>
         <h1 style={{fontSize:'26px',fontWeight:700,letterSpacing:'-.02em',color:'#1D1D1F',margin:0}}>Product Life Management</h1>
         <div style={{fontSize:'13px',color:'#86868B',marginTop:'5px'}}>
-          {board.length} in the pipeline · {finished.length} complete
+          {board.length} in the pipeline · {finished.length} archived
         </div>
       </div>
 
       <div style={{display:'flex',gap:'6px',marginBottom:'16px'}}>
-        {[['board','Pipeline',board.length],['completed','Completed',finished.length]].map(([v,l,n])=>(
+        {[['board','Pipeline',board.length],['archived','Archived',finished.length]].map(([v,l,n])=>(
           <button key={v} onClick={()=>{setTab(v);setOpenId(null);}}
             style={{fontSize:'12.5px',fontWeight:600,borderRadius:'980px',padding:'7px 14px',border:'none',
                     cursor:'pointer',fontFamily:'inherit',
@@ -571,7 +623,7 @@ export default function Programs({ userEmail }) {
                          color:'#5A5A5E',cursor:'pointer',fontFamily:'inherit'}}>
             <input type="checkbox" checked={showRetired} onChange={e=>setShowRetired(e.target.checked)}
               style={{cursor:'pointer'}} />
-            Show {history.length} retired, never ordered
+            Include {history.length} retired, never ordered
           </label>
         </div>
         <div style={{background:'#fff',borderRadius:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',overflow:'hidden'}}>
@@ -588,7 +640,7 @@ export default function Programs({ userEmail }) {
                   <span style={{fontSize:'13px',color:'#1D1D1F',flex:'1 1 200px'}}>{p.name || '—'}</span>
                   <span style={{fontSize:'12px',color:'#5A5A5E',minWidth:'130px'}}>{(r.client||{}).name || '—'}</span>
                   <span style={{fontSize:'11.5px',color:'#8A8A8E',minWidth:'150px'}}>
-                    {r.complete ? r.completedBy + ' ' + fmt(r.completedOn) : 'Product retired'}
+                    {r.complete ? r.completedBy + (r.elsewhere ? ' · ' : ' ') + fmt(r.completedOn) : 'Product retired'}
                   </span>
                   {testingNotRequired(p) && (
                     <span style={{fontSize:'10px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',
