@@ -1866,6 +1866,56 @@ below. Numbered 56 because 55 was already reserved for dropping `p_program_ids`;
 
 ---
 
+## Script 57, as run — 2026-09-15, sold products brought into service
+
+`z0` on commit, and verified from a fresh query afterwards.
+
+**Why.** Script 52 reconciled `products.active` against purchase order lines alone,
+so a product the client had bought through a sales order but that KUI had never
+raised a PO for went to NULL. Since `a74c8fc`, PLM calls a product ordered once it
+has a purchase order line **or** a sales order line. 57 brings the catalogue flag
+onto that one definition, and `16a086d` does the same for the Products list.
+
+**What moved.** 36 products with at least one sales order line and `active` NULL
+went to `true`, `updated_at` stamped. 28 of them were products script 52 had set
+to NULL the day before; the other 8 (LHS-188 to 190, LL1-1212 to 1214, LLW-1544
+and 1545) also have purchase order lines, were last updated 2026-08-06, and were
+already NULL, which 52 left alone because it moved only rows that were `false`. Most of the rest are BucketGolf, plus
+JUAC100460. Retired rows were not touched, and nothing already `true` changed.
+
+**What was held.** BUC-138 is the 37th. Its only sales order is on ZZTESTER, the
+test client, and a test order is no reason to put a product in service, so it
+stays NULL. The script names that client by id plus the length of its name, never
+by the name alone, and its guard refused to run unless the counts were exactly
+36 to flip and 1 held.
+
+**Not in scope.** 11 LHS parents — LHS-152 and LHS-170 to LHS-187 — have purchase
+order lines only and are still NULL. They belong to script B and the sizes
+question, not here. Counting them is what made the estimate ~49; the real
+PO-or-SO figure was 48.
+
+**Proven by the checks.** `active` went true +36, NULL −36, `false` unchanged. A
+fingerprint of `active` and `updated_at` on every other product, and of
+`updated_at` on every retired row, was unchanged. No product sold to a real
+client is left NULL. Row counts didn't move.
+
+**Archive.** `archive/2026-09-15-product-active-sales-orders.json` holds all 37 rows
+as they stood, with their sales order lines, exported before the script was
+written, and checked equal to that export.
+
+**The Products list.** The *Ordered* state counts sales order lines as well as
+purchase order lines (`16a086d`). *Last ordered*, *Orders* and the order-dates
+note still count purchase orders only, because they are about POs.
+
+| | before | after |
+|---|---|---|
+| `active` — true / false / NULL | 65 / 137 / 150 | **101 / 137 / 114** |
+| BUC-138 `active` | NULL | NULL |
+| products / quotes / PO lines / SO lines / programs | 352 / 332 / 256 / 258 / 312 | unchanged |
+| Products list — ordered / not yet / never used | 86 / 227 / 39 | **192 / 121 / 39** |
+
+---
+
 ## `production_pct` — a column the board wrote for ten weeks, 2026-07-08 to 2026-09-15
 
 `8f63202` (2026-07-08) gave the Production Board a percentage: `PO_CARD_SELECT`
