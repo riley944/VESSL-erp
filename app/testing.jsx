@@ -457,9 +457,11 @@ export default function Testing({ userEmail = '' }) {
   // the flag against the orders once precisely so that the two could stop being
   // confused with each other -- collapsing them now would undo that.
   //
-  // Three states, and they partition: a product has PO lines, or it has none but
-  // has been quoted, or it has neither. 86 / 250 / 16 today.
-  const orderedIds = useMemo(()=>new Set(prodOrders.map(r=>r.product_id)),[prodOrders]);
+  // Three states, and they partition: a product has purchase order OR sales order
+  // lines, or it has neither but has been quoted, or it has none of the three.
+  // Same definition PLM completion uses since a74c8fc, so the two screens agree on
+  // what ordered means. 192 / 121 / 39 when sales order lines were counted in.
+  const orderedIds = useMemo(()=>new Set([...prodOrders, ...prodSales].map(r=>r.product_id)),[prodOrders, prodSales]);
   const quotedIds  = useMemo(()=>new Set(prodQuotes.map(r=>r.product_id)),[prodQuotes]);
   const orderStateOf = p => orderedIds.has(p.id) ? 'ordered'
                     : quotedIds.has(p.id)  ? 'notordered'
