@@ -47,7 +47,6 @@ export function RenameSkuModal({ product, updatedBy = null, initialNewSku = null
   const [quotes, setQuotes] = useState([]);     // {row, group:'linked'|'key'|'drift'}
   const [pois, setPois] = useState([]);
   const [sois, setSois] = useState([]);
-  const [progs, setProgs] = useState([]);
   const [ticked, setTicked] = useState({});     // id -> bool
 
   useEffect(() => {
@@ -83,26 +82,15 @@ export function RenameSkuModal({ product, updatedBy = null, initialNewSku = null
         .select('id,client_sku,description,sales_orders(so_number,status)')
         .eq('client_sku', product.sku);
 
-      // PROGRAMS ARE NOT SEARCHED WHILE THE TABLE IS REBUILT.
-      //
-      // This read programs.sku and programs.quote_sku, two free-text columns
-      // script 48 removes -- the new table identifies a program by product_id,
-      // so a SKU rename cannot strand it and there is nothing here to fix up.
-      //
-      // Kept as an empty list rather than deleted, so the checklist section and
-      // its counts keep their shape and step 3 is a one-line restore if the new
-      // table ever needs a row touching. It does not today.
-      //
-      // The old table held ONE row, so nothing is being skipped in practice.
-      const pg = [];
+      // No programs here. Since script 48 a program is identified by product_id,
+      // so renaming a SKU cannot strand one and there is nothing to tick.
 
       if (dead) return;
       const t = {};
       qs.forEach(q => { t['q:'+q.row.id] = q.group !== 'drift'; });
       (poiRes.data||[]).forEach(r => { t['p:'+r.id] = poIsDraft(r.purchase_orders?.status); });
       (soiRes.data||[]).forEach(r => { t['s:'+r.id] = false; });   // never pre-ticked
-      pg.forEach(r => { t['g:'+r.id] = true; });
-      setQuotes(qs); setPois(poiRes.data||[]); setSois(soiRes.data||[]); setProgs(pg);
+      setQuotes(qs); setPois(poiRes.data||[]); setSois(soiRes.data||[]);
       setTicked(t); setLoading(false);
     })();
     return () => { dead = true; };
@@ -120,7 +108,6 @@ export function RenameSkuModal({ product, updatedBy = null, initialNewSku = null
       p_quote_ids:        idsFor('q', quotes),
       p_poi_ids:          idsFor('p', pois),
       p_soi_ids:          idsFor('s', sois),
-      p_program_ids:      idsFor('g', progs),
       p_updated_by:       updatedBy,
     });
     setBusy(false);
@@ -232,14 +219,6 @@ export function RenameSkuModal({ product, updatedBy = null, initialNewSku = null
             ))}
           </Group>
 
-          <Group title="Programs" count={progs.length}>
-            {progs.map(r => (
-              <Row key={r.id} k={'g:'+r.id}
-                   label={r.product||'(untitled)'}
-                   sub={['sku: '+(r.sku||'none'), 'quote_sku: '+(r.quote_sku||'none')].join(' · ')}
-                   right={<span style={pill('#F5F5F7','#86868B')}>{(r.stage||'—').replace(/_/g,' ')}</span>} />
-            ))}
-          </Group>
         </>
       )}
 

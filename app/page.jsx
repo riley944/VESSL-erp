@@ -304,7 +304,7 @@ function distinctClients(rows){
   const m={}; (rows||[]).forEach(p=>{ const c=poClient(p); if(c) m[c]=(m[c]||0)+1; });
   return Object.entries(m).sort((a,b)=>a[0].localeCompare(b[0]));
 }
-const PO_CARD_SELECT = 'id,order_number,client_po_number,status,order_date,cargo_ready_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
+const PO_CARD_SELECT = 'id,order_number,client_po_number,status,production_pct,order_date,cargo_ready_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
 
 function OrderCard({ p, navigate, onStatus }){
   const client = poClient(p), factory = poFactory(p);
@@ -1650,45 +1650,6 @@ function Inventory() {
 }
 
 // ── Sales Orders ─────────────────────────────────────────────────────────────
-function SOBadge({status}){
-  const m=SO_SM[status]||{label:(status||'—').replace(/_/g,' '),color:'#64748b',bg:'#f8fafc'};
-  return <span style={{display:'inline-flex',alignItems:'center',padding:'3px 9px',borderRadius:'20px',fontSize:'10px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',background:m.bg,color:m.color,whiteSpace:'nowrap'}}>{m.label}</span>;
-}
-
-// UNUSED. Defined here and rendered nowhere -- the Sales Orders grid builds its
-// cards inline in SalesOrders below. Left as it was rather than updated, so it
-// does not look like a live surface that has been kept in step.
-function SOCard({so,onClick}){
-  const {rev,cost,mgn}=soMetrics(so);
-  const cl=so.client?.name||'—'; const mc=mgnSignColor(mgn);
-  return (
-    <div className="order-card" onClick={onClick} style={{cursor:'pointer'}}>
-      <div className="oc-top">
-        <span style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:700,color:'var(--ink)'}}>{so.client_po_number||so.so_number||'—'}</span>
-        <SOBadge status={so.status} />
-      </div>
-      <div className="oc-factory">
-        <span className="oc-avatar" style={{background:companyColor(cl)}}>{initials(cl)}</span>
-        <span style={{display:'flex',flexDirection:'column',gap:'2px',minWidth:0,overflow:'hidden'}}>
-          <span style={{fontWeight:700,fontSize:'14px',color:'var(--ink)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{cl}</span>
-          {so.so_number && false && <span style={{fontSize:'11px',color:'var(--muted)'}}>{'Internal: '+so.so_number}</span>}
-        </span>
-      </div>
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px 4px'}}>
-        <span style={{fontFamily:'var(--mono)',fontSize:'14px',fontWeight:700,color:'var(--ink)'}}>{rev>0?money(rev,so.currency):'No items'}</span>
-        {mgn!==null && <span style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:700,color:mc,background:mc+'22',padding:'2px 8px',borderRadius:'12px'}}>{mgn.toFixed(1)+'%'}</span>}
-      </div>
-      {(so.required_ship_date||so.cargo_ready_date||cost>0) && (
-        <div style={{padding:'2px 16px 12px',fontSize:'11px',color:'var(--muted)',display:'flex',gap:'14px',flexWrap:'wrap'}}>
-          {so.cargo_ready_date && <span style={{color:'var(--accent)',fontWeight:600}}>{'CRD '+fmtDate(so.cargo_ready_date)}</span>}
-          {so.required_ship_date && <span>{'Ship by '+fmtDate(so.required_ship_date)}</span>}
-          {cost>0 && <span>{'Cost: '+money(cost,so.currency)}</span>}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function SalesOrders({navigate}){
   const [rows,setRows]=useState([]);
   const [loading,setLoading]=useState(true);
@@ -2479,6 +2440,7 @@ function CreateSOModal({onClose,onCreated}){
   const submit=async()=>{
     if(!form.clientId){window._toast?.('Client is required','err');return;}
     if(!form.clientPO.trim()){window._toast?.('Client PO number is required','err');return;}
+    if(!form.date){window._toast?.('Order date is required','err');return;}
     if(!items.filter(it=>it.desc.trim()).length){window._toast?.('Add at least one line item','err');return;}
     // A sized line expands to one row per size, so with every size at zero it would
     // contribute nothing and the order could be saved with no line items at all.
@@ -2781,6 +2743,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   // changes no control value and the snapshot cannot see it.
   const togglePO=pid=>{ markDirty(); setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]); };
   const save=async()=>{
+    if(!form.date){window._toast?.('Order date is required','err');return;}
     setLoading(true);
     const {error}=await SB.from('sales_orders').update({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:form.shipMethod||null,updated_at:new Date().toISOString()}).eq('id',so.id);
     if(error){alert('Error: '+error.message);setLoading(false);return;}
@@ -3261,15 +3224,16 @@ function Orders({ navigate }) {
     // Fallback for a column the schema cache has not caught up with yet.
     //
     // IT SAYS SO NOW. Silently degrading is how a 400 went unnoticed for months:
-    // the primary select named production_pct, which exists in no table in this
-    // database, so PostgREST rejected every request and this path rendered the
+    // the primary select named production_pct before script 53 created the
+    // column, so PostgREST rejected every request and this path rendered the
     // whole grid -- dropping client_po_number, so cards showed internal numbers
     // where client PO numbers belong, and nobody had any reason to suspect it.
     // A fallback that hides the failure it exists to survive is worse than no
     // fallback at all.
     //
-    // It also carries the same columns the primary does, so the degraded render
-    // differs in behaviour rather than in content.
+    // It carries every primary column EXCEPT production_pct. The newest column is
+    // the likeliest to be missing from a stale schema cache, so it is the one the
+    // fallback does without: the board shows 0 percent and the toast says why.
     if (error) {
       console.error('[Orders] Primary purchase_orders select failed — rendering from the reduced fallback query. '
                   + 'Cards may be missing fields. PostgREST said:', error.message, error);
@@ -3948,6 +3912,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   };
   const save = async () => {
     if(!form.num){alert('PO number required');return;}
+    if(!form.date){alert('Order date is required');return;}
     const { error } = await SB.from('purchase_orders').update({
       order_number:form.num, order_date:form.date||null, requested_ship_date:form.ship||null, cargo_ready_date:form.ship||null, cancel_date:form.cancel||null,
       incoterm:form.inco||null, payment_terms:form.pay||null, deposit_percent:Number(form.dep)||null,
@@ -6869,6 +6834,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
 
   const submit  = async () => {
     if (!form.factoryId||!form.num) { alert('Factory and PO number required'); return; }
+    if (!form.date) { alert('Order date is required'); return; }
     const valid = items.filter(it => (it.prodId || (it.desc||'').trim()) && lineQty(it)>0);
     if (valid.length===0) { alert('Add at least one line item with a quantity greater than 0 before creating the PO.'); return; }
     const baseFields = {
