@@ -1771,10 +1771,10 @@ move **53 → 54** of 184. A one-line script with its own wants, not an edit to 
 
 ---
 
-## Scripts 53, 54 and 56, as run — 2026-09-15
+## Scripts 53 to 56, as run — 2026-09-15
 
-All three `z0` on rehearsal and on commit, and verified from a fresh query
-afterwards.
+All four `z0` on commit and verified from a fresh query afterwards. 53, 54 and 56
+were `z0` on their first rehearsal; 55 took two, for the reason recorded under it.
 
 ### 53 — `purchase_orders.production_pct` exists
 
@@ -1804,18 +1804,62 @@ was needed is in the next section.
 
 Both new constraints were probed the same way as 53.
 
+### 55 — `rename_product_sku` loses `p_program_ids`
+
+Dropped and recreated with seven arguments, because `CREATE OR REPLACE` cannot
+remove a parameter. The body was **generated from script 51, not retyped**, and
+only once its fingerprint matched the live body (`d2e9155f…`, line endings
+normalised) — it still matches afterwards.
+
+A new function keeps none of the old one's settings, so three things were
+re-applied by hand:
+
+- **the grants** — revoked from `PUBLIC` and granted to `authenticated`, because a
+  fresh `CREATE FUNCTION` hands `EXECUTE` to `PUBLIC`, and `anon` inherits it;
+- **`search_path`**, with `SECURITY INVOKER` now written out rather than implied;
+- **the function comment**, which a drop discards silently and nothing else would
+  have noticed.
+
+Two probes ran, both undone even on commit. A call naming `p_program_ids` is now
+refused as an undefined function. And a throwaway `ZZTEST-OLD-55` product was
+renamed **through the function, by argument name** the way PostgREST calls it,
+inside a subtransaction forced to roll back: it reported
+`products.sku ZZTEST-OLD-55 to ZZTEST-NEW-55 true`, and the row read the new SKU.
+
+It ran a day earlier than planned, which was safe because `5489968` had already
+stopped the Rename SKU modal sending the argument, and the old signature
+defaulted it. A browser tab opened before that deploy still sends it, and now gets
+a 404 from PostgREST before Postgres is called — nothing is written, and a reload
+fixes it.
+
+**What its rehearsals taught.**
+
+- **`COMMENT ON` takes a string literal, never an expression.** Written verbatim,
+  the comment trips preflight's boolean-equality rule on its own words,
+  `(changed = false)`, so the `=` was built with `chr(61)` — and the first
+  rehearsal failed with 42601 at `||`, because a literal-only statement cannot
+  evaluate a concatenation. It rolled back with nothing changed. The comment is now
+  applied through `EXECUTE format('comment on function … is %L', <expression>)`
+  inside a DO block, and `c3` compared the stored comment's fingerprint with the
+  old one. The same applies to any statement whose grammar wants a literal.
+- **Preflight bans `regexp_replace` anywhere in a script.** The check that the body
+  names no `programs` table outside its comments cuts each line at its first `--`
+  with `string_to_table` and `split_part` instead, so the tombstone comments script
+  51 left in the body cannot fail it.
+
 ### 56 — same-SKU twins merged
 
 23 quotes re-linked and 23 empty programs deleted; see *Same-SKU twins merged*
-below. Numbered 56 because **55 is reserved** for dropping `p_program_ids` from
-`rename_product_sku`, due 2026-09-16 now that `5489968` has stopped the modal
-sending it.
+below. Numbered 56 because 55 was already reserved for dropping `p_program_ids`;
+55 then ran the same afternoon.
 
 ### Verified from outside
 
 | | before | after |
 |---|---|---|
 | legacy tables / `touch_program_stage` | 3 / 1 | **0 / 0** |
+| `rename_product_sku` arguments / overloads | 8 / 1 | **7 / 1** |
+| `rename_product_sku` `EXECUTE` — `anon` / `authenticated` / `PUBLIC` | false / true / none | **false / true / none** |
 | programs | 335 | **312** |
 | quotes / PO lines / SO lines / products | 332 / 256 / 258 / 352 | unchanged |
 | PLM board — pipeline / archived / retired | 89 / 194 / 52 | **89 / 194 / 29** |
