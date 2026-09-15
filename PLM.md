@@ -201,11 +201,9 @@ Removed with **0 rows ever declared**, so nothing was stranded. The *Start a
 program* action went with it: without Inquiry it created a program with no stage,
 which no column could show.
 
-**`vessl.programs` still permits `'inquiry'` in
-`programs_declared_stage_check`.** Narrowing it to `'sampling'` alone is a later
-script — cheap, but a schema change earns its own rehearsal, and with 0 rows
-carrying the value nothing is at risk meanwhile. Until then the constraint is
-wider than the app, which is the safe direction for a CHECK to be wrong in.
+**`programs_declared_stage_check` no longer permits `'inquiry'`.** Script 54
+(2026-09-15) narrowed it to `declared_stage IS NULL OR declared_stage =
+'sampling'`. No row had ever carried the value, so nothing moved.
 
 **What survived the reversal, deliberately:** quote save now creates the program,
 and `quotes.client_company_id` is resolved on every save. Both were built
@@ -224,7 +222,9 @@ Both live in `lib/lifecycle.js` with the reason at each.
 **Complete is derived, never stored.** `isComplete` reads the same `ordered` /
 `sold` events the panel derives. A stored flag would need writing at five call
 sites and would be wrong the first time one was missed. `archived` keeps its
-separate meaning: the product is retired.
+separate meaning: the product is retired. Since `a74c8fc` (2026-09-15) a
+program also completes when its **product** has been ordered or sold for any
+client — see *PLM completion becomes product-level* in CATALOGUE.md.
 
 **The single-value wrinkle, accepted.** `declared_stage` holds *one* value, so a
 program declared Sampling carries no Inquiry record and never will.

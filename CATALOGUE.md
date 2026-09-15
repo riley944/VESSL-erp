@@ -1771,6 +1771,193 @@ move **53 → 54** of 184. A one-line script with its own wants, not an edit to 
 
 ---
 
+## Scripts 53, 54 and 56, as run — 2026-09-15
+
+All three `z0` on rehearsal and on commit, and verified from a fresh query
+afterwards.
+
+### 53 — `purchase_orders.production_pct` exists
+
+`smallint NOT NULL DEFAULT 0`, `CHECK (production_pct BETWEEN 0 AND 100)`. A
+constant default, so no table rewrite; all 68 purchase orders read 0 on commit.
+The constraint was **exercised, not just asserted**: a probe wrote −1, 0, 10,
+100, 101 and null to a real row, each inside a subtransaction forced to roll
+back, and read back 0 / 10 / 100 accepted and −1 / 101 / null rejected. A
+fingerprint of every `id|updated_at` proved the probe left nothing. Why the column
+was needed is in the next section.
+
+### 54 — the legacy PLM tables, `inquiry`, and `order_date NOT NULL`
+
+- **`programs_legacy`, `program_tasks_legacy` and `program_notes_legacy` dropped**,
+  children first and without `CASCADE`, then `touch_program_stage()`, whose only
+  user was a trigger on `programs_legacy`. A guard refused to drop anything unless
+  the tables still held 1 / 8 / 0 rows — exactly what
+  `archive/2026-09-15-programs-legacy-BUC_157.json` holds, committed in `5489968`
+  and hash-checked row for row against the live tables before it went in.
+- **`programs_declared_stage_check` narrowed** to `declared_stage IS NULL OR
+  declared_stage = 'sampling'`. No row had ever carried `inquiry`.
+- **`order_date SET NOT NULL`** on `purchase_orders` and `sales_orders`, the
+  `CURRENT_DATE` defaults kept. It ran **after** `5489968` made the date required
+  on all four order forms: clearing the field used to send an explicit null, which
+  does not fall back to a default, so without that app change those saves would
+  have become raw database errors.
+
+Both new constraints were probed the same way as 53.
+
+### 56 — same-SKU twins merged
+
+23 quotes re-linked and 23 empty programs deleted; see *Same-SKU twins merged*
+below. Numbered 56 because **55 is reserved** for dropping `p_program_ids` from
+`rename_product_sku`, due 2026-09-16 now that `5489968` has stopped the modal
+sending it.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| legacy tables / `touch_program_stage` | 3 / 1 | **0 / 0** |
+| programs | 335 | **312** |
+| quotes / PO lines / SO lines / products | 332 / 256 / 258 / 352 | unchanged |
+| PLM board — pipeline / archived / retired | 89 / 194 / 52 | **89 / 194 / 29** |
+
+---
+
+## `production_pct` — a column the board wrote for ten weeks, 2026-07-08 to 2026-09-15
+
+`8f63202` (2026-07-08) gave the Production Board a percentage: `PO_CARD_SELECT`
+read `production_pct`, and `setPct` wrote it on every ±10 nudge. **No such column
+existed** — measured on 2026-09-14, no table in any schema carried the name.
+
+Two consequences, both silent:
+
+- **The purchase order list ran on its fallback query the whole time.** PostgREST
+  rejected the primary select with 42703 on every load, and a catch quietly
+  retried a reduced select that also dropped `client_po_number`, so PO cards showed
+  internal order numbers where client PO numbers belong (measured 2026-09-14: 12
+  of 68 POs carry one, and 2 differ from the order number). Found on 2026-09-14
+  from two 400s in the browser console while checking the CRD change on the PO
+  grid — not from any error anybody had seen.
+- **The percentage never saved.** Every nudge returned 400, and every card read
+  `Number(undefined) || 0`.
+
+`596794e` (2026-09-14) took the column out of the primary select and made the
+fallback log the PostgREST message and raise a toast: **a fallback that hides the
+failure it exists to survive is how this lasted ten weeks.** Riley and Steven
+confirmed they use the percentage, so script 53 added the column instead of the
+control being removed, and `5489968` put it back in the select. The fallback still
+leaves `production_pct` out on purpose — the newest column is the likeliest one a
+stale schema cache is missing.
+
+---
+
+## Plain dates rendered a day early — `fmt` and `daysSince`, fixed in `a74c8fc`
+
+`lib/lifecycle.js`'s `fmt` passed a plain `YYYY-MM-DD` to `new Date()`, which is
+**midnight UTC** — the evening before anywhere in the US. Every quote date, PO and
+SO order date and test date on PLM and on the Testing lifecycle panel rendered
+**one day early**: `2026-07-21` read *Jul 20, 2026* in New York. Found while
+checking the new *Ordered for* label on LLF-1617.
+
+`daysSince` had the same trap: the card's days-in-stage read one day high from 8pm
+Eastern — a quote dated today read 1d at 9:30pm.
+
+Both now treat a plain date as a local calendar day. `fmt` builds the date from its
+parts; `daysSince` counts whole days between local midnights, rounded so a 23- or
+25-hour daylight-saving day still counts as one. Timestamps are unchanged. Proven
+with a faked clock at 9:30pm Eastern and across both 2026 DST changes.
+
+**Audited, not changed.** Every other formatter already reads a plain date at local
+noon: `fmtDate`, `fmtDateShort` and both local `fd` helpers in `page.jsx`,
+`fmtDate` in `pricing.jsx` and `testing.jsx`, `CreateProductModal`'s `fmtDay`, and
+`excelDate` in `lib/excel.js`. `fmtDateTime`, `timeAgo`, `etaDays`, `quotes.jsx`'s
+`fmtStamp` and PLM's note times only ever receive timestamps.
+
+**Still open — UTC "today".** These take `new Date().toISOString()` as today and
+fill in **tomorrow** after 8pm Eastern: `nd()` (Create SO default), `nowDate()`
+(Create PO default), the `quote_date` fallbacks in `page.jsx` near lines 3867 and
+6647, and the new-quote default in `quotes.jsx` near line 1088 (line numbers as of
+`a74c8fc`). `monthStart` is correct in US time zones.
+
+---
+
+## PLM completion becomes product-level — 2026-09-15, `a74c8fc`
+
+Until now a program left the pipeline only when **its own client** ordered or sold
+it. That missed orders placed under a sibling company record: `LLF-1617` sat in the
+pipeline for *Legoland* while *Legoland Florida* had ordered it (PO 2026-07-21) and
+been sold it (SO 2026-07-22).
+
+**The rule now:** a program also leaves when its **product** has any linked PO line
+or SO line, for any client. The archived row and the card's final step name it —
+*Ordered for Legoland Florida · Jul 21, 2026* or *Sold to <client> · <date>* — by
+whichever came first on the calendar, a PO winning a same-day tie. An order under
+the program's own client still wins outright, because it is that program's own
+event.
+
+| | before | after `a74c8fc` |
+|---|---|---|
+| pipeline | 91 | 89 |
+| archived (was *Completed*) | 192 | 194 |
+| Quoted / Sampling / Tested | 6 / 83 / 2 | 6 / 82 / 1 |
+| retired toggle | 52 | 52, then 29 after script 56 |
+
+- **BUC-138's only sale is a ZZTESTER test order.** It stays archived until that
+  test data goes; then the board reads 90 / 193.
+- **Sales count, deliberately.** A PO-only rule — matching the Products list exactly
+  — read 90 / 193. Counting SO lines too means a product already sold to anyone is
+  not shown as new work.
+- **A SKU-level rule was measured and dropped:** 0 of the 90 moved, exact or
+  case-insensitive. The `-EXW` / `-Landed` / `-INT` / `-USA` variants are different
+  SKU strings, so no SKU rule can reach them.
+- **Nine BucketGolf programs may be in the pipeline wrongly:** BG03-Landed,
+  BG03RL-Landed, BG06-Landed, BG06RL-Landed, BG06RRRL-Landed, BG06RRRR-Landed,
+  BG09-Landed, BGBALLS-Landed and BGRHTC-EXW. Their names appear on unlinked PO
+  lines on BucketGolf's own POs — the 85-line backlog above, not this rule.
+- *Completed* is *Archived* everywhere it shows; the toggle reads *Include N
+  retired, never ordered*.
+
+---
+
+## Same-SKU twins merged — 2026-09-15, script 56, and the size rows that wait
+
+**The inflation check.** Of the 246 programs off the board (194 archived, 52
+retired), **91** sat on a retired product row with a more-live twin:
+
+| match | programs | what they are |
+|---|---|---|
+| same SKU | 25 | BG-101 / 104 / 113 size twins (18), JON-106, LL1-1591 ×2, LL1-1629 ×2, LL1-380 Small and Medium |
+| base SKU plus a suffix | 66 | Leesville `LHS-### - Size` rows (59), `JON-106-copy`, and 6 whose parent has no program for that client |
+
+Two more rules were run and **thrown out**. A letter-prefix rule matched any two
+BucketGolf SKUs ending the same way (`BGBALLS-EXW` with `BGLHAC-EXW` — 17 false
+positives), and a same-name rule found only costing and market siblings (20). A
+renamed row leaves nothing to find: `audit_log` has 0 rows and `rename_product_sku`
+renames in place. A further 77 programs match only an equally-live twin and were
+not touched.
+
+Checked **record by record**, not by kind of evidence: 6 are the same records
+counted twice, 20 carry a separate, differently-dated quote, and **65 hold evidence
+that exists only on the old row** — 65 quotes and 57 SO lines.
+
+**Merge, not suppress.** Suppressing would have hidden the old rows without touching
+data, but it leaves `LHS-183` in the pipeline although its size rows were sold, and
+it hides the only record of those sales.
+
+**Script 56 is merge A — same SKU, LL1-380 excluded.** Each of 23 retired rows held
+exactly one quote and nothing else; the quote was re-linked to its survivor and the
+empty program deleted. The old product rows remain, retired and empty.
+`quotes.updated_at` was left alone, so 23 old quotes do not read as edited today.
+Everything touched is in `archive/2026-09-15-plm-same-sku-twins-merge.json`
+(`e19041d`), checked equal to the database export and to the script's 23 id tuples
+before it ran. Programs 335 → 312; board 89 / 194 / 52 → **89 / 194 / 29**.
+
+**Script B waits on Kristy's sizes answer:** the 66 base-plus-suffix rows and the two
+LL1-380 rows, which carry PO lines. Measured before 56, doing A and B together moved
+the board to 92 / 136 / 20 — `LHS-183` to archived, and four parents (LLF-1605,
+LL1-1616, SL-117, LL1-1621) into the pipeline as quoted, never-ordered work.
+
+---
+
 ## Scripts 50 and 51, as run — 2026-09-11
 
 Both `z0` on rehearsal and commit, `51-after-commit-checks` `z0` and rolled back
