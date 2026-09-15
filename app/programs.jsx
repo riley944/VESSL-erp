@@ -639,6 +639,15 @@ export default function Programs({ userEmail }) {
                   <span style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:700,color:'#1D1D1F',minWidth:'110px'}}>{p.sku || '—'}</span>
                   <span style={{fontSize:'13px',color:'#1D1D1F',flex:'1 1 200px'}}>{p.name || '—'}</span>
                   <span style={{fontSize:'12px',color:'#5A5A5E',minWidth:'130px'}}>{(r.client||{}).name || '—'}</span>
+                  {/* CATALOGUE STATUS, worded and coloured exactly as on the Products
+                      list -- green Active, red Inactive, grey Not set -- so a product
+                      reads the same on both screens. products.active is three-state and
+                      only false is Inactive; NULL is undecided, not retired. */}
+                  <span style={{fontSize:'12px',color:'#86868B',minWidth:'80px',display:'inline-flex',alignItems:'center',gap:'5px'}}>
+                    <span style={{width:'6px',height:'6px',borderRadius:'50%',flexShrink:0,
+                      background: p.active === false ? 'var(--hot)' : p.active === true ? 'var(--ok)' : 'var(--muted)'}} />
+                    {p.active === false ? 'Inactive' : p.active === true ? 'Active' : 'Not set'}
+                  </span>
                   <span style={{fontSize:'11.5px',color:'#8A8A8E',minWidth:'150px'}}>
                     {r.complete ? r.completedBy + (r.elsewhere ? ' · ' : ' ') + fmt(r.completedOn) : 'Product retired'}
                   </span>
