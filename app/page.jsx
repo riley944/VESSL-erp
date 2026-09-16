@@ -2234,7 +2234,10 @@ function QuotePickerModal({ onPick, onClose, priceField='client' }){
   const [search,setSearch]=useState('');
   const [picked,setPicked]=useState(null);
   const tOf=q=>{try{return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]);}catch{return [];}};
-  useEffect(()=>{ SB.from('quotes').select('*').order('product').then(({data})=>{setQuotes(data||[]);setLoading(false);}); },[]);
+  // product_row is the product behind the quote, embedded through quotes.product_id,
+  // so a quote for a retired product can be shown as one. Named product_row because
+  // quotes.product is a text column holding the name.
+  useEffect(()=>{ SB.from('quotes').select('*,product_row:products(id,active)').order('product').then(({data})=>{setQuotes(data||[]);setLoading(false);}); },[]);
   const priceOf=t=>{ const v=Number(t[priceField]); if(v>0) return v; const c=Number(t.client),l=Number(t.landed); return c>0?c:(l>0?l:0); };
   const rangeOf=q=>{ const ps=tOf(q).map(priceOf).filter(Boolean); if(!ps.length) return null; const mn=Math.min(...ps),mx=Math.max(...ps); return mn===mx?money(mn):money(mn)+' – '+money(mx); };
   const filt=search?quotes.filter(q=>(q.product||'').toLowerCase().includes(search.toLowerCase())||(q.client||'').toLowerCase().includes(search.toLowerCase())||(q.factory||'').toLowerCase().includes(search.toLowerCase())||(q.sku||'').toLowerCase().includes(search.toLowerCase())):quotes;
@@ -2266,12 +2269,23 @@ function QuotePickerModal({ onPick, onClose, priceField='client' }){
               <div className="qp-list" style={{maxHeight:'340px',overflowY:'auto'}}>
                 {loading && <div className="empty" style={{padding:'30px'}}><p>Loading…</p></div>}
                 {!loading && filt.length===0 && <div className="empty" style={{padding:'30px'}}><p>No products match.</p></div>}
-                {!loading && filt.map(q=>{ const ts=tOf(q); const pr=rangeOf(q); return (
-                  <button key={q.id} className="qp-card" onClick={()=>{ const t=tOf(q); if(t.length<=1){ choose(q,t[0]||{}); } else { setPicked(q); } }}>
+                {!loading && filt.map(q=>{ const ts=tOf(q); const pr=rangeOf(q);
+                  // A QUOTE FOR A RETIRED PRODUCT STAYS LISTED, GREYED AND LABELLED.
+                  // The quote is real history and its prices are still worth reading;
+                  // hiding it would also hide the reason a price looks the way it does.
+                  // What must not happen is a NEW line carrying the retired product,
+                  // and that is refused where the product is resolved -- prodForQuote
+                  // on the sales order side, productIdForQuote on the purchase order
+                  // side -- so picking this seeds description and price with no link.
+                  const retired = !!(q.product_row && q.product_row.active === false);
+                  return (
+                  <button key={q.id} className="qp-card" style={retired?{opacity:.55}:undefined}
+                    title={retired?'Retired product — the line takes this quote’s description and price, but no product link':undefined}
+                    onClick={()=>{ const t=tOf(q); if(t.length<=1){ choose(q,t[0]||{}); } else { setPicked(q); } }}>
                     <span className="qp-avatar" style={{background:companyColor(q.client),color:'#0b1120'}}>{initials(q.client)}</span>
                     <span className="qp-meta">
                       <div className="qp-prod">{q.product||'Untitled'}</div>
-                      <div className="qp-sub">{q.client||'—'}{q.factory?' · '+q.factory:''}{q.sku?' · '+q.sku:''}</div>
+                      <div className="qp-sub">{q.client||'—'}{q.factory?' · '+q.factory:''}{q.sku?' · '+q.sku:''}{retired?' · Retired product':''}</div>
                     </span>
                     <span className="qp-right">
                       <div className="qp-price" style={{color:pr?'var(--ink)':'#d97706'}}>{pr||'No price'}</div>
@@ -2354,7 +2368,10 @@ function CreateSOModal({onClose,onCreated}){
     (async()=>{
       const [{data:cli},{data:qs},{data:sos}] = await Promise.all([
         SB.from('companies').select('id,name,vendor_number,shipping_address').order('name'),
-        SB.from('quotes').select('*').order('product'),
+        // product_row is the PRODUCT the quote is linked to, embedded through
+        // quotes.product_id, purely so a line can refuse to carry a retired one. Named
+        // product_row because quotes.product is a text column holding the name.
+        SB.from('quotes').select('*,product_row:products(id,active)').order('product'),
         SB.from('sales_orders').select('so_number').order('created_at',{ascending:false}).limit(100),
       ]);
       // Load POs separately with a fallback so a join issue can't blank the list
@@ -2491,7 +2508,14 @@ function CreateSOModal({onClose,onCreated}){
     //
     // Resolved from _quoteId at the insert rather than threaded through the three
     // places that seed a line, so a fourth seeding path added later inherits it.
-    const prodForQuote=qid=>{ const q=(quotes||[]).find(x=>x.id===qid); return (q&&q.product_id)||null; };
+    // RETIRED PRODUCTS ARE NOT LINKED to a new sales order line. The quote still
+    // supplies the description and the price; the line simply carries no product,
+    // which is the same answer ensureProductForQuote gives for a retired SKU below.
+    const prodForQuote=qid=>{
+      const q=(quotes||[]).find(x=>x.id===qid);
+      if(!q||!q.product_id) return null;
+      return (q.product_row && q.product_row.active === false) ? null : q.product_id;
+    };
     const rows=toIns.map(({_quoteId,_tierIdx,...rest})=>({...rest,quote_id:_quoteId||null,product_id:prodForQuote(_quoteId)}));
     let inserted=null;
     if(rows.length){
@@ -3883,7 +3907,9 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   };
   useEffect(()=>{
     Promise.all([
-      SB.from('products').select('id,sku,name').order('sku',{nullsFirst:false}),
+      // active comes along so the picker can refuse a retired product. Inactive means
+      // retired from new use, and a new line is new use.
+      SB.from('products').select('id,sku,name,active').order('sku',{nullsFirst:false}),
       SB.from('purchase_order_items').select('description').not('description','is',null).limit(200),
       SBQ.from('quotes').select('product').not('product','is',null).limit(300),
       SB.from('companies').select('id,name,pallet_info,shipping_address').eq('type','client').order('name')
@@ -3899,7 +3925,12 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     setItem(i,'desc',v);
     if(v.trim().length>0){
       const lv=v.toLowerCase();
-      const cat=(products||[]).filter(p=>(p.name||'').toLowerCase().includes(lv)||(p.sku||'').toLowerCase().includes(lv)).map(p=>({id:p.id,name:p.name,sku:p.sku||'',recent:false}));
+      // RETIRED PRODUCTS ARE NOT OFFERED, with one exception: the product already on
+      // THIS line. Editing a description on an existing line is not a statement about
+      // which product the line is for, so dropping it from the suggestions would be a
+      // way to lose a link somebody made while the product was still in service.
+      const keep=(items[i]||{}).prodId||'';
+      const cat=(products||[]).filter(p=>(p.active!==false||p.id===keep)&&((p.name||'').toLowerCase().includes(lv)||(p.sku||'').toLowerCase().includes(lv))).map(p=>({id:p.id,name:p.name,sku:p.sku||'',recent:false}));
       const rec=recentDescs.filter(d=>d.toLowerCase().includes(lv)&&!cat.some(c=>c.name===d)).slice(0,5).map(d=>({id:null,name:d,sku:'',recent:true}));
       const h=[...cat,...rec].slice(0,8);
       setESrchHits(h); setESrchIdx(i);
@@ -6843,7 +6874,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   useEffect(()=>{
     Promise.all([
       SB.from('companies').select('id,name').eq('type','factory').order('name'),
-      SB.from('products').select('id,sku,name').order('sku',{nullsFirst:false}),
+      // active comes along so the picker can refuse a retired product, and so a quote
+      // pointing at one resolves to no product rather than to a retired one.
+      SB.from('products').select('id,sku,name,active').order('sku',{nullsFirst:false}),
       SB.from('companies').select('id,name,vendor_number,pallet_info,shipping_address').eq('type','client').order('name'),
       SB.from('purchase_order_items').select('description').not('description','is',null).limit(200),
       SBQ.from('quotes').select('product').not('product','is',null).limit(300)
@@ -6904,7 +6937,10 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     setItem(i,'desc',v);
     if(v.trim().length>0){
       const lv=v.toLowerCase();
-      const cat=(products||[]).filter(p=>(p.name||'').toLowerCase().includes(lv)||(p.sku||'').toLowerCase().includes(lv)).map(p=>({id:p.id,name:p.name,sku:p.sku||'',recent:false}));
+      // Retired products are not offered, except the one already on this line -- the
+      // same rule the Edit PO picker applies, for the same reason.
+      const keep=(items[i]||{}).prodId||'';
+      const cat=(products||[]).filter(p=>(p.active!==false||p.id===keep)&&((p.name||'').toLowerCase().includes(lv)||(p.sku||'').toLowerCase().includes(lv))).map(p=>({id:p.id,name:p.name,sku:p.sku||'',recent:false}));
       const rec=recentDescs.filter(d=>d.toLowerCase().includes(lv)&&!cat.some(c=>c.name===d)).slice(0,5).map(d=>({id:null,name:d,sku:'',recent:true}));
       const h=[...cat,...rec].slice(0,8);
       setSrchHits(h); setSrchIdx(i);
@@ -7002,14 +7038,20 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     // The recorded link wins over the inferred one. Still checked against
     // `products` rather than returned blind: a link to a product this form has
     // not loaded would put an id on the line that its own picker cannot show.
-    if (q?.product_id && products.some(p => p.id === q.product_id)) return q.product_id;
+    // RETIRED PRODUCTS RESOLVE TO NOTHING. A quote can be older than the decision to
+    // retire what it is for; seeding a new line from it must not put that product back
+    // into service. The line keeps the quote's description and price and simply names
+    // no product, which the per-line picker can still fix -- the same "recoverable
+    // blank beats a wrong id" rule this function already follows for an ambiguous pair.
+    const live = id => { const p = products.find(x => x.id === id); return p && p.active !== false ? id : ''; };
+    if (q?.product_id && products.some(p => p.id === q.product_id)) return live(q.product_id);
     const sku  = (q?.sku || '').trim().toLowerCase();
     const name = (q?.product || '').trim().toLowerCase();
     if (!sku || !name) return '';
     const hits = products.filter(p =>
       (p.sku || '').trim().toLowerCase() === sku &&
       (p.name || '').trim().toLowerCase() === name);
-    return hits.length === 1 ? hits[0].id : '';
+    return hits.length === 1 ? live(hits[0].id) : '';
   };
 
   // when a quote+tier is chosen, prefill the PO form & line item
