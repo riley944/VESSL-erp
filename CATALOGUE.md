@@ -1866,6 +1866,59 @@ below. Numbered 56 because 55 was already reserved for dropping `p_program_ids`;
 
 ---
 
+## Script 58, as run — 2026-09-16, fourteen products retired
+
+`z0` on the first rehearsal, and verified from a fresh query afterwards.
+
+**This undoes half of script 52 on purpose.** Move B of 52 turned 30 products from
+`false` to `true` because they carry purchase order lines — a product somebody had
+bought was taken to be a product in service. The definition since settled is
+different and simpler: **Inactive means retired from new use, whatever the order
+history says.** Order lines are history; `active` is a decision about the future. 52
+was right about the facts and wrong about the question.
+
+**Fourteen, not thirty.** The other 16 List-B rows were retired by hand on the
+Products page earlier the same day. The script names those 16 by id too, and checks
+they are all still inactive and that it did not touch them.
+
+**Nothing about the orders changed.** Every purchase order line, sales order line and
+quote these products carry is exactly where it was — `b5` proves all fourteen still
+have their PO lines, and `c2` proves no line, quote or program row moved. A retired
+product keeps its history; what it cannot do is reach a **new** line, which the app
+has enforced since `f9619c2`.
+
+All fourteen are BucketGolf: the six `BG-104` size rows, and `BG06-USA`, `BG09-USA`,
+`BG09RL-INT`, `BG09RR-INT`, `BGLHTC-INT`, `BGLHTC-USA`, `BGRHTC-USA`,
+`BGTurfPad-INT`. Six of them share a SKU with a sibling that was already retired, so
+every row carrying those SKUs is now inactive — which leaves the **parent** `BG-104`
+as the orderable row, made active by script 59 the same afternoon.
+
+`archive/2026-09-16-list-b-retired.json` holds all fourteen as they stood, with the
+order and quote counts the claim above is read against.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| `active` — true / false / NULL | 88 / 153 / 110 | **74 / 167 / 110** |
+| the fourteen, inactive / carrying PO lines | 0 / 14 | **14 / 14** |
+| products / quotes / PO lines / SO lines | 351 / 332 / 256 / 257 | unchanged |
+| PLM board — pipeline / archived / retired | 90 / 192 / 30 | 89 / 192 / 30 |
+
+**The board did not move because of this script.** All fourteen carry order lines, so
+their programs stay Archived rather than dropping into the retired bucket. The
+pipeline reading one lower is a *program* deleted by hand between the two
+measurements — BUC-138 went from two programs to one — and `c2` had already proved
+the script left the program count alone.
+
+**What preflight caught.** The first draft identified those 16 rows by script 52
+timestamp. A time of day written as a literal carries colons, and `:5` is exactly
+what a bind-parameter rewriter reads as a parameter, so the rule fired six times —
+twice per copy of the literal. They are named by id now, which is the identity rule
+this codebase already follows. **A timestamp is not an identifier.**
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the
