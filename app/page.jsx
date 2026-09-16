@@ -1339,13 +1339,13 @@ function Inventory() {
   const [lines, setLines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshed, setRefreshed] = useState(null);
-  const [tab, setTab] = useState('overview');
+  // Which tab, the three filters and the search box, kept across navigation. The
+  // fetched lines and the refreshed-at stamp stay plain -- this page reloads on mount
+  // and a restored timestamp would claim a freshness it does not have.
+  const [ui, setUi] = usePageState('inventory', { tab:'overview', clientF:[], factoryF:[], statusF:[], search:'' });
   // All three are multi-select arrays. An empty array is no narrowing, matching
   // the All row optionsFrom emits with value ''.
-  const [clientF, setClientF] = useState([]);
-  const [factoryF, setFactoryF] = useState([]);
-  const [statusF, setStatusF] = useState([]);
-  const [search, setSearch] = useState('');
+  // clientF, factoryF, statusF and search are all ui.* now, in the page store above.
 
   const load = async () => {
     setLoading(true);
@@ -1419,14 +1419,14 @@ function Inventory() {
 
   // The sentinel is built the same way on both sides -- option list and predicate --
   // or choosing the em dash matches nothing.
-  const term = search.trim().toLowerCase();
+  const term = ui.search.trim().toLowerCase();
   const shown = lines.filter(l => {
-    if (!inSel(clientF, ((l.client ||'').trim()||'—')))  return false;
-    if (!inSel(factoryF, ((l.factory||'').trim()||'—'))) return false;
+    if (!inSel(ui.clientF, ((l.client ||'').trim()||'—')))  return false;
+    if (!inSel(ui.factoryF, ((l.factory||'').trim()||'—'))) return false;
     // No sentinel and no normalisation: bucket is one of four fixed strings this file
     // computes itself, so the option value and the line value cannot drift apart the
     // way a trimmed name can.
-    if (!inSel(statusF, l.bucket)) return false;
+    if (!inSel(ui.statusF, l.bucket)) return false;
     if (term && !((l.prod+' '+l.sku).toLowerCase().includes(term))) return false;
     return true;
   });
@@ -1527,8 +1527,8 @@ function Inventory() {
       {/* Pill tabs, testing.jsx's shape. */}
       <div style={{display:'flex',gap:'6px',marginBottom:'22px',flexWrap:'wrap'}}>
         {INV_TABS.map(([v,l])=>(
-          <button key={v} onClick={()=>setTab(v)}
-            style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'9px 16px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:tab===v?'#1D1D1F':'transparent',color:tab===v?'#fff':'#5A5A5E',boxShadow:tab===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>{l}</button>
+          <button key={v} onClick={()=>setUi('tab', v)}
+            style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'9px 16px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:ui.tab===v?'#1D1D1F':'transparent',color:ui.tab===v?'#fff':'#5A5A5E',boxShadow:ui.tab===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>{l}</button>
         ))}
       </div>
 
@@ -1537,7 +1537,7 @@ function Inventory() {
           <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',marginBottom:'7px',letterSpacing:'-.018em'}}>Inventory is empty</div>
           <div style={{color:'#86868B',fontSize:'14px'}}>Live purchase orders appear here automatically. Counts clear once a shipment is delivered.</div>
         </div>
-      ) : tab==='overview' ? (
+      ) : ui.tab==='overview' ? (
       <>
         {/* Tiles read the WHOLE live set, never the filters -- those live on the other
             tab, and a total that moved with a filter you cannot see from here would
@@ -1565,12 +1565,12 @@ function Inventory() {
       ) : (
       <>
         <div className="fs-row" style={{marginBottom:'14px'}}>
-          <FilterSelect multiple label="All Clients"   value={clientF}  onChange={setClientF}  options={clientOptions} />
-          <FilterSelect multiple label="All Factories" value={factoryF} onChange={setFactoryF} options={factoryOptions} />
-          <FilterSelect multiple label="All Statuses"  value={statusF}  onChange={setStatusF}  options={statusOptions} />
+          <FilterSelect multiple label="All Clients"   value={ui.clientF}  onChange={v=>setUi('clientF', v)}  options={clientOptions} />
+          <FilterSelect multiple label="All Factories" value={ui.factoryF} onChange={v=>setUi('factoryF', v)} options={factoryOptions} />
+          <FilterSelect multiple label="All Statuses"  value={ui.statusF}  onChange={v=>setUi('statusF', v)}  options={statusOptions} />
         </div>
         <div style={{marginBottom:'18px',maxWidth:'420px'}}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search product or SKU…"
+          <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Search product or SKU…"
             style={{width:'100%',border:'none',borderRadius:'980px',padding:'10px 15px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
         </div>
 
@@ -1595,9 +1595,9 @@ function Inventory() {
             tints for one choice and says "n selected" beyond, the Products
             breadcrumb names one client and says "n clients" beyond. One rule in
             three places rather than three rules. */}
-        {factoryF.length > 0 && (
+        {ui.factoryF.length > 0 && (
           <div style={{background:'#FEF3C7',borderRadius:'12px',padding:'11px 15px',marginBottom:'18px',fontSize:'12.5px',color:'#8a5a00',lineHeight:1.5}}>
-            Showing only lines ordered from <b>{factoryF.length === 1 ? factoryF[0] : factoryF.length + ' of ' + (factoryOptions.length - 1) + ' factories'}</b>. A product made at more than one factory still appears, with a smaller quantity — the factory is recorded on the purchase order, not on the product.
+            Showing only lines ordered from <b>{ui.factoryF.length === 1 ? ui.factoryF[0] : ui.factoryF.length + ' of ' + (factoryOptions.length - 1) + ' factories'}</b>. A product made at more than one factory still appears, with a smaller quantity — the factory is recorded on the purchase order, not on the product.
           </div>
         )}
 
@@ -1663,9 +1663,11 @@ function Inventory() {
 function SalesOrders({navigate}){
   const [rows,setRows]=useState([]);
   const [loading,setLoading]=useState(true);
-  const [search,setSearch]=useState('');
-  const [statusF,setStatusF]=useState([]);
-  const [clientF,setClientF]=useState([]);
+  // Search and the two membership filters survive going into an order and back. The
+  // sort and the CRD chips below do NOT live here -- they are on their own
+  // localStorage keys, on Kristy word, because those are meant to outlive a reload
+  // and this store deliberately does not.
+  const [ui, setUi] = usePageState('sales-orders', { search:'', statusF:[], clientF:[] });
   // Lazy initialisers: localStorage is read once on mount rather than on every
   // render, and never during the server pass.
   // Never empty. Nothing stored, a stored value this build no longer knows, or
@@ -1692,9 +1694,9 @@ function SalesOrders({navigate}){
   useEffect(()=>{ load(); },[]);
   const clients=[...new Set(rows.map(r=>r.client?.name).filter(Boolean))].sort();
   const preCrd=rows.filter(r=>{
-    if(!inSel(statusF,r.status)) return false;
-    if(!inSel(clientF,r.client?.name)) return false;
-    if(search){ const q=search.toLowerCase(); return (r.so_number||'').toLowerCase().includes(q)||(r.client_po_number||'').toLowerCase().includes(q)||(r.client?.name||'').toLowerCase().includes(q); }
+    if(!inSel(ui.statusF,r.status)) return false;
+    if(!inSel(ui.clientF,r.client?.name)) return false;
+    if(ui.search){ const q=ui.search.toLowerCase(); return (r.so_number||'').toLowerCase().includes(q)||(r.client_po_number||'').toLowerCase().includes(q)||(r.client?.name||'').toLowerCase().includes(q); }
     return true;
   });
   const shownUnsorted=preCrd.filter(r=>inSel(crdF, r.cargo_ready_date ? 'has' : 'none'));
@@ -1809,16 +1811,16 @@ function SalesOrders({navigate}){
       {/* Search */}
       <div style={{display:'flex',alignItems:'center',gap:'10px',background:'#fff',borderRadius:'12px',padding:'0 14px',height:'44px',marginBottom:'12px',boxShadow:'0 0 0 1px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.04)'}}>
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#8A8A8E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input placeholder="Search by client PO or client name…" value={search} onChange={e=>setSearch(e.target.value)} style={{flex:1,border:'none',outline:'none',background:'transparent',fontSize:'14px',color:'#1A1A1C',minWidth:0}} />
-        {search && <button onClick={()=>setSearch('')} style={{flexShrink:0,width:'20px',height:'20px',borderRadius:'50%',border:'none',background:'#F0F0F2',color:'#8A8A8E',fontSize:'14px',lineHeight:1,cursor:'pointer'}}>×</button>}
+        <input placeholder="Search by client PO or client name…" value={ui.search} onChange={e=>setUi('search', e.target.value)} style={{flex:1,border:'none',outline:'none',background:'transparent',fontSize:'14px',color:'#1A1A1C',minWidth:0}} />
+        {ui.search && <button onClick={()=>setUi('search','')} style={{flexShrink:0,width:'20px',height:'20px',borderRadius:'50%',border:'none',background:'#F0F0F2',color:'#8A8A8E',fontSize:'14px',lineHeight:1,cursor:'pointer'}}>×</button>}
       </div>
 
       {/* Client + status filters */}
       <div className="fs-row" style={{marginBottom:'18px'}}>
         {clients.length>1 && (
-          <FilterSelect multiple label="All Clients" value={clientF} onChange={setClientF} options={clientOptions} />
+          <FilterSelect multiple label="All Clients" value={ui.clientF} onChange={v=>setUi('clientF', v)} options={clientOptions} />
         )}
-        <FilterSelect multiple label="All Statuses" value={statusF} onChange={setStatusF} options={statusOptions} />
+        <FilterSelect multiple label="All Statuses" value={ui.statusF} onChange={v=>setUi('statusF', v)} options={statusOptions} />
         <FilterSelect multiple label="All CRD" value={crdF} onChange={setCrdF} options={crdOptions} />
         <FilterSelect multiple ordered label="Newest SO" value={sortBy} onChange={setSortBy} options={sortOptions} />
       </div>
@@ -1894,7 +1896,7 @@ function SalesOrders({navigate}){
           <div style={{width:'52px',height:'52px',borderRadius:'14px',background:'#F2F2F6',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#A0A0A4" strokeWidth="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           </div>
-          <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'8px'}}>{'No sales orders'+(statusF.length===1?' with this status':statusF.length>1?' with these statuses':'')}</div>
+          <div style={{fontSize:'16px',fontWeight:600,color:'#1A1A1C',marginBottom:'8px'}}>{'No sales orders'+(ui.statusF.length===1?' with this status':ui.statusF.length>1?' with these statuses':'')}</div>
           <div style={{color:'#8A8A8E',fontSize:'13.5px',marginBottom:'22px',lineHeight:1.6,maxWidth:'340px',marginLeft:'auto',marginRight:'auto'}}>Sales orders are client POs received by KUI. Create one to start tracking.</div>
           <button onClick={()=>setShowCreate(true)} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>New Sales Order</button>
         </div>
@@ -4210,10 +4212,12 @@ const COMPANY_TYPES = [
 function Companies() {
   const TYPE_LABELS = { client:'Clients', factory:'Factories', carrier:'Carriers', freight_forwarder:'Freight Forwarders' };
   const TYPE_KEYS = Object.keys(TYPE_LABELS);
-  const [tab, setTab]     = useState(0);
+  // Which type tab and what was typed, kept across navigation. openId and showCreate
+  // stay plain below -- an expanded row and an open modal are not choices about the
+  // view, and restoring them would put something on screen nobody asked for.
+  const [ui, setUi] = usePageState('companies', { tab:0, search:'' });
   const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch]   = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [openId, setOpenId]   = useState(null);
 
@@ -4221,14 +4225,16 @@ function Companies() {
     setLoading(true);
     const { data } = await SB.from('companies')
       .select('*,contacts(full_name,email,phone,is_primary)')
-      .eq('type', TYPE_KEYS[tab]).order('name');
+      .eq('type', TYPE_KEYS[ui.tab]).order('name');
     setRows(data||[]); setLoading(false);
   };
-  useEffect(() => { load(); setSearch(''); }, [tab]);
+  // Switching tab still clears the search, because a term that matched a client
+  // rarely matches a carrier. The dependency is ui.tab now, not tab.
+  useEffect(() => { load(); setUi('search', ''); }, [ui.tab]);
 
-  const shown = search.trim()
-    ? rows.filter(c => c.name.toLowerCase().includes(search.toLowerCase()) ||
-        (c.email||'').toLowerCase().includes(search.toLowerCase()))
+  const shown = ui.search.trim()
+    ? rows.filter(c => c.name.toLowerCase().includes(ui.search.toLowerCase()) ||
+        (c.email||'').toLowerCase().includes(ui.search.toLowerCase()))
     : rows;
 
   return (
@@ -4236,7 +4242,7 @@ function Companies() {
       {/* ── Type tabs ── */}
       <div className="co-tabs">
         {TYPE_KEYS.map((t,i) => (
-          <button key={t} className={'co-tab' + (i===tab?' active':'')} onClick={()=>setTab(i)}>
+          <button key={t} className={'co-tab' + (i===ui.tab?' active':'')} onClick={()=>setUi('tab', i)}>
             {TYPE_LABELS[t]}
           </button>
         ))}
@@ -4246,17 +4252,17 @@ function Companies() {
       <div className="co-toolbar">
         <div className="co-search-wrap">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input className="co-search" placeholder={'Search ' + TYPE_LABELS[TYPE_KEYS[tab]].toLowerCase() + '…'} value={search} onChange={e=>setSearch(e.target.value)} />
+          <input className="co-search" placeholder={'Search ' + TYPE_LABELS[TYPE_KEYS[ui.tab]].toLowerCase() + '…'} value={ui.search} onChange={e=>setUi('search', e.target.value)} />
         </div>
-        <span style={{fontSize:12,color:'var(--muted)',fontFamily:'var(--mono)'}}>{shown.length} {shown.length===1 ? TYPE_KEYS[tab].replace(/_/g,' ') : TYPE_LABELS[TYPE_KEYS[tab]].toLowerCase()}</span>
+        <span style={{fontSize:12,color:'var(--muted)',fontFamily:'var(--mono)'}}>{shown.length} {shown.length===1 ? TYPE_KEYS[ui.tab].replace(/_/g,' ') : TYPE_LABELS[TYPE_KEYS[ui.tab]].toLowerCase()}</span>
       </div>
 
       {/* ── Grid ── */}
       {loading ? <div className="loading">Loading…</div> : shown.length === 0 ? (
         <div className="empty">
           <div className="ico">🏢</div>
-          <h3>{search ? 'No matches' : 'No ' + TYPE_LABELS[TYPE_KEYS[tab]].toLowerCase() + ' yet'}</h3>
-          <p>{search ? 'Try a different search.' : 'Add your first to get started.'}</p>
+          <h3>{ui.search ? 'No matches' : 'No ' + TYPE_LABELS[TYPE_KEYS[ui.tab]].toLowerCase() + ' yet'}</h3>
+          <p>{ui.search ? 'Try a different search.' : 'Add your first to get started.'}</p>
         </div>
       ) : (
         <div className="co-grid">
@@ -5332,8 +5338,11 @@ function Shipments({ onNewShipment, userEmail }) {
   const [respDate, setRespDate] = useState('');
   const [respBusy, setRespBusy] = useState(false);
   const [openId, setOpenId] = useState(null);
-  const [view, setView] = useState('quotes');            // 'quotes' | 'shipments'
-  const [tab, setTab] = useState('active');              // shipments sub-tab
+  // Which half of the page, which sub-tab, and the three narrowings -- kept across
+  // navigation, and kept across the deliberate remount that follows creating a
+  // shipment, which is what the key on this component does. openId and the respond-*
+  // fields stay plain below, being a row somebody opened and a form in progress.
+  const [ui, setUi] = usePageState('shipments', { view:'quotes', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'' });
   // ── THE FREIGHT QUOTE STATUS FILTER ──────────────────────────────────────
   // Six pills and a Show-resolved toggle became one multi-select, the same shape
   // Testing's catalogue filter uses, for the same reason: the pills could only
@@ -5348,9 +5357,7 @@ function Shipments({ onNewShipment, userEmail }) {
   // Empty still means All, per the FilterSelect multi contract -- unticking the
   // last option widens to everything rather than showing nothing.
   const QF_DEFAULT = ['draft','awaiting','bidsin','awarded'];
-  const [qSel, setQSel] = useState(QF_DEFAULT);
-  const [shipFilter, setShipFilter] = useState('');      // '' | arriving | overdue
-  const [search, setSearch] = useState('');
+  // qSel, shipFilter and search are ui.* now, in the page store above.
   const [quotes, setQuotes] = useState([]);
   // null when closed, 'new' to create, or the freight quote row to edit. One state
   // rather than two, so the two paths cannot both be open at once.
@@ -5709,8 +5716,8 @@ function Shipments({ onNewShipment, userEmail }) {
   // whether the selection is empty -- on this axis empty means MORE rows, not
   // fewer. Default and empty both read as unfiltered; anything else is a
   // deliberate narrowing. Same rule as Testing's isDefaultCat.
-  const isDefaultQ = qSel.length === 0
-    || (qSel.length === QF_DEFAULT.length && QF_DEFAULT.every(v => qSel.includes(v)));
+  const isDefaultQ = ui.qSel.length === 0
+    || (ui.qSel.length === QF_DEFAULT.length && QF_DEFAULT.every(v => ui.qSel.includes(v)));
 
   // Counts are live and come from the same buckets the tiles read, so a number in
   // the dropdown and a number on a tile cannot disagree.
@@ -5736,35 +5743,35 @@ function Shipments({ onNewShipment, userEmail }) {
   // ── filtering ──
   const norm = t => (t||'').toLowerCase();
   const matchQ = (q) => {
-    if (search) {
+    if (ui.search) {
       const hay = norm(q.quote_number)+' '+norm((q.client||{}).name)+' '+norm(q.origin)+' '+norm(q.destination)+' '+norm((winnerOf(q.id)||{}).forwarder_name);
-      if (!hay.includes(norm(search))) return false;
+      if (!hay.includes(norm(ui.search))) return false;
     }
     // Membership, never a NOT. inSel reads an empty array as All.
-    return inSel(qSel, qKey(q));
+    return inSel(ui.qSel, qKey(q));
   };
   const shownQuotes = quotes.filter(matchQ);
   const matchS = (sp) => {
-    if (search) {
+    if (ui.search) {
       const po = ((sp.shipment_pos||[])[0]||{}).purchase_orders||{};
       const hay = norm(sp.shipment_number)+' '+norm(po.client_po_number)+' '+norm(po.order_number)+' '+norm((po.client||{}).name)+' '+norm((sp.companies||{}).name)+' '+norm(sp.vessel_name)+' '+norm(sp.container_no);
-      if (!hay.includes(norm(search))) return false;
+      if (!hay.includes(norm(ui.search))) return false;
     }
-    if (shipFilter==='arriving') { const d=etaDays(sp.estimated_arrival); if(!(d!==null&&d>=0&&d<=14&&!sp.actual_arrival)) return false; }
-    if (shipFilter==='overdue') { const d=etaDays(sp.estimated_arrival); if(!(d!==null&&d<0&&!sp.actual_arrival)) return false; }
+    if (ui.shipFilter==='arriving') { const d=etaDays(sp.estimated_arrival); if(!(d!==null&&d>=0&&d<=14&&!sp.actual_arrival)) return false; }
+    if (ui.shipFilter==='overdue') { const d=etaDays(sp.estimated_arrival); if(!(d!==null&&d<0&&!sp.actual_arrival)) return false; }
     return true;
   };
-  const baseShips = tab==='active' ? activeShips : tab==='delivered' ? doneShips : rows;
+  const baseShips = ui.tab==='active' ? activeShips : ui.tab==='delivered' ? doneShips : rows;
   const shownShips = baseShips.filter(matchS);
 
   // pulse tile helper
   const pulse = [
-    { k:'In transit',    v:activeShips.length,  c:'#1D1D1F', go:()=>{ setView('shipments'); setTab('active'); setShipFilter(''); } , on: view==='shipments'&&shipFilter===''&&tab==='active' },
-    { k:'Arriving \u226414d', v:arriving.length, c:'#0A84FF', go:()=>{ setView('shipments'); setTab('active'); setShipFilter(shipFilter==='arriving'?'':'arriving'); }, on: view==='shipments'&&shipFilter==='arriving' },
-    { k:'Overdue',       v:overdueShips.length, c:'#FF375F', go:()=>{ setView('shipments'); setTab('active'); setShipFilter(shipFilter==='overdue'?'':'overdue'); }, on: view==='shipments'&&shipFilter==='overdue' },
-    { k:'Awaiting bids', v:awaiting.length,     c:'#FF9F0A', go:()=>{ setView('quotes'); setQSel(prev => (prev.length===1 && prev[0]==='awaiting') ? QF_DEFAULT : ['awaiting']); }, on: view==='quotes'&&qSel.length===1&&qSel[0]==='awaiting' },
-    { k:'Bids in',       v:bidsIn.length,       c:'#30D158', go:()=>{ setView('quotes'); setQSel(prev => (prev.length===1 && prev[0]==='bidsin') ? QF_DEFAULT : ['bidsin']); }, on: view==='quotes'&&qSel.length===1&&qSel[0]==='bidsin' },
-    { k:'Awarded',       v:awarded.length,      c:'#0A84FF', go:()=>{ setView('quotes'); setQSel(prev => (prev.length===1 && prev[0]==='awarded') ? QF_DEFAULT : ['awarded']); }, on: view==='quotes'&&qSel.length===1&&qSel[0]==='awarded' },
+    { k:'In transit',    v:activeShips.length,  c:'#1D1D1F', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter',''); } , on: ui.view==='shipments'&&ui.shipFilter===''&&ui.tab==='active' },
+    { k:'Arriving \u226414d', v:arriving.length, c:'#0A84FF', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='arriving'?'':'arriving'); }, on: ui.view==='shipments'&&ui.shipFilter==='arriving' },
+    { k:'Overdue',       v:overdueShips.length, c:'#FF375F', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='overdue'?'':'overdue'); }, on: ui.view==='shipments'&&ui.shipFilter==='overdue' },
+    { k:'Awaiting bids', v:awaiting.length,     c:'#FF9F0A', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='awaiting') ? QF_DEFAULT : ['awaiting']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='awaiting' },
+    { k:'Bids in',       v:bidsIn.length,       c:'#30D158', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='bidsin') ? QF_DEFAULT : ['bidsin']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='bidsin' },
+    { k:'Awarded',       v:awarded.length,      c:'#0A84FF', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='awarded') ? QF_DEFAULT : ['awarded']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='awarded' },
   ];
 
   return (
@@ -5805,8 +5812,8 @@ function Shipments({ onNewShipment, userEmail }) {
               the other two counting what is live rather than what exists, and it
               is the number that should make somebody click. */}
           {[['quotes','Freight Quotes',quotes.length],['shipments','Shipments',rows.length],['delivery','Delivery Requests',openDreqs.length]].map(([v,l,ct])=>(
-            <button key={v} onClick={()=>{setView(v); setSearch('');}} style={{display:'inline-flex',alignItems:'center',gap:'8px',padding:'9px 18px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:view===v?'#1D1D1F':'transparent',color:view===v?'#fff':'#5A5A5E',boxShadow:view===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
-              {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 8px',background:view===v?'rgba(255,255,255,.22)':'#DCDCE0',color:view===v?'#fff':'#6A6A6E'}}>{ct}</span>
+            <button key={v} onClick={()=>{setUi('view', v); setUi('search','');}} style={{display:'inline-flex',alignItems:'center',gap:'8px',padding:'9px 18px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:ui.view===v?'#1D1D1F':'transparent',color:ui.view===v?'#fff':'#5A5A5E',boxShadow:ui.view===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
+              {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 8px',background:ui.view===v?'rgba(255,255,255,.22)':'#DCDCE0',color:ui.view===v?'#fff':'#6A6A6E'}}>{ct}</span>
             </button>
           ))}
         </div>
@@ -5819,13 +5826,13 @@ function Shipments({ onNewShipment, userEmail }) {
             pills still drop below rather than being crushed. */}
         <div style={{position:'relative',flex:'1 1 320px',maxWidth:'440px'}}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#A0A0A4" strokeWidth="2" strokeLinecap="round" style={{position:'absolute',left:'13px',top:'50%',transform:'translateY(-50%)'}}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={view==='quotes'?'Search quotes, clients, routes\u2026':'Search shipments, vessels, refs\u2026'} style={{width:'100%',border:'none',borderRadius:'980px',padding:'10px 15px 10px 38px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
+          <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder={ui.view==='quotes'?'Search quotes, clients, routes\u2026':'Search shipments, vessels, refs\u2026'} style={{width:'100%',border:'none',borderRadius:'980px',padding:'10px 15px 10px 38px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
         </div>
-        {view==='quotes' && (
+        {ui.view==='quotes' && (
           <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
             {/* Right of the search bar, with Import reply beside it. One control
                 where six pills and a toggle used to sit. */}
-            <FilterSelect multiple label="All statuses" value={qSel} onChange={setQSel} options={quoteStatusOptions} />
+            <FilterSelect multiple label="All statuses" value={ui.qSel} onChange={v=>setUi('qSel', v)} options={quoteStatusOptions} />
             {/* The default HIDES ROWS, which no other filter on this page does, so
                 the list would otherwise be short with nothing saying why. isDefaultQ
                 is what separates the two readings -- on load it names the reason,
@@ -5833,7 +5840,7 @@ function Shipments({ onNewShipment, userEmail }) {
                 the answer. */}
             {shownQuotes.length !== quotes.length && (
               <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>
-                {shownQuotes.length+' of '+quotes.length}{(isDefaultQ && !search) ? ' · resolved hidden' : ''}
+                {shownQuotes.length+' of '+quotes.length}{(isDefaultQ && !ui.search) ? ' · resolved hidden' : ''}
               </span>
             )}
             <button onClick={()=>setShowBidImport(true)} style={{display:'inline-flex',alignItems:'center',gap:'6px',fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'1px dashed rgba(0,0,0,.18)',cursor:'pointer',background:'transparent',color:'#4A4A4E'}}>
@@ -5842,18 +5849,18 @@ function Shipments({ onNewShipment, userEmail }) {
             </button>
           </div>
         )}
-        {view==='shipments' && (
+        {ui.view==='shipments' && (
           <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
             {[['active','In transit',activeShips.length],['delivered','Delivered',doneShips.length],['all','All',rows.length]].map(([val,label,ct])=>(
-              <button key={val} onClick={()=>{setTab(val); setShipFilter('');}} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:tab===val&&!shipFilter?'#1D1D1F':'#fff',color:tab===val&&!shipFilter?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{label+' '+String(ct)}</button>
+              <button key={val} onClick={()=>{setUi('tab', val); setUi('shipFilter','');}} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:ui.tab===val&&!ui.shipFilter?'#1D1D1F':'#fff',color:ui.tab===val&&!ui.shipFilter?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{label+' '+String(ct)}</button>
             ))}
-            {shipFilter && <button onClick={()=>setShipFilter('')} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:'#1D1D1F',color:'#fff'}}>{(shipFilter==='arriving'?'Arriving \u226414d':'Overdue')+' \u00d7'}</button>}
+            {ui.shipFilter && <button onClick={()=>setUi('shipFilter','')} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:'#1D1D1F',color:'#fff'}}>{(ui.shipFilter==='arriving'?'Arriving \u226414d':'Overdue')+' \u00d7'}</button>}
           </div>
         )}
       </div>
 
       {/* ══ FREIGHT QUOTES — card grid ══ */}
-      {view==='quotes' && (
+      {ui.view==='quotes' && (
         shownQuotes.length===0 ? (
           <div style={{background:'#fff',borderRadius:'20px',padding:'64px 32px',textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.04)'}}>
             <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',marginBottom:'8px',letterSpacing:'-.018em'}}>{quotes.length===0?'No freight quotes yet':'Nothing matches'}</div>
@@ -5977,7 +5984,7 @@ function Shipments({ onNewShipment, userEmail }) {
       )}
 
       {/* ══ DELIVERY REQUESTS — what the client asked for, and our answer ══ */}
-      {view==='delivery' && (
+      {ui.view==='delivery' && (
         dreqs.length===0 ? (
           <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>
             <div style={{fontSize:32,marginBottom:12,opacity:.2}}>📅</div>
@@ -6076,7 +6083,7 @@ function Shipments({ onNewShipment, userEmail }) {
       )}
 
       {/* ══ SHIPMENTS — voyage manifest ══ */}
-      {view==='shipments' && (
+      {ui.view==='shipments' && (
         loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div>
         : shownShips.length ? (
         <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>

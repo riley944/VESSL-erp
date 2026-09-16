@@ -7,6 +7,7 @@ import { RegulationsList, regSearchFields, CERT_PILL } from "@/app/components/Re
 import { RegModal } from "@/app/components/RegModal";
 import { ExportButton } from "@/app/components/ExportButton";
 import { loadExcelJS } from "@/lib/excel";
+import { usePageState } from "@/lib/pageState";
 
 // ── Codes ────────────────────────────────────────────────────────────────────
 // Two libraries the business files things against, behind one toggle:
@@ -43,12 +44,14 @@ const MODES = [
 // power on one page and not another. RegModal's confirm counts what a deletion
 // would orphan and says the number, which is the better guard.
 export default function Codes({ canDeleteCodes = true }) {
-  const [mode, setMode] = useState('hts');
+  // Which library is open and what was typed, kept across navigation. The modal slot
+  // below stays plain -- reopening an editor nobody asked for is not persistence.
+  const [ui, setUi] = usePageState('codes', { mode:'hts', search:'' });
   const [codes, setCodes] = useState([]);
   const [regs, setRegs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
-  const [search, setSearch] = useState('');
+  // search is ui.search, in the page store with mode.
   const [modal, setModal] = useState(null);   // {} for a new row, the row for an edit
   // USAGE, FOR THE EXPORT ONLY. Neither list shows these counts on screen -- they are
   // the question a spreadsheet gets asked and the page does not: which rules are
@@ -90,13 +93,13 @@ export default function Codes({ canDeleteCodes = true }) {
   };
   useEffect(()=>{ load(); },[]);
 
-  const q = normalizeTerm(search);
+  const q = normalizeTerm(ui.search);
   const searching = q.length > 0;
   const shownCodes = useMemo(()=> !q ? codes : codes.filter(c => matches(q, c.code, c.description)), [codes, q]);
   const shownRegs  = useMemo(()=> !q ? regs  : regs.filter(r => matches(q, ...regSearchFields(r))), [regs, q]);
 
-  const hts = mode === 'hts';
-  const [, , placeholder, createLabel] = MODES.find(m => m[0] === mode);
+  const hts = ui.mode === 'hts';
+  const [, , placeholder, createLabel] = MODES.find(m => m[0] === ui.mode);
   const shown = hts ? shownCodes : shownRegs;
   const total = hts ? codes.length : regs.length;
 
@@ -162,7 +165,7 @@ export default function Codes({ canDeleteCodes = true }) {
     ? { cols:HTS_COLS,  rows:shownCodes, sheet:'HTS codes',  file:'hts-codes',  title:'King Universal - HTS codes',  total:codes.length, noun:'codes' }
     : { cols:CPSC_COLS, rows:shownRegs,  sheet:'CPSC rules', file:'cpsc-rules', title:'King Universal - CPSC rules', total:regs.length,  noun:'rules' };
   const exportFilterPairs = (set) => [
-    ['Search', search.trim() || '(none)'],
+    ['Search', ui.search.trim() || '(none)'],
     ['List', hts ? 'HTS codes' : 'CPSC rules'],
     ['Order', hts ? 'Code' : 'Sort order, then code'],
     ['Retired rows', 'Included'],
@@ -265,15 +268,15 @@ export default function Codes({ canDeleteCodes = true }) {
       <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'18px',flexWrap:'wrap'}}>
         <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px'}}>
           {MODES.map(([v,l])=>(
-            <button key={v} onClick={()=>{setMode(v);setSearch('');}}
-              style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'8px 15px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13px',fontWeight:600,letterSpacing:'-.01em',background:mode===v?'#1A1A1C':'transparent',color:mode===v?'#fff':'#5A5A5E',boxShadow:mode===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
-              {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 7px',background:mode===v?'rgba(255,255,255,.22)':'#DCDCE0',color:mode===v?'#fff':'#6A6A6E'}}>{v==='hts'?codes.length:regs.length}</span>
+            <button key={v} onClick={()=>{setUi('mode', v); setUi('search', '');}}
+              style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'8px 15px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13px',fontWeight:600,letterSpacing:'-.01em',background:ui.mode===v?'#1A1A1C':'transparent',color:ui.mode===v?'#fff':'#5A5A5E',boxShadow:ui.mode===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
+              {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 7px',background:ui.mode===v?'rgba(255,255,255,.22)':'#DCDCE0',color:ui.mode===v?'#fff':'#6A6A6E'}}>{v==='hts'?codes.length:regs.length}</span>
             </button>
           ))}
         </div>
         <div className="prod-search" style={{flex:'1 1 260px',maxWidth:'440px'}}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-          <input placeholder={'Search '+placeholder} value={search} onChange={e=>setSearch(e.target.value)} />
+          <input placeholder={'Search '+placeholder} value={ui.search} onChange={e=>setUi('search', e.target.value)} />
         </div>
         {searching && <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{shown.length} of {total}</span>}
         {/* At the end of the row, exporting whichever list the toggle is showing and
@@ -294,7 +297,7 @@ export default function Codes({ canDeleteCodes = true }) {
       ) : shown.length === 0 ? (
         <Empty
           title={searching
-            ? 'No '+(hts?'codes':'rules')+' match “'+search.trim()+'”'
+            ? 'No '+(hts?'codes':'rules')+' match “'+ui.search.trim()+'”'
             : 'No '+(hts?'codes':'rules')+' yet'}
           sub={searching ? 'Try a different term, or clear the search.'
             : hts ? 'Add the tariff classifications you quote against with + New code.'

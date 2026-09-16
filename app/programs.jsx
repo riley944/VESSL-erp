@@ -15,6 +15,9 @@ import {
   isComplete, currentStage, stageEnteredAt, daysSince, CLIENT_OF, completionOf, PICK,
 } from '@/lib/lifecycle';
 import { ensurePrograms, pairsFromRecords } from '@/lib/programs';
+// Tab, search, stage filter and the retired toggle survive going into a program and
+// coming back, and are gone on reload. See the note at the top of lib/pageState.js.
+import { usePageState } from '@/lib/pageState';
 
 // ── PRODUCT LIFE MANAGEMENT ─────────────────────────────────────────────────
 // THE BOARD IS THE PRE-ORDER PIPELINE AND NOTHING ELSE. A program on a
@@ -290,11 +293,12 @@ export default function Programs({ userEmail }) {
   const [ev, setEv]       = useState(null);
   const [loading, setLoad]= useState(true);
   const [err, setErr]     = useState('');
-  const [tab, setTab]     = useState('board');      // board | archived
-  const [search, setSearch] = useState('');
-  const [stageSel, setStageSel] = useState([]);
+  // Which tab, the search box, the stage filter and the retired toggle -- kept across
+  // navigation, so opening a program and coming back lands where it left. openId stays
+  // plain below, because an expanded card is not a filter.
+  const [ui, setUi] = usePageState('programs', { tab:'board', search:'', stageSel:[], showRetired:false });
   const [openId, setOpenId] = useState(null);
-  const [showRetired, setShowRetired] = useState(false);
+  // showRetired is ui.showRetired, in the page store above.
   const [sweeping, setSweeping] = useState(false);
 
   const load = async () => {
@@ -429,8 +433,8 @@ export default function Programs({ userEmail }) {
   // existed at all, but behind a toggle that is off by default.
   const finished = useMemo(() => enriched.filter(r => r.complete), [enriched]);
   const history  = useMemo(() => enriched.filter(r => !r.onBoard && !r.complete), [enriched]);
-  const done     = useMemo(() => showRetired ? finished.concat(history) : finished,
-                           [finished, history, showRetired]);
+  const done     = useMemo(() => ui.showRetired ? finished.concat(history) : finished,
+                           [finished, history, ui.showRetired]);
 
   const counts = useMemo(() => {
     const c = {}; PIPELINE_STAGES.forEach(([k]) => { c[k] = 0; });
@@ -439,9 +443,9 @@ export default function Programs({ userEmail }) {
   }, [board]);
 
   const matches = r => {
-    if (!search) return true;
+    if (!ui.search) return true;
     const p = r.products || {};
-    return (norm(p.sku) + ' ' + norm(p.name) + ' ' + norm((r.client||{}).name)).includes(norm(search));
+    return (norm(p.sku) + ' ' + norm(p.name) + ' ' + norm((r.client||{}).name)).includes(norm(ui.search));
   };
 
   // Membership against the ladder. Empty is All -- no narrowing -- and because
@@ -449,9 +453,9 @@ export default function Programs({ userEmail }) {
   // rather than overlap. That is the difference the six-stage chip filter could
   // not offer, and it is a consequence of the pipeline having an order.
   const shownBoard = useMemo(() => board.filter(r =>
-    matches(r) && (!stageSel.length || stageSel.includes(r.stage))), [board, search, stageSel]);
+    matches(r) && (!ui.stageSel.length || ui.stageSel.includes(r.stage))), [board, ui.search, ui.stageSel]);
   const shownDone  = useMemo(() => done.filter(matches)
-    .sort((a,b) => String(b.completedOn||'').localeCompare(String(a.completedOn||''))), [done, search]);
+    .sort((a,b) => String(b.completedOn||'').localeCompare(String(a.completedOn||''))), [done, ui.search]);
 
   const stageOptions = useMemo(() => ([
     { value:'', label:'All stages', count:board.length },
@@ -538,10 +542,10 @@ export default function Programs({ userEmail }) {
 
       <div style={{display:'flex',gap:'6px',marginBottom:'16px'}}>
         {[['board','Pipeline',board.length],['archived','Archived',finished.length]].map(([v,l,n])=>(
-          <button key={v} onClick={()=>{setTab(v);setOpenId(null);}}
+          <button key={v} onClick={()=>{setUi('tab', v);setOpenId(null);}}
             style={{fontSize:'12.5px',fontWeight:600,borderRadius:'980px',padding:'7px 14px',border:'none',
                     cursor:'pointer',fontFamily:'inherit',
-                    background:tab===v?'#1D1D1F':'#F2F2F4',color:tab===v?'#fff':'#5A5A5E'}}>
+                    background:ui.tab===v?'#1D1D1F':'#F2F2F4',color:ui.tab===v?'#fff':'#5A5A5E'}}>
             {l} <span style={{opacity:.65}}>{n}</span>
           </button>
         ))}
@@ -549,12 +553,12 @@ export default function Programs({ userEmail }) {
 
       <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',marginBottom:'18px'}}>
         <div style={{position:'relative',flex:'1 1 240px',maxWidth:'320px'}}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search product, SKU or client…"
+          <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Search product, SKU or client…"
             style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 12px',
                     fontSize:'13.5px',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'}} />
         </div>
-        {tab==='board' && (
-          <FilterSelect multiple label="All stages" value={stageSel} onChange={setStageSel} options={stageOptions} />
+        {ui.tab==='board' && (
+          <FilterSelect multiple label="All stages" value={ui.stageSel} onChange={v=>setUi('stageSel', v)} options={stageOptions} />
         )}
         <div style={{flex:1}} />
         <button onClick={sweep} disabled={sweeping}
@@ -566,16 +570,16 @@ export default function Programs({ userEmail }) {
         </button>
       </div>
 
-      {tab==='board' ? (
+      {ui.tab==='board' ? (
         <>
           {/* Tiles first, the original dashboard shape. They read the WHOLE board
               rather than the filtered view, so narrowing never makes a total lie. */}
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:'10px',marginBottom:'18px'}}>
             {PIPELINE_STAGES.map(([k,l,src])=>(
-              <button key={k} onClick={()=>setStageSel(stageSel.length===1&&stageSel[0]===k?[]:[k])}
+              <button key={k} onClick={()=>setUi('stageSel', ui.stageSel.length===1&&ui.stageSel[0]===k?[]:[k])}
                 style={{background:'#fff',borderRadius:'14px',padding:'14px 16px',textAlign:'left',cursor:'pointer',
                         fontFamily:'inherit',border:'none',borderTop:'3px solid '+COL[k].bar,
-                        boxShadow:stageSel.length===1&&stageSel[0]===k?'0 0 0 2px '+COL[k].fg:'0 1px 3px rgba(0,0,0,.05)'}}>
+                        boxShadow:ui.stageSel.length===1&&ui.stageSel[0]===k?'0 0 0 2px '+COL[k].fg:'0 1px 3px rgba(0,0,0,.05)'}}>
                 <div style={{fontSize:'22px',fontWeight:700,color:'#1D1D1F',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{counts[k]||0}</div>
                 <div style={{fontSize:'11.5px',color:'#5A5A5E',marginTop:'6px'}}>{l}</div>
                 <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'2px'}}>{src}</div>
@@ -621,7 +625,7 @@ export default function Programs({ userEmail }) {
         <div style={{display:'flex',justifyContent:'flex-end',marginBottom:'9px'}}>
           <label style={{display:'inline-flex',alignItems:'center',gap:'7px',fontSize:'12px',
                          color:'#5A5A5E',cursor:'pointer',fontFamily:'inherit'}}>
-            <input type="checkbox" checked={showRetired} onChange={e=>setShowRetired(e.target.checked)}
+            <input type="checkbox" checked={ui.showRetired} onChange={e=>setUi('showRetired', e.target.checked)}
               style={{cursor:'pointer'}} />
             Include {history.length} retired, never ordered
           </label>
