@@ -13,6 +13,7 @@ import { LinkRulesModal } from "@/app/components/LinkRulesModal";
 import { RenameSkuModal } from "@/app/components/RenameSkuModal";
 import { AddMaterialModal } from "@/app/components/AddMaterialModal";
 import { FilterSelect } from "@/app/components/FilterSelect";
+import { ExportButton } from "@/app/components/ExportButton";
 // CDN loader, not an import of exceljs -- the package is ~900KB and nothing that
 // large should ride in the bundle for a button most sessions never press.
 import { loadExcelJS, excelDate } from "@/lib/excel";
@@ -769,18 +770,10 @@ export default function Testing({ userEmail = '' }) {
     setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
   };
 
+  // Only the building flag lives here now. The menu, its open state and the outside
+  // click and Escape handling moved into ExportButton, which the Products page uses
+  // too -- see the note at the top of that file.
   const [exporting, setExporting] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
-  // Closes on an outside click or on Escape. Bound only while open, so the page is not
-  // carrying a document-level listener for a menu nobody has opened.
-  useEffect(()=>{
-    if (!exportOpen) return;
-    const onDown = e => { if (!(e.target.closest && e.target.closest('[data-export-menu]'))) setExportOpen(false); };
-    const onKey  = e => { if (e.key === 'Escape') setExportOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return ()=>{ document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
-  },[exportOpen]);
 
   const exportXlsx = async () => {
     if (!shownProducts.length) return;
@@ -1086,32 +1079,8 @@ export default function Testing({ userEmail = '' }) {
             DOES something rather than narrowing something, and the filled pill is how
             this page already says that. */}
         {tab==='products' && (
-          <div style={{position:'relative'}} data-export-menu>
-            <button onClick={()=>setExportOpen(v=>!v)} disabled={exporting || !shownProducts.length}
-              aria-haspopup="menu" aria-expanded={exportOpen}
-              title={shownProducts.length ? 'Download these '+shownProducts.length+' rows' : 'Nothing to export'}
-              style={{background:shownProducts.length?'#1D1D1F':'#C7C7CC',color:'#fff',border:'none',
-                      borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,
-                      cursor:shownProducts.length&&!exporting?'pointer':'default',whiteSpace:'nowrap',fontFamily:'inherit'}}>
-              {exporting ? 'Building\u2026' : 'Export'}
-            </button>
-            {exportOpen && (
-              <div role="menu" style={{position:'absolute',top:'calc(100% + 6px)',left:0,zIndex:40,background:'#fff',
-                            border:'1px solid rgba(0,0,0,.08)',borderRadius:'12px',boxShadow:'0 8px 28px rgba(0,0,0,.12)',
-                            minWidth:'196px',overflow:'hidden'}}>
-                {[['Export as XLSX', exportXlsx], ['Export as CSV', exportCsv]].map(([label, run])=>(
-                  <button key={label} role="menuitem" onClick={()=>{ setExportOpen(false); run(); }}
-                    style={{display:'block',width:'100%',textAlign:'left',background:'none',border:'none',
-                            padding:'10px 14px',fontSize:'13px',fontWeight:500,color:'#1D1D1F',
-                            cursor:'pointer',fontFamily:'inherit'}}>{label}</button>
-                ))}
-                {/* Says what is about to be downloaded, at the moment of choosing. */}
-                <div style={{padding:'8px 14px 10px',borderTop:'1px solid #F0F0F2',fontSize:'11px',color:'#8A8A8E'}}>
-                  {shownProducts.length} {shownProducts.length===1?'row':'rows'}, as filtered
-                </div>
-              </div>
-            )}
-          </div>
+          <ExportButton count={shownProducts.length} busy={exporting}
+                        onXlsx={exportXlsx} onCsv={exportCsv} align="left" />
         )}
         {/* The tiles above stay at totals while the list is filtered. This count makes
             that read as deliberate rather than as the tiles being wrong. */}

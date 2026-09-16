@@ -99,6 +99,13 @@ function cartonForSize(it, e) {
 // modals in this file are wired, so none is left behind on the old behaviour.
 import { useDirtyGuard } from '@/app/components/ModalGuard';
 import { RenameSkuModal, QuoteSkuChoiceModal } from '@/app/components/RenameSkuModal';
+import { CreateProductModal } from '@/app/components/CreateProductModal';
+// excelDate only. This file carries its own loadExcelJS at :5944, and lib/excel.js says
+// consolidating that copy is a change of its own -- importing both names here would
+// collide with it. excelDate is the half that matters for a date cell: it builds the
+// Date at NOON, so an exported date cannot land a day early west of Greenwich.
+import { excelDate } from '@/lib/excel';
+import { ExportButton } from '@/app/components/ExportButton';
 import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
 // The RFQ sheet geometry and its builder, shared with app/api/rfq/send/route.js.
 // The row numbers are a wire format between the workbook this writes and the one
@@ -4448,13 +4455,48 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   // two columns both showing an arrow -- is invisible until someone reads the list
   // and trusts the wrong one.
   const [sort, setSort] = useState(null);
+  const [poLines, setPoLines] = useState([]);
+  const [soLines, setSoLines] = useState([]);
+  // EDIT PRODUCT holds the FULL row, fetched fresh on open. CreateProductModal writes
+  // every column it shows, so opening it on the thin row this page lists (id, sku,
+  // name, active) would blank the rest on Save -- the 88f0295 bug Testing's select
+  // comment records. The column list is Testing's, for the same reason.
+  //
+  // The links are read-only in that modal (LinkRulesModal and LinkModal are their
+  // writers), so they are fetched only so its two blocks show what is really linked.
+  const [editProduct, setEditProduct] = useState(null);
+  const openEditProduct = async (productId) => {
+    if (!productId) return;
+    const [p, pr, pm, rg] = await Promise.all([
+      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,product_stage,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,active,manual_test_date,client:companies!client_company_id(name)').eq('id', productId).single(),
+      SB.from('product_regulations').select('id,product_id,regulation_id').eq('product_id', productId),
+      SB.from('product_materials').select('*,material:materials(id,name,status,material_code)').eq('product_id', productId),
+      SB.from('regulations').select('*').eq('active',true).order('sort_order').order('code'),
+    ]);
+    if (p.error || !p.data) { window._toast?.('Could not open product — '+(p.error?.message||'not found'),'err'); return; }
+    setEditProduct({ data:p.data, links:pr.data||[], matLinks:pm.data||[], regs:rg.data||[] });
+  };
+  // NEW QUOTE for a product nobody has quoted. Prices and margins live on quotes, so
+  // this is how such a product gets them. The quote form opens on the Quotes page with
+  // SKU, name and client filled in, and its save links back through
+  // ensureProductForQuote, which adopts this row on the same (sku, name).
+  const newQuoteFor = q => navigate('quotes', { newQuote: { sku:q.sku||'', product:q.product||'', client:q.client||'' } });
   const load = async () => {
     setLoading(true);
-    const [qRes, pRes] = await Promise.all([
+    const [qRes, pRes, poRes, soRes] = await Promise.all([
       SBQ.from('quotes').select('*').order('created_at',{ascending:false}),
-      SB.from('products').select('id,sku,name,active'),
+      SB.from('products').select('id,sku,name,active,client_company_id,client:companies!client_company_id(name)'),
+      // Only to fill in a product no quote reaches -- products carry no factory column,
+      // so its latest purchase order is the one place a factory is recorded, and the
+      // client there stands in when the product has none set.
+      SB.from('purchase_order_items').select('product_id,po:purchase_orders(order_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name))').not('product_id','is',null),
+      // Sales lines, ids only. Ordered means a purchase order OR a sales order -- the
+      // definition PLM and the Testing products list both use since a74c8fc -- and the
+      // export's Order state column is derived here so it cannot say something the
+      // other two screens would not.
+      SB.from('sales_order_items').select('product_id').not('product_id','is',null),
     ]);
-    setQuotes(qRes.data||[]); setProds(pRes.data||[]); setLoading(false);
+    setQuotes(qRes.data||[]); setProds(pRes.data||[]); setPoLines(poRes.data||[]); setSoLines(soRes.data||[]); setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
   // prodKey now lives in lib/products.js, which carries the reasoning: SKU alone
@@ -4505,7 +4547,8 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
         const { error } = await SB.from('products').update({ active: value }).eq('id', prod.id);
         if (error) { window._toast?.('Could not change active state — '+error.message,'err'); return; }
         setProds(prev => prev.map(p => p.id===prod.id ? {...p, active:value} : p));
-        await linkQuoteToProduct(q.id, prod.id);
+        // A product-only row has no quote behind it, so there is nothing to link.
+        if (!q.productOnly) await linkQuoteToProduct(q.id, prod.id);
         return;
       }
       const sku = (q.sku||'').trim() || null, name = (q.product||'').trim();
@@ -4550,13 +4593,43 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   const priceRange = q => { const p=clientPrices(q); if(!p.length) return null; const lo=Math.min(...p),hi=Math.max(...p); return lo===hi?money(lo):`${money(lo)} – ${money(hi)}`; };
   const avgMargin = q => { const ms=tiersOf(q).map(t=>tierMargin(t,q.mold_fee)).filter(v=>v!=null); return ms.length?Math.round(ms.reduce((a,b)=>a+b,0)/ms.length):null; };
 
-  const counts = {}; quotes.forEach(q=>{ const c=(q.client||'').trim()||'—'; counts[c]=(counts[c]||0)+1; });
+  // PRODUCTS NO QUOTE REACHES get a row of their own. The table used to be built from
+  // quotes alone, so a product that was ordered but never quoted -- LHS-184's parent,
+  // PO lines and no quote -- did not appear anywhere on this page. Quote rows are
+  // unchanged; each product that matchOf never returns for any quote is appended once.
+  //
+  // It is shaped like a quote so every filter, the search and the sort read it without
+  // a second code path: client is the product's own client, or failing that the one
+  // on its latest purchase order; factory is always the one on that purchase order;
+  // and empty tiers make Client Price and Avg Margin fall to the em dash they already
+  // render. product_id is what lets matchOf, and so the status cell, resolve it to
+  // the product it stands for.
+  //
+  // Sorted oldest first so a later order overwrites an earlier one, and each field
+  // only when that order names it -- a newer PO with no client does not blank the
+  // client an older one recorded.
+  const quotedProdIds = new Set(quotes.map(matchOf).filter(Boolean).map(p=>p.id));
+  const factoryOf = new Map(), poClientOf = new Map();
+  [...poLines].sort((a,b)=>((a.po||{}).order_date||'').localeCompare((b.po||{}).order_date||''))
+    .forEach(r=>{
+      const po = r.po||{};
+      const f = (po.factory||{}).name; if(f) factoryOf.set(r.product_id, f);
+      const c = (po.client||{}).name;  if(c) poClientOf.set(r.product_id, c);
+    });
+  const productRows = prods.filter(p=>!quotedProdIds.has(p.id)).map(p=>({
+    id:'product:'+p.id, productOnly:true, product_id:p.id, sku:p.sku, product:p.name,
+    client:(p.client||{}).name||poClientOf.get(p.id)||'', factory:factoryOf.get(p.id)||'', country:'', tiers:[], mold_fee:null,
+  }));
+  const allRows = [...quotes, ...productRows];
+
+  const counts = {}; allRows.forEach(q=>{ const c=(q.client||'').trim()||'—'; counts[c]=(counts[c]||0)+1; });
   const clientList = Object.keys(counts).sort((a,b)=>a.localeCompare(b));
   const clientOptions = [
-    { value:'All', label:'All Clients', count:quotes.length },
+    { value:'All', label:'All Clients', count:allRows.length },
     ...clientList.map(c=>({ value:c, label:c, color:companyColor(c), count:counts[c] })),
   ];
-  // Counted over quote rows, not products, so the numbers match what the table shows.
+  // Counted over the table's rows -- every quote, plus every product no quote reaches --
+  // so the numbers match what the table shows.
   // An unmatched row is neither active nor inactive and is excluded by either filter.
   // active is nullable and null means undecided, so only an explicit true or false is
   // counted -- an unruled product belongs to neither bucket.
@@ -4584,13 +4657,13 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
     if (p.active == null) return 'notset';
     return p.active ? 'active' : 'inactive';
   };
-  const activeCounts = quotes.reduce((a,q)=>{ a[statusBucket(q)]++; return a; },
+  const activeCounts = allRows.reduce((a,q)=>{ a[statusBucket(q)]++; return a; },
                                      {active:0,inactive:0,notset:0,noprod:0});
   const activeOptions = [
     // The All row carries value '' because that is what FilterSelect reserves for it
     // in multi mode -- picking it clears the selection to []. The label prop on the
     // control says the same words for the empty case.
-    { value:'', label:'All Statuses', count:quotes.length },
+    { value:'', label:'All Statuses', count:allRows.length },
     { value:'active', label:'Active', color:'var(--ok)', count:activeCounts.active },
     { value:'inactive', label:'Inactive', color:'var(--hot)', count:activeCounts.inactive },
     // var(--muted) is the same grey the row's dot already uses for this state, so
@@ -4615,13 +4688,13 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   // No colour, unlike the client options: companyColor is the company convention and
   // there is no factory palette anywhere in the app. Borrowing the company one would
   // assert a relationship between a factory and a company that does not exist.
-  const facCounts = {}; quotes.forEach(q=>{ const f=(q.factory||'').trim()||'—'; facCounts[f]=(facCounts[f]||0)+1; });
+  const facCounts = {}; allRows.forEach(q=>{ const f=(q.factory||'').trim()||'—'; facCounts[f]=(facCounts[f]||0)+1; });
   const factoryList = Object.keys(facCounts).sort((a,b)=>a.localeCompare(b));
   const factoryOptions = [
-    { value:'', label:'All Factories', count:quotes.length },
+    { value:'', label:'All Factories', count:allRows.length },
     ...factoryList.map(f=>({ value:f, label:f, count:facCounts[f] })),
   ];
-  const filtered = quotes.filter(q=>{
+  const filtered = allRows.filter(q=>{
     if(!inSel(client, ((q.client||'').trim()||'—'))) return false;
     // ANDs with the rest, and uses the identical normalisation to the option list above
     // -- the sentinel has to be built the same way on both sides or picking the dash
@@ -4686,7 +4759,8 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
     factory: { get: q => (q.factory||'').trim(), missing: v => !v,        numeric:false },
     // A tier count of 0 is a real answer, not a gap -- the quote genuinely has no
     // tiers -- so nothing is missing here and 0 sorts as the smallest number.
-    tiers:   { get: q => tiersOf(q).length,      missing: () => false,    numeric:true  },
+    // A product-only row has no quote, so no tier count at all -- that one IS missing.
+    tiers:   { get: q => q.productOnly ? null : tiersOf(q).length, missing: v => v == null, numeric:true },
     price:   { get: minPrice,                    missing: v => v == null, numeric:true  },
     // avgMargin returns null when no tier yields one. Explicitly == null rather than
     // falsy: a margin of exactly 0 is a real margin and must sort with the numbers.
@@ -4707,6 +4781,156 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   const cycleSort = col => setSort(s =>
     !s || s.col !== col ? { col, dir:'asc' } : s.dir==='asc' ? { col, dir:'desc' } : null);
 
+  // ── EXPORT WHAT IS ON SCREEN ───────────────────────────────────────────────
+  // `rows`, not `filtered` and not `quotes`: the file is the table, in the order the
+  // table is in. Search, the three filters and the current sort all reach it, because
+  // narrowing first and exporting that is the whole point of the button.
+  //
+  // Built on Testing's export, which this mirrors deliberately -- one column list walked
+  // by both writers, a Filters sheet in the workbook and a filter comment line in the
+  // CSV, the same quoting rule, the same BOM and CRLF, the same stamped filename shape.
+  // Two exports that describe the same catalogue differently would be worse than one.
+  //
+  // ORDER STATE is derived here the way Testing and PLM derive it: a product is ordered
+  // once it has a purchase order line OR a sales order line. A quote row whose product
+  // does not exist yet cannot have either, and it is a quote, so it reads Not yet
+  // ordered -- which is what the Products list shows for it too.
+  const orderedProdIds = useMemo(
+    () => new Set([...poLines, ...soLines].map(r => r.product_id).filter(Boolean)),
+    [poLines, soLines]);
+  const orderStateOfRow = q => {
+    const p = matchOf(q);
+    if (p && orderedProdIds.has(p.id)) return 'Ordered';
+    if (p && quotedProdIds.has(p.id)) return 'Not yet ordered';
+    // No product record at all: the row is a quote, so it has been quoted and cannot
+    // carry an order line. A product-only row always has a product, so it never lands here.
+    return q.productOnly ? 'Never used' : 'Not yet ordered';
+  };
+  // Each entry is [header, read, kind]; kind is what the two writers dispatch on, since
+  // 'date' means a Date object in the workbook and a yyyy-mm-dd string in the CSV.
+  //
+  // The five quote columns return null on a product-only row rather than 0 or an em
+  // dash: that row has no quote, and a zero would read as a quote with no tiers.
+  const EXPORT_COLS = [
+    ['SKU',              q => q.sku || ''],
+    ['Product name',     q => q.product || ''],
+    ['Client',           q => (q.client || '').trim()],
+    ['Factory',          q => (q.factory || '').trim()],
+    ['Country',          q => q.country || ''],
+    // Blank, not "Not set", when no product row exists -- that is the page's fourth
+    // status bucket, and calling it Not set would merge two different states.
+    ['Catalogue status', q => { const p = matchOf(q); return !p ? '' : p.active == null ? 'Not set' : p.active ? 'Active' : 'Inactive'; }],
+    ['Order state',      q => orderStateOfRow(q)],
+    ['Tiers',            q => q.productOnly ? null : tiersOf(q).length, 'num'],
+    ['Min price',        q => { if (q.productOnly) return null; const p = clientPrices(q); return p.length ? Math.min(...p) : null; }, 'num'],
+    ['Max price',        q => { if (q.productOnly) return null; const p = clientPrices(q); return p.length ? Math.max(...p) : null; }, 'num'],
+    ['Avg margin',       q => q.productOnly ? null : avgMargin(q), 'num'],
+    ['Quote date',       q => q.productOnly ? null : (q.quote_date || (q.created_at ? String(q.created_at).slice(0,10) : null)), 'date'],
+    // The product this row is for, so a spreadsheet can be joined back to the catalogue
+    // without matching on a SKU that 30 products share.
+    ['Product ID',       q => (matchOf(q) || {}).id || ''],
+  ];
+  // The applied filters, as [label, value] pairs. Sheet 2 prints them as rows and the
+  // CSV prints them as its one comment line, from this one source.
+  const exportFilterPairs = () => {
+    const labelsFor = (sel, opts) => sel.length
+      ? sel.map(v => (opts.find(o => String(o.value) === String(v)) || {}).label || String(v)).join(', ')
+      : 'All';
+    const SORT_LABEL = { sku:'SKU / Product', company:'Company', factory:'Factory', tiers:'Tiers', price:'Client Price', margin:'Avg Margin' };
+    return [
+      ['Search', search.trim() || '(none)'],
+      ['Client', client.length ? client.join(', ') : 'All'],
+      ['Factory', factoryF.length ? factoryF.join(', ') : 'All'],
+      ['Status', labelsFor(activeF, activeOptions)],
+      ['Sort', sort ? (SORT_LABEL[sort.col] || sort.col) + (sort.dir === 'desc' ? ' (Z to A)' : ' (A to Z)') : 'None - query order'],
+    ];
+  };
+  const stampToday = () => {
+    const d = new Date();
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  };
+  const downloadFile = (blob, filename) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+  };
+  // Only the building flag lives here. The pill, its menu and the open state are
+  // ExportButton's, shared with Testing / Products so the two cannot drift.
+  const [exporting, setExporting] = useState(false);
+
+  const exportXlsx = async () => {
+    if (!rows.length) return;
+    setExporting(true);
+    try {
+      const ExcelJS = await loadExcelJS();
+      const wb = new ExcelJS.Workbook();
+      wb.creator = 'VESSL'; wb.created = new Date();
+
+      const ws = wb.addWorksheet('Products');
+      ws.addRow(EXPORT_COLS.map(c => c[0]));
+      rows.forEach(q => ws.addRow(EXPORT_COLS.map(c => c[2] === 'date' ? excelDate(c[1](q)) : c[1](q))));
+
+      ws.getRow(1).font = { bold: true };
+      ws.views = [{ state: 'frozen', ySplit: 1 }];
+      ws.autoFilter = { from: { row:1, column:1 }, to: { row:1, column:EXPORT_COLS.length } };
+
+      EXPORT_COLS.forEach((c, i) => {
+        const col = ws.getColumn(i + 1);
+        if (c[2] === 'date') col.numFmt = 'yyyy-mm-dd';
+        if (c[2] === 'num')  col.alignment = { horizontal: 'right' };
+        let w = String(c[0]).length;
+        rows.forEach(q => {
+          const v = c[1](q);
+          const len = v == null ? 0 : (c[2] === 'date' ? 10 : String(v).length);
+          if (len > w) w = len;
+        });
+        col.width = Math.min(Math.max(w + 3, 9), 48);
+      });
+
+      // Sheet 2, so a count in a spreadsheet still says what it was a count OF.
+      const fs2 = wb.addWorksheet('Filters');
+      fs2.addRow(['Export', 'King Universal - Products']);
+      fs2.addRow(['Generated', new Date()]);
+      fs2.addRow(['Rows in this file', rows.length]);
+      fs2.addRow(['Rows on this page', allRows.length]);
+      fs2.addRow([]);
+      fs2.addRow(['Filter', 'Applied']);
+      exportFilterPairs().forEach(pair => fs2.addRow(pair));
+      fs2.getRow(1).font = { bold: true };
+      fs2.getRow(6).font = { bold: true };
+      fs2.getCell('B2').numFmt = 'yyyy-mm-dd hh:mm';
+      fs2.getColumn(1).width = 36;
+      fs2.getColumn(2).width = 54;
+
+      const buf = await wb.xlsx.writeBuffer();
+      downloadFile(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+                   'products-'+stampToday()+'.xlsx');
+    } catch (e) {
+      alert('Could not build the export: '+((e && e.message) || e));
+    }
+    setExporting(false);
+  };
+
+  // CSV. String building, so it needs no engine and returns instantly.
+  const exportCsv = () => {
+    if (!rows.length) return;
+    // Every field quoted, so the rule stays trivial: double any internal quote, wrap.
+    const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const applied = exportFilterPairs().filter(([, v]) => v !== 'All' && v !== '(none)' && v !== 'None - query order');
+    const summary = applied.length
+      ? applied.map(([k, v]) => k + ' = ' + v).join(' · ')
+      : 'none - all ' + rows.length + ' rows shown';
+    const lines = [];
+    lines.push(cell('# Filters: ' + summary));
+    lines.push(EXPORT_COLS.map(c => cell(c[0])).join(','));
+    rows.forEach(q => lines.push(EXPORT_COLS.map(c => cell(c[1](q))).join(',')));
+    // CRLF and a BOM, both for Excel: without the BOM an accented client name arrives mangled.
+    const csv = '﻿' + lines.join('\r\n') + '\r\n';
+    downloadFile(new Blob([csv], { type:'text/csv;charset=utf-8;' }), 'products-'+stampToday()+'.csv');
+  };
+
   return (
     <>
       <div className="prod-search" style={{marginBottom:'16px'}}>
@@ -4717,6 +4941,14 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
         <FilterSelect multiple label="All Clients" value={client} onChange={setClient} options={clientOptions} />
         <FilterSelect multiple label="All Factories" value={factoryF} onChange={setFactoryF} options={factoryOptions} />
         <FilterSelect multiple label="All Statuses" value={activeF} onChange={setActiveF} options={activeOptions} />
+        {/* Beside the filters because it exports exactly what they narrowed to, sorted
+            the way the table is sorted. The control itself is ExportButton, shared with
+            Testing / Products; marginLeft pushes it to the end of the row, and the menu
+            hangs from its right edge so it cannot run off screen there. */}
+        <div style={{marginLeft:'auto'}}>
+          <ExportButton count={rows.length} busy={exporting}
+                        onXlsx={exportXlsx} onCsv={exportCsv} align="right" />
+        </div>
       </div>
       {/* THE BREADCRUMB ONLY MAKES SENSE FOR ONE CLIENT. It reads as a location --
           All Clients / Acme -- and there is no location called two clients, so with
@@ -4771,7 +5003,9 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
               {rows.map(q=>{
                 const col=companyColor(q.client); const tiers=tiersOf(q); const m=avgMargin(q); const prod=matchOf(q);
                 return (
-                  <tr key={q.id} onClick={()=>setViewQuote(q)} style={{cursor:'pointer'}}>
+                  <tr key={q.id} onClick={()=> q.productOnly ? openEditProduct(q.product_id) : setViewQuote(q)}
+                      style={{cursor:'pointer'}}
+                      title={q.productOnly ? 'Not quoted yet — opens the product' : undefined}>
                     <td>
                       <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
                         <span style={{width:'26px',height:'26px',borderRadius:'7px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'9px',fontWeight:600,fontFamily:'var(--mono)',color:'#0b1120',background:col}}>{initials(q.client)}</span>
@@ -4782,6 +5016,15 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
                               this cell the width its product name needs at 260px. */}
                           <div style={{fontSize:'11px',color:'var(--muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'260px'}}>{q.product||'Untitled'}</div>
                         </div>
+                        {/* Disabled on an Inactive product: inactive means retired from new
+                            use, and ensureProductForQuote would refuse to link the quote
+                            anyway, leaving it with no product. */}
+                        {q.productOnly && (
+                          <button className="btn btn-ghost btn-sm" style={{marginLeft:'auto',flexShrink:0,color:'var(--accent)'}}
+                                  disabled={!!(prod && prod.active===false)}
+                                  title={prod && prod.active===false ? 'Inactive — retired from new use, so it cannot be quoted' : 'Open a new quote for this product'}
+                                  onClick={e=>{ e.stopPropagation(); newQuoteFor(q); }}>New quote</button>
+                        )}
                       </div>
                     </td>
                     {/* THE COMPANY CHIP. Same companyColor() hash and palette as the
@@ -4803,13 +5046,13 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
                     <td>
                       {(q.client||'').trim() ? (
                         <span title={q.client} style={{display:'inline-flex',alignItems:'center',maxWidth:'190px',padding:'3px 9px',borderRadius:'980px',background:col,color:'#0b1120',fontFamily:'var(--sans)',fontSize:'11.5px',fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{q.client}</span>
-                      ) : <span style={{color:'var(--faint)'}} title="No client recorded on this quote">—</span>}
+                      ) : <span style={{color:'var(--faint)'}} title={q.productOnly ? 'No client set on this product' : 'No client recorded on this quote'}>—</span>}
                     </td>
                     <td><div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'200px'}}>{q.factory||'—'}</div><div style={{fontSize:'11px',color:'var(--faint)'}}>{q.country||''}</div></td>
                     {/* Centred to match their headers. The em dash a blank price or
                         margin renders centres with them, which is what keeps a sparse
                         column reading as a column. */}
-                    <td className="mono" style={{textAlign:'center'}}>{tiers.length}</td>
+                    <td className="mono" style={{textAlign:'center',color:q.productOnly?'var(--faint)':undefined}}>{q.productOnly ? '—' : tiers.length}</td>
                     <td className="mono" style={{textAlign:'center'}}>{priceRange(q)||'—'}</td>
                     <td className="mono" style={{textAlign:'center',color:m==null?'var(--faint)':m<15?'var(--hot)':m<25?'var(--warn)':'var(--ok)'}}>{m==null?'—':m+'%'}</td>
                     {/* A FILLED dot means a product record exists — green/red/grey for
@@ -4858,16 +5101,19 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
               })}
             </tbody>
           </table>
-        ) : <div className="empty"><h3>No products</h3><p>{quotes.length? 'Nothing matches this filter.' : 'Create quotes in the Quotes tab — each one appears here as a product.'}</p></div>}
+        ) : <div className="empty"><h3>No products</h3><p>{allRows.length? 'Nothing matches this filter.' : 'Create quotes in the Quotes tab — each one appears here as a product.'}</p></div>}
       </div>
-      {viewQuote && <ProductDetailModal quote={viewQuote} userEmail={userEmail} onClose={()=>setViewQuote(null)} onCreatePO={()=>{setPoQuote(viewQuote);setViewQuote(null);}} />}
+      {viewQuote && <ProductDetailModal quote={viewQuote} userEmail={userEmail} onClose={()=>setViewQuote(null)} onCreatePO={()=>{setPoQuote(viewQuote);setViewQuote(null);}} productId={(matchOf(viewQuote)||{}).id||null} onEditProduct={openEditProduct} />}
+      {/* After the quote modal, so it stacks above it when opened from there. Saving
+          reloads the list, which is what refreshes the row. */}
+      {editProduct && <CreateProductModal data={editProduct.data} regs={editProduct.regs} links={editProduct.links} matLinks={editProduct.matLinks} onClose={()=>setEditProduct(null)} onCreated={()=>{ setEditProduct(null); load(); }} />}
       {poQuote && <CreatePOModal initialQuote={poQuote} onClose={()=>setPoQuote(null)} onCreated={id=>{setPoQuote(null);navigate('order-detail',{id});}} />}
     </>
   );
 }
 
 // ── Product Detail Modal ──────────────────────────────────────────────────────
-function ProductDetailModal({quote:initQ, userEmail='', onClose, onCreatePO}){
+function ProductDetailModal({quote:initQ, userEmail='', onClose, onCreatePO, productId=null, onEditProduct=null}){
   // Add/remove tier both change the tier rows, which ARE inputs, so the snapshot
   // sees them and no markDirty is needed.
   const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
@@ -4986,7 +5232,7 @@ function ProductDetailModal({quote:initQ, userEmail='', onClose, onCreatePO}){
         </div>
         <div className="modal-foot">
           {!editing ? (
-            <><button className="btn btn-ghost btn-sm" style={{marginRight:'auto',color:'var(--accent)'}} onClick={onCreatePO}>Create PO from this →</button><button className="btn btn-ghost" onClick={onClose}>Close</button><button className="btn btn-dark" onClick={()=>setEditing(true)}>Edit</button></>
+            <><button className="btn btn-ghost btn-sm" style={{marginRight:'auto',color:'var(--accent)'}} onClick={onCreatePO}>Create PO from this →</button><button className="btn btn-ghost" disabled={!productId} title={productId?'Edit the product this quote is for':'No product record for this quote yet'} onClick={()=>onEditProduct&&onEditProduct(productId)}>Edit product</button><button className="btn btn-ghost" onClick={onClose}>Close</button><button className="btn btn-dark" onClick={()=>setEditing(true)}>Edit</button></>
           ) : (
             <><button className="btn btn-ghost" onClick={()=>setEditing(false)}>Cancel</button><button className="btn btn-dark" onClick={save} disabled={saving}>{saving?'Saving…':'Save Changes'}</button></>
           )}
@@ -9352,7 +9598,7 @@ export default function App() {
       {page==='quotes' ? (
         <div className="main-area">
           <div className="quotes-root" style={{height:'100%',overflowY:'auto'}}>
-            <Quotes session={session} />
+            <Quotes session={session} newQuote={params.newQuote} />
           </div>
         </div>
       ) : (

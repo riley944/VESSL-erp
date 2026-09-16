@@ -3,8 +3,10 @@ import React, { useState, useEffect, useMemo } from "react";
 import { SB } from "@/lib/supabase";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 import { CodeModal } from "@/app/components/CodeModal";
-import { RegulationsList, regSearchFields } from "@/app/components/RegulationsList";
+import { RegulationsList, regSearchFields, CERT_PILL } from "@/app/components/RegulationsList";
 import { RegModal } from "@/app/components/RegModal";
+import { ExportButton } from "@/app/components/ExportButton";
+import { loadExcelJS } from "@/lib/excel";
 
 // ── Codes ────────────────────────────────────────────────────────────────────
 // Two libraries the business files things against, behind one toggle:
@@ -48,6 +50,16 @@ export default function Codes({ canDeleteCodes = true }) {
   const [loadErr, setLoadErr] = useState('');
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);   // {} for a new row, the row for an edit
+  // USAGE, FOR THE EXPORT ONLY. Neither list shows these counts on screen -- they are
+  // the question a spreadsheet gets asked and the page does not: which rules are
+  // actually linked, and which codes anybody cites.
+  //
+  // Three id-only fetches rather than three counting queries, because PostgREST has no
+  // GROUP BY: ~500 short rows, counted once below. A failure here leaves the counts at
+  // zero and the page working, which is why they are not part of the load guard.
+  const [regLinks, setRegLinks] = useState([]);
+  const [quoteHts, setQuoteHts] = useState([]);
+  const [productHts, setProductHts] = useState([]);
 
   // No caching: the shell unmounts this page on navigation, so every visit
   // refetches. ~180 rows across both tables makes that immaterial; it is the first
@@ -61,12 +73,19 @@ export default function Codes({ canDeleteCodes = true }) {
   // cannot bring back. They render dimmed, exactly as retired HTS codes do.
   const load = async () => {
     setLoading(true); setLoadErr('');
-    const [c, r] = await Promise.all([
+    const [c, r, pl, qh, ph] = await Promise.all([
       SB.from('htscodes').select('id,code,description,total_duty,duty_note,active').order('code'),
       SB.from('regulations').select('*').order('sort_order').order('code'),
+      SB.from('product_regulations').select('regulation_id'),
+      // An HTS code is cited on a QUOTE (quotes.hts) and, in principle, on a product
+      // (products.hts_code). Both are read, because the export reports both counts and
+      // a column that is empty today is not the same as one that cannot fill.
+      SB.from('quotes').select('hts').not('hts','is',null),
+      SB.from('products').select('hts_code').not('hts_code','is',null),
     ]);
     if (c.error || r.error) { setLoadErr((c.error || r.error).message); setCodes([]); setRegs([]); }
     else { setCodes(c.data || []); setRegs(r.data || []); }
+    setRegLinks(pl.data || []); setQuoteHts(qh.data || []); setProductHts(ph.data || []);
     setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
@@ -80,6 +99,153 @@ export default function Codes({ canDeleteCodes = true }) {
   const [, , placeholder, createLabel] = MODES.find(m => m[0] === mode);
   const shown = hts ? shownCodes : shownRegs;
   const total = hts ? codes.length : regs.length;
+
+  // ── EXPORT WHAT IS ON SCREEN ───────────────────────────────────────────────
+  // shownCodes / shownRegs, in the order the list is in -- codes by code, rules by
+  // sort_order then code, which is the query order and the only order this page has.
+  // The search narrows both, so the file is the list.
+  //
+  // ONE CONTROL, TWO LISTS: the toggle already decides which list a person is looking
+  // at, so the button follows it -- columns, sheet name and filename all come from the
+  // active mode. A second button for the list not on screen would export something
+  // nobody can see.
+  //
+  // Built the same way as the Products and Testing exports: one column list per format,
+  // a Filters sheet in the workbook, the same quoting, BOM and CRLF in the CSV, and the
+  // shared ExportButton. Each entry is [header, read, kind].
+  const countBy = (rows, pick) => {
+    const m = new Map();
+    rows.forEach(row => { const k = (pick(row) || '').trim(); if (k) m.set(k, (m.get(k) || 0) + 1); });
+    return m;
+  };
+  const linkCount = useMemo(()=>{
+    const m = new Map();
+    regLinks.forEach(l => { if (l.regulation_id) m.set(l.regulation_id, (m.get(l.regulation_id) || 0) + 1); });
+    return m;
+  },[regLinks]);
+  const quoteCites  = useMemo(()=>countBy(quoteHts,   r => r.hts),      [quoteHts]);
+  const productUses = useMemo(()=>countBy(productHts, r => r.hts_code), [productHts]);
+
+  const HTS_COLS = [
+    ['Code',              c => c.code || ''],
+    ['Description',       c => c.description || ''],
+    // parseFloat drops the stored scale, so 36.50 exports as 36.5 -- the number the row
+    // shows. Null stays null, so an unrated code leaves the cell empty rather than 0.
+    ['Total duty %',      c => c.total_duty == null ? null : parseFloat(c.total_duty), 'num'],
+    // The asterisk on the row means this: a compound rate whose specific part cannot
+    // live in the percentage, so the figure beside it understates the duty.
+    ['Duty note',         c => c.duty_note || ''],
+    ['Status',            c => c.active ? 'Active' : 'Inactive'],
+    ['Products using it', c => productUses.get((c.code || '').trim()) || 0, 'num'],
+    ['Quotes citing it',  c => quoteCites.get((c.code || '').trim()) || 0, 'num'],
+  ];
+  const CPSC_COLS = [
+    ['Rule code',            r => r.code || ''],
+    ['Rule',                 r => r.name || ''],
+    ['Category',             r => r.category || ''],
+    // The two applies-to fields the table actually has. There is no materials column on
+    // vessl.regulations; what a rule covers is written in applies_to and the notes.
+    ['Applies to',           r => r.applies_to || ''],
+    ['Age grade',            r => r.age_group || ''],
+    // The pill's wording, so the file reads as the row does -- the column stores
+    // depends_on_age_grade where the row shows "By age grade".
+    ['Certificate required', r => (CERT_PILL[r.certificate_required] || {}).label || r.certificate_required || ''],
+    // Three-state: null means nobody has recorded an answer, which is not "No".
+    ['Third-party testing',  r => r.requires_3p == null ? '' : r.requires_3p ? 'Yes' : 'No'],
+    ['Citation',             r => r.citation || ''],
+    ['Notes',                r => r.notes || ''],
+    ['Status',               r => r.active === false ? 'Inactive' : 'Active'],
+    ['Products linked',      r => linkCount.get(r.id) || 0, 'num'],
+  ];
+  // Everything the two writers need that differs by mode, decided once.
+  const exportSet = () => hts
+    ? { cols:HTS_COLS,  rows:shownCodes, sheet:'HTS codes',  file:'hts-codes',  title:'King Universal - HTS codes',  total:codes.length, noun:'codes' }
+    : { cols:CPSC_COLS, rows:shownRegs,  sheet:'CPSC rules', file:'cpsc-rules', title:'King Universal - CPSC rules', total:regs.length,  noun:'rules' };
+  const exportFilterPairs = (set) => [
+    ['Search', search.trim() || '(none)'],
+    ['List', hts ? 'HTS codes' : 'CPSC rules'],
+    ['Order', hts ? 'Code' : 'Sort order, then code'],
+    ['Retired rows', 'Included'],
+    ['Rows shown', set.rows.length + ' of ' + set.total],
+  ];
+  const stampToday = () => {
+    const d = new Date();
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  };
+  const downloadFile = (blob, filename) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+  };
+  const [exporting, setExporting] = useState(false);
+
+  const exportXlsx = async () => {
+    const set = exportSet();
+    if (!set.rows.length) return;
+    setExporting(true);
+    try {
+      const ExcelJS = await loadExcelJS();
+      const wb = new ExcelJS.Workbook();
+      wb.creator = 'VESSL'; wb.created = new Date();
+
+      const ws = wb.addWorksheet(set.sheet);
+      ws.addRow(set.cols.map(c => c[0]));
+      set.rows.forEach(row => ws.addRow(set.cols.map(c => c[1](row))));
+
+      ws.getRow(1).font = { bold: true };
+      ws.views = [{ state:'frozen', ySplit:1 }];
+      ws.autoFilter = { from:{ row:1, column:1 }, to:{ row:1, column:set.cols.length } };
+
+      set.cols.forEach((c, i) => {
+        const col = ws.getColumn(i + 1);
+        if (c[2] === 'num') col.alignment = { horizontal:'right' };
+        let w = String(c[0]).length;
+        set.rows.forEach(row => {
+          const v = c[1](row);
+          const len = v == null ? 0 : String(v).length;
+          if (len > w) w = len;
+        });
+        col.width = Math.min(Math.max(w + 3, 9), 48);
+      });
+
+      const fs2 = wb.addWorksheet('Filters');
+      fs2.addRow(['Export', set.title]);
+      fs2.addRow(['Generated', new Date()]);
+      fs2.addRow(['Rows in this file', set.rows.length]);
+      fs2.addRow(['Rows in the library', set.total]);
+      fs2.addRow([]);
+      fs2.addRow(['Filter', 'Applied']);
+      exportFilterPairs(set).forEach(pair => fs2.addRow(pair));
+      fs2.getRow(1).font = { bold: true };
+      fs2.getRow(6).font = { bold: true };
+      fs2.getCell('B2').numFmt = 'yyyy-mm-dd hh:mm';
+      fs2.getColumn(1).width = 36;
+      fs2.getColumn(2).width = 54;
+
+      const buf = await wb.xlsx.writeBuffer();
+      downloadFile(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+                   set.file+'-'+stampToday()+'.xlsx');
+    } catch (e) {
+      alert('Could not build the export: '+((e && e.message) || e));
+    }
+    setExporting(false);
+  };
+
+  const exportCsv = () => {
+    const set = exportSet();
+    if (!set.rows.length) return;
+    // Every field quoted, so a comma or a quote inside a rule's notes cannot spill.
+    const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const applied = exportFilterPairs(set).filter(([, v]) => v !== '(none)');
+    const lines = [];
+    lines.push(cell('# ' + applied.map(([k, v]) => k + ' = ' + v).join(' · ')));
+    lines.push(set.cols.map(c => cell(c[0])).join(','));
+    set.rows.forEach(row => lines.push(set.cols.map(c => cell(c[1](row))).join(',')));
+    const csv = '﻿' + lines.join('\r\n') + '\r\n';
+    downloadFile(new Blob([csv], { type:'text/csv;charset=utf-8;' }), set.file+'-'+stampToday()+'.csv');
+  };
 
   return (
     <div className="db-wrap" style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
@@ -110,6 +276,12 @@ export default function Codes({ canDeleteCodes = true }) {
           <input placeholder={'Search '+placeholder} value={search} onChange={e=>setSearch(e.target.value)} />
         </div>
         {searching && <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{shown.length} of {total}</span>}
+        {/* At the end of the row, exporting whichever list the toggle is showing and
+            whatever the search left of it. Same control as Testing and Products. */}
+        <div style={{marginLeft:'auto'}}>
+          <ExportButton count={shown.length} busy={exporting}
+                        onXlsx={exportXlsx} onCsv={exportCsv} align="right" />
+        </div>
       </div>
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#8A8A8E'}}>Loading…</div> : loadErr ? (

@@ -629,7 +629,7 @@ const BLANK = {
 //  Login is handled by the ERP shell; we read the existing session
 //  and render the Platform directly.
 // ============================================================
-export default function Quotes({ session: erpSession }) {
+export default function Quotes({ session: erpSession, newQuote = null }) {
   const [session, setSession] = useState(erpSession || null);
 
   useEffect(() => {
@@ -640,7 +640,7 @@ export default function Quotes({ session: erpSession }) {
   }, [erpSession]);
 
   if (!session) return <div style={S.shell}><style>{CSS}</style><div style={S.center}>Loading quotes…</div></div>;
-  return <Platform session={session} />;
+  return <Platform session={session} newQuote={newQuote} />;
 }
 
 // ---------- tier calc helpers ----------
@@ -667,7 +667,7 @@ function quoteSummary(q) {
 const ALL = "__all_clients__";
 
 // ---------- main platform ----------
-function Platform({ session }) {
+function Platform({ session, newQuote = null }) {
   const userEmail = session?.user?.email || "unknown";
   const isMobile = useIsMobile();
   const lastSaveRef = useRef(0);
@@ -689,6 +689,13 @@ function Platform({ session }) {
   const [showSend, setShowSend] = useState(false);
 
   const flash = (msg) => { setToast(msg); setTimeout(() => setToast(""), 1900); };
+  // Opened from the Products page's "New quote", on a product nobody has quoted yet:
+  // the same blank the + New Quote button builds, with SKU, name and client filled in.
+  // Keyed on that object, so a later visit to this page without one opens nothing.
+  useEffect(() => {
+    if (!newQuote) return;
+    setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), sku: newQuote.sku || "", product: newQuote.product || "", client: newQuote.client || "", tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] });
+  }, [newQuote]);
 
   const loadTasks = useCallback(async () => {
     const { data, error } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
