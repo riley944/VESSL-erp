@@ -106,6 +106,9 @@ import { CreateProductModal } from '@/app/components/CreateProductModal';
 // Date at NOON, so an exported date cannot land a day early west of Greenwich.
 import { excelDate } from '@/lib/excel';
 import { ExportButton } from '@/app/components/ExportButton';
+// Filters that survive going into a detail view and coming back, and die on reload.
+// See the note at the top of lib/pageState.js for what may and may not go in it.
+import { usePageState } from '@/lib/pageState';
 import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
 // The RFQ sheet geometry and its builder, shared with app/api/rfq/send/route.js.
 // The row numbers are a wire format between the workbook this writes and the one
@@ -3244,11 +3247,12 @@ function CompanyBanking() {
 // ── Orders List ───────────────────────────────────────────────────────────────
 function Orders({ navigate }) {
   const [rows, setRows]     = useState([]);
-  const [status, setStatus] = useState([]);
-  const [search, setSearch] = useState('');
-  const [client, setClient] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView]     = useState('list'); // 'list' | 'board'
+  // What the user chose about this list -- search, the two filters, and which of the
+  // two views they are in -- kept in the page store so opening an order and coming
+  // back does not throw it away. rows and loading stay plain useState on purpose,
+  // because the page refetches on mount and stale rows would be a lie.
+  const [ui, setUi] = usePageState('orders', { status:[], search:'', client:[], view:'list' });
   const load = async () => {
     setLoading(true);
     let { data, error } = await SB.from('purchase_orders').select(PO_CARD_SELECT).order('created_at',{ascending:false});
@@ -3287,19 +3291,19 @@ function Orders({ navigate }) {
     setRows(prev=>prev.map(p=>p.id===pid?{...p,production_pct:pct}:p));
     await SB.from('purchase_orders').update({production_pct:pct,updated_at:new Date().toISOString()}).eq('id',pid);
   };
-  const shown = filterPOs(rows,{search,client,status});
+  const shown = filterPOs(rows,{search:ui.search, client:ui.client, status:ui.status});
   return (
     <>
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'2px'}}>
-        <div style={{flex:1}}><PoToolbar rows={rows} search={search} setSearch={setSearch} client={client} setClient={setClient} status={status} setStatus={setStatus} /></div>
+        <div style={{flex:1}}><PoToolbar rows={rows} search={ui.search} setSearch={v=>setUi('search',v)} client={ui.client} setClient={v=>setUi('client',v)} status={ui.status} setStatus={v=>setUi('status',v)} /></div>
       </div>
       <div style={{display:'inline-flex',background:'#F2F2F6',borderRadius:'10px',padding:'3px',marginBottom:'16px'}}>
         {[['list','List'],['board','Production Board']].map(([v,l])=>(
-          <button key={v} onClick={()=>setView(v)} style={{padding:'7px 15px',borderRadius:'8px',border:'none',cursor:'pointer',fontSize:'12.5px',fontWeight:600,background:view===v?'#fff':'transparent',color:view===v?'#1A1A1C':'#8A8A8E',boxShadow:view===v?'0 1px 2px rgba(0,0,0,.08)':'none'}}>{l}</button>
+          <button key={v} onClick={()=>setUi('view',v)} style={{padding:'7px 15px',borderRadius:'8px',border:'none',cursor:'pointer',fontSize:'12.5px',fontWeight:600,background:ui.view===v?'#fff':'transparent',color:ui.view===v?'#1A1A1C':'#8A8A8E',boxShadow:ui.view===v?'0 1px 2px rgba(0,0,0,.08)':'none'}}>{l}</button>
         ))}
       </div>
       {loading ? <div className="loading">Loading...</div> :
-        view==='board' ? <ProductionBoard rows={shown} navigate={navigate} onStatus={setStat} onPct={setPct} />
+        ui.view==='board' ? <ProductionBoard rows={shown} navigate={navigate} onStatus={setStat} onPct={setPct} />
         : shown.length ? (
         <div className="order-card-grid">
           {shown.map(p=><OrderCard key={p.id} p={p} navigate={navigate} onStatus={setStat} />)}
@@ -4464,8 +4468,11 @@ function SortTh({ col, label, sort, onSort, style }) {
 function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [client, setClient] = useState([]);
-  const [search, setSearch] = useState('');
+  // WHAT THE USER CHOSE ABOUT THIS LIST, in the page store so that opening a product
+  // and coming back does not throw it away. Everything else here stays plain
+  // useState -- the fetched rows because the page refetches on mount, and the three
+  // modal slots because restoring an open modal would reopen it behind somebody.
+  const [ui, setUi] = usePageState('products', { search:'', client:[], activeF:[], factoryF:[], sort:null });
   const [poQuote, setPoQuote] = useState(null);
   const [viewQuote, setViewQuote] = useState(null);
   const [prods, setProds] = useState([]);
@@ -4474,8 +4481,7 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   // member of one, so the sentinel that used to be the string All is now [].
   // Named factoryF rather than factory so it cannot be mistaken for a row value in
   // a file where q.factory is read a few lines away.
-  const [activeF, setActiveF] = useState([]);
-  const [factoryF, setFactoryF] = useState([]);
+  // activeF and factoryF live in the page store above, with search and client.
   // ONE SORT, NOT ONE PER COLUMN. null | { col, dir }, where null is a REAL state --
   // the order the query returned, which is what this page has always shown and what the
   // cycle comes back to.
@@ -4485,7 +4491,8 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   // clear-the-others step on every handler, and the bug that arrangement produces --
   // two columns both showing an arrow -- is invisible until someone reads the list
   // and trusts the wrong one.
-  const [sort, setSort] = useState(null);
+  // sort is ui.sort, in the page store with the filters -- null is still a real
+  // state, the order the query returned.
   const [poLines, setPoLines] = useState([]);
   const [soLines, setSoLines] = useState([]);
   // EDIT PRODUCT holds the FULL row, fetched fresh on open. CreateProductModal writes
@@ -4726,17 +4733,17 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
     ...factoryList.map(f=>({ value:f, label:f, count:facCounts[f] })),
   ];
   const filtered = allRows.filter(q=>{
-    if(!inSel(client, ((q.client||'').trim()||'—'))) return false;
+    if(!inSel(ui.client, ((q.client||'').trim()||'—'))) return false;
     // ANDs with the rest, and uses the identical normalisation to the option list above
     // -- the sentinel has to be built the same way on both sides or picking the dash
     // matches nothing.
-    if(!inSel(factoryF, ((q.factory||'').trim()||'—'))) return false;
+    if(!inSel(ui.factoryF, ((q.factory||'').trim()||'—'))) return false;
     // Not an early return: the search test below still has to run, so each branch
     // only rejects.
     // Four branches became one membership test, because statusBucket already
     // answers which of the four states a row is in.
-    if(!inSel(activeF, statusBucket(q))) return false;
-    const s=search.toLowerCase(); if(!s) return true;
+    if(!inSel(ui.activeF, statusBucket(q))) return false;
+    const s=ui.search.toLowerCase(); if(!s) return true;
     return `${q.product} ${q.client} ${q.factory} ${q.sku} ${q.country}`.toLowerCase().includes(s);
   });
 
@@ -4797,19 +4804,19 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
     // falsy: a margin of exactly 0 is a real margin and must sort with the numbers.
     margin:  { get: q => avgMargin(q),           missing: v => v == null, numeric:true  },
   };
-  const rows = !sort ? filtered : [...filtered].sort((a,b)=>{
-    const k = SORT_KEYS[sort.col];
+  const rows = !ui.sort ? filtered : [...filtered].sort((a,b)=>{
+    const k = SORT_KEYS[ui.sort.col];
     const A = k.get(a), B = k.get(b);
     const ma = k.missing(A), mb = k.missing(B);
     if(ma && mb) return 0;
     if(ma) return 1;
     if(mb) return -1;
     const r = k.numeric ? A - B : A.localeCompare(B, undefined, { numeric:true });
-    return sort.dir==='desc' ? -r : r;
+    return ui.sort.dir==='desc' ? -r : r;
   });
   // unsorted -> asc -> desc -> unsorted, and clicking a DIFFERENT column starts that
   // column at asc rather than inheriting the direction of the one it replaced.
-  const cycleSort = col => setSort(s =>
+  const cycleSort = col => setUi('sort', s =>
     !s || s.col !== col ? { col, dir:'asc' } : s.dir==='asc' ? { col, dir:'desc' } : null);
 
   // ── EXPORT WHAT IS ON SCREEN ───────────────────────────────────────────────
@@ -4869,11 +4876,11 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
       : 'All';
     const SORT_LABEL = { sku:'SKU / Product', company:'Company', factory:'Factory', tiers:'Tiers', price:'Client Price', margin:'Avg Margin' };
     return [
-      ['Search', search.trim() || '(none)'],
-      ['Client', client.length ? client.join(', ') : 'All'],
-      ['Factory', factoryF.length ? factoryF.join(', ') : 'All'],
-      ['Status', labelsFor(activeF, activeOptions)],
-      ['Sort', sort ? (SORT_LABEL[sort.col] || sort.col) + (sort.dir === 'desc' ? ' (Z to A)' : ' (A to Z)') : 'None - query order'],
+      ['Search', ui.search.trim() || '(none)'],
+      ['Client', ui.client.length ? ui.client.join(', ') : 'All'],
+      ['Factory', ui.factoryF.length ? ui.factoryF.join(', ') : 'All'],
+      ['Status', labelsFor(ui.activeF, activeOptions)],
+      ['Sort', ui.sort ? (SORT_LABEL[ui.sort.col] || ui.sort.col) + (ui.sort.dir === 'desc' ? ' (Z to A)' : ' (A to Z)') : 'None - query order'],
     ];
   };
   const stampToday = () => {
@@ -4966,12 +4973,12 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
     <>
       <div className="prod-search" style={{marginBottom:'16px'}}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-        <input placeholder="Search products — name, client, factory, SKU…" value={search} onChange={e=>setSearch(e.target.value)} />
+        <input placeholder="Search products — name, client, factory, SKU…" value={ui.search} onChange={e=>setUi('search', e.target.value)} />
       </div>
       <div className="fs-row" style={{marginBottom:'20px'}}>
-        <FilterSelect multiple label="All Clients" value={client} onChange={setClient} options={clientOptions} />
-        <FilterSelect multiple label="All Factories" value={factoryF} onChange={setFactoryF} options={factoryOptions} />
-        <FilterSelect multiple label="All Statuses" value={activeF} onChange={setActiveF} options={activeOptions} />
+        <FilterSelect multiple label="All Clients" value={ui.client} onChange={v=>setUi('client', v)} options={clientOptions} />
+        <FilterSelect multiple label="All Factories" value={ui.factoryF} onChange={v=>setUi('factoryF', v)} options={factoryOptions} />
+        <FilterSelect multiple label="All Statuses" value={ui.activeF} onChange={v=>setUi('activeF', v)} options={activeOptions} />
         {/* Beside the filters because it exports exactly what they narrowed to, sorted
             the way the table is sorted. The control itself is ExportButton, shared with
             Testing / Products; marginLeft pushes it to the end of the row, and the menu
@@ -4985,13 +4992,13 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
           All Clients / Acme -- and there is no location called two clients, so with
           several chosen it says how many instead of naming one. Clearing still goes
           back to [], which is every client. */}
-      {client.length > 0 && (
+      {ui.client.length > 0 && (
         <div style={{display:'flex',alignItems:'center',gap:'8px',margin:'4px 0 16px',fontSize:'15px'}}>
-          <button className="crumb" onClick={()=>setClient([])}>‹ All Clients</button>
+          <button className="crumb" onClick={()=>setUi('client', [])}>‹ All Clients</button>
           <span style={{color:'var(--faint)'}}>/</span>
           {/* Client name, so sans -- see the SANS note in quotes.jsx. */}
           <span style={{fontFamily:'var(--sans)',fontWeight:600}}>
-            {client.length===1 ? client[0] : client.length+' clients'}
+            {ui.client.length===1 ? ui.client[0] : ui.client.length+' clients'}
           </span>
           <span style={{color:'var(--muted)',fontSize:'12.5px'}}>{filtered.length} {filtered.length===1?'product':'products'}</span>
         </div>
@@ -5026,7 +5033,7 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
                 is what says so.
                 Still exactly one sort at a time; SortTh reads the shared {col, dir}
                 and only the matching column shows a solid arrow. */}
-            <thead><tr><SortTh col="sku" label="SKU / Product" sort={sort} onSort={cycleSort} /><SortTh col="company" label="Company" sort={sort} onSort={cycleSort} /><SortTh col="factory" label="Factory" sort={sort} onSort={cycleSort} /><SortTh col="tiers" label="Tiers" sort={sort} onSort={cycleSort} style={{textAlign:'center'}} /><SortTh col="price" label="Client Price" sort={sort} onSort={cycleSort} style={{textAlign:'center'}} /><SortTh col="margin" label="Avg Margin" sort={sort} onSort={cycleSort} style={{textAlign:'center'}} /><th style={{textAlign:'center'}}>Product Status</th></tr></thead>
+            <thead><tr><SortTh col="sku" label="SKU / Product" sort={ui.sort} onSort={cycleSort} /><SortTh col="company" label="Company" sort={ui.sort} onSort={cycleSort} /><SortTh col="factory" label="Factory" sort={ui.sort} onSort={cycleSort} /><SortTh col="tiers" label="Tiers" sort={ui.sort} onSort={cycleSort} style={{textAlign:'center'}} /><SortTh col="price" label="Client Price" sort={ui.sort} onSort={cycleSort} style={{textAlign:'center'}} /><SortTh col="margin" label="Avg Margin" sort={ui.sort} onSort={cycleSort} style={{textAlign:'center'}} /><th style={{textAlign:'center'}}>Product Status</th></tr></thead>
             <tbody>
               {/* rows, not filtered: same rows, possibly reordered. The counts above and
                   the empty check below stay on `filtered`, because sorting cannot change
