@@ -1866,6 +1866,69 @@ below. Numbered 56 because 55 was already reserved for dropping `p_program_ids`;
 
 ---
 
+## Script 59, as run — 2026-09-16, nine parents from a sheet
+
+`z0` on the second rehearsal, and verified from a fresh query afterwards. What the
+first rehearsal caught is recorded at the end of this section.
+
+**Where it came from.** The Products page export, edited by hand in Excel and handed
+back as nine parent rows. The sheet is committed beside the data it produced —
+`archive/2026-09-16-parent-products-upload.xlsx`, byte for byte as received, with
+`archive/2026-09-16-parent-products-client-upload.json` holding the nine rows as they
+stood before anything was written.
+
+**Only two of its thirteen columns are product fields.** Client became
+`client_company_id` and Catalogue status became `active`. **Factory, Country, Tiers,
+Min price, Max price, Avg margin and Quote date all live on the QUOTE**, and Order
+state is derived from order lines — none of them has a column on `products` to write
+to, so all seven were ignored and the script says so at the top. Worth remembering
+the next time an export comes back edited — a column being in the file does not make
+it a field.
+
+**What it did.**
+
+- **Nine rows gained a client**, every one of them NULL beforehand, so nothing was
+  overwritten. Five companies, matched by id with the length of the name as a second
+  key: BucketGolf, Madame Tussauds, Paw Patrol, Legoland, Peppa Pig.
+- **BG-104 and BG-113 went active.** BG-101 was already `true` and got no write.
+- **LL1-1591 went the other way** — `false` to NULL, not recorded — **and was renamed**
+  from *Ollie small water bottle* to *Ollie Water Bottle*.
+
+**PEP-114 arrived with `1` in its client column**, which matches no company and is not
+an id. It was held out of the first draft entirely rather than guessed at, and went in
+only once a person said the client was Peppa Pig. A sheet is a person typing, and the
+cell that makes no sense is the one worth stopping on.
+
+**The rename had to be proved safe first.** `products_sku_name_key` is UNIQUE over
+`(sku, name)` and **three rows carry SKU LL1-1591** — the other two are *Olivia small
+water bottle* and *Youth steel water bottle*, both inactive, both untouched. The guard
+re-proved the new name was free on that SKU rather than trusting the measurement, so a
+collision could not become a failed transaction half way through.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| the nine parents with a client | 0 / 9 | **9 / 9** |
+| BG-104 / BG-113 | NULL / NULL | **true / true** |
+| LL1-1591 `2edeaee1` | false, *Ollie small water bottle* | **NULL, _Ollie Water Bottle_** |
+| its two siblings | false, 25 and 24 characters | unchanged |
+| quotes / PO lines / programs | 332 / 256 / 312 | unchanged |
+
+**What the rehearsal taught.** `b5` asserted `length(name) = 24` for **both** siblings,
+and *Olivia small water bottle* is 25. The check failed, the transaction rolled back
+clean, and the script was wrong rather than the data. Two rows are two identities: each
+one now gets its own id and its own length. The rule this belongs to is the one already
+written down — identity is an id plus something measured about that row, never a shape
+assumed to be shared.
+
+**And a preflight trap worth knowing.** The verification block is found as everything
+from the first `select * from (` in the file, so a temp table written as
+`select * from (values …)` is parsed as branches — which is what the uncast-`got`
+failure on the first run was really saying. Name the columns.
+
+---
+
 ## Script 57, as run — 2026-09-15, sold products brought into service
 
 `z0` on commit, and verified from a fresh query afterwards.
