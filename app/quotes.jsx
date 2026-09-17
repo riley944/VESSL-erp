@@ -11,6 +11,8 @@ import { SB } from "@/lib/supabase";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
 import { productByKey, ensureProductForQuote, skuActivity } from "@/lib/products";
+// The one door into the programs table. See the note at the top of lib/programs.js.
+import { createProgram } from "@/lib/programs";
 // The search term and the open client survive navigation, and go on reload.
 import { usePageState } from "@/lib/pageState";
 // sizesForScale is gone from this file: a quote can now carry several scales, and
@@ -615,6 +617,11 @@ const SKU_SIZE_SUFFIX = /[-_\/ ]\s*(?:[0-9]?X{0,3}(?:S|M|L|XS|SM|MED|LG|XL|XXL|S
 const skuLooksSized = (sku) => SKU_SIZE_SUFFIX.test((sku || "").trim());
 
 const BLANK = {
+  // FORM STATE ONLY, and that is what makes it safe. formToRow is a destructive
+  // whitelist -- anything it does not name is dropped on every save -- so this
+  // never reaches the quotes table. It travels with the form object to saveQuote,
+  // which reads it and then forgets it.
+  createProgram: false,
   id: null, quoteDate: "", product: "", sku: "", sizeScales: [], sizeDeltas: {}, sizePlateFees: {}, sizeCartons: {}, notes: "",
   updatedAt: "", updatedBy: "",
   client: "", clientContact: "", clientEmail: "", clientPhone: "", clientAddress: "",
@@ -984,10 +991,26 @@ function Platform({ session, newQuote = null }) {
         }
       } catch (e) {}
 
-      // SAVING A QUOTE NO LONGER OPENS A PROGRAM. It used to, on the reasoning that
-      // quoting a product for a client IS the programme starting. PLM is kept by
-      // hand now, on Riley decision, so a card appears only when somebody ticks
-      // Create PLM program on this form -- which arrives in the next change.
+      // ── THE TICK, AND ONLY THE TICK ───────────────────────────────────────
+      // A program is created here when somebody asked for one on this form, and
+      // never otherwise. f carries createProgram as form state; formToRow dropped
+      // it on the way to the table, which is why it is read from f rather than
+      // from savedRow.
+      //
+      // The owner is whoever is saving the quote, resolved to a staff_profiles
+      // row inside the helper. A quote with no product or no resolved client
+      // names no program, and says so rather than failing the save -- 3 quotes
+      // carry a client the catalogue has no company for, which is a known
+      // question rather than a fault here.
+      if (f.createProgram) {
+        if (!savedRow.product_id || !savedRow.client_company_id) {
+          flash("Quote saved — no PLM card, it needs a product and a matched client");
+        } else {
+          const { error: pErr } = await createProgram(savedRow.product_id, savedRow.client_company_id,
+                                                      { stage: 'quoted', ownerEmail: userEmail });
+          flash(pErr ? "Quote saved — PLM card failed, " + pErr.message : "Quote saved — PLM card opened at Quoted");
+        }
+      }
       // Ask on the OLD key -- renamed, or a different product? Kristy's words on
       // why any of this exists: "if I have to update information on multiple
       // screens, it allows more chance for me to miss something."
@@ -1265,10 +1288,56 @@ function Platform({ session, newQuote = null }) {
 }
 
 // ---------- expanded detail ----------
-// MARK WON IS GONE. It called ensurePrograms directly, so it was a second door
-// into the programs table -- and under the manual board it would have created a
-// card with no owner and no stage, which is exactly what the rework forbids. If
-// Riley wants it back, it returns wired to the new creation helper.
+// ── MARK WON, BACK ON THE NEW HELPER ────────────────────────────────────────
+// It was removed when the automatic doors were closed, because it called
+// ensurePrograms directly and would have opened a card with no owner and no
+// stage. It returns writing what the manual board needs -- stage quoted, owner
+// the person pressing it -- through the same helper the quote-form tick uses.
+//
+// IT READS THE QUOTE ROW RATHER THAN THE CARD, as it always did. The card object
+// is a UI shape assembled at load, and whether it carries product_id and
+// client_company_id is an implementation detail that has changed before.
+//
+// PRESSING IT TWICE IS A NO-OP. createProgram inserts and never updates, so a
+// second press cannot drag a card back to Quoted or take it off its owner.
+function MarkWonButton({ q, userEmail }) {
+  const [busy, setBusy] = useState(false);
+  const [state, setState] = useState('idle');   // idle | done | cannot
+
+  const start = async () => {
+    setBusy(true);
+    try {
+      const { data: row, error } = await SB.from('quotes')
+        .select('product_id,client_company_id').eq('id', q.id).single();
+      if (error) { alert('Could not read the quote: ' + error.message); setBusy(false); return; }
+      if (!row || !row.product_id || !row.client_company_id) {
+        setState('cannot'); setBusy(false); setTimeout(()=>setState('idle'), 6000); return;
+      }
+      const { error: pErr } = await createProgram(row.product_id, row.client_company_id,
+                                                  { stage: 'quoted', ownerEmail: userEmail });
+      if (pErr) { alert('Could not start the program: ' + pErr.message); setBusy(false); return; }
+      setState('done'); setBusy(false); setTimeout(()=>setState('idle'), 5000);
+    } catch (e) {
+      alert('Something went wrong: ' + (e && e.message ? e.message : e)); setBusy(false);
+    }
+  };
+
+  const label = state==='done'   ? 'PLM card ready — see Programs'
+    : state==='cannot' ? 'Needs a product and a client first'
+    : busy ? 'Starting…' : 'Mark won · start PLM card';
+  const bg = state==='done' ? '#e7f5ec' : state==='cannot' ? '#fef3e2' : '#0f7d43';
+  const col = state==='done' ? '#2f7d52' : state==='cannot' ? '#b45309' : '#fff';
+
+  return (
+    <button
+      style={{ display:'inline-flex', alignItems:'center', gap:7, background:bg, border:'1px solid '+(state==='idle'?'#0f7d43':'transparent'), color:col, borderRadius:10, padding:'9px 16px', fontSize:13.5, fontWeight:600, cursor:'pointer' }}
+      onClick={start} disabled={busy}
+      title="Open a PLM card for this quote, at Quoted, owned by you"
+    >
+      <CheckCircle2 size={15} /> {label}
+    </button>
+  );
+}
 
 function FreightQuoteButton({ q, cbmPerCarton }) {
   const [busy, setBusy] = useState(false);
@@ -1754,6 +1823,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
             <button style={S.iconBtn} title="Delete" onClick={onDelete}><Trash2 size={16} /></button>
           </div>
         )}
+        <MarkWonButton q={q} userEmail={userEmail} />
         <FreightQuoteButton q={q} cbmPerCarton={cbm} />
         <button style={S.printBtn} onClick={() => { printQuote(q).catch(e => console.error('print failed:', e)); }}><Printer size={15} /> Print this quote</button>
       </div>
@@ -3008,6 +3078,29 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
           </FormSection>
 
           <FormSection icon={<Building2 size={15} />} title="Client / Vendor Info">
+            {/* ── THE ONE DOOR INTO PLM ──────────────────────────────────────
+                In the Client section rather than beside the SKU, because a card is
+                a product FOR a client -- and the field it depends on is right
+                below it. Unticked by default on every quote, new or reopened: a
+                card is something somebody asks for, and a box that remembers
+                being ticked would start creating them quietly again.
+
+                A real checkbox, like the size scales above, so the modal dirty
+                guard sees it natively without a markDirty call. */}
+            <label style={{ ...S.field, gridColumn: "1 / -1", display: "flex", flexDirection: "row",
+                            alignItems: "flex-start", gap: 9, margin: 0, fontFamily: "inherit",
+                            fontSize: 13, letterSpacing: 0, textTransform: "none" }}>
+              <input type="checkbox" style={{ marginTop: 2 }}
+                     checked={!!f.createProgram}
+                     onChange={(e) => setF((p) => ({ ...p, createProgram: e.target.checked }))} />
+              <span>
+                Create PLM program
+                <span style={{ display: "block", fontSize: 11.5, color: "#6a7488", marginTop: 2 }}>
+                  Opens a card at Quoted, owned by you. Needs a product and a client the
+                  catalogue knows. Nothing else creates one.
+                </span>
+              </span>
+            </label>
             <label style={{ ...S.field, position: "relative" }}>
               <span style={S.fieldLabel}>Client</span>
               <input
