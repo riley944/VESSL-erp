@@ -12,6 +12,8 @@ import { ensurePrograms } from "@/lib/programs";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
 import { productByKey, ensureProductForQuote, skuActivity } from "@/lib/products";
+// The search term and the open client survive navigation, and go on reload.
+import { usePageState } from "@/lib/pageState";
 // sizesForScale is gone from this file: a quote can now carry several scales, and
 // every size here is addressed by the composite key sizesForSelection hands out.
 import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey, storedQtyToMap as qtyMapFrom } from "@/app/components/SizeGrid";
@@ -675,8 +677,10 @@ function Platform({ session, newQuote = null }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [skuChoice, setSkuChoice] = useState(null);
-  const [search, setSearch] = useState("");
-  const [activeClient, setActiveClient] = useState(null);
+  // The search term and which client is open survive going to another page and back.
+  // expanded stays plain below -- an open row is the same class of thing as openId
+  // elsewhere, and restoring one would scroll somebody to a quote they had left.
+  const [ui, setUi] = usePageState('quotes', { search:'', activeClient:null });
   const [expanded, setExpanded] = useState(null);
   const [toast, setToast] = useState("");
   const [loadErr, setLoadErr] = useState("");
@@ -868,7 +872,7 @@ function Platform({ session, newQuote = null }) {
     if (!targetId) { deepLinkHandledRef.current = true; return; }
     const q = quotes.find((x) => x.id === targetId);
     if (q) {
-      setActiveClient((q.client || "Unassigned").trim() || "Unassigned");
+      setUi('activeClient', (q.client || "Unassigned").trim() || "Unassigned");
       setExpanded(targetId);
       setTimeout(() => {
         const el = document.getElementById(`quote-row-${targetId}`);
@@ -1037,19 +1041,19 @@ function Platform({ session, newQuote = null }) {
     })),
   ];
 
-  const searching = search.trim() !== "";
+  const searching = ui.search.trim() !== "";
   const searchResults = useMemo(() => {
-    const s = search.toLowerCase();
+    const s = ui.search.toLowerCase();
     return quotes.filter((q) => {
       const hay = `${q.client} ${q.product} ${q.factory} ${q.sku} ${q.clientContact} ${q.factoryContact} ${q.country}`.toLowerCase();
       return hay.includes(s);
     });
-  }, [quotes, search]);
+  }, [quotes, ui.search]);
 
   const clientQuotes = useMemo(() => {
-    if (!activeClient) return [];
-    return quotes.filter((q) => ((q.client || "Unassigned").trim() || "Unassigned") === activeClient);
-  }, [quotes, activeClient]);
+    if (!ui.activeClient) return [];
+    return quotes.filter((q) => ((q.client || "Unassigned").trim() || "Unassigned") === ui.activeClient);
+  }, [quotes, ui.activeClient]);
 
   const exportCSV = () => {
     const cols = ["SKU","Date","Product","Client","Client Contact","Factory","Country","HTS","Tier Qty","EXW Cost","Method","Freight+Duty","Total Cost","Client Price","Margin %","Updated","Updated By","Notes"];
@@ -1070,7 +1074,7 @@ function Platform({ session, newQuote = null }) {
 
   let view = "clients";
   if (searching) view = "search";
-  else if (activeClient) view = "clientQuotes";
+  else if (ui.activeClient) view = "clientQuotes";
   const shownQuotes = view === "search" ? searchResults : view === "clientQuotes" ? clientQuotes : [];
 
   const myOpenTaskCount = tasks.filter((t) => !t.done && (t.assigned_to || "").toLowerCase() === userEmail.toLowerCase()).length;
@@ -1103,7 +1107,7 @@ function Platform({ session, newQuote = null }) {
           tasks={tasks} userEmail={userEmail}
           onToggle={toggleTask} onDelete={deleteTask}
           onClose={() => setShowTasks(false)}
-          onJump={(qid) => { const qq = quotes.find((x) => x.id === qid); if (qq) { setActiveClient((qq.client || "Unassigned").trim() || "Unassigned"); setExpanded(qid); setShowTasks(false); } }}
+          onJump={(qid) => { const qq = quotes.find((x) => x.id === qid); if (qq) { setUi('activeClient', (qq.client || "Unassigned").trim() || "Unassigned"); setExpanded(qid); setShowTasks(false); } }}
         />
       )}
 
@@ -1114,8 +1118,8 @@ function Platform({ session, newQuote = null }) {
       <div style={S.controls}>
         <div style={S.searchWrap}>
           <Search size={16} color="#6a7488" />
-          <input style={S.searchInput} placeholder="Search all quotes — client, product, factory, SKU…" value={search} onChange={(e) => setSearch(e.target.value)} />
-          {searching && <button style={S.clearBtn} onClick={() => setSearch("")}><X size={14} /></button>}
+          <input style={S.searchInput} placeholder="Search all quotes — client, product, factory, SKU…" value={ui.search} onChange={(e) => setUi('search', e.target.value)} />
+          {searching && <button style={S.clearBtn} onClick={() => setUi('search', "")}><X size={14} /></button>}
         </div>
       </div>
 
@@ -1123,8 +1127,8 @@ function Platform({ session, newQuote = null }) {
         <div className="fs-row" style={{ maxWidth: 1280, margin: "0 auto 20px" }}>
           <FilterSelect
             label="All Clients"
-            value={activeClient ?? ALL}
-            onChange={(v) => { setActiveClient(v === ALL ? null : v); setExpanded(null); }}
+            value={ui.activeClient ?? ALL}
+            onChange={(v) => { setUi('activeClient', v === ALL ? null : v); setExpanded(null); }}
             options={clientOptions}
           />
         </div>
@@ -1134,11 +1138,11 @@ function Platform({ session, newQuote = null }) {
 
       {view === "clientQuotes" && (
         <div style={S.breadcrumb}>
-          <button style={S.crumbBtn} onClick={() => { setActiveClient(null); setExpanded(null); }}>
+          <button style={S.crumbBtn} onClick={() => { setUi('activeClient', null); setExpanded(null); }}>
             <ChevronLeft size={15} /> All Clients
           </button>
           <span style={S.crumbSep}>/</span>
-          <span style={S.crumbCurrent}>{activeClient}</span>
+          <span style={S.crumbCurrent}>{ui.activeClient}</span>
           <span style={S.crumbMeta}>{clientQuotes.length} {clientQuotes.length === 1 ? "quote" : "quotes"}</span>
         </div>
       )}
@@ -1157,7 +1161,7 @@ function Platform({ session, newQuote = null }) {
             const latest = c.quotes.reduce((a, q) => (!a || (q.updatedAt > a) ? q.updatedAt : a), "");
             const col = clientColor(c.name);
             return (
-              <button key={c.name} style={{ ...S.clientCard, background: col.bg, borderColor: "#e7eaf0", borderTop: `2px solid ${col.accent}` }} onClick={() => setActiveClient(c.name)}>
+              <button key={c.name} style={{ ...S.clientCard, background: col.bg, borderColor: "#e7eaf0", borderTop: `2px solid ${col.accent}` }} onClick={() => setUi('activeClient', c.name)}>
                 <div style={S.clientCardTop}>
                   <div style={{ ...S.clientAvatar, background: col.avatar, color: col.text }}>{c.name.slice(0, 2).toUpperCase()}</div>
                   <ChevronRight size={18} color="#3f4853" />

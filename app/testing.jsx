@@ -14,6 +14,9 @@ import { RenameSkuModal } from "@/app/components/RenameSkuModal";
 import { AddMaterialModal } from "@/app/components/AddMaterialModal";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { ExportButton } from "@/app/components/ExportButton";
+// Tab, search and all eleven filters survive going into another page and coming
+// back, and are gone on reload. See the note at the top of lib/pageState.js.
+import { usePageState } from "@/lib/pageState";
 // CDN loader, not an import of exceljs -- the package is ~900KB and nothing that
 // large should ride in the bundle for a button most sessions never press.
 import { loadExcelJS, excelDate } from "@/lib/excel";
@@ -208,7 +211,14 @@ const card = {background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,
 // from the shell rather than re-read from the session -- so a rename started here
 // can stamp quotes.updated_by like the Quotes page does.
 export default function Testing({ userEmail = '' }) {
-  const [tab, setTab] = useState('products');
+  // EVERY CHOICE THIS PAGE OFFERS, in the page store. Thirteen of them, which is why
+  // this page was left for last -- the big shownProducts memo names most of them in
+  // its dependency array, and a missed rename there would not throw, it would just
+  // stop recomputing. Fetched lists, the modal slot and the busy flags stay plain.
+  const [ui, setUi] = usePageState('testing', {
+    tab:'products', search:'', compSel:[], efSel:[], brandSel:[], stageSel:[], dateSel:[],
+    clientSel:[], matFilter:'', repFilter:'', movedOnly:false, orderSel:[], catSel:['active','notset'],
+  });
   const [products, setProducts] = useState([]);
   const [materials, setMaterials] = useState([]);
   const [reports, setReports] = useState([]);
@@ -221,7 +231,7 @@ export default function Testing({ userEmail = '' }) {
   const [prodQuotes, setProdQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // {type:'material'|'report'|'link', data}
-  const [search, setSearch] = useState('');
+  // search is ui.search, with tab and the filters in the page store above.
   // ── Products filters: five multi-select axes plus Client ───────────────────
   // Each is an ARRAY and [] is All -- see isAll. They are separate states rather
   // than one because they are separate axes ANDed together: "Merlin products that
@@ -232,18 +242,18 @@ export default function Testing({ userEmail = '' }) {
   // now expressible as a set, where a single slot could only have offered a
   // NOT-something pill to approximate it -- and a NOT over a nullable column is the
   // thing this file refuses to write.
-  const [compSel,  setCompSel]  = useState([]);   // complianceKey's six returns
-  const [efSel,    setEfSel]    = useState([]);   // efilingKey's four returns, verbatim
-  const [brandSel, setBrandSel] = useState([]);   // merlin | non_merlin | unclassified
-  const [stageSel, setStageSel] = useState([]);   // production | sample | notset
-  const [dateSel,  setDateSel]  = useState([]);   // 30 | 60 | 90 | over90 | nolink
+  // ui.compSel  complianceKey's six returns
+  // ui.efSel    efilingKey's four returns, verbatim
+  // ui.brandSel merlin | non_merlin | unclassified
+  // ui.stageSel production | sample | notset
+  // ui.dateSel  30 | 60 | 90 | over90 | nolink
   // Client stays SINGLE-select: it is an identity, not a bucket, and 13 of them
   // behave differently from a five-item state list. FilterSelect serves both.
   // Multi-select, so an ARRAY of company uuids and the string unassigned. An
   // empty array is every client, the same contract the five filters beside it use.
-  const [clientSel, setClientSel] = useState([]);
-  const [matFilter, setMatFilter] = useState('');     // '' | passed | untested | attention
-  const [repFilter, setRepFilter] = useState('');     // '' | pass | fail | expiring
+  // ui.clientSel company uuids, plus the literal unassigned
+  // ui.matFilter '' | passed | untested | attention
+  // ui.repFilter '' | pass | fail | expiring
 
   const load = async () => {
     setLoading(true);
@@ -446,7 +456,8 @@ export default function Testing({ userEmail = '' }) {
       .filter(p => p.product_stage === 'sample' && (ordered.has(p.id) || sold.has(p.id)))
       .map(p => p.id));
   },[selectableProducts, prodOrders, prodSales]);
-  const [movedOnly, setMovedOnly] = useState(false);
+  // movedOnly is ui.movedOnly. movedPast above is a memo over the data, not a choice,
+  // so it is derived every render and belongs nowhere near the store.
 
   // The catalogue-status filter, and the ONE default on this page that is not
   // "everything". Active and Not Set are ticked on load; an empty selection means
@@ -475,7 +486,7 @@ export default function Testing({ userEmail = '' }) {
   // Empty is All, like every other multi filter on this page. No default
   // narrowing: this is a new axis and hiding rows behind it on first load would
   // be a surprise, not a convenience.
-  const [orderSel, setOrderSel] = useState([]);
+  // orderSel is ui.orderSel, in the page store.
   const orderOptions = useMemo(()=>[
     { value:'', label:'All order states', count:products.length },
     { value:'ordered',    label:'Ordered',        color:'var(--ok)',    count:orderCounts.ordered },
@@ -483,7 +494,8 @@ export default function Testing({ userEmail = '' }) {
     { value:'neverused',  label:'Never used',     color:'var(--muted)', count:orderCounts.neverused },
   ],[orderCounts, products.length]);
 
-  const [catSel, setCatSel] = useState(['active','notset']);
+  // catSel is ui.catSel, and it opens on active plus notset rather than empty -- the
+  // one filter on this page with a non-empty default, which the store preserves.
   const catKey = p => p.active === false ? 'inactive' : p.active === true ? 'active' : 'notset';
   const catCounts = useMemo(()=>{
     const c = { active:0, inactive:0, notset:0 };
@@ -494,8 +506,8 @@ export default function Testing({ userEmail = '' }) {
   // whether the selection is empty -- on this axis empty means MORE rows, not
   // fewer. Default and empty both count as unfiltered for the badge ProductsView
   // shows; anything else is a deliberate narrowing.
-  const isDefaultCat = catSel.length === 0
-    || (catSel.length === 2 && catSel.includes('active') && catSel.includes('notset'));
+  const isDefaultCat = ui.catSel.length === 0
+    || (ui.catSel.length === 2 && ui.catSel.includes('active') && ui.catSel.includes('notset'));
   const catOptions = useMemo(()=>[
     { value:'', label:'All catalogue statuses', count:products.length },
     { value:'active',   label:'Active',   color:'var(--ok)',    count:catCounts.active },
@@ -592,7 +604,7 @@ export default function Testing({ userEmail = '' }) {
   // no query runs on a keystroke. These feed the four VIEWS ONLY: ReportModal's product
   // and material pickers and LinkModal's material list keep the unfiltered arrays, or a
   // search would silently narrow what is selectable inside a modal.
-  const q = normalizeTerm(search);
+  const q = normalizeTerm(ui.search);
   const searching = q.length > 0;
   const shownProducts = useMemo(() => {
     let list = !q ? products : products.filter(p =>
@@ -639,32 +651,32 @@ export default function Testing({ userEmail = '' }) {
     // product -- but clearing the filter, or ticking Inactive, brings them back.
     // Retired rows are compliance history and stay reachable; they are just not
     // what this page opens on.
-    if (!isAll(catSel)) list = list.filter(p => inSel(catSel, catKey(p)));
-    if (!isAll(orderSel)) list = list.filter(p => inSel(orderSel, orderStateOf(p)));
+    if (!isAll(ui.catSel)) list = list.filter(p => inSel(ui.catSel, catKey(p)));
+    if (!isAll(ui.orderSel)) list = list.filter(p => inSel(ui.orderSel, orderStateOf(p)));
     // Not a filter axis -- a shortcut attached to the page-level line, so it is
     // not in the dropdown row and does not participate in isDefaultCat.
-    if (movedOnly) list = list.filter(p => movedPast.has(p.id));
+    if (ui.movedOnly) list = list.filter(p => movedPast.has(p.id));
     //
     // Compliance and eFiling both read a KEY FUNCTION -- complianceKey / efilingKey --
     // so the bucket a product is in is decided in one place and the filter, the row
     // dot, the tooltip and the search index cannot drift apart. That is also what
     // stops a value like 'tbd' from falling through every branch and vanishing, which
     // is exactly what the old four-independent-tests shape did to 88 products.
-    if (!isAll(compSel))  list = list.filter(p => inSel(compSel,  complianceKey(p)));
-    if (!isAll(efSel))    list = list.filter(p => inSel(efSel,    efilingKey(p)));
+    if (!isAll(ui.compSel))  list = list.filter(p => inSel(ui.compSel,  complianceKey(p)));
+    if (!isAll(ui.efSel))    list = list.filter(p => inSel(ui.efSel,    efilingKey(p)));
     // brand_group and product_stage are already key-shaped in the column. NULL is a
     // named bucket rather than a NOT, so an unclassified product appears under
     // Unclassified and under All, nowhere else.
-    if (!isAll(brandSel)) list = list.filter(p => inSel(brandSel, p.brand_group == null ? 'unclassified' : p.brand_group));
-    if (!isAll(stageSel)) list = list.filter(p => inSel(stageSel, p.product_stage == null ? 'notset' : p.product_stage));
+    if (!isAll(ui.brandSel)) list = list.filter(p => inSel(ui.brandSel, p.brand_group == null ? 'unclassified' : p.brand_group));
+    if (!isAll(ui.stageSel)) list = list.filter(p => inSel(ui.stageSel, p.product_stage == null ? 'notset' : p.product_stage));
     // Equality on both branches, never <> and never NOT -- the same rule brand_group
     // follows. client_company_id is NULL on the six products whose SKU names no guide
     // prefix; those are unresolved, not "some other client", and
     // p.client_company_id !== id would sweep all six into every named client's result.
     // One membership test covers both branches the single-select needed. A row
     // with no client answers to the literal unassigned, which is its option value.
-    if (clientSel.length) list = list.filter(p =>
-      clientSel.includes(p.client_company_id == null ? 'unassigned' : p.client_company_id));
+    if (ui.clientSel.length) list = list.filter(p =>
+      ui.clientSel.includes(p.client_company_id == null ? 'unassigned' : p.client_company_id));
     // ORDERED IS THE ONE THAT IS NOT A KEY FUNCTION, because its buckets are not a
     // partition: 30 ⊂ 60 ⊂ 90 are nested, so a product can be in three of them at
     // once. It is a UNION of the chosen windows instead -- ticking 30 and 60 means
@@ -680,22 +692,26 @@ export default function Testing({ userEmail = '' }) {
     // a NULL order_date falls outside every window, since each needs o.last.
     // purchase_orders.order_date is nullable but defaults to CURRENT_DATE and is set
     // on all 54 rows, so this cannot happen today.
-    if (!isAll(dateSel)) {
-      const within = dateSel.filter(v => v==='30'||v==='60'||v==='90').map(Number);
+    if (!isAll(ui.dateSel)) {
+      const within = ui.dateSel.filter(v => v==='30'||v==='60'||v==='90').map(Number);
       const cutoffs = within.map(isoDaysAgo);
       const over90 = isoDaysAgo(90);
       list = list.filter(p => {
         const o = ordersByProduct[p.id];
-        if (dateSel.includes('nolink') && !o) return true;
+        if (ui.dateSel.includes('nolink') && !o) return true;
         if (!o || !o.last) return false;
-        if (dateSel.includes('over90') && o.last < over90) return true;
+        if (ui.dateSel.includes('over90') && o.last < over90) return true;
         return cutoffs.some(c => o.last >= c);
       });
     }
     return list;
     // Joined rather than passed raw: each selection is a fresh array identity on every
     // render, which would defeat the memo entirely.
-  }, [products, q, compSel.join(), efSel.join(), brandSel.join(), stageSel.join(), dateSel.join(), clientSel.join(), catSel.join(), orderSel.join(), movedOnly, movedPast, ordersByProduct]);
+    // EVERY FILTER IS NAMED HERE, and each one had to move to ui.* with its use above
+    // -- this array is the one place where a missed rename would not throw. It would
+    // read a stale name, the memo would stop seeing that filter change, and the list
+    // would quietly stop responding to a dropdown that still looks like it works.
+  }, [products, q, ui.compSel.join(), ui.efSel.join(), ui.brandSel.join(), ui.stageSel.join(), ui.dateSel.join(), ui.clientSel.join(), ui.catSel.join(), ui.orderSel.join(), ui.movedOnly, movedPast, ordersByProduct]);
   // -- EXPORT WHAT IS ON SCREEN -----------------------------------------------
   // shownProducts, NOT products and not selectableProducts. The whole point is that
   // Jenn narrows the table first and exports that -- search, all seven filter axes and
@@ -745,16 +761,16 @@ export default function Testing({ userEmail = '' }) {
     const CAT = { active:'Active', notset:'Not set', inactive:'Inactive' };
     const USE = { ordered:'Ordered', notordered:'Not yet ordered', neverused:'Never used' };
     return [
-      ['Search', search.trim() || '(none)'],
-      ['Catalogue status', catSel.length ? catSel.map(v => CAT[v] || v).join(', ') : 'All'],
-    ['Order state', orderSel.length ? orderSel.map(v => USE[v] || v).join(', ') : 'All'],
-      ['Compliance', labelsFor(compSel,  compOptions)],
-      ['eFiling',    labelsFor(efSel,    efOptions)],
-      ['Brand',      labelsFor(brandSel, brandOptions)],
-      ['Stage',      labelsFor(stageSel, stageOptions)],
-      ['Ordered',    labelsFor(dateSel,  dateOptions)],
-      ['Client',     labelsFor(clientSel, clientOptions)],
-      ['Sample but already ordered or sold', movedOnly ? 'Only these' : 'All'],
+      ['Search', ui.search.trim() || '(none)'],
+      ['Catalogue status', ui.catSel.length ? ui.catSel.map(v => CAT[v] || v).join(', ') : 'All'],
+    ['Order state', ui.orderSel.length ? ui.orderSel.map(v => USE[v] || v).join(', ') : 'All'],
+      ['Compliance', labelsFor(ui.compSel,  compOptions)],
+      ['eFiling',    labelsFor(ui.efSel,    efOptions)],
+      ['Brand',      labelsFor(ui.brandSel, brandOptions)],
+      ['Stage',      labelsFor(ui.stageSel, stageOptions)],
+      ['Ordered',    labelsFor(ui.dateSel,  dateOptions)],
+      ['Client',     labelsFor(ui.clientSel, clientOptions)],
+      ['Sample but already ordered or sold', ui.movedOnly ? 'Only these' : 'All'],
     ];
   };
 
@@ -870,11 +886,11 @@ export default function Testing({ userEmail = '' }) {
       // costs nothing and means the search does not have to be remembered later.
       matches(q, m.name, m.material_type, m.supplier?.name, m.supplier_name, m.material_code, m.master_sku)
     );
-    if (matFilter==='passed')    list = list.filter(m=>m.status==='passed');
-    if (matFilter==='untested')  list = list.filter(m=>['untested','in_progress'].includes(m.status));
-    if (matFilter==='attention') list = list.filter(m=>['failed','expired'].includes(m.status));
+    if (ui.matFilter==='passed')    list = list.filter(m=>m.status==='passed');
+    if (ui.matFilter==='untested')  list = list.filter(m=>['untested','in_progress'].includes(m.status));
+    if (ui.matFilter==='attention') list = list.filter(m=>['failed','expired'].includes(m.status));
     return list;
-  }, [materials, q, matFilter]);
+  }, [materials, q, ui.matFilter]);
   const shownReports = useMemo(() => {
     let list = !q ? reports : reports.filter(r =>
       // All FIVE headline fallbacks, since which one renders varies by row, plus the
@@ -893,19 +909,19 @@ export default function Testing({ userEmail = '' }) {
         r.composition,
         ...(r.test_results || []).map(t => t.regulation_code))
     );
-    if (repFilter==='pass') list = list.filter(r=>r.overall_result==='pass');
-    if (repFilter==='fail') list = list.filter(r=>r.overall_result==='fail');
-    if (repFilter==='expiring') list = list.filter(r=>{ const d=daysUntil(r.expiry_date); return d!==null && d>=0 && d<=EXPIRY_WINDOW_DAYS; });
+    if (ui.repFilter==='pass') list = list.filter(r=>r.overall_result==='pass');
+    if (ui.repFilter==='fail') list = list.filter(r=>r.overall_result==='fail');
+    if (ui.repFilter==='expiring') list = list.filter(r=>{ const d=daysUntil(r.expiry_date); return d!==null && d>=0 && d<=EXPIRY_WINDOW_DAYS; });
     return list;
-  }, [reports, q, repFilter]);
+  }, [reports, q, ui.repFilter]);
   const shownRegs = useMemo(() => !q ? regs : regs.filter(r =>
     matches(q, ...regSearchFields(r))
   ), [regs, q]);
-  const shownCount = { products:shownProducts, materials:shownMaterials, reports:shownReports, regs:shownRegs }[tab].length;
+  const shownCount = { products:shownProducts, materials:shownMaterials, reports:shownReports, regs:shownRegs }[ui.tab].length;
   // The Products badge counts the SELECTABLE catalogue, matching every other
   // number on this page. The other three tabs are unchanged -- a test report on a
   // retired product is still a test report.
-  const totalCount = { products: selectableProducts, materials, reports, regs }[tab].length;
+  const totalCount = { products: selectableProducts, materials, reports, regs }[ui.tab].length;
 
   // Stored statuses only, matching the table beneath. A product nobody has ruled on
   // counts toward none of the three — the totals are what has been decided, not a
@@ -991,12 +1007,15 @@ export default function Testing({ userEmail = '' }) {
 
   // Pulse tiles: each is a live count and a shortcut. Tapping switches to the tab
   // that answers it and toggles the matching filter; tapping again clears it.
-  const goto = (t, setter, current, val) => () => { setTab(t); setSearch(''); setter(current===val?'':val); };
+  // The tiles take the KEY they narrow rather than a setter, now that every filter
+  // lives under one object. Same behaviour -- jump to the tab, clear the term, and
+  // toggle the value off if it is already the only thing selected.
+  const goto = (t, key, current, val) => () => { setUi('tab', t); setUi('search',''); setUi(key, current===val?'':val); };
   // The multi-select version: a tile sets its axis to EXACTLY its own bucket, and
   // tapping it again goes back to All. It replaces the whole selection rather than
   // adding to it -- a tile is a shortcut to one answer, not a way to build a set.
-  const gotoSel = (t, setter, current, val) => () =>
-    { setTab(t); setSearch(''); setter(current.length===1 && current[0]===val ? [] : [val]); };
+  const gotoSel = (t, key, current, val) => () =>
+    { setUi('tab', t); setUi('search',''); setUi(key, current.length===1 && current[0]===val ? [] : [val]); };
   const only = (sel, val) => sel.length===1 && sel[0]===val;
   // Follows the eFiling dropdown, over all products rather than over what is on
   // screen -- so Brand, Stage, Client and the search box do not move it. All reads
@@ -1010,17 +1029,17 @@ export default function Testing({ userEmail = '' }) {
   // label carries that -- it names the selection rather than a problem -- but it is
   // a different kind of number sitting in a row that was homogeneous, which is worth
   // knowing before reading 271 as 271 problems.
-  const efTileCount = isAll(efSel) ? selectableProducts.length
-                    : selectableProducts.filter(p => efSel.includes(efilingKey(p))).length;
-  const efTileLabel = isAll(efSel) ? 'eFiling \u00b7 All'
-                    : efSel.length === 1 ? (EFILING_LABEL[efSel[0]] || 'eFiling')
-                    : 'eFiling \u00b7 ' + efSel.length + ' selected';
+  const efTileCount = isAll(ui.efSel) ? selectableProducts.length
+                    : selectableProducts.filter(p => ui.efSel.includes(efilingKey(p))).length;
+  const efTileLabel = isAll(ui.efSel) ? 'eFiling \u00b7 All'
+                    : ui.efSel.length === 1 ? (EFILING_LABEL[ui.efSel[0]] || 'eFiling')
+                    : 'eFiling \u00b7 ' + ui.efSel.length + ' selected';
   const pulse = [
-    { k:'Compliant',        v:counts.compliant, c:'#30D158', go:gotoSel('products',setCompSel,compSel,'compliant'), on:tab==='products'&&only(compSel,'compliant') },
-    { k:'Pending decision', v:counts.pending,   c:'#FF9F0A', go:gotoSel('products',setCompSel,compSel,'pending'),   on:tab==='products'&&only(compSel,'pending') },
-    { k:'Issues',           v:counts.issues,    c:'#FF375F', go:gotoSel('products',setCompSel,compSel,'issues'),    on:tab==='products'&&only(compSel,'issues') },
-    { k:'Material issues',  v:counts.matIssues, c:'#FF9F0A', go:goto('materials',setMatFilter,matFilter,'attention'), on:tab==='materials'&&matFilter==='attention' },
-    { k:'Expiring \u2264'+EXPIRY_WINDOW_DAYS+'d', v:counts.expiring, c:'#FF375F', go:goto('reports',setRepFilter,repFilter,'expiring'), on:tab==='reports'&&repFilter==='expiring' },
+    { k:'Compliant',        v:counts.compliant, c:'#30D158', go:gotoSel('products','compSel',ui.compSel,'compliant'), on:ui.tab==='products'&&only(ui.compSel,'compliant') },
+    { k:'Pending decision', v:counts.pending,   c:'#FF9F0A', go:gotoSel('products','compSel',ui.compSel,'pending'),   on:ui.tab==='products'&&only(ui.compSel,'pending') },
+    { k:'Issues',           v:counts.issues,    c:'#FF375F', go:gotoSel('products','compSel',ui.compSel,'issues'),    on:ui.tab==='products'&&only(ui.compSel,'issues') },
+    { k:'Material issues',  v:counts.matIssues, c:'#FF9F0A', go:goto('materials','matFilter',ui.matFilter,'attention'), on:ui.tab==='materials'&&ui.matFilter==='attention' },
+    { k:'Expiring \u2264'+EXPIRY_WINDOW_DAYS+'d', v:counts.expiring, c:'#FF375F', go:goto('reports','repFilter',ui.repFilter,'expiring'), on:ui.tab==='reports'&&ui.repFilter==='expiring' },
     { k:efTileLabel,        v:efTileCount,      c:'#0A84FF', go:null, on:false },
   ];
 
@@ -1062,14 +1081,14 @@ export default function Testing({ userEmail = '' }) {
       <div style={{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap',marginBottom:'18px'}}>
         <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',boxShadow:'inset 0 1px 2px rgba(0,0,0,.05)'}}>
           {TABS.map(([v,l])=>(
-            <button key={v} onClick={()=>{setTab(v);setSearch('');}} style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'9px 16px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:tab===v?'#1D1D1F':'transparent',color:tab===v?'#fff':'#5A5A5E',boxShadow:tab===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
-              {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 7px',background:tab===v?'rgba(255,255,255,.22)':'#DCDCE0',color:tab===v?'#fff':'#6A6A6E'}}>{ {products:selectableProducts.length,materials:materials.length,reports:reports.length,regs:regs.length}[v] }</span>
+            <button key={v} onClick={()=>{setUi('tab', v);setUi('search','');}} style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'9px 16px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:ui.tab===v?'#1D1D1F':'transparent',color:ui.tab===v?'#fff':'#5A5A5E',boxShadow:ui.tab===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
+              {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 7px',background:ui.tab===v?'rgba(255,255,255,.22)':'#DCDCE0',color:ui.tab===v?'#fff':'#6A6A6E'}}>{ {products:selectableProducts.length,materials:materials.length,reports:reports.length,regs:regs.length}[v] }</span>
             </button>
           ))}
         </div>
         <div style={{position:'relative',flex:'1 1 200px',maxWidth:'320px'}}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#A0A0A4" strokeWidth="2" strokeLinecap="round" style={{position:'absolute',left:'13px',top:'50%',transform:'translateY(-50%)'}}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={'Search '+(TABS.find(t=>t[0]===tab)||[])[2]+'\u2026'} style={{width:'100%',border:'none',borderRadius:'980px',padding:'10px 15px 10px 38px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
+          <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder={'Search '+(TABS.find(t=>t[0]===ui.tab)||[])[2]+'\u2026'} style={{width:'100%',border:'none',borderRadius:'980px',padding:'10px 15px 10px 38px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
         </div>
         {/* Beside the search box because it exports what the search box narrowed to.
             Products only -- the other three tabs have no export, and a button that
@@ -1078,7 +1097,7 @@ export default function Testing({ userEmail = '' }) {
             Styled as "+ Log Test Report" is: this is the one thing on the row that
             DOES something rather than narrowing something, and the filled pill is how
             this page already says that. */}
-        {tab==='products' && (
+        {ui.tab==='products' && (
           <ExportButton count={shownProducts.length} busy={exporting}
                         onXlsx={exportXlsx} onCsv={exportCsv} align="left" />
         )}
@@ -1102,21 +1121,21 @@ export default function Testing({ userEmail = '' }) {
 
             GONE: the No CPSC and No trade info pills. Both were worklists and
             nothing else finds those products now; that is accepted, not overlooked. */}
-        {tab==='products' && (
+        {ui.tab==='products' && (
           <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',width:'100%'}}>
-            <FilterSelect multiple label="All Compliance" value={compSel}  onChange={setCompSel}  options={compOptions} />
-            <FilterSelect multiple label="All eFiling"    value={efSel}    onChange={setEfSel}    options={efOptions} />
-            <FilterSelect multiple label="All Brands"     value={brandSel} onChange={setBrandSel} options={brandOptions} />
-            <FilterSelect multiple label="All Stages"     value={stageSel} onChange={setStageSel} options={stageOptions} />
-            <FilterSelect multiple label="Ordered · Any"  value={dateSel}  onChange={setDateSel}  options={dateOptions} />
+            <FilterSelect multiple label="All Compliance" value={ui.compSel}  onChange={v=>setUi('compSel', v)}  options={compOptions} />
+            <FilterSelect multiple label="All eFiling"    value={ui.efSel}    onChange={v=>setUi('efSel', v)}    options={efOptions} />
+            <FilterSelect multiple label="All Brands"     value={ui.brandSel} onChange={v=>setUi('brandSel', v)} options={brandOptions} />
+            <FilterSelect multiple label="All Stages"     value={ui.stageSel} onChange={v=>setUi('stageSel', v)} options={stageOptions} />
+            <FilterSelect multiple label="Ordered · Any"  value={ui.dateSel}  onChange={v=>setUi('dateSel', v)}  options={dateOptions} />
             {/* Single-select: a client is an identity, not a bucket, and the 13 of
                 them behave nothing like a five-item state list. */}
-            <FilterSelect multiple label="All Clients" value={clientSel} onChange={setClientSel} options={clientOptions} />
+            <FilterSelect multiple label="All Clients" value={ui.clientSel} onChange={v=>setUi('clientSel', v)} options={clientOptions} />
             {/* Last in the row because it is the scoping control rather than a
                 question about a product -- and the only one that opens with a
                 selection already made. */}
-            <FilterSelect multiple label="All catalogue statuses" value={catSel} onChange={setCatSel} options={catOptions} />
-            <FilterSelect multiple label="All order states" value={orderSel} onChange={setOrderSel} options={orderOptions} />
+            <FilterSelect multiple label="All catalogue statuses" value={ui.catSel} onChange={v=>setUi('catSel', v)} options={catOptions} />
+            <FilterSelect multiple label="All order states" value={ui.orderSel} onChange={v=>setUi('orderSel', v)} options={orderOptions} />
             {/* The caption is not decoration. Only a fraction of products have a
                 reachable order date, so picking "90 days" and seeing a small number
                 reads as "only this many were ordered in 90 days" -- when the truth is
@@ -1128,15 +1147,15 @@ export default function Testing({ userEmail = '' }) {
                 rather than as a badge on each of 32 products. It only appears when
                 there is something to say, and the count is live -- it will shrink
                 on its own as the stage gets maintained, and disappear when it is. */}
-            {movedPast.size > 0 && tab === 'products' && (
+            {movedPast.size > 0 && ui.tab === 'products' && (
               <span style={{flexBasis:'100%',fontSize:'12px',color:'#8a5a00',background:'#FEF3C7',
                             border:'1px solid #f0d9a8',borderRadius:'8px',padding:'8px 11px',lineHeight:1.5}}>
                 {movedPast.size} {movedPast.size === 1 ? 'product is' : 'products are'} declared
                 {' '}Sample but have already been ordered or sold.{' '}
-                <button onClick={()=>setMovedOnly(v=>!v)}
+                <button onClick={()=>setUi('movedOnly', v=>!v)}
                   style={{background:'none',border:'none',padding:0,font:'inherit',color:'#8a5a00',
                           textDecoration:'underline',cursor:'pointer'}}>
-                  {movedOnly ? 'Show all products' : 'Show them'}
+                  {ui.movedOnly ? 'Show all products' : 'Show them'}
                 </button>
               </span>
             )}
@@ -1146,17 +1165,17 @@ export default function Testing({ userEmail = '' }) {
             </span>
           </div>
         )}
-        {tab==='materials' && (
+        {ui.tab==='materials' && (
           <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
             {[['','All'],['passed','Passed'],['untested','Untested'],['attention','Failed / expired']].map(([v,l])=>(
-              <button key={v||'all'} onClick={()=>setMatFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:matFilter===v?'#1D1D1F':'#fff',color:matFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
+              <button key={v||'all'} onClick={()=>setUi('matFilter', v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:ui.matFilter===v?'#1D1D1F':'#fff',color:ui.matFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
             ))}
           </div>
         )}
-        {tab==='reports' && (
+        {ui.tab==='reports' && (
           <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
             {[['','All'],['pass','Pass'],['fail','Fail'],['expiring','Expiring \u2264'+EXPIRY_WINDOW_DAYS+'d']].map(([v,l])=>(
-              <button key={v||'all'} onClick={()=>setRepFilter(v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:repFilter===v?'#1D1D1F':'#fff',color:repFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
+              <button key={v||'all'} onClick={()=>setUi('repFilter', v)} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 12px',border:'none',cursor:'pointer',background:ui.repFilter===v?'#1D1D1F':'#fff',color:ui.repFilter===v?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{l}</button>
             ))}
           </div>
         )}
@@ -1171,20 +1190,20 @@ export default function Testing({ userEmail = '' }) {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {tab==='products'  && <ProductsView products={shownProducts} orderState={orderStateOf} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onRename={(p)=>setModal({type:'rename',data:p})} onDelete={deleteProduct} searching={searching} term={search.trim()} filtered={!(isAll(compSel) && isAll(efSel) && isAll(brandSel) && isAll(stageSel) && isAll(dateSel) && isAll(clientSel) && isDefaultCat)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(dateSel)} testedByProduct={testedByProduct} />}
+          {ui.tab==='products'  && <ProductsView products={shownProducts} orderState={orderStateOf} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onRename={(p)=>setModal({type:'rename',data:p})} onDelete={deleteProduct} searching={searching} term={ui.search.trim()} filtered={!(isAll(ui.compSel) && isAll(ui.efSel) && isAll(ui.brandSel) && isAll(ui.stageSel) && isAll(ui.dateSel) && isAll(ui.clientSel) && isDefaultCat)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(ui.dateSel)} testedByProduct={testedByProduct} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
-          {tab==='materials' && <MaterialsView materials={shownMaterials} onEdit={(m)=>setModal({type:'material',data:m})} onDelete={deleteMaterial} searching={searching} term={search.trim()} filtered={!!matFilter} />}
-          {tab==='reports'   && <ReportsView reports={shownReports} onEdit={(r)=>setModal({type:'report',row:r})} onDelete={deleteReport} searching={searching} term={search.trim()} filtered={!!repFilter} />}
+          {ui.tab==='materials' && <MaterialsView materials={shownMaterials} onEdit={(m)=>setModal({type:'material',data:m})} onDelete={deleteMaterial} searching={searching} term={ui.search.trim()} filtered={!!ui.matFilter} />}
+          {ui.tab==='reports'   && <ReportsView reports={shownReports} onEdit={(r)=>setModal({type:'report',row:r})} onDelete={deleteReport} searching={searching} term={ui.search.trim()} filtered={!!ui.repFilter} />}
           {/* RegulationsList renders rows only -- the empty state stays here because its
               wording is this page's, not the shared component's. Delete moved into
               RegModal, so the row no longer carries a bin: a rule can be cited by test
               results and linked to products, and the confirm has to establish both
               before it can say what deleting one would do. */}
-          {tab==='regs'      && (shownRegs.length === 0
+          {ui.tab==='regs'      && (shownRegs.length === 0
             ? <Empty
-                title={searching ? 'No regulations match “'+search.trim()+'”' : 'No regulations loaded'}
+                title={searching ? 'No regulations match “'+ui.search.trim()+'”' : 'No regulations loaded'}
                 sub={searching ? 'Try a different term, or clear the search.' : 'Run the compliance schema seed to load the CPSC rule library.'} />
             : <RegulationsList regs={shownRegs} onEdit={(r)=>setModal({type:'reg',data:r})} cardStyle={card} dividerColor="#F5F5F7" />)}
         </>
