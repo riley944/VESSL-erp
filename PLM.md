@@ -1,9 +1,60 @@
 # Product Lifecycle Management — design brief
 
+> ## THE MODEL CHANGED ON 2026-09-17. READ THIS FIRST.
+>
+> **PLM is manual. A card exists because somebody asked for one, sits at the stage
+> somebody set, and belongs to somebody by name.** Nothing derived creates a card
+> and nothing derived moves one.
+>
+> Everything below this box is the *derived* model — designed 2026-09-09, built,
+> run for eight days, and replaced. It is kept because it is the record of how the
+> decision was reached and what the derivation actually measured, and because the
+> read-only block on today's card still reports exactly those signals. **It is no
+> longer how the board behaves.**
+>
+> ### What is true now
+>
+> | | |
+> |---|---|
+> | **The one door** | A tick — *Create PLM program* — on the quote form. `createProgram` in `lib/programs.js` is the only writer. |
+> | **Stages** | `quoted`, `sample_1`…`sample_5`, `testing`, `purchase_order`, `complete`. Set by a person, on the card. |
+> | **Complete** | A stage somebody sets. **A sales order does not finish a card**, on Riley's decision 2026-09-17. |
+> | **Owner** | `programs.owner_id`, a key into `staff_profiles`. Reassignable by anyone; every reassignment writes its own `program_notes` line. |
+> | **Stale** | 21 days in a stage, counted from `declared_stage_at`. |
+> | **The records** | Reported on the card under *What the system knows*, and acted on by nothing. |
+>
+> ### What was switched off, and why it mattered
+>
+> Six call sites used to mint a card whenever a quote or an order was saved — the
+> quote save, both sales order modals, both purchase order modals — plus *Sync from
+> records* and *Mark won*. On a derived board that was correct: a program was a fact
+> the records implied. On a manual board every one of them is a door that fills the
+> list with cards nobody chose, so all of them were closed in `99830b0` before
+> script 60 emptied the table. **Mark won came back in `6b7d4a4`** wired to the one
+> helper, because a button a person presses is a decision, not a derivation.
+>
+> ### Why the derived model was replaced
+>
+> Not because the derivation was wrong. It measured real things and this document
+> records what it found. It was replaced because **a board that moves on its own
+> cannot be a board somebody is accountable for** — there was no owner, no way to
+> say "this is mine and it is at sample two", and no way to be wrong on purpose.
+> Riley wanted a list people keep. The evidence is still there to be read; it just
+> no longer votes.
+>
+> **As-run:** script 60 and the four stages are recorded in CATALOGUE.md under
+> *The PLM rework — 2026-09-17*.
+
+---
+
 Decisions taken 2026-09-09, from the Phase 0 discovery. This is the design, not
 the implementation. Findings that produced it are in the appendix; every number
 in this document was measured against the live database on 2026-09-09 and should
 be re-measured before being acted on (see CATALOGUE.md "Number drift").
+
+**Superseded 2026-09-17 — see the box above.** The sections that follow describe
+the derived model as designed and built. Where they say a stage is derived, read
+it as history.
 
 ---
 

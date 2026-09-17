@@ -1919,6 +1919,116 @@ this codebase already follows. **A timestamp is not an identifier.**
 
 ---
 
+## The PLM rework — 2026-09-17, a board people keep by hand
+
+Riley wanted PLM manual. Four commits and one script, in an order chosen so the
+table could never refill from a door that was still open.
+
+### Why the derived board went
+
+It was not wrong. It measured real things — `PLM.md` records what it found — and
+it kept itself current without anybody maintaining it. It was replaced because
+**a board that moves on its own cannot be a board somebody is accountable for.**
+There was no owner, no way to say *this is mine and it is at sample two*, and no
+way to be deliberately wrong. The records are still on the card; they just no
+longer vote.
+
+### The order mattered
+
+**`99830b0` closed every door first**, before script 60 emptied anything. Six
+automatic call sites, not the five Riley listed — Edit SO had two, one on the line
+insert and one after the product was resolved — plus *Sync from records* and
+*Mark won*.
+
+**Mark won was not on the list**, and went anyway. It is a button a person
+presses, so it reads as manual, but it called `ensurePrograms` directly and would
+have opened a card with **no owner and no stage** — the two things the new model
+requires. It returned in `6b7d4a4` wired to the new helper. The general shape:
+*manual* is not the same as *deliberate*, and a control that creates a row the new
+model cannot describe is a door however it is labelled.
+
+Had the script run first, every quote and order saved in the gap would have
+refilled the table.
+
+### Script 60, as run
+
+`z0` on the second rehearsal. All 314 programs deleted, the `declared_stage` CHECK
+widened from *NULL or sampling* to the nine manual stages, `owner_id` added as a
+key into `staff_profiles` with `ON DELETE SET NULL`, and `programs_owner_idx` with
+it.
+
+**No `stage_changed_at` column**, because `declared_stage_at` already existed and
+`trg_programs_declared_stage_at` has stamped it with `clock_timestamp()` since
+script 49. The manual board reads it as a card's age — which is the one thing the
+derived board could never say for Sampling, where nothing recorded the change.
+
+**The guard refused unless `program_notes` held zero rows.** Notes cascade on
+delete, and they are append-only prose somebody typed; a delete that quietly took
+them would have been the wrong kind of clean start. Three probes, rolled back even
+on commit: a real stage inserts, the old `sampling` value is refused by the CHECK,
+an unknown owner is refused by the key.
+
+**What the first rehearsal taught.** `create temp table t_probe on commit drop
+(name text, got text)` is a 42601. Both orders look right because both *are* —
+the `AS query` form takes the clause first and every other temp table in these
+scripts is written that way; the column-list form does not. Preflight gained
+**Rule 10** for it, proven against a throwaway file carrying all three forms
+before it was trusted.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| programs / program_notes | 314 / 0 | **0 / 0** |
+| stages in the CHECK | NULL or `sampling` | **nine, `sampling` gone** |
+| `owner_id` + FK + index | none | **present** |
+| `declared_stage_at` trigger | attached | unchanged |
+| products / quotes / PO lines / SO lines | 352 / 333 / 259 / 260 | unchanged |
+
+`archive/2026-09-17-programs-before-manual-reset.json` holds all 314 rows —
+committed **before** the delete, on Riley's instruction, not after.
+
+### The board that replaced it
+
+Eight columns — Quoted, Sample 1 to 5, Testing, Purchase Order — and a ninth,
+*No stage set*, that appears **only when a card is in it**. A permanent empty
+column is a standing invitation to a state nothing produces.
+
+**Sample is five rungs** because a sample round is the thing that repeats here,
+and one Sampling column could not say whether a card had been round once or five
+times.
+
+**Unowned is an option with a count**, not an absence. A card whose creator
+resolved to no staff row is the one state worth finding, and a filter that could
+not express it would hide exactly that.
+
+**Reassignment writes its own note** through `program_notes`, which is append-only
+by grant — `authenticated` holds INSERT and SELECT and nothing else — so the
+record cannot be tidied afterwards. The note is written *after* the owner update
+lands, and a failed note leaves a correct owner and a missing line, which is the
+better way round.
+
+**What the system knows** is the old derivation, demoted to a read-only block that
+says in words that it moves nothing. Throwing the records away would have been a
+loss; obeying them would have been the old board.
+
+### What was removed rather than left to look live
+
+`ProgramLadder` (99 lines), the `COL` colour table, the whole derived-completion
+path in `enriched` and its `firstOrder` feeder in `buckets`, and five imports —
+`PIPELINE_STAGES`, `stageEnteredAt`, `isComplete`, `completionOf`, `PICK`. That
+derivation filled five fields no render site read any more. Dead computation next
+to live computation is how the next person learns the wrong rule.
+
+### Open
+
+`expected_ship_date`, `factory_status`, `factory_pct` and `factory_reported_at`
+are still columns on `programs` and nothing on the new board reads or writes them.
+Either they are part of the manual card or they are columns to drop — a question
+for Riley, not an assumption to make.
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the
