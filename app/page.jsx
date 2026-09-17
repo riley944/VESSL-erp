@@ -5314,6 +5314,30 @@ const RFQ_PILL = {
 };
 const rfqPill = st => RFQ_PILL[st] || { label:(st||'unknown'), color:'#86868B', bg:'#F2F2F4' };
 
+// ── THE FREIGHT QUOTE STATUS FILTER ──────────────────────────────────────────
+// Six pills and a Show-resolved toggle became one multi-select, the same shape
+// Testing's catalogue filter uses, for the same reason: the pills could only
+// ever ask one question at a time, and "awarded or not selected" is a thing
+// somebody wants to see.
+//
+// THE DEFAULT IS NON-EMPTY, which is the whole trick. Four of the six are
+// ticked on load, so resolved rows are out of the way without a second control
+// governing them -- ticking Not selected or Archived is how you see them, and
+// that replaces the toggle rather than sitting beside it.
+//
+// Empty still means All, per the FilterSelect multi contract -- unticking the
+// last option widens to everything rather than showing nothing.
+//
+// IT LIVES OUT HERE, not in the component, and that is the fix for the crash of
+// 17 Sep. The stage-2 filter conversion moved the read of this constant into
+// usePageState on the component's first line of state, fourteen lines above the
+// declaration it used to sit beneath -- a dead-zone ReferenceError on every
+// render, which reached Kristy as "Application error: a client-side exception"
+// and reached the console as 'q', the minifier's name for it. The constant
+// depends on nothing in the component, so at module scope no reordering of the
+// body can ever get above it again.
+const QF_DEFAULT = ['draft','awaiting','bidsin','awarded'];
+
 function Shipments({ onNewShipment, userEmail }) {
   const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
@@ -5336,21 +5360,8 @@ function Shipments({ onNewShipment, userEmail }) {
   // shipment, which is what the key on this component does. openId and the respond-*
   // fields stay plain below, being a row somebody opened and a form in progress.
   const [ui, setUi] = usePageState('shipments', { view:'quotes', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'' });
-  // ── THE FREIGHT QUOTE STATUS FILTER ──────────────────────────────────────
-  // Six pills and a Show-resolved toggle became one multi-select, the same shape
-  // Testing's catalogue filter uses, for the same reason: the pills could only
-  // ever ask one question at a time, and "awarded or not selected" is a thing
-  // somebody wants to see.
-  //
-  // THE DEFAULT IS NON-EMPTY, which is the whole trick. Four of the six are
-  // ticked on load, so resolved rows are out of the way without a second control
-  // governing them -- ticking Not selected or Archived is how you see them, and
-  // that replaces the toggle rather than sitting beside it.
-  //
-  // Empty still means All, per the FilterSelect multi contract -- unticking the
-  // last option widens to everything rather than showing nothing.
-  const QF_DEFAULT = ['draft','awaiting','bidsin','awarded'];
-  // qSel, shipFilter and search are ui.* now, in the page store above.
+  // qSel, shipFilter and search are ui.* now, in the page store above, and
+  // QF_DEFAULT is at module scope above this component -- see the note there.
   const [quotes, setQuotes] = useState([]);
   // null when closed, 'new' to create, or the freight quote row to edit. One state
   // rather than two, so the two paths cannot both be open at once.
