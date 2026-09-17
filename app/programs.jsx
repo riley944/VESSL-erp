@@ -10,38 +10,53 @@ import { Overlay, useGuardedClose } from '@/app/components/ModalGuard';
 // for every program at once -- but it must not DECIDE differently, which is how
 // the awarded tile and the awarded filter ended up disagreeing about who won a
 // shipment. lib/lifecycle.js owns the rules; this file owns the fetching.
+// PIPELINE_STAGES and stageEnteredAt are gone from this list with the derived
+// board. The stages are MANUAL_STAGES below, set by a person, and the date a card
+// entered one is declared_stage_at rather than anything inferred from records.
+// The rest stays: the card still REPORTS what the records say, it just no longer
+// obeys them.
 import {
-  PIPELINE_STAGES, fmt, deriveEvents,
-  isComplete, currentStage, stageEnteredAt, daysSince, CLIENT_OF, completionOf, PICK,
+  fmt, deriveEvents,
+  currentStage, daysSince, CLIENT_OF,
 } from '@/lib/lifecycle';
 // Sync from records is gone with the derived board -- nothing here creates a
 // program any more. The quote-form tick is the only door.
 // Tab, search, stage filter and the retired toggle survive going into a program and
 // coming back, and are gone on reload. See the note at the top of lib/pageState.js.
 import { usePageState } from '@/lib/pageState';
+// COL, the per-stage colour table, went with the derived tiles and columns it
+// dressed. The manual board is one ink -- nine stages in nine colours would be
+// decoration competing with the stale flag, which is the only colour that means
+// something here.
 
-// ── PRODUCT LIFE MANAGEMENT ─────────────────────────────────────────────────
-// THE BOARD IS THE PRE-ORDER PIPELINE AND NOTHING ELSE. A program on a
-// selectable product with no purchase order line and no sales order line for the
-// pair, ever. The moment either appears the program is COMPLETE and leaves the
-// board -- derived, never a flag somebody has to set.
-//
-// That scope is what makes the ladder honest. Sold and Ordered have no fixed
-// order at KUI, which is why the six-stage lifecycle has none; the pipeline
-// stops before both of them, so Quoted to Sampling to Tested is a real
-// sequence. See lib/lifecycle.js and PLM.md.
-//
-// FOUR BULK QUERIES, NOT FOUR PER PROGRAM. The panel runs four for one product,
-// which is right for a modal and catastrophic for a list. Everything is fetched
-// once and bucketed by product and client -- about 1,200 rows, flat however many
-// programs exist.
-const COL = {
-  quoted:   { bg:'#EAF3FE', fg:'#0A84FF', bar:'#0A84FF' },
-  sampling: { bg:'#F3E8FF', fg:'#7C3AED', bar:'#7C3AED' },
-  tested:   { bg:'#DCFCE7', fg:'#15803D', bar:'#15803D' },
-};
 
 const norm = t => (t || '').toLowerCase();
+
+// ── THE STAGES, AND THEY ARE SET BY A PERSON ────────────────────────────────
+// The nine values script 60 widened the CHECK to. Sample is five rungs rather
+// than one because a sample round is the thing that actually repeats at KUI, and
+// a single Sampling column could not say whether a card had been round once or
+// five times.
+//
+// Complete is on this list because it is a stage somebody sets -- a sales order
+// does NOT move a card, on Riley decision. It lives on its own tab rather than as
+// a tenth column, for the same reason Archived always did.
+const MANUAL_STAGES = [
+  ['quoted',         'Quoted'],
+  ['sample_1',       'Sample 1'],
+  ['sample_2',       'Sample 2'],
+  ['sample_3',       'Sample 3'],
+  ['sample_4',       'Sample 4'],
+  ['sample_5',       'Sample 5'],
+  ['testing',        'Testing'],
+  ['purchase_order', 'Purchase Order'],
+];
+const COMPLETE = 'complete';
+
+// 21 days, on Riley word. One threshold rather than one per stage: a per-stage
+// table would be a tuning conversation nobody has had yet, and a single number
+// can be argued with, which is what makes it honest.
+const STALE_DAYS = 21;
 
 // compliance_status = 'not_required' is a DELIBERATE STATEMENT, and rare: 17 of
 // 352 products carry it, against 291 still sitting at 'tbd'. Somebody decided
@@ -144,105 +159,12 @@ function ProgramNotes({ programId, userEmail }) {
     </div>
   );
 }
+// THE LADDER IS GONE, replaced by SystemKnows further down. It drew four rungs
+// inferred from the records -- quoted, sampling, tested, and whichever order
+// completed the program -- which was the right card for a board that derived its
+// stages. On a manual board the rungs would have been a second opinion drawn to
+// look like the state, beside a stage control that actually is it.
 
-// The card-open and row-open views are the SAME view, which is the point -- a
-// completed program reads exactly as it did on the board, minus what happened
-// after it completed. stopAfter carries the completion date, so an incomplete
-// program passes null and sees its whole lifecycle.
-// ── THE CARD LADDER: QUOTED, SAMPLING, TESTED, COMPLETION ───────────────────
-// FOUR ROWS, and deliberately not the six-stage LifecyclePanel. PLM is the
-// pre-order pipeline, so Shipped and Delivered are not late stages of a program
-// -- they are logistics, and they belong to the shipment.
-//
-// The fourth row is THE COMPLETION EVENT rather than a fixed "Ordered", because
-// a fixed label was measured and found wrong most of the time. Of 192 completed
-// programs, 106 -- 55 percent -- were sold and never ordered: an Ordered row
-// would have sat empty and greyed on more than half the Completed tab, on
-// programs that are finished. 110 completed on a sales order, 82 on a purchase
-// order, and 41 have both on the SAME DAY, which is too many to settle by an
-// arbitrary pick, so those name both.
-//
-// Rendered from what the board already holds. The page bulk-fetches quotes, PO
-// lines, SO lines and reports for every program at once, so the card needs no
-// query of its own and opens instantly -- which is why it no longer uses
-// LifecyclePanel, whose four per-product queries would be a round trip on every
-// open of data already in hand.
-function ProgramLadder({ r }) {
-  const ev = r.events || {};
-  const p  = r.products || {};
-
-  // Sampling MIRRORS THE BOARD exactly -- the product stage, not a declaration.
-  // There is no date behind it (product_stage carries no timestamp), so the row
-  // shows no date rather than a dash pretending to be one.
-  const sampling = p.product_stage === 'sample' || p.product_stage === 'production';
-  // Tested likewise: a report gives a date, a passed compliance flag does not.
-  const testedOn = (ev.tested || {}).on || null;
-  const tested   = !!ev.tested || p.compliance_status === 'passed';
-
-  const noTest = testingNotRequired(p);
-
-  const rows = [
-    { key:'quoted',   label:'Quoted',   hit:!!ev.quoted, on:(ev.quoted||{}).on || null,
-      detail:(ev.quoted||{}).detail || null,
-      empty:'No quote names this product for this client.' },
-    { key:'sampling', label:'Sampling', hit:sampling, on:null,
-      detail:sampling ? 'Product stage is ' + p.product_stage : null,
-      empty:'Product is not marked Sample or Production.' },
-    // Dropped entirely when testing does not apply -- see testingNotRequired.
-    ...(noTest ? [] : [{ key:'tested', label:'Tested', hit:tested, on:testedOn,
-      detail:ev.tested ? ((ev.tested||{}).detail || null)
-                       : (tested ? 'Compliance status is passed' : null),
-      empty:'No test report, and compliance is not marked passed.' }]),
-    // Ordered / Sold / Ordered & Sold when complete; when not, the row names
-    // BOTH WAYS OUT, because either one completes the program and promising a
-    // purchase order that may never come would be the same error as the fixed
-    // label this replaces.
-    // Ordered or sold for ANOTHER client reads as one line -- "Ordered for
-    // <client> . date" or "Sold to <client> . date" -- the same words as the
-    // archived row, so the date moves into the label.
-    { key:'done',     label:!r.complete ? 'Ordered or sold'
-                           : r.elsewhere ? r.completedBy + ' · ' + fmt(r.completedOn)
-                           : r.completedBy,
-      hit:r.complete, on:r.elsewhere ? null : r.completedOn,
-      detail:!r.complete ? null
-            : r.elsewhere ? (r.elsewhereKind === 'so'
-                ? 'This product was sold to another client, so the program left the pipeline.'
-                : 'This product was ordered for another client, so the program left the pipeline.')
-            : 'This program left the pipeline here.',
-      empty:'Not yet ordered or sold.' },
-  ];
-
-  return (
-    <div style={{marginTop:'14px',display:'flex',flexDirection:'column',gap:'1px'}}>
-      {noTest && (
-        <div style={{fontSize:'11.5px',color:'#5A5A5E',background:'#F4F4F6',border:'1px solid #E5E5EA',
-                     borderRadius:'8px',padding:'8px 11px',marginBottom:'10px',lineHeight:1.5}}>
-          This product&rsquo;s compliance status is <strong style={{fontWeight:600}}>Not required</strong>,
-          so no test report is expected and the Tested step is not shown.
-        </div>
-      )}
-      {rows.map((row, i) => (
-        <div key={row.key} style={{display:'flex',gap:'11px',alignItems:'flex-start',
-                                   padding:'9px 0',borderTop:i?'1px solid #F2F2F4':'none'}}>
-          <div style={{width:'9px',height:'9px',borderRadius:'50%',marginTop:'4px',flexShrink:0,
-                       background:row.hit?'#1D1D1F':'#E5E5EA'}} />
-          <div style={{minWidth:0,flex:1}}>
-            <div style={{display:'flex',justifyContent:'space-between',gap:'10px',alignItems:'baseline'}}>
-              <span style={{fontSize:'13px',fontWeight:600,color:row.hit?'#1D1D1F':'#A0A0A4'}}>{row.label}</span>
-              {/* No date is not the same as no event: Sampling never has one and
-                  a passed compliance flag carries none, so the slot stays empty
-                  rather than printing a dash that reads as missing data. */}
-              {row.on && <span style={{fontSize:'12px',color:'#5A5A5E',fontVariantNumeric:'tabular-nums'}}>{fmt(row.on)}</span>}
-            </div>
-            <div style={{fontSize:'11.5px',color:row.hit?'#5A5A5E':'#B0B0B4',marginTop:'2px',lineHeight:1.45}}>
-              {row.hit ? (row.detail || '') : row.empty}
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 // A POPUP, NOT AN INLINE EXPANSION, and the notes box is why the guard matters.
 //
@@ -252,18 +174,69 @@ function ProgramLadder({ r }) {
 // inside the card, so typed-but-unsaved text turns the backdrop click into a
 // confirm instead of a dismissal. Nothing here has to arrange that beyond using
 // Overlay.
-function ProgramDetail({ r, userEmail, onClose }) {
+function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onClose }) {
   return (
     <Overlay onClose={onClose} maxWidth={640}>
-      <ProgramCard r={r} userEmail={userEmail} />
+      <ProgramCard r={r} userEmail={userEmail} staff={staff} busy={busy} onStage={onStage} onOwner={onOwner} />
     </Overlay>
   );
 }
 
+// ── WHAT THE SYSTEM KNOWS, AND DOES NOT ACT ON ──────────────────────────────
+// The records for this product and client, reported and nothing more. It exists
+// because the manual board threw away a real thing the derived board had: it
+// could see that a product had been quoted, sampled, tested or ordered. Throwing
+// that away would have been a loss; acting on it would have been the old board.
+//
+// So the rule is stated on screen rather than only in a commit message -- none of
+// this moves the card. Somebody reads it and decides.
+//
+// Everything here comes from data the board already bulk-fetched, so opening a
+// card costs no query.
+function SystemKnows({ r }) {
+  const p = r.products || {};
+  const ev = r.events || {};
+  const row = (label, value, muted) => (
+    <div style={{display:'flex',gap:'10px',padding:'6px 0',borderTop:'1px solid #F2F2F4'}}>
+      <span style={{fontSize:'11.5px',color:'#86868B',minWidth:'118px',flexShrink:0}}>{label}</span>
+      <span style={{fontSize:'12.5px',color:muted?'#A0A0A4':'#1D1D1F',lineHeight:1.45}}>{value}</span>
+    </div>
+  );
+  const none = 'Nothing recorded';
+  return (
+    <div style={{marginTop:'16px',paddingTop:'13px',borderTop:'1px solid #ECECEE'}}>
+      <div style={{fontSize:'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',
+                   color:'#86868B',marginBottom:'4px'}}>What the system knows</div>
+      <div style={{fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5,marginBottom:'7px'}}>
+        Read only. None of this moves the card &mdash; the stage above is whatever somebody set.
+      </div>
+      {row('Quoted', ev.quoted ? fmt(ev.quoted.on) + (ev.quoted.n > 1 ? ' · ' + ev.quoted.n + ' quotes' : '') : none, !ev.quoted)}
+      {row('Purchase order', ev.ordered ? fmt(ev.ordered.on) : none, !ev.ordered)}
+      {row('Sales order', ev.sold ? fmt(ev.sold.on) : none, !ev.sold)}
+      {row('Test report', ev.tested ? fmt(ev.tested.on) : none, !ev.tested)}
+      {row('Product stage', p.product_stage
+        ? p.product_stage.charAt(0).toUpperCase() + p.product_stage.slice(1)
+        : 'Not set', !p.product_stage)}
+      {row('Compliance', p.compliance_status || 'Not set', !p.compliance_status)}
+      {/* What the OLD board would have called this card, kept because it is a
+          useful second opinion and labelled so nobody mistakes it for the stage. */}
+      {row('Records suggest', r.derivedStage ? (STAGE_HINT[r.derivedStage] || r.derivedStage) : 'Nothing yet', !r.derivedStage)}
+      {/* The catalogue status, worded as the Products list words it. A retired
+          product with a live card is worth seeing rather than hiding. */}
+      {row('Catalogue', p.active === false ? 'Inactive' : p.active === true ? 'Active' : 'Not set',
+           p.active == null)}
+    </div>
+  );
+}
+
+// The three stages the old derived board could infer, in its words, so the line
+// reads as a second opinion rather than as one of the nine manual stages.
+const STAGE_HINT = { quoted:'Quoted', sampling:'Sampling (product stage)', tested:'Tested (report or compliance)' };
+
 // Split out so the x can read guardedClose from context. The provider lives
 // INSIDE Overlay, so a hook called in ProgramDetail would sit above it and get
 // the default -- the close button has to be a child to be guarded.
-function ProgramCard({ r, userEmail }) {
+function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner }) {
   const p = r.products || {};
   const guardedClose = useGuardedClose();
   return (
@@ -283,7 +256,45 @@ function ProgramCard({ r, userEmail }) {
           on a card the header already names the client, and a standing caveat
           about catalogue coverage is not what somebody opened a program to read.
           A card-view removal -- LifecyclePanel still shows both. */}
-      <ProgramLadder r={r} />
+      {/* ── THE TWO CONTROLS ────────────────────────────────────────────────
+          Stage and owner, the only things this page writes. Both are plain
+          selects rather than anything cleverer, because a stage move is a
+          deliberate act and a dropdown is the control that reads as one. */}
+      <div style={{display:'flex',gap:'10px',flexWrap:'wrap',marginTop:'14px',paddingTop:'13px',borderTop:'1px solid #ECECEE'}}>
+        <label style={{display:'flex',flexDirection:'column',gap:'4px',fontSize:'11px',fontWeight:600,
+                       letterSpacing:'.08em',textTransform:'uppercase',color:'#86868B',fontFamily:'inherit'}}>
+          Stage
+          <select value={r.stage || ''} disabled={busy}
+            onChange={e=>onStage(r, e.target.value)}
+            style={{border:'1px solid rgba(0,0,0,.12)',borderRadius:'9px',padding:'7px 9px',fontSize:'13px',
+                    fontFamily:'inherit',background:'#fff',color:'#1D1D1F',letterSpacing:0,textTransform:'none',
+                    cursor:busy?'default':'pointer',minWidth:'165px'}}>
+            {!r.stage && <option value="">No stage set</option>}
+            {[...MANUAL_STAGES, [COMPLETE,'Complete']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </label>
+        <label style={{display:'flex',flexDirection:'column',gap:'4px',fontSize:'11px',fontWeight:600,
+                       letterSpacing:'.08em',textTransform:'uppercase',color:'#86868B',fontFamily:'inherit'}}>
+          Owner
+          <select value={r.owner_id || ''} disabled={busy}
+            onChange={e=>onOwner(r, e.target.value)}
+            style={{border:'1px solid rgba(0,0,0,.12)',borderRadius:'9px',padding:'7px 9px',fontSize:'13px',
+                    fontFamily:'inherit',background:'#fff',color:'#1D1D1F',letterSpacing:0,textTransform:'none',
+                    cursor:busy?'default':'pointer',minWidth:'175px'}}>
+            <option value="">Unowned</option>
+            {staff.map(s => <option key={s.id} value={s.id}>{s.full_name || s.email}</option>)}
+          </select>
+        </label>
+        {r.since && (
+          <div style={{alignSelf:'flex-end',fontSize:'11.5px',color:r.stale?'#8a5a00':'#8A8A8E',paddingBottom:'8px'}}>
+            {r.days === 0 ? 'Moved today' : r.days + ' days in this stage'}
+            {r.stale ? ' · stale past ' + STALE_DAYS : ''}
+          </div>
+        )}
+      </div>
+      {/* Changing the owner writes its own note, so the reassignment is on the
+          record rather than only in the column. */}
+      <SystemKnows r={r} />
       <ProgramNotes programId={r.id} userEmail={userEmail} />
     </>
   );
@@ -297,17 +308,25 @@ export default function Programs({ userEmail }) {
   // Which tab, the search box, the stage filter and the retired toggle -- kept across
   // navigation, so opening a program and coming back lands where it left. openId stays
   // plain below, because an expanded card is not a filter.
-  const [ui, setUi] = usePageState('programs', { tab:'board', search:'', stageSel:[], showRetired:false });
+  const [ui, setUi] = usePageState('programs', { tab:'board', search:'', stageSel:[], showRetired:false, ownerSel:[] });
   const [openId, setOpenId] = useState(null);
+  const [staff, setStaff] = useState([]);
+  // Set while a stage or an owner is being written, so the control can say so and
+  // refuse a second click. Not in the page store -- it is in-flight, not a choice.
+  const [saving, setSaving] = useState(null);
   // showRetired is ui.showRetired, in the page store above.
 
   const load = async () => {
     setLoad(true); setErr('');
     try {
-      const [p, q, poi, soi, tr] = await Promise.all([
+      const [p, q, poi, soi, tr, st] = await Promise.all([
+        // declared_stage and declared_stage_at are the board now -- the stage a
+        // person set, and when they set it. owner_id joins staff_profiles for the
+        // name on the card and the owner filter.
         SB.from('programs')
-          .select('id,product_id,client_company_id,expected_ship_date,archived,'
-                + 'products(id,sku,name,active,product_stage,compliance_status),client:companies!client_company_id(id,name)')
+          .select('id,product_id,client_company_id,expected_ship_date,archived,declared_stage,declared_stage_at,owner_id,'
+                + 'products(id,sku,name,active,product_stage,compliance_status),client:companies!client_company_id(id,name),'
+                + 'owner:staff_profiles!owner_id(id,email,full_name)')
           .order('created_at', { ascending:true }),
         SB.from('quotes').select('product_id,client_company_id,quote_date,created_at').not('product_id','is',null),
         SB.from('purchase_order_items')
@@ -319,10 +338,15 @@ export default function Programs({ userEmail }) {
         // Product-wide on purpose -- a test report has no client, and testing is
         // not repeated per client. The panel says the same thing on screen.
         SB.from('test_reports').select('product_id,test_date,issue_date,overall_result').not('product_id','is',null),
+        // The owner filter offers every colleague, not only those who happen to
+        // own a card today -- a filter that grows as work is assigned would keep
+        // changing shape under whoever is using it.
+        SB.from('staff_profiles').select('id,email,full_name').order('full_name', { nullsFirst:false }),
       ]);
-      const e = [p,q,poi,soi,tr].find(r => r.error);
+      const e = [p,q,poi,soi,tr,st].find(r => r.error);
       if (e) throw new Error(e.error.message);
       setRows(p.data || []);
+      setStaff(st.data || []);
       setEv({ quotes:q.data||[], poItems:poi.data||[], soItems:soi.data||[], reports:tr.data||[] });
     } catch (x) {
       setErr(x && x.message ? x.message : String(x));
@@ -341,28 +365,10 @@ export default function Programs({ userEmail }) {
     ev.soItems.forEach(r => { const c = CLIENT_OF.soLine(r); if (c) add(soItems, key(r.product_id, c), r); });
     ev.reports.forEach(r => add(reports, String(r.product_id), r));
 
-    // THE PRODUCT HAS BEEN ORDERED OR SOLD, FOR ANYONE. A linked purchase order
-    // line or sales order line, any client -- including an order with no client
-    // on it. Kept as the EARLIEST such line per product, for the date and the
-    // client the archived row names.
-    //
-    // Compared by calendar day, for the reason completionOf gives: PICK.poLine
-    // prefers issued_at, a timestamp, over order_date, a plain date, and as
-    // strings a timestamp sorts after the bare date it shares a day with. On the
-    // same day the purchase order wins -- POs are considered first, and a sale
-    // replaces one only when it is strictly earlier.
-    const firstOrder = {};
-    const consider = (r, kind, on, rel) => {
-      if (!on) return;
-      const k = String(r.product_id);
-      const cur = firstOrder[k];
-      if (!cur || String(on).slice(0, 10) < String(cur.on).slice(0, 10)) {
-        firstOrder[k] = { kind, on, client: ((r[rel] || {}).client || {}).name || null };
-      }
-    };
-    ev.poItems.forEach(r => consider(r, 'po', PICK.poLine(r), 'purchase_orders'));
-    ev.soItems.forEach(r => consider(r, 'so', PICK.soLine(r), 'sales_orders'));
-    return { key, quotes, poItems, soItems, reports, firstOrder };
+    // firstOrder went with the derived completion below. What survives here is
+    // what SystemKnows reports on a card -- the quotes, order lines and reports
+    // for this pair -- fetched once for every program rather than per card.
+    return { key, quotes, poItems, soItems, reports };
   }, [ev]);
 
   const enriched = useMemo(() => {
@@ -375,52 +381,68 @@ export default function Programs({ userEmail }) {
         soItems: buckets.soItems[k] || [],
         reports: buckets.reports[String(r.product_id)] || [],
       });
-      // A PROGRAM LEAVES THE PIPELINE when its own client ordered or sold it --
-      // or when its PRODUCT has been ordered or sold for anyone. The second exit
-      // exists because the per-client test missed real orders placed under a
-      // sibling company record: LLF-1617 sat in the pipeline for Legoland while
-      // Legoland Florida had already ordered it and been sold it.
-      //
-      // Sales count as well as purchase orders, so a product already sold to
-      // any client is not treated as new. That currently also archives BUC-138,
-      // whose only sale is a test order on ZZTESTER; it returns to the pipeline
-      // when that test data goes.
-      const ownComplete = isComplete(events);
-      const firstOrder = buckets.firstOrder[String(r.product_id)] || null;
-      const elsewhere = !ownComplete && !!firstOrder;
-      const complete = ownComplete || elsewhere;
-      // The PRODUCT decides Sampling and Tested now, so the product row goes in
-      // rather than a per-program declaration. since is null for Sampling always,
-      // and for Tested when compliance rather than a report put it there.
-      const stage = currentStage(events, r.products);
-      const since = stageEnteredAt(stage, events);
+      // COMPLETION IS NOT DERIVED ANY MORE. This is where the old board worked out
+      // whether an order had finished a program -- its own client, or the product
+      // ordered for anyone -- and which order to name. All of it is gone, because
+      // Complete is a stage somebody sets, on Riley decision. A sales order arriving
+      // is reported on the card and moves nothing.
+      // ── THE STAGE IS WHAT SOMEBODY SET ──────────────────────────────────
+      // declared_stage, and nothing else. currentStage still runs below, but only
+      // to fill the read-only block on the card -- what the records happen to say
+      // is information, not a mover of cards. A card with no stage is a real
+      // state, not a bug, and gets its own column rather than being hidden.
+      const stage = r.declared_stage || null;
+      // declared_stage_at is stamped by trg_programs_declared_stage_at on every
+      // change, so this is genuinely when the card entered the stage it is in --
+      // which the derived board could never say for Sampling.
+      const since = r.declared_stage_at || null;
+      const derivedStage = currentStage(events, r.products);
       // Retired products never sit on the board, however incomplete they are --
       // nobody is going to quote a product that is out of the catalogue.
       const retired = (r.products || {}).active === false;
-      // THE EARLIER of the two. A program is complete the moment the FIRST order
-      // names it -- Riley's rule -- and at KUI either can come first, which is
-      // exactly why this takes the minimum rather than assuming Sold leads.
-      // Null for a retired-but-never-ordered program, which sorts last rather
-      // than pretending to a date.
-      // completionOf carries the measurement: 106 of 192 completed programs were
-      // SOLD AND NEVER ORDERED, and 41 have both on the same day. Deciding the
-      // name here rather than at each render is what stops those 41 being called
-      // Sold on the row and Ordered in the ladder.
-      const done_ = completionOf(events);
-      // An order under this program's own client always wins, because that is
-      // this program's own event. Only when there is none does the product-level
-      // order supply the date and the name.
-      const completedOn = done_ ? done_.on : (elsewhere ? firstOrder.on : null);
-      const completedBy = done_ ? done_.label
-                        : !elsewhere ? null
-                        : firstOrder.kind === 'po'
-                          ? (firstOrder.client ? 'Ordered for ' + firstOrder.client : 'Ordered, no client on the PO')
-                          : (firstOrder.client ? 'Sold to ' + firstOrder.client : 'Sold, no client on the SO');
-      return { ...r, events, complete, elsewhere, elsewhereKind: elsewhere ? firstOrder.kind : null,
-               stage, since, days: daysSince(since), retired,
-               completedOn, completedBy, onBoard: !complete && !retired };
+      const days = daysSince(since);
+      return { ...r, events,
+               stage, since, days, retired, derivedStage,
+               // STALE IS ABOUT THE CARD, NOT THE PRODUCT. It counts days since the
+               // stage was set, so a card nobody has moved in three weeks says so
+               // whatever the records are doing underneath.
+               stale: stage !== COMPLETE && days !== null && days >= STALE_DAYS,
+               ownerName: (r.owner || {}).full_name || (r.owner || {}).email || null,
+               onBoard: stage !== COMPLETE };
     });
   }, [rows, buckets]);
+
+  // ── WRITING A STAGE, AND WRITING AN OWNER ───────────────────────────────────
+  // The only two things this page changes. Both re-read from the database after
+  // the write rather than patching state, so what is on screen is what is stored.
+  //
+  // A REASSIGNMENT WRITES ITS OWN NOTE, on Riley decision -- program_notes is
+  // append-only by grant, so the record cannot be quietly tidied later. The note
+  // is written after the update lands; a failed note leaves a correct owner and a
+  // missing line, which is the better way round.
+  const setStage = async (r, next) => {
+    if (!next || next === r.stage) return;
+    setSaving(r.id);
+    const { error } = await SB.from('programs').update({ declared_stage: next, updated_at: new Date().toISOString() }).eq('id', r.id);
+    if (error) { window._toast?.('Could not move the card — ' + error.message, 'err'); setSaving(null); return; }
+    await load(); setSaving(null);
+  };
+
+  const setOwner = async (r, nextId) => {
+    const next = nextId || null;
+    if (next === (r.owner_id || null)) return;
+    setSaving(r.id);
+    const { error } = await SB.from('programs').update({ owner_id: next, updated_at: new Date().toISOString() }).eq('id', r.id);
+    if (error) { window._toast?.('Could not change the owner — ' + error.message, 'err'); setSaving(null); return; }
+    const nameOf = id => { const s = staff.find(x => x.id === id); return s ? (s.full_name || s.email) : 'nobody'; };
+    try {
+      await SB.from('program_notes').insert({
+        program_id: r.id, author: userEmail || null, source: 'owner-change',
+        note: 'Reassigned from ' + (r.ownerName || 'nobody') + ' to ' + nameOf(next) + ' by ' + (userEmail || 'unknown'),
+      });
+    } catch (e) {}
+    await load(); setSaving(null);
+  };
 
   const board = useMemo(() => enriched.filter(r => r.onBoard), [enriched]);
   // COMPLETED MEANS COMPLETED. The tab was everything not on the board, which
@@ -431,16 +453,42 @@ export default function Programs({ userEmail }) {
   //
   // They are still reachable, because they are the only record that the pair
   // existed at all, but behind a toggle that is off by default.
-  const finished = useMemo(() => enriched.filter(r => r.complete), [enriched]);
-  const history  = useMemo(() => enriched.filter(r => !r.onBoard && !r.complete), [enriched]);
+  // COMPLETE IS A STAGE SOMEBODY SET, not an order arriving. A sales order does
+  // not finish a card, on Riley decision, so this reads declared_stage and never
+  // the records.
+  const finished = useMemo(() => enriched.filter(r => r.stage === COMPLETE), [enriched]);
+  // Cards on a product that has left the catalogue. Still reachable, still off the
+  // board by default, exactly as before -- the difference is that being retired no
+  // longer decides anything about the stage.
+  const history  = useMemo(() => enriched.filter(r => r.retired && r.stage !== COMPLETE), [enriched]);
   const done     = useMemo(() => ui.showRetired ? finished.concat(history) : finished,
                            [finished, history, ui.showRetired]);
 
   const counts = useMemo(() => {
-    const c = {}; PIPELINE_STAGES.forEach(([k]) => { c[k] = 0; });
-    board.forEach(r => { if (r.stage) c[r.stage] = (c[r.stage]||0) + 1; });
+    const c = { none: 0 };
+    MANUAL_STAGES.forEach(([k]) => { c[k] = 0; });
+    board.forEach(r => { const k = r.stage || 'none'; c[k] = (c[k]||0) + 1; });
     return c;
   }, [board]);
+
+  // ── OWNER, INCLUDING NOBODY ─────────────────────────────────────────────────
+  // Unowned is an option with a count rather than an absence, on Riley word. A
+  // card with no owner is the one state worth surfacing -- it means the creator
+  // resolved to no staff row -- and a filter that could not express it would hide
+  // exactly the thing somebody needs to find.
+  const ownerCounts = useMemo(() => {
+    const c = { none: 0 };
+    board.forEach(r => { const k = r.owner_id || 'none'; c[k] = (c[k]||0) + 1; });
+    return c;
+  }, [board]);
+
+  const ownerOptions = useMemo(() => ([
+    { value:'', label:'All owners', count:board.length },
+    { value:'none', label:'Unowned', color:'var(--hot)', count:ownerCounts.none || 0 },
+    ...staff.map(s => ({ value:s.id, label:s.full_name || s.email, count:ownerCounts[s.id] || 0 })),
+  ]), [staff, ownerCounts, board.length]);
+
+  const ownerMatches = r => !ui.ownerSel.length || ui.ownerSel.includes(r.owner_id || 'none');
 
   const matches = r => {
     if (!ui.search) return true;
@@ -453,14 +501,18 @@ export default function Programs({ userEmail }) {
   // rather than overlap. That is the difference the six-stage chip filter could
   // not offer, and it is a consequence of the pipeline having an order.
   const shownBoard = useMemo(() => board.filter(r =>
-    matches(r) && (!ui.stageSel.length || ui.stageSel.includes(r.stage))), [board, ui.search, ui.stageSel]);
-  const shownDone  = useMemo(() => done.filter(matches)
-    .sort((a,b) => String(b.completedOn||'').localeCompare(String(a.completedOn||''))), [done, ui.search]);
+    matches(r) && ownerMatches(r) && (!ui.stageSel.length || ui.stageSel.includes(r.stage || 'none'))),
+    [board, ui.search, ui.stageSel, ui.ownerSel]);
+  const shownDone  = useMemo(() => done.filter(r => matches(r) && ownerMatches(r))
+    .sort((a,b) => String(b.since||'').localeCompare(String(a.since||''))), [done, ui.search, ui.ownerSel]);
 
   const stageOptions = useMemo(() => ([
     { value:'', label:'All stages', count:board.length },
-    ...PIPELINE_STAGES.map(([v,l]) => ({
-      value:v, label:l, color:COL[v].fg, bg:COL[v].bg, count:counts[v]||0 })),
+    ...MANUAL_STAGES.map(([v,l]) => ({ value:v, label:l, count:counts[v]||0 })),
+    // A card whose stage was cleared. Nothing creates one today -- the tick always
+    // writes quoted -- but the column is nullable, so the board says so rather
+    // than dropping the card out of every view.
+    { value:'none', label:'No stage set', color:'var(--muted)', count:counts.none||0 },
   ]), [counts, board.length]);
 
   // The sweep that used to sit here read every quote, purchase order line and sales
@@ -490,18 +542,21 @@ export default function Programs({ userEmail }) {
               </span>
             </div>
           )}
-          {/* THE WHOLE LINE GOES when there is no date, rather than degrading to
-              a dash or a zero -- both of those read as a measurement. Sampling
-              never has one, and Tested only has one when a report rather than a
-              compliance flag put it there. */}
+          {/* OWNER ON THE FACE OF THE CARD. Unowned is said in words and in red
+              rather than left blank, because a blank reads as a layout gap and
+              this is the one state somebody needs to notice. */}
+          <div style={{fontSize:'11px',marginTop:'5px',color:r.ownerName?'#5A5A5E':'var(--hot)'}}>
+            {r.ownerName || 'Unowned'}
+          </div>
+          {/* Every card has a stage date now -- declared_stage_at is stamped on
+              every change -- so this line no longer disappears the way the derived
+              one had to. */}
           {r.since && (
-            <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'6px',display:'flex',gap:'8px',flexWrap:'wrap'}}>
+            <div style={{fontSize:'11px',color:r.stale?'#8a5a00':'#8A8A8E',marginTop:'6px',display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
+              {r.stale && <span style={{width:'6px',height:'6px',borderRadius:'50%',background:'#d97706',flexShrink:0}} />}
               <span>{r.days === 0 ? 'today' : r.days + 'd in stage'}</span>
               <span>· since {fmt(r.since)}</span>
             </div>
-          )}
-          {r.events.quoted && r.stage !== 'quoted' && (
-            <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'2px'}}>Quoted {fmt(r.events.quoted.on)}</div>
           )}
         </button>
 
@@ -513,7 +568,9 @@ export default function Programs({ userEmail }) {
 
   return (
     <div style={{padding:'26px 30px 60px'}}>
-      {openRow && <ProgramDetail r={openRow} userEmail={userEmail} onClose={()=>setOpenId(null)} />}
+      {openRow && <ProgramDetail r={openRow} userEmail={userEmail} staff={staff}
+                                 busy={saving === openRow.id} onStage={setStage} onOwner={setOwner}
+                                 onClose={()=>setOpenId(null)} />}
       {/* Centred, and the count on its own line beneath. The description
           paragraph that sat here is gone -- the columns and their placeholders
           already say what the board is, and a paragraph nobody rereads after the
@@ -546,6 +603,9 @@ export default function Programs({ userEmail }) {
         {ui.tab==='board' && (
           <FilterSelect multiple label="All stages" value={ui.stageSel} onChange={v=>setUi('stageSel', v)} options={stageOptions} />
         )}
+        {/* Owner narrows both tabs, because "what is Kristy carrying" is as fair a
+            question about finished work as about live work. */}
+        <FilterSelect multiple label="All owners" value={ui.ownerSel} onChange={v=>setUi('ownerSel', v)} options={ownerOptions} />
         <div style={{flex:1}} />
       </div>
 
@@ -553,37 +613,38 @@ export default function Programs({ userEmail }) {
         <>
           {/* Tiles first, the original dashboard shape. They read the WHOLE board
               rather than the filtered view, so narrowing never makes a total lie. */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:'10px',marginBottom:'18px'}}>
-            {PIPELINE_STAGES.map(([k,l,src])=>(
+          {/* Tiles read the WHOLE board rather than the filtered view, so narrowing
+              never makes a total lie. No source line under the label any more --
+              every one of these is set by a person, so there is nothing to cite. */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:'10px',marginBottom:'18px'}}>
+            {MANUAL_STAGES.map(([k,l])=>(
               <button key={k} onClick={()=>setUi('stageSel', ui.stageSel.length===1&&ui.stageSel[0]===k?[]:[k])}
-                style={{background:'#fff',borderRadius:'14px',padding:'14px 16px',textAlign:'left',cursor:'pointer',
-                        fontFamily:'inherit',border:'none',borderTop:'3px solid '+COL[k].bar,
-                        boxShadow:ui.stageSel.length===1&&ui.stageSel[0]===k?'0 0 0 2px '+COL[k].fg:'0 1px 3px rgba(0,0,0,.05)'}}>
-                <div style={{fontSize:'22px',fontWeight:700,color:'#1D1D1F',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{counts[k]||0}</div>
+                style={{background:'#fff',borderRadius:'14px',padding:'13px 15px',textAlign:'left',cursor:'pointer',
+                        fontFamily:'inherit',border:'none',borderTop:'3px solid #1D1D1F',
+                        boxShadow:ui.stageSel.length===1&&ui.stageSel[0]===k?'0 0 0 2px #1D1D1F':'0 1px 3px rgba(0,0,0,.05)'}}>
+                <div style={{fontSize:'21px',fontWeight:700,color:'#1D1D1F',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{counts[k]||0}</div>
                 <div style={{fontSize:'11.5px',color:'#5A5A5E',marginTop:'6px'}}>{l}</div>
-                <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'2px'}}>{src}</div>
               </button>
             ))}
           </div>
 
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))',gap:'12px',alignItems:'start'}}>
-            {PIPELINE_STAGES.map(([k,l])=>{
-              const inCol = shownBoard.filter(r => r.stage === k);
+          {/* Eight columns plus a ninth that only appears when it has something in
+              it. A permanent empty No stage set column would be a standing invitation
+              to a state nothing produces. */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(215px,1fr))',gap:'12px',alignItems:'start'}}>
+            {[...MANUAL_STAGES, ...((counts.none||0) > 0 ? [['none','No stage set']] : [])].map(([k,l])=>{
+              const inCol = shownBoard.filter(r => (r.stage || 'none') === k);
               return (
                 <div key={k}>
                   <div style={{display:'flex',alignItems:'center',gap:'7px',padding:'0 2px 9px'}}>
-                    <span style={{width:'8px',height:'8px',borderRadius:'50%',background:COL[k].bar}} />
+                    <span style={{width:'8px',height:'8px',borderRadius:'50%',background:k==='none'?'#C7C7CC':'#1D1D1F'}} />
                     <span style={{fontSize:'12px',fontWeight:700,color:'#1D1D1F'}}>{l}</span>
                     <span style={{fontSize:'11.5px',color:'#A0A0A4'}}>{inCol.length}</span>
                   </div>
                   {inCol.length === 0 ? (
                     <div style={{border:'1px dashed #E5E5EA',borderRadius:'12px',padding:'16px 13px',
                                  fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5}}>
-                      {k==='sampling'
-                        ? 'No product here is marked Sample or Production.'
-                        : k==='tested'
-                        ? 'Nothing here has a test report or a passed compliance status.'
-                        : 'Nothing has reached Quoted.'}
+                      Nothing here. Cards arrive at Quoted and are moved on the card.
                     </div>
                   ) : inCol.map(r => <Card key={r.id} r={r} />)}
                 </div>
@@ -593,10 +654,10 @@ export default function Programs({ userEmail }) {
           {/* Cards cannot be dragged, and a board that looks draggable but is not
               owes an explanation rather than a shrug. */}
           <p style={{margin:'18px 0 0',fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.55,maxWidth:'720px'}}>
-            Cards are not dragged, and nothing here is set on the card. Quoted follows the
-            quote; Sampling follows the product&rsquo;s Sample or Production stage; Tested follows a
-            test report or a passed compliance status. Change the product on Testing and the card
-            moves on its own.
+            Cards are not dragged. Open one to change its stage, change its owner or add a
+            note. Nothing here moves on its own &mdash; an order, a test report or a change on
+            Testing is reported on the card and never acts on it. A card appears only when
+            somebody ticks Create PLM program on a quote.
           </p>
         </>
       ) : (
@@ -606,7 +667,7 @@ export default function Programs({ userEmail }) {
                          color:'#5A5A5E',cursor:'pointer',fontFamily:'inherit'}}>
             <input type="checkbox" checked={ui.showRetired} onChange={e=>setUi('showRetired', e.target.checked)}
               style={{cursor:'pointer'}} />
-            Include {history.length} retired, never ordered
+            Include {history.length} on retired products
           </label>
         </div>
         <div style={{background:'#fff',borderRadius:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',overflow:'hidden'}}>
@@ -632,7 +693,10 @@ export default function Programs({ userEmail }) {
                     {p.active === false ? 'Inactive' : p.active === true ? 'Active' : 'Not set'}
                   </span>
                   <span style={{fontSize:'11.5px',color:'#8A8A8E',minWidth:'150px'}}>
-                    {r.complete ? r.completedBy + (r.elsewhere ? ' · ' : ' ') + fmt(r.completedOn) : 'Product retired'}
+                    {r.stage === COMPLETE ? 'Marked complete ' + fmt(r.since) : 'Product retired'}
+                  </span>
+                  <span style={{fontSize:'11.5px',minWidth:'110px',color:r.ownerName?'#8A8A8E':'var(--hot)'}}>
+                    {r.ownerName || 'Unowned'}
                   </span>
                   {testingNotRequired(p) && (
                     <span style={{fontSize:'10px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',
