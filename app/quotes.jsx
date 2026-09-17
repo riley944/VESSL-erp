@@ -8,7 +8,6 @@ import {
 // The SBQ import went with the htscodes fetch -- that was this file's last use of it.
 // lib/supabaseQuotes still exists; page.jsx and pricing.jsx both import it.
 import { SB } from "@/lib/supabase";
-import { ensurePrograms } from "@/lib/programs";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
 import { productByKey, ensureProductForQuote, skuActivity } from "@/lib/products";
@@ -985,14 +984,10 @@ function Platform({ session, newQuote = null }) {
         }
       } catch (e) {}
 
-      // A QUOTE IS THE PROGRAM STARTING, so the board shows it now rather than
-      // waiting for Mark won or a Sync. Idempotent by the unique constraint, and
-      // it never updates -- so re-saving a quote cannot disturb a declared stage
-      // or resurrect an archived program. A quote missing either id names no
-      // program and is skipped in silence; the save already succeeded.
-      if (savedRow.product_id && savedRow.client_company_id) {
-        try { await ensurePrograms([[savedRow.product_id, savedRow.client_company_id]]); } catch (e) {}
-      }
+      // SAVING A QUOTE NO LONGER OPENS A PROGRAM. It used to, on the reasoning that
+      // quoting a product for a client IS the programme starting. PLM is kept by
+      // hand now, on Riley decision, so a card appears only when somebody ticks
+      // Create PLM program on this form -- which arrives in the next change.
       // Ask on the OLD key -- renamed, or a different product? Kristy's words on
       // why any of this exists: "if I have to update information on multiple
       // screens, it allows more chance for me to miss something."
@@ -1270,62 +1265,10 @@ function Platform({ session, newQuote = null }) {
 }
 
 // ---------- expanded detail ----------
-// ── MARK WON STARTS THE PROGRAM ───────────────────────────────────────────
-// Restored in step 3, writing the NEW shape -- product_id and client_company_id,
-// both of which the quote row now carries. The old version wrote free-text
-// product, sku, client and factory plus a nine-value stage and a four-task
-// checklist; none of that exists any more, and the stages it used to set by hand
-// are now read from records.
-//
-// IT READS THE QUOTE ROW RATHER THAN THE CARD. The card object is a UI shape
-// assembled at load, and whether it carries product_id and client_company_id is
-// an implementation detail that has changed before. One indexed lookup by id
-// gets what the database actually holds, at the moment the button is pressed.
-//
-// NO DOUBLE-CREATE CHECK, because there cannot be a double. The unique
-// constraint on (product_id, client_company_id) makes ensurePrograms idempotent,
-// so pressing this twice is a no-op rather than a second program -- and it never
-// updates, so it cannot resurrect one somebody archived.
-function MarkWonButton({ q }) {
-  const [busy, setBusy] = useState(false);
-  const [state, setState] = useState('idle');   // idle | done | cannot
-
-  const start = async () => {
-    setBusy(true);
-    try {
-      const { data: row, error } = await SB.from('quotes')
-        .select('product_id,client_company_id').eq('id', q.id).single();
-      if (error) { alert('Could not read the quote: ' + error.message); setBusy(false); return; }
-      // A quote with no product or no resolved client names no program. Saying so
-      // beats creating half a row -- 3 quotes carry a client the catalogue has no
-      // company for, and those are a known question rather than a bug here.
-      if (!row || !row.product_id || !row.client_company_id) {
-        setState('cannot'); setBusy(false); setTimeout(()=>setState('idle'), 6000); return;
-      }
-      const { error: pErr } = await ensurePrograms([[row.product_id, row.client_company_id]]);
-      if (pErr) { alert('Could not start the program: ' + pErr.message); setBusy(false); return; }
-      setState('done'); setBusy(false); setTimeout(()=>setState('idle'), 5000);
-    } catch (e) {
-      alert('Something went wrong: ' + (e && e.message ? e.message : e)); setBusy(false);
-    }
-  };
-
-  const label = state==='done'   ? 'Program ready — see Programs'
-    : state==='cannot' ? 'Needs a product and a client first'
-    : busy ? 'Starting…' : 'Mark won · start program';
-  const bg = state==='done' ? '#e7f5ec' : state==='cannot' ? '#fef3e2' : '#0f7d43';
-  const col = state==='done' ? '#2f7d52' : state==='cannot' ? '#b45309' : '#fff';
-
-  return (
-    <button
-      style={{ display:'inline-flex', alignItems:'center', gap:7, background:bg, border:'1px solid '+(state==='idle'?'#0f7d43':'transparent'), color:col, borderRadius:10, padding:'9px 16px', fontSize:13.5, fontWeight:600, cursor:'pointer' }}
-      onClick={start} disabled={busy}
-      title="Mark this quote won and start its program"
-    >
-      <CheckCircle2 size={15} /> {label}
-    </button>
-  );
-}
+// MARK WON IS GONE. It called ensurePrograms directly, so it was a second door
+// into the programs table -- and under the manual board it would have created a
+// card with no owner and no stage, which is exactly what the rework forbids. If
+// Riley wants it back, it returns wired to the new creation helper.
 
 function FreightQuoteButton({ q, cbmPerCarton }) {
   const [busy, setBusy] = useState(false);
@@ -1811,7 +1754,6 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
             <button style={S.iconBtn} title="Delete" onClick={onDelete}><Trash2 size={16} /></button>
           </div>
         )}
-        <MarkWonButton q={q} />
         <FreightQuoteButton q={q} cbmPerCarton={cbm} />
         <button style={S.printBtn} onClick={() => { printQuote(q).catch(e => console.error('print failed:', e)); }}><Printer size={15} /> Print this quote</button>
       </div>

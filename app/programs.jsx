@@ -14,7 +14,8 @@ import {
   PIPELINE_STAGES, fmt, deriveEvents,
   isComplete, currentStage, stageEnteredAt, daysSince, CLIENT_OF, completionOf, PICK,
 } from '@/lib/lifecycle';
-import { ensurePrograms, pairsFromRecords } from '@/lib/programs';
+// Sync from records is gone with the derived board -- nothing here creates a
+// program any more. The quote-form tick is the only door.
 // Tab, search, stage filter and the retired toggle survive going into a program and
 // coming back, and are gone on reload. See the note at the top of lib/pageState.js.
 import { usePageState } from '@/lib/pageState';
@@ -299,7 +300,6 @@ export default function Programs({ userEmail }) {
   const [ui, setUi] = usePageState('programs', { tab:'board', search:'', stageSel:[], showRetired:false });
   const [openId, setOpenId] = useState(null);
   // showRetired is ui.showRetired, in the page store above.
-  const [sweeping, setSweeping] = useState(false);
 
   const load = async () => {
     setLoad(true); setErr('');
@@ -463,25 +463,11 @@ export default function Programs({ userEmail }) {
       value:v, label:l, color:COL[v].fg, bg:COL[v].bg, count:counts[v]||0 })),
   ]), [counts, board.length]);
 
-  const sweep = async () => {
-    setSweeping(true);
-    try {
-      const pairs = await pairsFromRecords();
-      const have = new Set(rows.map(r => r.product_id + '|' + r.client_company_id));
-      const missing = []; const seen = new Set();
-      for (const [pid, cid] of pairs) {
-        const k = pid + '|' + cid;
-        if (have.has(k) || seen.has(k)) continue;
-        seen.add(k); missing.push([pid, cid]);
-      }
-      if (!missing.length) { window._toast?.('Nothing to add — every pair already has a program','ok'); setSweeping(false); return; }
-      const { error } = await ensurePrograms(missing);
-      if (error) { alert('Could not add programs: ' + error.message); setSweeping(false); return; }
-      window._toast?.('Added ' + missing.length + ' ' + (missing.length===1?'program':'programs'), 'ok');
-      await load();
-    } catch (e) { alert('Sweep failed: ' + (e && e.message ? e.message : e)); }
-    setSweeping(false);
-  };
+  // The sweep that used to sit here read every quote, purchase order line and sales
+  // order line and created a program for any pair the records proved but the board
+  // was missing. It was the right tool for a DERIVED board. On a manual one it is a
+  // button that fills the list with cards nobody chose, which is the thing this
+  // rework exists to stop, so it is gone along with the five automatic call sites.
 
   if (loading) return <div style={{padding:'28px 30px',color:'#86868B',fontSize:'14px'}}>Reading programs…</div>;
   if (err) return <div style={{padding:'28px 30px',color:'var(--hot)',fontSize:'14px'}}>Could not read programs — {err}</div>;
@@ -561,13 +547,6 @@ export default function Programs({ userEmail }) {
           <FilterSelect multiple label="All stages" value={ui.stageSel} onChange={v=>setUi('stageSel', v)} options={stageOptions} />
         )}
         <div style={{flex:1}} />
-        <button onClick={sweep} disabled={sweeping}
-          title="Create programs for any product and client pair the records prove but the list is missing"
-          style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'7px 13px',
-                  cursor:sweeping?'default':'pointer',border:'1px solid rgba(0,0,0,.1)',
-                  fontFamily:'inherit',background:'#fff',color:sweeping?'#B0B0B4':'#5A5A5E'}}>
-          {sweeping ? 'Checking…' : 'Sync from records'}
-        </button>
       </div>
 
       {ui.tab==='board' ? (
