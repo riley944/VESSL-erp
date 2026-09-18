@@ -2029,6 +2029,91 @@ for Riley, not an assumption to make.
 
 ---
 
+## Script 61, as run — 2026-09-18, the duplicate TRE-011 quote removed
+
+`z0` on the first rehearsal, and verified from a fresh query afterwards.
+
+**One save, two rows.** Saving the TRE-011 quote inserted `7c976a19` and then
+`8b6eb449` 1.5 seconds later. The first carries both links — product `877c38f2`,
+company `ee8455ed`. The second is a shell: same SKU, same product text, same client
+text, same single tier at 2000 units and 10 landed, but `product_id` and
+`client_company_id` both NULL, because the linking steps that follow a save ran
+against the first row and never against the second. Loren asked for the shell to go.
+
+**Nothing referenced it, and that took measuring rather than assuming.** There is
+**no foreign key anywhere in this database pointing at `vessl.quotes` or
+`public.quotes`** — every reference is by convention, so the database would have
+allowed the delete no matter what pointed at the row. Twelve paths were counted by
+hand and then counted again inside the transaction, into `_r61`, so the guard and
+the checks read the same numbers rather than trusting a measurement taken the day
+before. All twelve read zero. `programs` and `program_notes` are both empty and
+neither carries a quote column, so there was no card and no note to orphan.
+
+**A claim corrected on the way.** The shell was first described as carrying the
+signature of a double-submit because its `updated_at` precedes its own `created_at`.
+That is not a signature: **94 of 339 quotes have it**, average gap 0.265s, because
+the app stamps `updated_at` client-side before the insert lands. What is singular
+about the shell is the *size* of the gap — 2.597s, the largest in the table. The
+duplicate evidence is two same-SKU rows 1.5 seconds apart with one unlinked.
+
+**No timestamp literal appears in the script, and that shaped a guard.** A timestamp
+carries single colons and the SQL editor rewrites those as bind parameters, which is
+what cost script 58 a rehearsal. So "nobody has edited this row since it was
+created" is asserted as `updated_at < created_at` — true of it today, and false the
+moment anybody saves the row, because a save stamps `updated_at` with the current
+time. The property does the work a literal would have done, and survives transport.
+
+**Counts asserted as differences, not absolutes.** `quotes` moved from 338 to 339
+while the script was being written — an unrelated quote saved in the gap. An
+absolute `want` would have failed a perfectly good run, the same argument script 37
+makes for the same reason.
+
+`archive/2026-09-18-duplicate-quote-TRE-011.json` holds the row as it stood, every
+column, beside a summary of the row kept and all twelve reference counts.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| quotes | 339 | **338** |
+| rows carrying SKU `TRE-011` | 2 | **1** |
+| Tremont Sporting Co quotes | 12 | **11** |
+| the shell `8b6eb449` | present, both links NULL | **gone** |
+| survivor `7c976a19` — links / tiers | `877c38f2` + `ee8455ed` / 1 | unchanged |
+| product `877c38f2`, company `ee8455ed` | present | unchanged |
+| programs / program_notes | 0 / 0 | unchanged |
+
+### preflight.py had vanished, and is now in the repo
+
+It was not in the repo, not in `scratchpad/`, not anywhere — it had only ever lived
+in a session scratchpad, which rolled over. Every rule it enforces is recorded in
+this file and in the session memory, so it was rewritten from those.
+
+**Its first run failed script 61 twice, and both were bugs in the checker.** Rule 10
+flagged `create temp table … on commit drop as select …`, which is the *correct*
+form, because the first open paren it found belonged to the select body. The test is
+narrower than the first draft assumed: flag only when the next non-whitespace
+character after the clause is an open paren. The AS form has `as` there; the correct
+column-list form has a semicolon.
+
+**Then it was made to prove it can fail**, because a checker that cannot detect its
+own fault class is worse than none — the first lexer written for this job skipped
+newlines before testing whether it was inside a string and reported PASS on the very
+bug it existed for. Two throwaway files: one carrying a backslash, a single colon in
+a comment, an apostrophe in a comment, a double space in a literal, the broken rule
+10 form, a first branch missing `as got`, a live `commit;` and no trailing rollback —
+**all eight fired**; and one carrying the script 42 fault, an uncast `got` reading an
+enum — **rule 7 fired**. Rule 9, the absence check, is unproven and does not apply
+here. It now lives at `scratchpad/preflight.py`, committed, so it stops disappearing.
+
+### Open
+
+**The Save button has no double-submit guard.** This row exists because a save ran
+twice, and nothing in the quote form prevents it happening again. The duplicate is
+cheap to remove once; the guard is the actual fix and is not written.
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the
