@@ -2254,6 +2254,55 @@ in conversation that 64 ended up filling; the files themselves are correct.
 
 ---
 
+## Script 65, as run — 2026-09-18, three sample rungs become one Sampling stage
+
+`z0` on the first rehearsal. Narrows `programs_declared_stage_check` from the nine
+values script 60 gave it to five plus null — `quoted`, `sampling`, `testing`,
+`purchase_order`, `complete` — migrating any row on a numbered rung first.
+
+**What the CHECK allowed, re-measured rather than taken from 60:** `NULL, quoted,
+sample_1, sample_2, sample_3, sample_4, sample_5, testing, purchase_order,
+complete`.
+
+**Why the rungs went.** They were built on the reasoning that a sample round is the
+thing that repeats at KUI and one column could not say whether a card had been
+round once or three times. Nobody used the fourth or the fifth, the board capped at
+three within a day, and how many rounds a product has been through turned out to be
+something people write in the notes rather than record by moving a card. A stage
+that says sampling is happening is the honest shape.
+
+**Zero rows moved, and that was measured rather than expected.** `programs` held one
+row and it sat on `quoted`. The migration UPDATE is in the script anyway, for a card
+created between writing and running — and it runs **before** the constraint swap,
+because the other order fails on any row still holding a rung. Same lesson the PLM
+rework recorded about doors and scripts.
+
+**The probe is real here, unlike 63 and 64.** A CHECK applies to the owner too, so
+the script proves the new constraint by trying it: `sampling` inserts, `sample_1` is
+refused, both inside subtransactions forced to roll back.
+
+**A defect this change introduced in the app, caught before it shipped.** The tiles
+grid was a hardcoded `repeat(6,1fr)`. Collapsing six stages to four left four tiles
+in a six-column grid with two empty slots — a stage list and a layout that disagreed
+because only one of them knew the stages had changed. The grid now takes its column
+count from `MANUAL_STAGES.length`.
+
+**What preflight caught.** A single colon in the header prose — `not assumed:
+vessl.programs` — the same class that cost script 58 a rehearsal. Rewritten without
+it.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| CHECK values | 9 plus null | **5 plus null** |
+| numbered rungs in the CHECK | 5 | **0** |
+| rows on a numbered rung | 0 | 0 |
+| `programs` rows | 1, on `quoted` | unchanged |
+| `programs_factory_pct_check` | attached | unchanged |
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the
