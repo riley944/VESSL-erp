@@ -2114,6 +2114,45 @@ cheap to remove once; the guard is the actual fix and is not written.
 
 ---
 
+## Script 62, as run — 2026-09-18, who touched the card last
+
+`z0` on the first rehearsal. Adds `vessl.programs.updated_by`, text, NULL. One
+column, nothing else.
+
+**`updated_at` was already there and already being stamped by hand.** What was
+missing was the name beside it, so a card could say when it last moved but never
+who moved it. There is no trigger on this table doing either — the only one is
+`trg_programs_declared_stage_at`, which stamps the stage date on insert and on a
+stage change. The application does `updated_at` itself, on every write, and now
+does `updated_by` the same way: a stage move from the modal or from a drag, an
+owner change, and adding, editing or deleting a note.
+
+**NULL is a real value and the column is deliberately nullable.** Every row that
+existed predates the stamp, and backfilling a name onto a change nobody recorded
+would be inventing evidence. An empty last touch reads as not recorded, which is
+exactly what it is — the one existing card showed that until it was next moved.
+
+**Text, not a key into `staff_profiles`.** `owner_id` is a key because an owner is
+somebody the board assigns work to and a typo there breaks a filter. This is an
+audit crumb: it has to stay readable after a colleague leaves and their profile
+goes. The interface resolves it to a full name when a profile still matches and
+shows the raw address when none does.
+
+**Counts asserted as differences.** The table held zero rows that morning and one
+by the afternoon, because a card was made while testing. An absolute want would
+have failed a good run for a reason unrelated to the script.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| `programs` columns | 13 | **14** |
+| `updated_by` | absent | **present, text, nullable** |
+| rows | 1 | unchanged |
+| `trg_programs_declared_stage_at` | attached | unchanged |
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the
