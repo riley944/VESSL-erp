@@ -13,6 +13,11 @@ import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
 import { productByKey, ensureProductForQuote, skuActivity } from "@/lib/products";
 // The one door into the programs table. See the note at the top of lib/programs.js.
 import { createProgram } from "@/lib/programs";
+// The house modal, and the one owner picker both doors share. Overlay rather than
+// a hand-rolled backdrop or a window.prompt: this file already has one modal
+// pattern and a second would be a second set of behaviours to keep in step.
+import { Overlay } from "@/app/components/ModalGuard";
+import { OwnerSelect, ownerIdForEmail } from "@/app/components/OwnerSelect";
 // The search term and the open client survive navigation, and go on reload.
 import { usePageState } from "@/lib/pageState";
 // sizesForScale is gone from this file: a quote can now carry several scales, and
@@ -622,6 +627,9 @@ const BLANK = {
   // never reaches the quotes table. It travels with the form object to saveQuote,
   // which reads it and then forgets it.
   createProgram: false,
+  // Who the card opens owned by. Null is Unowned and is a real answer, so it is
+  // also the blank value -- the tick fills it with the saver when it is turned on.
+  programOwnerId: null,
   id: null, quoteDate: "", product: "", sku: "", sizeScales: [], sizeDeltas: {}, sizePlateFees: {}, sizeCartons: {}, notes: "",
   updatedAt: "", updatedBy: "",
   client: "", clientContact: "", clientEmail: "", clientPhone: "", clientAddress: "",
@@ -693,6 +701,10 @@ function Platform({ session, newQuote = null }) {
   const [factories, setFactories] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [clientRecords, setClientRecords] = useState([]);
+  // Every colleague, not only those who own a card today -- the same list the PLM
+  // card modal offers for reassignment, so the two pickers cannot disagree about
+  // who exists. Loaded once with the other reference lists.
+  const [staff, setStaff] = useState([]);
   const [showDirectory, setShowDirectory] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [showTasks, setShowTasks] = useState(false);
@@ -786,6 +798,12 @@ function Platform({ session, newQuote = null }) {
     if (!error) setClientRecords(data || []);
   }, []);
 
+  const loadStaff = useCallback(async () => {
+    const { data, error } = await supabase.from("staff_profiles").select("id,email,full_name")
+      .order("full_name", { nullsFirst: false });
+    if (!error) setStaff(data || []);
+  }, []);
+
   const saveContact = async (contact) => {
     const { error } = await supabase.from("client_contacts").upsert(contact).select();
     if (error && !/duplicate|unique/i.test(error.message)) { flash("Couldn't save contact: " + error.message); return false; }
@@ -867,7 +885,7 @@ function Platform({ session, newQuote = null }) {
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); loadFactories(); loadContacts(); loadClientRecords(); loadTasks(); }, [load, loadFactories, loadContacts, loadClientRecords, loadTasks]);
+  useEffect(() => { load(); loadFactories(); loadContacts(); loadClientRecords(); loadTasks(); loadStaff(); }, [load, loadFactories, loadContacts, loadClientRecords, loadTasks, loadStaff]);
 
   const deepLinkHandledRef = useRef(false);
   useEffect(() => {
@@ -997,17 +1015,20 @@ function Platform({ session, newQuote = null }) {
       // it on the way to the table, which is why it is read from f rather than
       // from savedRow.
       //
-      // The owner is whoever is saving the quote, resolved to a staff_profiles
-      // row inside the helper. A quote with no product or no resolved client
-      // names no program, and says so rather than failing the save -- 3 quotes
-      // carry a client the catalogue has no company for, which is a known
-      // question rather than a fault here.
+      // The owner is whoever the picker beside the tick names, defaulted to the
+      // person saving. It is passed as an ID and never as an email: Unowned is a
+      // choice the picker offers, and an email fallback here would quietly overrule
+      // somebody who made it. A quote with no product or no resolved client names
+      // no program, and says so rather than failing the save -- 3 quotes carry a
+      // client the catalogue has no company for, which is a known question rather
+      // than a fault here.
       if (f.createProgram) {
         if (!savedRow.product_id || !savedRow.client_company_id) {
           flash("Quote saved — no PLM card, it needs a product and a matched client");
         } else {
           const { error: pErr } = await createProgram(savedRow.product_id, savedRow.client_company_id,
-                                                      { stage: 'quoted', ownerEmail: userEmail });
+                                                      { stage: 'quoted', ownerId: f.programOwnerId || null,
+                                                        createdBy: userEmail });
           flash(pErr ? "Quote saved — PLM card failed, " + pErr.message : "Quote saved — PLM card opened at Quoted");
         }
       }
@@ -1271,14 +1292,14 @@ function Platform({ session, newQuote = null }) {
                     </div>
                   )}
                 </div>
-                {open && <ExpandedDetail q={q} tasks={tasks.filter((t) => t.quote_id === q.id)} onAddTask={addTask} onToggleTask={toggleTask} onDeleteTask={deleteTask} userEmail={userEmail} isMobile={isMobile} onEdit={() => setEditing(q)} onDuplicate={() => duplicateQuote(q)} onDelete={() => { if (confirm("Delete this quote?")) removeQuote(q.id); }} />}
+                {open && <ExpandedDetail q={q} tasks={tasks.filter((t) => t.quote_id === q.id)} onAddTask={addTask} onToggleTask={toggleTask} onDeleteTask={deleteTask} userEmail={userEmail} staff={staff} isMobile={isMobile} onEdit={() => setEditing(q)} onDuplicate={() => duplicateQuote(q)} onDelete={() => { if (confirm("Delete this quote?")) removeQuote(q.id); }} />}
               </div>
             );
           })}
         </div>
       )}
 
-      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} factories={factories} clientNames={clients.map((c) => c.name).filter((n) => n !== "Unassigned")} contacts={contacts} onSaveFactory={saveFactoryPreset} onSaveContact={saveContact} userEmail={userEmail} />}
+      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} factories={factories} clientNames={clients.map((c) => c.name).filter((n) => n !== "Unassigned")} contacts={contacts} onSaveFactory={saveFactoryPreset} onSaveContact={saveContact} userEmail={userEmail} staff={staff} />}
       {/* Opens after a SKU change is saved. onDone reloads so the list shows the
           result; the modal stays up because the report IS the result. */}
       {skuChoice && <QuoteSkuChoiceModal product={skuChoice.product} quote={skuChoice.quote} updatedBy={userEmail} onClose={() => setSkuChoice(null)} onDone={() => load()} />}
@@ -1300,42 +1321,102 @@ function Platform({ session, newQuote = null }) {
 //
 // PRESSING IT TWICE IS A NO-OP. createProgram inserts and never updates, so a
 // second press cannot drag a card back to Quoted or take it off its owner.
-function MarkWonButton({ q, userEmail }) {
+function MarkWonButton({ q, userEmail, staff = [] }) {
   const [busy, setBusy] = useState(false);
   const [state, setState] = useState('idle');   // idle | done | cannot
+  // null when shut; { row, ownerId } while the popup is asking.
+  const [ask, setAsk] = useState(null);
 
-  const start = async () => {
+  // NOTHING IS WRITTEN UNTIL START. This button used to create the card on its own
+  // click, owned by whoever pressed it -- which was fine while the owner was never
+  // a question, and wrong the moment it became one. Pressing it now READS the quote
+  // and opens the popup; the insert waits for Start.
+  //
+  // The read still happens first so the refusal is still early: a quote with no
+  // product or no matched client says so on the button rather than inside a popup
+  // it should not have opened.
+  const open = async () => {
     setBusy(true);
     try {
       const { data: row, error } = await SB.from('quotes')
         .select('product_id,client_company_id').eq('id', q.id).single();
-      if (error) { alert('Could not read the quote: ' + error.message); setBusy(false); return; }
+      setBusy(false);
+      if (error) { alert('Could not read the quote: ' + error.message); return; }
       if (!row || !row.product_id || !row.client_company_id) {
-        setState('cannot'); setBusy(false); setTimeout(()=>setState('idle'), 6000); return;
+        setState('cannot'); setTimeout(()=>setState('idle'), 6000); return;
       }
-      const { error: pErr } = await createProgram(row.product_id, row.client_company_id,
-                                                  { stage: 'quoted', ownerEmail: userEmail });
-      if (pErr) { alert('Could not start the program: ' + pErr.message); setBusy(false); return; }
-      setState('done'); setBusy(false); setTimeout(()=>setState('idle'), 5000);
+      // Defaulted to the person who pressed it, which is what it always did --
+      // the difference is that it is now visible and can be changed.
+      setAsk({ row, ownerId: ownerIdForEmail(staff, userEmail) });
     } catch (e) {
-      alert('Something went wrong: ' + (e && e.message ? e.message : e)); setBusy(false);
+      setBusy(false);
+      alert('Something went wrong: ' + (e && e.message ? e.message : e));
+    }
+  };
+
+  const start = async () => {
+    if (!ask) return;
+    setBusy(true);
+    try {
+      // ownerId only, never ownerEmail. Unowned is a choice somebody can make in
+      // the picker, and an email fallback would quietly overrule it.
+      const { error: pErr } = await createProgram(ask.row.product_id, ask.row.client_company_id,
+                                                  { stage: 'quoted', ownerId: ask.ownerId, createdBy: userEmail });
+      setBusy(false);
+      if (pErr) { alert('Could not start the program: ' + pErr.message); return; }
+      setAsk(null);
+      setState('done'); setTimeout(()=>setState('idle'), 5000);
+    } catch (e) {
+      setBusy(false);
+      alert('Something went wrong: ' + (e && e.message ? e.message : e));
     }
   };
 
   const label = state==='done'   ? 'PLM card ready — see Programs'
     : state==='cannot' ? 'Needs a product and a client first'
-    : busy ? 'Starting…' : 'Mark won · start PLM card';
+    : busy && !ask ? 'Opening…' : 'Mark won · start PLM card';
   const bg = state==='done' ? '#e7f5ec' : state==='cannot' ? '#fef3e2' : '#0f7d43';
   const col = state==='done' ? '#2f7d52' : state==='cannot' ? '#b45309' : '#fff';
 
   return (
-    <button
-      style={{ display:'inline-flex', alignItems:'center', gap:7, background:bg, border:'1px solid '+(state==='idle'?'#0f7d43':'transparent'), color:col, borderRadius:10, padding:'9px 16px', fontSize:13.5, fontWeight:600, cursor:'pointer' }}
-      onClick={start} disabled={busy}
-      title="Open a PLM card for this quote, at Quoted, owned by you"
-    >
-      <CheckCircle2 size={15} /> {label}
-    </button>
+    <>
+      <button
+        style={{ display:'inline-flex', alignItems:'center', gap:7, background:bg, border:'1px solid '+(state==='idle'?'#0f7d43':'transparent'), color:col, borderRadius:10, padding:'9px 16px', fontSize:13.5, fontWeight:600, cursor:'pointer' }}
+        onClick={open} disabled={busy}
+        title="Open a PLM card for this quote, at Quoted, owned by whoever you choose"
+      >
+        <CheckCircle2 size={15} /> {label}
+      </button>
+
+      {ask && (
+        <Overlay onClose={()=>setAsk(null)} maxWidth={420}>
+          <div style={{ fontSize:17, fontWeight:600, color:'#0f1729', letterSpacing:'-.01em' }}>
+            Start PLM card for {q.sku || 'this quote'}
+          </div>
+          <div style={{ fontSize:12.5, color:'#6a7488', marginTop:6, lineHeight:1.5 }}>
+            Opens a card at Quoted. Nothing is written until you press Start.
+          </div>
+          <label style={{ display:'flex', flexDirection:'column', gap:5, marginTop:16,
+                          fontSize:11, fontWeight:600, letterSpacing:'.08em',
+                          textTransform:'uppercase', color:'#86868B', fontFamily:'inherit' }}>
+            Owner
+            <OwnerSelect value={ask.ownerId} staff={staff} disabled={busy}
+              onChange={v => setAsk(a => ({ ...a, ownerId: v }))}
+              style={{ minWidth:0, width:'100%' }} />
+          </label>
+          <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:20 }}>
+            <button onClick={()=>setAsk(null)} disabled={busy}
+              style={{ background:'#F2F2F4', border:'none', borderRadius:10, padding:'9px 16px',
+                       fontSize:13, fontWeight:600, color:'#5A5A5E', fontFamily:'inherit',
+                       cursor: busy ? 'default' : 'pointer' }}>Cancel</button>
+            <button onClick={start} disabled={busy}
+              style={{ background:'#0f7d43', border:'none', borderRadius:10, padding:'9px 18px',
+                       fontSize:13, fontWeight:600, color:'#fff', fontFamily:'inherit',
+                       cursor: busy ? 'default' : 'pointer' }}>{busy ? 'Starting…' : 'Start'}</button>
+          </div>
+        </Overlay>
+      )}
+    </>
   );
 }
 
@@ -1687,7 +1768,7 @@ function ContainerPackout({ q, cbmPerCarton }) {
   );
 }
 
-function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, userEmail, isMobile = false, onEdit, onDuplicate, onDelete }) {
+function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, userEmail, staff = [], isMobile = false, onEdit, onDuplicate, onDelete }) {
   const [taskText, setTaskText] = useState("");
   const [taskWho, setTaskWho] = useState(TEAM[0].email);
   const submitTask = () => {
@@ -1823,7 +1904,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
             <button style={S.iconBtn} title="Delete" onClick={onDelete}><Trash2 size={16} /></button>
           </div>
         )}
-        <MarkWonButton q={q} userEmail={userEmail} />
+        <MarkWonButton q={q} userEmail={userEmail} staff={staff} />
         <FreightQuoteButton q={q} cbmPerCarton={cbm} />
         <button style={S.printBtn} onClick={() => { printQuote(q).catch(e => console.error('print failed:', e)); }}><Printer size={15} /> Print this quote</button>
       </div>
@@ -2443,7 +2524,7 @@ function SelectField({ label, k, placeholder, options, hint, f, set }) {
   );
 }
 
-function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [], contacts = [], onSaveFactory, onSaveContact, userEmail }) {
+function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [], contacts = [], onSaveFactory, onSaveContact, userEmail, staff = [] }) {
   // The form this guard exists for. About eleven of its edits are click-driven --
   // the saved-factory chips, the client suggestions, picking an HTS code, Add
   // tier, Preset qtys, auto, the Air/Ocean toggles -- and not one of them fires
@@ -3092,15 +3173,36 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                             fontSize: 13, letterSpacing: 0, textTransform: "none" }}>
               <input type="checkbox" style={{ marginTop: 2 }}
                      checked={!!f.createProgram}
-                     onChange={(e) => setF((p) => ({ ...p, createProgram: e.target.checked }))} />
+                     onChange={(e) => {
+                       const on = e.target.checked;
+                       // Ticking it defaults the owner to whoever is saving, which is
+                       // what it always did silently. Unticking clears the choice
+                       // rather than remembering it, for the same reason the tick
+                       // itself never persists.
+                       setF((p) => ({ ...p, createProgram: on,
+                                      programOwnerId: on ? (p.programOwnerId || ownerIdForEmail(staff, userEmail)) : null }));
+                     }} />
               <span>
                 Create PLM program
                 <span style={{ display: "block", fontSize: 11.5, color: "#6a7488", marginTop: 2 }}>
-                  Opens a card at Quoted, owned by you. Needs a product and a client the
-                  catalogue knows. Nothing else creates one.
+                  Opens a card at Quoted, owned by whoever you pick. Needs a product and a
+                  client the catalogue knows. Nothing else creates one.
                 </span>
               </span>
             </label>
+            {/* ── WHO KEEPS IT ───────────────────────────────────────────────
+                Revealed by the tick and gone without it: an owner picker beside an
+                unticked box would be asking about a card nobody has asked for.
+                OUTSIDE the label above rather than inside it, because a select
+                inside a label toggles the checkbox on every click. */}
+            {!!f.createProgram && (
+              <div style={{ ...S.field, gridColumn: "1 / -1", display: "flex", flexDirection: "row",
+                            alignItems: "center", gap: 10, margin: 0 }}>
+                <span style={{ fontSize: 12.5, color: "#6a7488" }}>Owner</span>
+                <OwnerSelect value={f.programOwnerId} staff={staff}
+                  onChange={(v) => setF((p) => ({ ...p, programOwnerId: v }))} />
+              </div>
+            )}
             <label style={{ ...S.field, position: "relative" }}>
               <span style={S.fieldLabel}>Client</span>
               <input
