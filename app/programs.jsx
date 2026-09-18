@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { SB } from '@/lib/supabase';
 import { FilterSelect } from '@/app/components/FilterSelect';
 // Overlay, not a hand-rolled backdrop. It carries useDirtyGuard, so a typed note
@@ -17,7 +17,7 @@ import { Overlay, useGuardedClose } from '@/app/components/ModalGuard';
 // obeys them.
 import {
   fmt, deriveEvents,
-  currentStage, daysSince, CLIENT_OF,
+  currentStage, daysSince, CLIENT_OF, sampledFromStage,
 } from '@/lib/lifecycle';
 // Sync from records is gone with the derived board -- nothing here creates a
 // program any more. The quote-form tick is the only door.
@@ -25,33 +25,57 @@ import {
 // coming back, and are gone on reload. See the note at the top of lib/pageState.js.
 import { usePageState } from '@/lib/pageState';
 // COL, the per-stage colour table, went with the derived tiles and columns it
-// dressed. The manual board is one ink -- nine stages in nine colours would be
-// decoration competing with the stale flag, which is the only colour that means
-// something here.
+// dressed, and the BOARD is still one ink -- the rail, the group headings and the
+// cards all use a single dark dot, because colour competing with the stale flag
+// would cost the only colour down there that means something.
+//
+// THE ANALYTICS TILES ARE THE ONE EXCEPTION, on Riley word. They match the
+// Insights cards, and those carry a coloured dot per metric; six identical grey
+// dots would read as a different component wearing the same shape. STAGE_ACCENT
+// below dresses the tiles and nothing else.
 
 
 const norm = t => (t || '').toLowerCase();
 
 // ── THE STAGES, AND THEY ARE SET BY A PERSON ────────────────────────────────
-// The nine values script 60 widened the CHECK to. Sample is five rungs rather
-// than one because a sample round is the thing that actually repeats at KUI, and
-// a single Sampling column could not say whether a card had been round once or
-// five times.
+// ONE SAMPLING STAGE, NOT THREE RUNGS. The numbered rungs were built on the
+// reasoning that a sample round is the thing that repeats at KUI and one column
+// could not say whether a card had been round once or three times. In practice
+// nobody used the fourth or the fifth, the board capped at three, and how many
+// rounds a product has been through turned out to be something people write in
+// the notes rather than record by moving a card. A stage that says sampling is
+// happening is the honest shape, and script 65 narrows the CHECK to match.
+//
+// THIS LIST IS THE BOARD. The tiles, the sections, the drop targets, the stage
+// control on the card and the tile accent colours all map over it, so a stage
+// added or removed here changes every one of them together, which is why they
+// cannot disagree.
+//
+// The one thing to know if it is ever narrowed again: counts tally whatever
+// declared_stage a card holds, but sections render only from this list, so a card
+// left on a removed value would count and appear in no section. Script 65 moves
+// the rows before it narrows the constraint, for exactly that reason.
 //
 // Complete is on this list because it is a stage somebody sets -- a sales order
-// does NOT move a card, on Riley decision. It lives on its own tab rather than as
-// a tenth column, for the same reason Archived always did.
+// does NOT move a card, on Riley decision. It lives in its own section at the
+// bottom rather than among the pipeline, for the same reason Archived always did.
 const MANUAL_STAGES = [
   ['quoted',         'Quoted'],
-  ['sample_1',       'Sample 1'],
-  ['sample_2',       'Sample 2'],
-  ['sample_3',       'Sample 3'],
-  ['sample_4',       'Sample 4'],
-  ['sample_5',       'Sample 5'],
+  ['sampling',       'Sampling'],
   ['testing',        'Testing'],
   ['purchase_order', 'Purchase Order'],
 ];
 const COMPLETE = 'complete';
+
+// Tile dots only, and the palette is the Insights one in pipeline order, so the
+// two pages read as one product rather than as two designs that both happen to
+// use circles.
+const STAGE_ACCENT = {
+  quoted:         '#0A84FF',
+  sampling:       '#5E5CE6',
+  testing:        '#30B050',
+  purchase_order: '#0066CC',
+};
 
 // 21 days, on Riley word. One threshold rather than one per stage: a per-stage
 // table would be a tuning conversation nobody has had yet, and a single number
@@ -72,28 +96,81 @@ const STALE_DAYS = 21;
 const testingNotRequired = product => (product || {}).compliance_status === 'not_required';
 
 // ── NOTES ON A PROGRAM ──────────────────────────────────────────────────────
-// APPEND ONLY, and not merely by convention -- authenticated holds SELECT and
-// INSERT on vessl.program_notes and nothing else. UPDATE and DELETE were never
-// granted by script 48, so an edit control would fail at the database even if
-// somebody built one. There is no edit control and no delete control here, and
-// the grants are what make that a guarantee rather than a promise.
+// APPEND ONLY WAS THE RULE UNTIL SCRIPT 63, and the rule was enforced by grants
+// rather than by convention -- authenticated held SELECT and INSERT on
+// vessl.program_notes and nothing else, so an edit control would have failed at
+// the database even if somebody built one.
+//
+// 63 REVERSED THAT, NARROWLY. authenticated gained UPDATE on note and edited_at,
+// with a RESTRICTIVE policy limiting those updates to rows whose author is the
+// caller. Somebody else notes stay read-only here and unwritable at the database,
+// which is the same guarantee as before pointed at a smaller set of rows.
+//
+// 64 MAKES DELETE MEAN DELETE. 63 had shipped a soft delete -- a deleted_at stamp
+// and a filter that hid the row -- and it lasted one round, because a note nobody
+// can see and nobody can remove is a row that only ever accumulates. The column is
+// dropped, DELETE is granted, and a second RESTRICTIVE policy confines it to the
+// author exactly as the update one does.
+//
+// SO A DELETE IS PERMANENT NOW, and the confirm says so. The protection is that it
+// is yours to delete and nobody else can.
 //
 // Newest first, because the last thing said is the thing being caught up on.
-function ProgramNotes({ programId, userEmail }) {
+function ProgramNotes({ programId, userEmail, onTouched }) {
   const [notes, setNotes] = useState(null);
   const [text, setText]   = useState('');
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState('');
 
+  // Which note is open in the editor, and the text being edited. One at a time --
+  // two open editors would be two unsaved drafts with no way to say which one the
+  // modal dirty guard is protecting.
+  const [editId, setEditId] = useState(null);
+  const [draft, setDraft]   = useState('');
+
+  // No deleted_at filter any more, and no deleted_at in the select -- 64 drops the
+  // column. A deleted note is gone from the table, so there is nothing to exclude.
   const load = async () => {
     const { data, error } = await SB.from('program_notes')
-      .select('id,author,source,note,created_at')
+      .select('id,author,source,note,created_at,edited_at')
       .eq('program_id', programId)
       .order('created_at', { ascending:false });
     if (error) { setErr(error.message); setNotes([]); return; }
     setNotes(data || []);
   };
-  useEffect(()=>{ setNotes(null); load(); }, [programId]);
+  useEffect(()=>{ setNotes(null); setEditId(null); load(); }, [programId]);
+
+  // A NOTE IS A TOUCH, and so is editing one or deleting one. The card reports a
+  // single last-touch line and it would be a lie if working on a card left it
+  // reading from last week. Stamped after the write lands; a failure here leaves
+  // the note correct and the stamp stale, which is the better way round -- the
+  // same trade the owner note makes.
+  const stampProgram = async () => {
+    try {
+      await SB.from('programs')
+        .update({ updated_at: new Date().toISOString(), updated_by: userEmail || null })
+        .eq('id', programId);
+    } catch (e) {}
+  };
+
+  // Every write ends the same way, so it is written once: stamp the program, read
+  // the notes back, and tell the board to re-read so the card behind this modal
+  // matches what was just written rather than waiting for the next visit.
+  const settle = async () => {
+    await stampProgram();
+    await load();
+    if (onTouched) onTouched();
+  };
+
+  // MINE MEANS MINE, matched the way the database will match it. The policy 63
+  // adds compares lower(author) to lower(the caller email from the token), so the
+  // button that offers the edit has to agree with the rule that permits it --
+  // otherwise a control appears and the write behind it is refused.
+  const isMine = n => {
+    const a = (n.author || '').trim().toLowerCase();
+    const me = (userEmail || '').trim().toLowerCase();
+    return !!me && a === me;
+  };
 
   const add = async () => {
     const body = text.trim();
@@ -109,7 +186,40 @@ function ProgramNotes({ programId, userEmail }) {
     setBusy(false);
     if (error) { setErr(error.message); return; }
     setText('');
-    await load();
+    await settle();
+  };
+
+  const saveEdit = async (n) => {
+    const body = draft.trim();
+    // Nothing typed, or nothing changed, is a cancel rather than a write. An
+    // edited_at stamp for an edit that changed no text would be a false record.
+    if (!body || body === n.note) { setEditId(null); return; }
+    setBusy(true); setErr('');
+    const { error } = await SB.from('program_notes')
+      .update({ note: body, edited_at: new Date().toISOString() })
+      .eq('id', n.id);
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setEditId(null);
+    await settle();
+  };
+
+  // NAMED FOR WHAT IT DOES. It was hide, because it wrote a stamp and the list
+  // looked away; it removes the row now, so it says so. Asked once, and the
+  // wording does not soften it -- there is no undo and nothing keeps a copy.
+  //
+  // The restrictive policy 64 adds is what makes this safe to offer: the delete is
+  // refused at the database for any row the caller did not write, so the button
+  // and the rule agree rather than the button being the only guard.
+  const removeNote = async (n) => {
+    if (!window.confirm('Delete this note? This cannot be undone.')) return;
+    setBusy(true); setErr('');
+    const { error } = await SB.from('program_notes')
+      .delete()
+      .eq('id', n.id);
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    await settle();
   };
 
   const when = iso => {
@@ -125,7 +235,7 @@ function ProgramNotes({ programId, userEmail }) {
                    color:'#86868B',marginBottom:'9px'}}>Notes</div>
 
       <textarea value={text} onChange={e=>setText(e.target.value)} rows={2}
-        placeholder="Add a note — it cannot be edited or deleted afterwards"
+        placeholder="Add a note — you can edit or hide your own notes later"
         style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 11px',
                 fontSize:'13px',fontFamily:'inherit',outline:'none',resize:'vertical',
                 background:'#fff',boxSizing:'border-box'}} />
@@ -145,15 +255,63 @@ function ProgramNotes({ programId, userEmail }) {
         <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'12px'}}>No notes yet.</div>
       ) : (
         <div style={{marginTop:'12px',display:'flex',flexDirection:'column',gap:'9px'}}>
-          {notes.map(n => (
-            <div key={n.id} style={{background:'#fff',border:'1px solid #ECECEE',borderRadius:'10px',padding:'9px 11px'}}>
-              <div style={{fontSize:'13px',color:'#1D1D1F',lineHeight:1.5,whiteSpace:'pre-wrap'}}>{n.note}</div>
-              <div style={{fontSize:'11px',color:'#A0A0A4',marginTop:'5px'}}>
-                {n.author || 'unknown'} · {when(n.created_at)}
-                {n.source && n.source !== 'manual' ? ' · ' + n.source : ''}
+          {notes.map(n => {
+            const mine = isMine(n);
+            const editing = editId === n.id;
+            return (
+              <div key={n.id} style={{background:'#fff',border:'1px solid #ECECEE',borderRadius:'10px',padding:'9px 11px'}}>
+                {editing ? (
+                  <>
+                    <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={3}
+                      style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'8px',padding:'8px 10px',
+                              fontSize:'13px',fontFamily:'inherit',outline:'none',resize:'vertical',
+                              background:'#fff',boxSizing:'border-box'}} />
+                    <div style={{display:'flex',gap:'7px',marginTop:'7px'}}>
+                      <button onClick={()=>saveEdit(n)} disabled={busy || !draft.trim()}
+                        style={{fontSize:'11.5px',fontWeight:600,borderRadius:'980px',padding:'5px 13px',border:'none',
+                                fontFamily:'inherit',cursor:busy||!draft.trim()?'default':'pointer',
+                                background:draft.trim()?'#1D1D1F':'#E5E5EA',color:draft.trim()?'#fff':'#A0A0A4'}}>
+                        {busy ? 'Saving…' : 'Save'}
+                      </button>
+                      <button onClick={()=>setEditId(null)} disabled={busy}
+                        style={{fontSize:'11.5px',fontWeight:600,borderRadius:'980px',padding:'5px 13px',
+                                border:'1px solid #E5E5EA',background:'#fff',color:'#5A5A5E',
+                                fontFamily:'inherit',cursor:busy?'default':'pointer'}}>
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{fontSize:'13px',color:'#1D1D1F',lineHeight:1.5,whiteSpace:'pre-wrap'}}>{n.note}</div>
+                )}
+                <div style={{display:'flex',alignItems:'baseline',gap:'8px',marginTop:'5px',flexWrap:'wrap'}}>
+                  <span style={{fontSize:'11px',color:'#A0A0A4'}}>
+                    {n.author || 'unknown'} · {when(n.created_at)}
+                    {/* Said once and plainly. The edit time itself is on the row if
+                        anybody needs it; what the reader needs here is to know the
+                        words changed after they were first written. */}
+                    {n.edited_at ? ' · edited' : ''}
+                    {n.source && n.source !== 'manual' ? ' · ' + n.source : ''}
+                  </span>
+                  {/* OFFERED ONLY ON YOUR OWN NOTES, and the database agrees --
+                      the restrictive policy refuses an update to anybody else row,
+                      so this is the control matching the rule rather than guarding
+                      it. Hidden while an editor is open, because Edit and Cancel
+                      next to each other is two ways out of one state. */}
+                  {mine && !editing && (
+                    <span style={{display:'inline-flex',gap:'8px',marginLeft:'auto'}}>
+                      <button onClick={()=>{ setEditId(n.id); setDraft(n.note || ''); }} disabled={busy}
+                        style={{fontSize:'11px',background:'none',border:'none',padding:0,color:'#0A84FF',
+                                fontFamily:'inherit',cursor:busy?'default':'pointer'}}>Edit</button>
+                      <button onClick={()=>removeNote(n)} disabled={busy}
+                        style={{fontSize:'11px',background:'none',border:'none',padding:0,color:'var(--hot)',
+                                fontFamily:'inherit',cursor:busy?'default':'pointer'}}>Delete</button>
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -174,10 +332,10 @@ function ProgramNotes({ programId, userEmail }) {
 // inside the card, so typed-but-unsaved text turns the backdrop click into a
 // confirm instead of a dismissal. Nothing here has to arrange that beyond using
 // Overlay.
-function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onClose }) {
+function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onClose, onTouched }) {
   return (
     <Overlay onClose={onClose} maxWidth={640}>
-      <ProgramCard r={r} userEmail={userEmail} staff={staff} busy={busy} onStage={onStage} onOwner={onOwner} />
+      <ProgramCard r={r} userEmail={userEmail} staff={staff} busy={busy} onStage={onStage} onOwner={onOwner} onTouched={onTouched} />
     </Overlay>
   );
 }
@@ -196,6 +354,9 @@ function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onClose })
 function SystemKnows({ r }) {
   const p = r.products || {};
   const ev = r.events || {};
+  // The same test currentStage uses, imported rather than repeated -- production
+  // implies sampling happened, and that rule lives in lib/lifecycle.js.
+  const sampled = sampledFromStage(p);
   const row = (label, value, muted) => (
     <div style={{display:'flex',gap:'10px',padding:'6px 0',borderTop:'1px solid #F2F2F4'}}>
       <span style={{fontSize:'11.5px',color:'#86868B',minWidth:'118px',flexShrink:0}}>{label}</span>
@@ -211,6 +372,13 @@ function SystemKnows({ r }) {
         Read only. None of this moves the card &mdash; the stage above is whatever somebody set.
       </div>
       {row('Quoted', ev.quoted ? fmt(ev.quoted.on) + (ev.quoted.n > 1 ? ' · ' + ev.quoted.n + ' quotes' : '') : none, !ev.quoted)}
+      {/* SAMPLING HAS NO DATE, and that is not an omission. product_stage records
+          what a product IS, not when it became that, and no column anywhere
+          records the change -- so this line says which flag is set and nothing
+          more. Production counts because production implies sampling happened. */}
+      {row('Sampling', sampled === 'production' ? 'Product marked Production'
+                     : sampled === 'sample' ? 'Product marked Sample'
+                     : 'Not recorded', !sampled)}
       {row('Purchase order', ev.ordered ? fmt(ev.ordered.on) : none, !ev.ordered)}
       {row('Sales order', ev.sold ? fmt(ev.sold.on) : none, !ev.sold)}
       {row('Test report', ev.tested ? fmt(ev.tested.on) : none, !ev.tested)}
@@ -233,10 +401,21 @@ function SystemKnows({ r }) {
 // reads as a second opinion rather than as one of the nine manual stages.
 const STAGE_HINT = { quoted:'Quoted', sampling:'Sampling (product stage)', tested:'Tested (report or compliance)' };
 
+// programs.updated_by holds an ADDRESS, deliberately -- an audit crumb has to stay
+// readable after a colleague leaves and their profile goes. This turns it into a
+// full name when a profile still matches, and shows the address itself when none
+// does, so the card never renders a blank where a person should be.
+const staffName = (staff, email) => {
+  const e = (email || '').trim().toLowerCase();
+  if (!e) return null;
+  const hit = (staff || []).find(s => (s.email || '').trim().toLowerCase() === e);
+  return (hit && (hit.full_name || hit.email)) || email;
+};
+
 // Split out so the x can read guardedClose from context. The provider lives
 // INSIDE Overlay, so a hook called in ProgramDetail would sit above it and get
 // the default -- the close button has to be a child to be guarded.
-function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner }) {
+function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner, onTouched }) {
   const p = r.products || {};
   const guardedClose = useGuardedClose();
   return (
@@ -295,7 +474,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner 
       {/* Changing the owner writes its own note, so the reassignment is on the
           record rather than only in the column. */}
       <SystemKnows r={r} />
-      <ProgramNotes programId={r.id} userEmail={userEmail} />
+      <ProgramNotes programId={r.id} userEmail={userEmail} onTouched={onTouched} />
     </>
   );
 }
@@ -305,29 +484,73 @@ export default function Programs({ userEmail }) {
   const [ev, setEv]       = useState(null);
   const [loading, setLoad]= useState(true);
   const [err, setErr]     = useState('');
-  // Which tab, the search box, the stage filter and the retired toggle -- kept across
-  // navigation, so opening a program and coming back lands where it left. openId stays
-  // plain below, because an expanded card is not a filter.
-  const [ui, setUi] = usePageState('programs', { tab:'board', search:'', stageSel:[], showRetired:false, ownerSel:[] });
+  // The search box, the retired toggle and whether the Complete section is open --
+  // kept across navigation, so opening a program and coming back lands where it
+  // left. openId stays plain below, because an expanded card is not a filter.
+  //
+  // THERE IS NO STAGE FILTER STATE AT ALL NOW. It was stageSel for the chips, then
+  // stageF for the rail; the board shows every section at once, so there is nothing
+  // to select and the key is deleted rather than kept empty. A stale key left in the
+  // store by an earlier mount is harmless -- usePageState merges the store over
+  // these defaults, and a name that is not here is never read.
+  const [ui, setUi] = usePageState('programs', { search:'', showRetired:false, doneOpen:false, ownerSel:[] });
   const [openId, setOpenId] = useState(null);
   const [staff, setStaff] = useState([]);
   // Set while a stage or an owner is being written, so the control can say so and
   // refuse a second click. Not in the page store -- it is in-flight, not a choice.
   const [saving, setSaving] = useState(null);
+  // ── DRAG STATE, ALL OF IT TRANSIENT ─────────────────────────────────────────
+  // Which section the pointer is currently over, and which card is in the air.
+  // Neither belongs in the page store: a drag that survived navigation would be a
+  // card stuck at half opacity on a board nobody is touching.
+  const [dropTarget, setDropTarget] = useState(null);
+  // THERE IS NO dragId STATE ANY MORE, deliberately. The tile that is in the air
+  // used to be identified in React state and faded by a style that read it, and
+  // that could be left set by any path where dragend did not arrive -- which is a
+  // class of bug, not one bug. The fade is now an inline style written straight
+  // onto the drag handle and wiped off it, so a remounted tile starts at full
+  // opacity by definition and no state can be stale.
+  // Which card is showing its detail, and only ever one. Transient like openId --
+  // a row left open across navigation would be somebody else's place, not yours.
+  const [expandedId, setExpandedId] = useState(null);
+  // program_id -> how many notes, filled in bulk by load().
+  const [noteCounts, setNoteCounts] = useState({});
+  // A CLICK MUST NOT FOLLOW A DRAG, and a drag must not swallow a real click.
+  // Cleared on mousedown, which always precedes both, and set on dragstart -- so
+  // the click handler can tell the two apart without a timer. A timer would be a
+  // guess about how fast somebody let go.
+  const dragMovedRef = useRef(false);
+
+  // ── ENDING A DRAG IS NOT THE SAME AS dragend ────────────────────────────────
+  // This clears the SECTION HIGHLIGHT only. The fade on the tile is an inline
+  // style the handle writes and wipes itself, for the reason above.
+  //
+  // dragend is dispatched to the SOURCE element. A tile dropped on another section
+  // is unmounted before that happens -- setStage patches rows optimistically, the
+  // sections recompute, and React remounts the card under a different parent -- so
+  // the handler attached to the old node never runs. That is why this is called
+  // from every path that can finish a drag rather than from dragend alone, and why
+  // the document listener below exists behind it. Calling it twice is free.
+  const endDrag = () => setDropTarget(null);
   // showRetired is ui.showRetired, in the page store above.
 
   const load = async () => {
     setLoad(true); setErr('');
     try {
-      const [p, q, poi, soi, tr, st] = await Promise.all([
+      const [p, nt, q, poi, soi, tr, st] = await Promise.all([
         // declared_stage and declared_stage_at are the board now -- the stage a
         // person set, and when they set it. owner_id joins staff_profiles for the
         // name on the card and the owner filter.
         SB.from('programs')
           .select('id,product_id,client_company_id,expected_ship_date,archived,declared_stage,declared_stage_at,owner_id,'
+                + 'updated_at,updated_by,'
                 + 'products(id,sku,name,active,product_stage,compliance_status),client:companies!client_company_id(id,name),'
                 + 'owner:staff_profiles!owner_id(id,email,full_name)')
           .order('created_at', { ascending:true }),
+        // NOTE COUNTS IN BULK, because the expanded card shows one. ProgramNotes
+        // still fetches the notes themselves when a modal opens -- this is the
+        // count only, and fetching it per card would be one query per row.
+        SB.from('program_notes').select('program_id'),
         SB.from('quotes').select('product_id,client_company_id,quote_date,created_at').not('product_id','is',null),
         SB.from('purchase_order_items')
           .select('product_id,purchase_orders(order_date,issued_at,client_company_id,client:companies!client_company_id(name),shipment_pos(shipments(actual_departure,actual_arrival)))')
@@ -343,10 +566,11 @@ export default function Programs({ userEmail }) {
         // changing shape under whoever is using it.
         SB.from('staff_profiles').select('id,email,full_name').order('full_name', { nullsFirst:false }),
       ]);
-      const e = [p,q,poi,soi,tr,st].find(r => r.error);
+      const e = [p,nt,q,poi,soi,tr,st].find(r => r.error);
       if (e) throw new Error(e.error.message);
       setRows(p.data || []);
       setStaff(st.data || []);
+      setNoteCounts((nt.data || []).reduce((m, n) => { m[n.program_id] = (m[n.program_id] || 0) + 1; return m; }, {}));
       setEv({ quotes:q.data||[], poItems:poi.data||[], soItems:soi.data||[], reports:tr.data||[] });
     } catch (x) {
       setErr(x && x.message ? x.message : String(x));
@@ -354,6 +578,28 @@ export default function Programs({ userEmail }) {
     setLoad(false);
   };
   useEffect(()=>{ load(); }, []);
+
+  // ── THE LAST RESORT, OUTSIDE THE REACT TREE ─────────────────────────────────
+  // dragend goes to the source element, so a source that was unmounted mid-drag
+  // never receives it and its handler never runs. drop goes to the TARGET, which
+  // is still mounted, and both events bubble to the document.
+  //
+  // So the document keeps its own pair of listeners. They wipe the inline fade off
+  // every drag handle on the board and drop the section highlight, from outside
+  // the tree entirely -- which is the point, because nothing here can be defeated
+  // by a remount. Wiping a handle that was never faded costs nothing.
+  useEffect(() => {
+    const clear = () => {
+      setDropTarget(null);
+      document.querySelectorAll('[data-plm-drag]').forEach(el => { el.style.opacity = ''; });
+    };
+    document.addEventListener('dragend', clear);
+    document.addEventListener('drop', clear);
+    return () => {
+      document.removeEventListener('dragend', clear);
+      document.removeEventListener('drop', clear);
+    };
+  }, []);
 
   const buckets = useMemo(() => {
     if (!ev) return null;
@@ -408,31 +654,74 @@ export default function Programs({ userEmail }) {
                // whatever the records are doing underneath.
                stale: stage !== COMPLETE && days !== null && days >= STALE_DAYS,
                ownerName: (r.owner || {}).full_name || (r.owner || {}).email || null,
+               // LAST TOUCH, which is a different question from the stage date.
+               // declared_stage_at answers when the card last MOVED; updated_at
+               // answers when anybody last changed anything about it, including an
+               // owner swap or a note. Both are on the expanded card because they
+               // disagree usefully.
+               lastTouchAt: r.updated_at || null,
+               lastTouchBy: staffName(staff, r.updated_by),
+               noteCount: noteCounts[r.id] || 0,
                onBoard: stage !== COMPLETE };
     });
-  }, [rows, buckets]);
+    // staff and noteCounts are dependencies now: without them a name stays
+    // unresolved and a count stays zero until some other change happens to
+    // recompute this.
+  }, [rows, buckets, staff, noteCounts]);
 
   // ── WRITING A STAGE, AND WRITING AN OWNER ───────────────────────────────────
   // The only two things this page changes. Both re-read from the database after
-  // the write rather than patching state, so what is on screen is what is stored.
+  // the write, so what is on screen ends up being what is stored.
   //
   // A REASSIGNMENT WRITES ITS OWN NOTE, on Riley decision -- program_notes is
   // append-only by grant, so the record cannot be quietly tidied later. The note
   // is written after the update lands; a failed note leaves a correct owner and a
   // missing line, which is the better way round.
+
+  // ONE FUNCTION, TWO CALLERS. The select in the card modal and a card dropped on
+  // a section both come through here. That is the whole reason dragging was worth
+  // building: declared_stage_at is stamped by the same trigger either way, a
+  // failure is reported the same way, and there is no second write path to drift.
+  //
+  // OPTIMISTIC, BECAUSE A DROP HAS TO LOOK LIKE IT LANDED. A card that sits in its
+  // old section for the length of a round trip reads as a refused drop, and the
+  // obvious response is to drag it again. So rows is patched first and the write
+  // follows; if the write fails the row is put back exactly as it was and the toast
+  // says why. declared_stage_at is guessed locally only so the age line does not
+  // flash a stale number -- the trigger owns the real value and the load() below
+  // replaces the guess with it.
   const setStage = async (r, next) => {
     if (!next || next === r.stage) return;
+    const before = rows.find(x => x.id === r.id) || null;
     setSaving(r.id);
-    const { error } = await SB.from('programs').update({ declared_stage: next, updated_at: new Date().toISOString() }).eq('id', r.id);
-    if (error) { window._toast?.('Could not move the card — ' + error.message, 'err'); setSaving(null); return; }
-    await load(); setSaving(null);
+    setRows(prev => prev.map(x => x.id === r.id
+      ? { ...x, declared_stage: next, declared_stage_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(), updated_by: userEmail || null }
+      : x));
+    const { error } = await SB.from('programs')
+      .update({ declared_stage: next, updated_at: new Date().toISOString(), updated_by: userEmail || null })
+      .eq('id', r.id);
+    if (error) {
+      if (before) setRows(prev => prev.map(x => x.id === r.id ? before : x));
+      window._toast?.('Could not move the card — ' + error.message, 'err');
+      endDrag();
+      setSaving(null);
+      return;
+    }
+    await load();
+    // Both exits clear it, because both of them have already replaced the element
+    // the drag began on. See the note on endDrag.
+    endDrag();
+    setSaving(null);
   };
 
   const setOwner = async (r, nextId) => {
     const next = nextId || null;
     if (next === (r.owner_id || null)) return;
     setSaving(r.id);
-    const { error } = await SB.from('programs').update({ owner_id: next, updated_at: new Date().toISOString() }).eq('id', r.id);
+    const { error } = await SB.from('programs')
+      .update({ owner_id: next, updated_at: new Date().toISOString(), updated_by: userEmail || null })
+      .eq('id', r.id);
     if (error) { window._toast?.('Could not change the owner — ' + error.message, 'err'); setSaving(null); return; }
     const nameOf = id => { const s = staff.find(x => x.id === id); return s ? (s.full_name || s.email) : 'nobody'; };
     try {
@@ -443,6 +732,33 @@ export default function Programs({ userEmail }) {
     } catch (e) {}
     await load(); setSaving(null);
   };
+
+  // ── WHAT MAKES A SECTION A DROP TARGET ──────────────────────────────────────
+  // Spread onto the section wrapper. onDragOver has to preventDefault or the drop
+  // never fires at all -- the default action for a dragover is to refuse it, which
+  // is the one piece of HTML5 drag and drop that reads backwards.
+  //
+  // The dragleave guard is why the highlight does not flicker: moving the pointer
+  // from a section onto a card INSIDE it fires dragleave on the section, so the
+  // target is only cleared when the pointer has actually left the subtree.
+  const dropProps = (stageKey) => ({
+    onDragOver: e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; },
+    onDragEnter: () => setDropTarget(stageKey),
+    onDragLeave: e => { if (!e.currentTarget.contains(e.relatedTarget)) setDropTarget(t => (t === stageKey ? null : t)); },
+    onDrop: e => {
+      e.preventDefault();
+      // Cleared here as well as in setStage, because the drop is the last moment
+      // the source element is certainly still mounted. A no-op drop -- back onto
+      // the section it came from -- returns early inside setStage and would
+      // otherwise leave the tile faded with nothing left to clear it.
+      endDrag();
+      const id = e.dataTransfer.getData('text/plain');
+      const row = enriched.find(x => x.id === id);
+      // setStage returns early when the stage has not changed, so a card dropped
+      // back where it started writes nothing.
+      if (row) setStage(row, stageKey);
+    },
+  });
 
   const board = useMemo(() => enriched.filter(r => r.onBoard), [enriched]);
   // COMPLETED MEANS COMPLETED. The tab was everything not on the board, which
@@ -496,24 +812,17 @@ export default function Programs({ userEmail }) {
     return (norm(p.sku) + ' ' + norm(p.name) + ' ' + norm((r.client||{}).name)).includes(norm(ui.search));
   };
 
-  // Membership against the ladder. Empty is All -- no narrowing -- and because
-  // every program has exactly ONE current stage here, these counts partition
-  // rather than overlap. That is the difference the six-stage chip filter could
-  // not offer, and it is a consequence of the pipeline having an order.
-  const shownBoard = useMemo(() => board.filter(r =>
-    matches(r) && ownerMatches(r) && (!ui.stageSel.length || ui.stageSel.includes(r.stage || 'none'))),
-    [board, ui.search, ui.stageSel, ui.ownerSel]);
+  // SEARCH AND OWNER, AND NOTHING ELSE. The stage filter went with the rail --
+  // every section is on screen at once now, so narrowing to one stage is what
+  // scrolling does. Each section takes its own slice of this list below.
+  const shownBoard = useMemo(() => board.filter(r => matches(r) && ownerMatches(r)),
+    [board, ui.search, ui.ownerSel]);
   const shownDone  = useMemo(() => done.filter(r => matches(r) && ownerMatches(r))
     .sort((a,b) => String(b.since||'').localeCompare(String(a.since||''))), [done, ui.search, ui.ownerSel]);
 
-  const stageOptions = useMemo(() => ([
-    { value:'', label:'All stages', count:board.length },
-    ...MANUAL_STAGES.map(([v,l]) => ({ value:v, label:l, count:counts[v]||0 })),
-    // A card whose stage was cleared. Nothing creates one today -- the tick always
-    // writes quoted -- but the column is nullable, so the board says so rather
-    // than dropping the card out of every view.
-    { value:'none', label:'No stage set', color:'var(--muted)', count:counts.none||0 },
-  ]), [counts, board.length]);
+  // railStages was here. The sections carry their own headings and counts now, and
+  // the tiles above carry the totals, so a second list of the same six labels had
+  // nothing left to say.
 
   // The sweep that used to sit here read every quote, purchase order line and sales
   // order line and created a program for any pair the records proved but the board
@@ -524,42 +833,144 @@ export default function Programs({ userEmail }) {
   if (loading) return <div style={{padding:'28px 30px',color:'#86868B',fontSize:'14px'}}>Reading programs…</div>;
   if (err) return <div style={{padding:'28px 30px',color:'var(--hot)',fontSize:'14px'}}>Could not read programs — {err}</div>;
 
+  // ── A TILE, MODELLED ON THE PRODUCTION BOARD CARD ───────────────────────────
+  // The surface values here are lifted from the purchase order card in
+  // ProductionBoard, not invented: radius 11, padding 12 by 13, a 1px #EFEFF1
+  // border, the two-layer shadow, grab cursor, and half opacity while in the air.
+  // Two draggable boards in one app that dress their cards differently would be
+  // two designs; the same values make them one.
+  //
+  // WHAT THE COLLAPSED TILE SAYS is what a scan needs and nothing else -- the
+  // exceptions first as pills, then what it is, then who touched it. The pill row
+  // is absent rather than empty when there is nothing to flag, because a reserved
+  // blank strip is a row of nothing repeated across the whole board.
+  //
+  // EXPANSION AND THE MODAL ARE DIFFERENT ANSWERS. The tile expands to say what the
+  // card IS; the modal is where it gets changed. Clicking does the cheap one, and
+  // Open is a deliberate second step rather than the accident of a click.
   const Card = ({ r }) => {
     const p = r.products || {};
+    const open = expandedId === r.id;
+    const notReq = testingNotRequired(p);
+    // The same guard the drag already uses: cleared on mousedown, set on
+    // dragstart. A drag must not toggle the tile, and a click must not be eaten.
+    const toggle = () => {
+      if (dragMovedRef.current) { dragMovedRef.current = false; return; }
+      setExpandedId(open ? null : r.id);
+    };
+    const line = (label, value, muted) => (
+      <div style={{display:'flex',gap:'8px',alignItems:'baseline'}}>
+        <span style={{fontSize:'11px',color:'#86868B',minWidth:'92px',flexShrink:0}}>{label}</span>
+        <span style={{fontSize:'12px',color:muted?'#A0A0A4':'#1D1D1F',minWidth:0,
+                      overflow:'hidden',textOverflow:'ellipsis'}}>{value}</span>
+      </div>
+    );
     return (
-      <div style={{background:'#fff',borderRadius:'12px',boxShadow:'0 1px 2px rgba(0,0,0,.06)',marginBottom:'8px',overflow:'hidden'}}>
-        <button onClick={()=>setOpenId(openId===r.id?null:r.id)}
-          style={{display:'block',width:'100%',textAlign:'left',background:'none',border:'none',
-                  padding:'11px 13px',cursor:'pointer',fontFamily:'inherit'}}>
-          <div style={{fontFamily:'var(--mono)',fontSize:'11.5px',fontWeight:700,color:'#1D1D1F'}}>{p.sku || '—'}</div>
-          <div style={{fontSize:'12.5px',color:'#1D1D1F',marginTop:'2px',lineHeight:1.35}}>{p.name || '—'}</div>
-          <div style={{fontSize:'11.5px',color:'#5A5A5E',marginTop:'4px'}}>{(r.client||{}).name || '—'}</div>
-          {testingNotRequired(p) && (
-            <div style={{marginTop:'5px'}}>
-              <span style={{fontSize:'9.5px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',
-                            color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 7px'}}>
-                Testing not required
-              </span>
-            </div>
-          )}
-          {/* OWNER ON THE FACE OF THE CARD. Unowned is said in words and in red
-              rather than left blank, because a blank reads as a layout gap and
-              this is the one state somebody needs to notice. */}
-          <div style={{fontSize:'11px',marginTop:'5px',color:r.ownerName?'#5A5A5E':'var(--hot)'}}>
-            {r.ownerName || 'Unowned'}
-          </div>
-          {/* Every card has a stage date now -- declared_stage_at is stamped on
-              every change -- so this line no longer disappears the way the derived
-              one had to. */}
-          {r.since && (
-            <div style={{fontSize:'11px',color:r.stale?'#8a5a00':'#8A8A8E',marginTop:'6px',display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
-              {r.stale && <span style={{width:'6px',height:'6px',borderRadius:'50%',background:'#d97706',flexShrink:0}} />}
-              <span>{r.days === 0 ? 'today' : r.days + 'd in stage'}</span>
-              <span>· since {fmt(r.since)}</span>
-            </div>
-          )}
-        </button>
+      <div style={{background:'#fff',borderRadius:'11px',border:'1px solid #EFEFF1',overflow:'hidden',
+                   boxShadow:'0 1px 2px rgba(0,0,0,.05),0 1px 3px rgba(0,0,0,.04)'}}>
 
+        {/* ── THE HANDLE IS THE COLLAPSED HEADER, AND ONLY IT ─────────────────
+            draggable used to sit on the whole tile, which made the expansion a
+            drag handle too -- including the Open button. Dragging a card by its
+            own button is not a gesture anybody meant to offer.
+
+            A wrapper div rather than draggable on the button itself: draggable on
+            a form control behaves differently across browsers, and every other
+            draggable in this app is a div. The click guard is untouched, because
+            mousedown, dragstart and click all still sit in this one subtree.
+
+            THE FADE IS WRITTEN HERE AND WIPED HERE. No state holds it, so a tile
+            that gets remounted mid-drag comes back with no inline style at all,
+            which is full opacity by definition. data-plm-drag is what lets the
+            document listener above find any handle a lost dragend left faded. */}
+        <div draggable data-plm-drag=""
+          onMouseDown={()=>{ dragMovedRef.current = false; }}
+          onDragStart={e=>{
+            e.dataTransfer.setData('text/plain', r.id);
+            e.dataTransfer.effectAllowed = 'move';
+            dragMovedRef.current = true;
+            e.currentTarget.style.opacity = '.5';
+          }}
+          onDragEnd={e=>{ e.currentTarget.style.opacity = ''; endDrag(); }}
+          style={{cursor:'grab'}}>
+
+        <button onClick={toggle}
+          style={{display:'flex',flexDirection:'column',alignItems:'stretch',gap:'4px',width:'100%',
+                  minHeight:'112px',textAlign:'left',background:'none',border:'none',
+                  padding:'12px 13px',cursor:'pointer',fontFamily:'inherit',boxSizing:'border-box'}}>
+
+          {(r.stale || notReq) && (
+            <div style={{display:'flex',gap:'5px',flexWrap:'wrap',marginBottom:'2px'}}>
+              {r.stale && (
+                <span title={'Nothing has moved this card in ' + r.days + ' days'}
+                  style={{fontSize:'10px',fontWeight:700,color:'#8a5a00',background:'#FDF0DC',
+                          borderRadius:'980px',padding:'2px 7px',fontVariantNumeric:'tabular-nums'}}>
+                  {r.days}d
+                </span>
+              )}
+              {notReq && (
+                <span style={{fontSize:'9.5px',fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',
+                              color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 7px'}}>
+                  Testing not required
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* THE THREE IDENTITY LINES ARE CENTRED, and only these three. The pills
+              above and the expansion below stay left, because those are lists and a
+              centred list has no edge for the eye to run down. */}
+          <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:700,color:'#1A1A1C',
+                       textAlign:'center',whiteSpace:'nowrap',overflow:'hidden',
+                       textOverflow:'ellipsis'}}>{p.sku || '—'}</div>
+
+          {/* Two lines, then cut. A product name is the one field here with no
+              length discipline behind it, and one long name must not be allowed to
+              set the height of every tile in the row. */}
+          <div style={{fontSize:'12.5px',color:'#1D1D1F',lineHeight:1.35,textAlign:'center',
+                       display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',
+                       overflow:'hidden'}}>{p.name || '—'}</div>
+
+          <div style={{fontSize:'11.5px',color:'#8A8A8E',textAlign:'center',whiteSpace:'nowrap',
+                       overflow:'hidden',textOverflow:'ellipsis'}}>{(r.client||{}).name || '—'}</div>
+
+          {/* marginTop auto pins this to the bottom, so the footer sits on the same
+              line across a row of tiles whatever the name above it did.
+              TWO LINES, because a name without a date says how recently somebody
+              touched it only if you already know. The date stands even when the
+              name does not -- updated_at is NOT NULL, so it is genuinely known on
+              every row, including the ones that predate the updated_by stamp.
+              Hiding a date this card actually has would be the worse lie. */}
+          <div style={{fontSize:'11px',color:'#A0A0A4',marginTop:'auto',paddingTop:'8px',
+                       lineHeight:1.4,textAlign:'center'}}>
+            <div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+              Last touch: {r.lastTouchBy || 'not recorded'}
+            </div>
+            {r.lastTouchAt && (
+              <div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                Last touch date: {fmt(r.lastTouchAt)}
+              </div>
+            )}
+          </div>
+        </button>
+        </div>
+
+        {open && (
+          <div style={{borderTop:'1px solid #F2F2F4',padding:'11px 13px 12px',
+                       display:'flex',flexDirection:'column',gap:'6px'}}>
+            {line('Owner', r.ownerName || 'Unowned', !r.ownerName)}
+            {line('Last touch date', r.lastTouchAt ? fmt(r.lastTouchAt) : 'Not recorded', !r.lastTouchAt)}
+            {line('Stage set', r.since ? fmt(r.since) : 'Not recorded', !r.since)}
+            {line('Notes', r.noteCount === 1 ? '1 note' : r.noteCount + ' notes', !r.noteCount)}
+            <div style={{marginTop:'5px'}}>
+              <button onClick={()=>setOpenId(r.id)}
+                style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 14px',border:'none',
+                        background:'#1D1D1F',color:'#fff',fontFamily:'inherit',cursor:'pointer'}}>
+                Open
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -570,6 +981,7 @@ export default function Programs({ userEmail }) {
     <div style={{padding:'26px 30px 60px'}}>
       {openRow && <ProgramDetail r={openRow} userEmail={userEmail} staff={staff}
                                  busy={saving === openRow.id} onStage={setStage} onOwner={setOwner}
+                                 onTouched={load}
                                  onClose={()=>setOpenId(null)} />}
       {/* Centred, and the count on its own line beneath. The description
           paragraph that sat here is gone -- the columns and their placeholders
@@ -579,19 +991,43 @@ export default function Programs({ userEmail }) {
       <div style={{textAlign:'center',marginBottom:'18px'}}>
         <h1 style={{fontSize:'26px',fontWeight:700,letterSpacing:'-.02em',color:'#1D1D1F',margin:0}}>Product Life Management</h1>
         <div style={{fontSize:'13px',color:'#86868B',marginTop:'5px'}}>
-          {board.length} in the pipeline · {finished.length} archived
+          {board.length} in the pipeline
         </div>
       </div>
 
-      <div style={{display:'flex',gap:'6px',marginBottom:'16px'}}>
-        {[['board','Pipeline',board.length],['archived','Archived',finished.length]].map(([v,l,n])=>(
-          <button key={v} onClick={()=>{setUi('tab', v);setOpenId(null);}}
-            style={{fontSize:'12.5px',fontWeight:600,borderRadius:'980px',padding:'7px 14px',border:'none',
-                    cursor:'pointer',fontFamily:'inherit',
-                    background:ui.tab===v?'#1D1D1F':'#F2F2F4',color:ui.tab===v?'#fff':'#5A5A5E'}}>
-            {l} <span style={{opacity:.65}}>{n}</span>
-          </button>
-        ))}
+      {/* ── LIVE COUNTS, AS ANALYTICS TILES ──────────────────────────────────
+          Matching the Insights KPI cards -- one white card, a coloured dot beside
+          a muted label, the number large and tabular beneath -- so the two pages
+          read as one product. No sparkline: a stage count has no history to draw,
+          and a flat line pretending to be a trend is worse than no line.
+
+          DISPLAY ONLY, AND DELIBERATELY NOT BUTTONS. The rail is the filter. A
+          tile that also filtered would be a second control for the same choice,
+          able to disagree with the rail on screen -- which is the exact fault the
+          tiles-plus-dropdown arrangement had before the rail replaced both.
+
+          They read the WHOLE board rather than the filtered view, so narrowing
+          never makes a total lie. */}
+      <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',
+                   overflow:'hidden',marginBottom:'18px'}}>
+        {/* The column count comes from the array rather than a number typed here.
+            It was a hardcoded six, and collapsing the three sample rungs into one
+            Sampling stage left four tiles sitting in a six column grid with two
+            empty slots on the right -- a stage list and a layout that disagreed
+            because only one of them knew the stages had changed. */}
+        <div style={{display:'grid',gridTemplateColumns:`repeat(${MANUAL_STAGES.length},1fr)`}}>
+          {MANUAL_STAGES.map(([k,l],i)=>(
+            <div key={k} style={{padding:'20px 22px',borderLeft:i>0?'1px solid rgba(0,0,0,.06)':'none'}}>
+              <div style={{display:'flex',alignItems:'center',gap:'7px',marginBottom:'13px'}}>
+                <span style={{width:'6px',height:'6px',borderRadius:'50%',flexShrink:0,
+                              background:STAGE_ACCENT[k]||'#86868B'}} />
+                <span style={{fontSize:'13px',color:'#86868B',fontWeight:400,letterSpacing:'-.006em'}}>{l}</span>
+              </div>
+              <div style={{fontSize:'27px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.026em',
+                           lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{counts[k]||0}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',marginBottom:'18px'}}>
@@ -600,120 +1036,157 @@ export default function Programs({ userEmail }) {
             style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 12px',
                     fontSize:'13.5px',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'}} />
         </div>
-        {ui.tab==='board' && (
-          <FilterSelect multiple label="All stages" value={ui.stageSel} onChange={v=>setUi('stageSel', v)} options={stageOptions} />
-        )}
-        {/* Owner narrows both tabs, because "what is Kristy carrying" is as fair a
+        {/* The All stages dropdown was here. The rail on the left of the board is
+            that control now -- it selects the same thing and shows every count
+            without a click, so keeping both would be two controls for one choice
+            that could disagree on screen. */}
+        {/* Owner narrows every view, because "what is Kristy carrying" is as fair a
             question about finished work as about live work. */}
         <FilterSelect multiple label="All owners" value={ui.ownerSel} onChange={v=>setUi('ownerSel', v)} options={ownerOptions} />
         <div style={{flex:1}} />
       </div>
 
-      {ui.tab==='board' ? (
-        <>
-          {/* Tiles first, the original dashboard shape. They read the WHOLE board
-              rather than the filtered view, so narrowing never makes a total lie. */}
-          {/* Tiles read the WHOLE board rather than the filtered view, so narrowing
-              never makes a total lie. No source line under the label any more --
-              every one of these is set by a person, so there is nothing to cite. */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:'10px',marginBottom:'18px'}}>
-            {MANUAL_STAGES.map(([k,l])=>(
-              <button key={k} onClick={()=>setUi('stageSel', ui.stageSel.length===1&&ui.stageSel[0]===k?[]:[k])}
-                style={{background:'#fff',borderRadius:'14px',padding:'13px 15px',textAlign:'left',cursor:'pointer',
-                        fontFamily:'inherit',border:'none',borderTop:'3px solid #1D1D1F',
-                        boxShadow:ui.stageSel.length===1&&ui.stageSel[0]===k?'0 0 0 2px #1D1D1F':'0 1px 3px rgba(0,0,0,.05)'}}>
-                <div style={{fontSize:'21px',fontWeight:700,color:'#1D1D1F',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{counts[k]||0}</div>
-                <div style={{fontSize:'11.5px',color:'#5A5A5E',marginTop:'6px'}}>{l}</div>
-              </button>
-            ))}
-          </div>
+      <>
+          {/* ── THE SECTIONS ARE THE BOARD ────────────────────────────────────
+              The rail is gone and the stage groups take its place, full width,
+              Quoted through Purchase Order stacked top to bottom. The rail bought
+              one thing -- a stage list always on screen -- at the price of showing
+              one section at a time. The tiles above carry the counts now, so what
+              is left for the board to do is BE the board.
 
-          {/* Eight columns plus a ninth that only appears when it has something in
-              it. A permanent empty No stage set column would be a standing invitation
-              to a state nothing produces. */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(215px,1fr))',gap:'12px',alignItems:'start'}}>
-            {[...MANUAL_STAGES, ...((counts.none||0) > 0 ? [['none','No stage set']] : [])].map(([k,l])=>{
-              const inCol = shownBoard.filter(r => (r.stage || 'none') === k);
-              return (
-                <div key={k}>
-                  <div style={{display:'flex',alignItems:'center',gap:'7px',padding:'0 2px 9px'}}>
-                    <span style={{width:'8px',height:'8px',borderRadius:'50%',background:k==='none'?'#C7C7CC':'#1D1D1F'}} />
-                    <span style={{fontSize:'12px',fontWeight:700,color:'#1D1D1F'}}>{l}</span>
-                    <span style={{fontSize:'11.5px',color:'#A0A0A4'}}>{inCol.length}</span>
-                  </div>
-                  {inCol.length === 0 ? (
-                    <div style={{border:'1px dashed #E5E5EA',borderRadius:'12px',padding:'16px 13px',
-                                 fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5}}>
-                      Nothing here. Cards arrive at Quoted and are moved on the card.
-                    </div>
-                  ) : inCol.map(r => <Card key={r.id} r={r} />)}
-                </div>
-              );
-            })}
-          </div>
-          {/* Cards cannot be dragged, and a board that looks draggable but is not
-              owes an explanation rather than a shrug. */}
-          <p style={{margin:'18px 0 0',fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.55,maxWidth:'720px'}}>
-            Cards are not dragged. Open one to change its stage, change its owner or add a
-            note. Nothing here moves on its own &mdash; an order, a test report or a change on
-            Testing is reported on the card and never acts on it. A card appears only when
-            somebody ticks Create PLM program on a quote.
-          </p>
-        </>
-      ) : (
-        <>
-        <div style={{display:'flex',justifyContent:'flex-end',marginBottom:'9px'}}>
-          <label style={{display:'inline-flex',alignItems:'center',gap:'7px',fontSize:'12px',
-                         color:'#5A5A5E',cursor:'pointer',fontFamily:'inherit'}}>
-            <input type="checkbox" checked={ui.showRetired} onChange={e=>setUi('showRetired', e.target.checked)}
-              style={{cursor:'pointer'}} />
-            Include {history.length} on retired products
-          </label>
-        </div>
-        <div style={{background:'#fff',borderRadius:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',overflow:'hidden'}}>
-          {shownDone.length === 0 ? (
-            <div style={{padding:'44px 24px',textAlign:'center',fontSize:'13.5px',color:'#86868B'}}>Nothing here.</div>
-          ) : shownDone.map((r,i) => {
-            const p = r.products || {};
+              EVERY SECTION IS A DROP TARGET, and a card dropped on one goes through
+              the same setStage the modal select calls. No stage set is deliberately
+              NOT one: none is a display key for a null stage, not a value the CHECK
+              accepts, so writing it would be a constraint violation dressed up as a
+              move. It stays a place cards can sit and not a place they can be put. */}
+          {[...MANUAL_STAGES, ...((counts.none||0) > 0 ? [['none','No stage set']] : [])].map(([k,l])=>{
+            const inGroup = shownBoard.filter(r => (r.stage || 'none') === k);
+            const droppable = k !== 'none';
+            const over = droppable && dropTarget === k;
             return (
-              <div key={r.id} style={{borderTop:i>0?'1px solid #F5F5F7':'none'}}>
-                <button onClick={()=>setOpenId(openId===r.id?null:r.id)}
-                  style={{display:'flex',width:'100%',textAlign:'left',background:'none',border:'none',gap:'12px',
-                          padding:'11px 18px',cursor:'pointer',fontFamily:'inherit',alignItems:'center',flexWrap:'wrap'}}>
-                  <span style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:700,color:'#1D1D1F',minWidth:'110px'}}>{p.sku || '—'}</span>
-                  <span style={{fontSize:'13px',color:'#1D1D1F',flex:'1 1 200px'}}>{p.name || '—'}</span>
-                  <span style={{fontSize:'12px',color:'#5A5A5E',minWidth:'130px'}}>{(r.client||{}).name || '—'}</span>
-                  {/* CATALOGUE STATUS, worded and coloured exactly as on the Products
-                      list -- green Active, red Inactive, grey Not set -- so a product
-                      reads the same on both screens. products.active is three-state and
-                      only false is Inactive; NULL is undecided, not retired. */}
-                  <span style={{fontSize:'12px',color:'#86868B',minWidth:'80px',display:'inline-flex',alignItems:'center',gap:'5px'}}>
-                    <span style={{width:'6px',height:'6px',borderRadius:'50%',flexShrink:0,
-                      background: p.active === false ? 'var(--hot)' : p.active === true ? 'var(--ok)' : 'var(--muted)'}} />
-                    {p.active === false ? 'Inactive' : p.active === true ? 'Active' : 'Not set'}
-                  </span>
-                  <span style={{fontSize:'11.5px',color:'#8A8A8E',minWidth:'150px'}}>
-                    {r.stage === COMPLETE ? 'Marked complete ' + fmt(r.since) : 'Product retired'}
-                  </span>
-                  <span style={{fontSize:'11.5px',minWidth:'110px',color:r.ownerName?'#8A8A8E':'var(--hot)'}}>
-                    {r.ownerName || 'Unowned'}
-                  </span>
-                  {testingNotRequired(p) && (
-                    <span style={{fontSize:'10px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',
-                                  color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 8px'}}>No testing</span>
-                  )}
-                  {r.retired && (
-                    <span style={{fontSize:'10px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',
-                                  color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 8px'}}>History</span>
-                  )}
-                </button>
+              <div key={k} {...(droppable ? dropProps(k) : {})}
+                style={{marginBottom:'22px',borderRadius:'14px',padding:'10px 12px 6px',
+                        background:over?'rgba(10,132,255,.06)':'transparent',
+                        boxShadow:over?'inset 0 0 0 2px #0A84FF':'none',
+                        transition:'background .12s'}}>
+                <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'0 2px 12px'}}>
+                  <span style={{width:'8px',height:'8px',borderRadius:'50%',flexShrink:0,
+                                background:k==='none'?'#C7C7CC':'#1D1D1F'}} />
+                  <span style={{fontSize:'14px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.01em'}}>{l}</span>
+                  <span style={{fontSize:'12.5px',color:'#A0A0A4',fontVariantNumeric:'tabular-nums'}}>{inGroup.length}</span>
+                </div>
+                {/* ONE LINE, NOT A BOX. Six dashed placeholders down a page is
+                    scaffolding pretending to be content. A sentence says the same
+                    thing and lets the eye skip it. It keeps its height while a card
+                    is in the air, so an empty section is still somewhere to aim. */}
+                {inGroup.length === 0 ? (
+                  <div style={{fontSize:'13px',color:'#A0A0A4',padding:'0 2px 10px'}}>Nothing here yet.</div>
+                ) : (
+                  /* TILES THAT WRAP, not a column that scrolls. A stage with a
+                     hundred cards was a hundred rows and a page of scrolling; the
+                     same hundred is a few rows of tiles, and the section still
+                     reads as one block you can drop onto.
 
+                     alignItems start rather than the grid default of stretch, so an
+                     expanded tile grows on its own instead of dragging every tile
+                     beside it to the same height. The minHeight on the tile is what
+                     keeps the collapsed ones even without it. */
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(230px,1fr))',
+                               gap:'10px',alignItems:'start'}}>
+                    {inGroup.map(r => <Card key={r.id} r={r} />)}
+                  </div>
+                )}
               </div>
             );
           })}
-        </div>
+
+          {/* ── COMPLETE, LAST AND SHUT ───────────────────────────────────────
+              A finished program is not part of the pipeline, so it sits beneath it
+              rather than among it, and it opens only when somebody asks. The header
+              is the drop target as well as the toggle: a card dropped here is marked
+              complete through the same setStage, open or shut, so finishing a
+              program is the same gesture as any other move.
+
+              It keeps the row layout rather than becoming cards. The catalogue dot,
+              the date it was marked complete and the History badge are what this
+              list is read for, and a Card carries none of them. Rows open the modal,
+              whose stage control is how a completed program is reopened. */}
+          <div {...dropProps(COMPLETE)}
+            style={{borderRadius:'14px',padding:'12px',marginTop:'4px',
+                    background:dropTarget===COMPLETE?'rgba(10,132,255,.06)':'#FAFAFA',
+                    boxShadow:dropTarget===COMPLETE?'inset 0 0 0 2px #0A84FF':'none',
+                    transition:'background .12s'}}>
+            <button onClick={()=>setUi('doneOpen', !ui.doneOpen)}
+              style={{display:'flex',alignItems:'center',gap:'8px',width:'100%',textAlign:'left',
+                      background:'none',border:'none',padding:'2px',cursor:'pointer',fontFamily:'inherit'}}>
+              <span style={{fontSize:'10px',color:'#86868B',width:'10px',flexShrink:0}}>{ui.doneOpen ? '▾' : '▸'}</span>
+              <span style={{width:'8px',height:'8px',borderRadius:'50%',flexShrink:0,background:'#8E8E93'}} />
+              <span style={{fontSize:'14px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.01em'}}>Complete</span>
+              <span style={{fontSize:'12.5px',color:'#A0A0A4',fontVariantNumeric:'tabular-nums'}}>{finished.length}</span>
+            </button>
+
+            {ui.doneOpen && (
+              <div style={{marginTop:'12px'}}>
+                <div style={{display:'flex',justifyContent:'flex-end',marginBottom:'9px'}}>
+                  <label style={{display:'inline-flex',alignItems:'center',gap:'7px',fontSize:'12.5px',
+                                 color:'#5A5A5E',cursor:'pointer',fontFamily:'inherit'}}>
+                    <input type="checkbox" checked={ui.showRetired} onChange={e=>setUi('showRetired', e.target.checked)}
+                      style={{cursor:'pointer'}} />
+                    Include {history.length} on retired products
+                  </label>
+                </div>
+                <div style={{background:'#fff',borderRadius:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',overflow:'hidden'}}>
+                  {shownDone.length === 0 ? (
+                    <div style={{padding:'44px 24px',textAlign:'center',fontSize:'13.5px',color:'#86868B'}}>Nothing here.</div>
+                  ) : shownDone.map((r,i) => {
+                    const p = r.products || {};
+                    return (
+                      <div key={r.id} style={{borderTop:i>0?'1px solid #F5F5F7':'none'}}>
+                        <button onClick={()=>setOpenId(openId===r.id?null:r.id)}
+                          style={{display:'flex',width:'100%',textAlign:'left',background:'none',border:'none',gap:'12px',
+                                  padding:'13px 18px',cursor:'pointer',fontFamily:'inherit',alignItems:'center',flexWrap:'wrap'}}>
+                          <span style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:700,color:'#1D1D1F',minWidth:'110px'}}>{p.sku || '—'}</span>
+                          <span style={{fontSize:'14px',color:'#1D1D1F',flex:'1 1 200px'}}>{p.name || '—'}</span>
+                          <span style={{fontSize:'13px',color:'#5A5A5E',minWidth:'130px'}}>{(r.client||{}).name || '—'}</span>
+                          {/* CATALOGUE STATUS, worded and coloured exactly as on the
+                              Products list -- green Active, red Inactive, grey Not
+                              set. products.active is three-state and only false is
+                              Inactive; NULL is undecided, not retired. */}
+                          <span style={{fontSize:'12.5px',color:'#86868B',minWidth:'80px',display:'inline-flex',alignItems:'center',gap:'5px'}}>
+                            <span style={{width:'6px',height:'6px',borderRadius:'50%',flexShrink:0,
+                              background: p.active === false ? 'var(--hot)' : p.active === true ? 'var(--ok)' : 'var(--muted)'}} />
+                            {p.active === false ? 'Inactive' : p.active === true ? 'Active' : 'Not set'}
+                          </span>
+                          <span style={{fontSize:'12.5px',color:'#8A8A8E',minWidth:'150px'}}>
+                            {r.stage === COMPLETE ? 'Marked complete ' + fmt(r.since) : 'Product retired'}
+                          </span>
+                          <span style={{fontSize:'12.5px',minWidth:'110px',color:r.ownerName?'#8A8A8E':'var(--hot)'}}>
+                            {r.ownerName || 'Unowned'}
+                          </span>
+                          {testingNotRequired(p) && (
+                            <span style={{fontSize:'10px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',
+                                          color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 8px'}}>No testing</span>
+                          )}
+                          {r.retired && (
+                            <span style={{fontSize:'10px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',
+                                          color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 8px'}}>History</span>
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <p style={{margin:'18px 0 0',fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.55,maxWidth:'720px'}}>
+            Drag a card to move it, or open one to change its stage, change its owner or
+            add a note. Nothing here moves on its own &mdash; an order, a test report or a
+            change on Testing is reported on the card and never acts on it. A card appears
+            only when somebody ticks Create PLM program on a quote.
+          </p>
         </>
-      )}
     </div>
   );
 }
