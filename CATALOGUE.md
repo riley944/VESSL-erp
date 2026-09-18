@@ -2206,6 +2206,54 @@ right, so both were cast.
 
 ---
 
+## Script 64, as run — 2026-09-18, delete means delete
+
+`z0` on the first rehearsal. Grants DELETE on `vessl.program_notes`, adds a
+RESTRICTIVE policy confining deletes to rows the caller wrote, and drops the
+`deleted_at` column script 63 had added hours earlier.
+
+**It reverses 63's soft delete, and the speed is the point rather than an
+embarrassment.** 63 shipped `deleted_at` plus a filter that hid the row, on the
+reasoning that a note is a record and a record should not be destroyable. One
+round of using it changed the answer: a note nobody can see and nobody can remove
+is a row that only accumulates, and the list it hides from is the only place
+anybody would ever read it. Hiding was protecting the wrong thing.
+
+**What protects a note now is that it is yours.** The delete policy is the same
+shape as the update policy 63 added — same `btrim`/`lower`/`coalesce` comparison
+against the token address, same empty-author exclusion, so a row nobody signed is
+deletable by nobody. `USING` only, with no `WITH CHECK`: a delete produces no new
+row, and Postgres accepts no check expression there.
+
+**`edited_at` stays.** It records that words changed after they were written, which
+is still true and still worth saying on the card. Only `deleted_at` goes.
+
+**The guard proved the drop lost nothing rather than assuming it.** `deleted_at`
+was set on zero rows, measured immediately before writing. Had anything been soft
+deleted between 63 and this, the guard refuses and the column stays until somebody
+decides what those rows are.
+
+**No probe, for the same reason 63 had none** — the editor runs as owner, RLS does
+not apply to owners. The grant is tested for real by `has_table_privilege`;
+author-only enforcement was verified in the application.
+
+**A numbering note for anyone reading the files.** 64 was written *after* 65, which
+is why the two sit out of order in the working tree. 63 briefly occupied the slot
+in conversation that 64 ended up filling; the files themselves are correct.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| `program_notes` columns | 8 | **7** |
+| `deleted_at` | present, set on 0 rows | **dropped** |
+| `edited_at` | present | unchanged |
+| `authenticated` DELETE | false | **true** |
+| policies | 2 | **3, the new one RESTRICTIVE/DELETE** |
+| rows | 1 | unchanged |
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the
