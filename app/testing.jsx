@@ -1,6 +1,9 @@
 'use client';
 import React, { useState, useEffect, useMemo } from "react";
 import { SB } from "@/lib/supabase";
+// The product option sets moved to lib so the PLM card offers the same ones. See
+// the note above them there.
+import { COMPLIANCE_OPTS, STAGE_OPTS } from "@/lib/products";
 import { CreateProductModal } from "@/app/components/CreateProductModal";
 // The regulations list and its editor moved to app/components so the Codes page
 // shows the same two rather than copies. Delete went into RegModal with them --
@@ -177,12 +180,9 @@ const inSel = (sel, key) => isAll(sel) || sel.includes(key);
 // about the product -- Pass, Pending, Failed -- where Pending means the work is already
 // under way. Keeping the three together is what stops Not required being read as a
 // fourth verdict.
-const COMPLIANCE_OPTS = [['','— Not set —'],['not_required','Not required'],['tbd','TBD'],['passed','Pass'],['pending','Pending'],['failed','Failed']];
-// Written to products.product_stage. '' means clear it back to NULL, which
-// products_product_stage_check requires -- it accepts NULL, 'production' or 'sample'
-// and would reject an empty string. Values lowercase, labels capitalised, the same
-// split COMPLIANCE_OPTS uses.
-const STAGE_OPTS = [['','— Not set —'],['production','Production'],['sample','Sample']];
+// COMPLIANCE_OPTS and STAGE_OPTS used to be declared here. They are imported from
+// lib/products now, because the PLM card writes the same two columns and a second
+// copy of either list is how two screens start disagreeing about what Pass means.
 // Unused on purpose. MaterialModal's Type field was opened up to free text so we can
 // see what people actually reach for; this is the list to put back as a <select> once
 // there is enough real data to say what the options should be.
