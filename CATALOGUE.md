@@ -2153,6 +2153,59 @@ have failed a good run for a reason unrelated to the script.
 
 ---
 
+## Script 63, as run — 2026-09-18, a note can be corrected by whoever wrote it
+
+`z0` on the first rehearsal. Adds `edited_at` and `deleted_at` to
+`vessl.program_notes`, grants UPDATE on three columns, and adds a RESTRICTIVE
+policy confining those updates to rows the caller wrote.
+
+**This reversed the append-only decision, narrowly.** Script 48 left
+`authenticated` holding SELECT and INSERT and nothing else, and the comment on the
+notes component said so proudly. The reason it reversed is simpler than the reason
+it was made: somebody typing a note into a card gets it wrong sometimes, and a
+record nobody can correct is a record people stop trusting.
+
+**Append-only was a GRANT property, not a policy one — and that changed the shape
+of the script.** `program_notes` carries one policy, `staff_only`, `FOR ALL` and
+permissive, which already permitted UPDATE at the policy layer. Permissive policies
+OR together, so a second permissive policy would have confined nothing. The author
+check had to be **RESTRICTIVE**, which ANDs — the same pattern `vessl.quotes`
+already uses with its restrictive `kui_staff_only`.
+
+**The grant is per column, and that is where the real safety is.** `authenticated`
+gained UPDATE on `note`, `edited_at`, `deleted_at` and nothing else, so a note
+cannot be reassigned to another author or backdated regardless of policy. Column
+privileges live in `pg_attribute.attacl`, not `relacl`, so the checks read them
+through `has_column_privilege`, which answers for a named role from any connection.
+`information_schema.role_table_grants` would have returned nothing here — it only
+shows grants involving the current role — and a check reading it would have passed
+vacuously.
+
+**No probe, deliberately.** The SQL editor runs as the table owner and RLS does not
+apply to the owner, so a probe could only have proved that owners can do owner
+things. The grants *are* tested; author-only enforcement was verified in the
+application, signed in as two different people. A role-switched probe was
+considered and rejected — after `set local role authenticated` the block loses
+privileges on its own temp table.
+
+**What preflight caught.** One branch whose `got` was a bare `case … end` with no
+cast. A second branch of the same shape escaped only because an unrelated
+`relacl::text` sat in its segment — the rule passed it by accident, not by being
+right, so both were cast.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| `program_notes` columns | 6 | **8** |
+| policies | 1 permissive ALL | **2, the new one RESTRICTIVE/UPDATE** |
+| `authenticated` table UPDATE | false | unchanged, still false |
+| column UPDATE on note / edited_at / deleted_at | none | **granted** |
+| column UPDATE on author | none | unchanged, still none |
+| rows | 1 | unchanged |
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the
