@@ -2303,6 +2303,103 @@ it.
 
 ---
 
+## Script 66, as run — 2026-09-18, sampling belongs to the product
+
+`z0`, but only on the **second** rehearsal — and the first failure is the reason
+this entry exists. Creates `vessl.product_notes` with the grants and policies
+`program_notes` ended up with after 63 and 64, and adds `products.sample_date`.
+
+**THE LESSON, AND IT APPLIES TO EVERY NEW TABLE IN THIS SCHEMA.** `b6` and `b7`
+failed on the first run: after `CREATE TABLE`, `authenticated` already held
+table-level UPDATE and column UPDATE on `author` and `kind`, which the narrow
+grant was supposed to withhold. The cause is `pg_default_acl` — for schema
+`vessl`, `postgres` grants `authenticated` **`arwdDxtm`** on every table created
+in it. So a new table arrives with full rights already on it, and a narrow
+`grant` beside a wide inherited one is decoration. **Revoke first, then grant.**
+The script now runs `revoke all ... from public, anon, authenticated` immediately
+after `CREATE TABLE`, and `b12` asserts `anon` holds nothing.
+
+**Where the lesson stops.** `pg_default_acl` fires at `CREATE TABLE` and nowhere
+else. A script that ALTERs an existing table inherits nothing and needs no
+revoke — see 67 below, which grants additively and re-measures instead. Applying
+the revoke reflexively to an existing table would take away rights somebody
+granted on purpose.
+
+**`service_role` is deliberately not named.** It is absent from the `vessl`
+default and from every sibling table ACL, so there is nothing of its to take
+away, and a revoke naming it would be a statement about a grant that does not
+exist.
+
+**No probe for the policies, as in 63 and 64.** The SQL editor runs as the table
+owner and RLS does not apply to the owner, so a probe could only prove that
+owners can do owner things. The grants are tested for real, by
+`has_table_privilege` and `has_column_privilege`, which answer for a named role.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| `vessl.product_notes` | did not exist | **7 columns, 0 rows** |
+| `products` columns | 34 | **35** (`sample_date`) |
+| table grants to `authenticated` | — | **select, insert, delete; no update** |
+| column UPDATE | — | **`note`, `edited_at` only** |
+| policies | — | **3** — permissive `staff_only`, restrictive author-only update and delete |
+| `anon` privileges | none | none |
+
+---
+
+## Script 67, as run — 2026-09-18, a sample is an event, not a column
+
+`z0` on the first rehearsal, and preflight passed first time. Adds `sample_date`
+and `sample_stage` to `product_notes`, widens the `kind` CHECK to
+`('sampling','sample_event')`, adds a CHECK that a sample event carries a date or
+a stage, extends the column UPDATE grant to the two new columns, and **drops
+`products.sample_date`** — the column script 66 had added a day earlier.
+
+**Why 66 was wrong within a day.** One `sample_date` on the product can hold
+exactly one round. A product is sampled more than once — that is the whole reason
+the board carried Sample 1 through Sample 5 before 65 collapsed them — so
+recording the second sample meant overwriting the first. The column could only
+ever describe the most recent round while looking like it described the sampling.
+A row per round keeps the history; two new columns on a table that already has an
+author, a timestamp, an edit stamp and author-only policies cost one table
+instead of two.
+
+**The drop was guarded on a measured number.** `products.sample_date` was non-null
+on **0** rows when the script was written — the ZZTESTPLM value that prompted the
+tolerance had already gone. The guard refuses at more than one, so a real value
+appearing between writing and running stops the drop rather than being eaten by
+it; branch `a1` asserts the measured 0 separately.
+
+**The `kind` CHECK is dropped and re-added, not altered.** Postgres has no
+alter-in-place for a check body. Doing both inside the transaction means no
+window exists where the table is unconstrained.
+
+**No revoke here, deliberately.** This alters an existing table, so the schema
+default privileges never fire — see the boundary noted under 66. The grant is
+purely additive and `b8` through `b12` re-measure the result rather than assume
+it, which is the half of the 66 lesson that does transfer.
+
+**Sequencing that had to be got right.** `programs.jsx` selected
+`products.sample_date`, and PostgREST fails the whole request on a missing
+column — so running this against the old code would have stopped the PLM board
+loading entirely. Script and app change landed together.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| `product_notes` columns | 7 | **9** (`sample_date`, `sample_stage`) |
+| CHECKs on `product_notes` | 1 | **3** |
+| `kind` permits | `sampling` | **`sampling`, `sample_event`** |
+| column UPDATE | `note`, `edited_at` | **`note`, `edited_at`, `sample_date`, `sample_stage`** |
+| table-level UPDATE | not granted | not granted |
+| `author` / `kind` writable | no | no |
+| `products` columns | 35 | **34**, no `sample_date` |
+| `product_notes` rows | 0 | 2 — both `ZZTESTPLM` sample events from the localhost pass |
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the
