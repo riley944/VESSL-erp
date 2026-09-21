@@ -1215,10 +1215,29 @@ export default function Testing({ userEmail = '' }) {
           can name what is linked without consulting a materials list. It takes no
           materials array: the block is read-only, so there is nothing to choose from. */}
       {modal?.type==='product'  && <CreateProductModal data={modal.data} regs={regs} links={modal.data ? prodRegs.filter(l=>l.product_id===modal.data.id) : []} matLinks={modal.data ? prodMats.filter(l=>l.product_id===modal.data.id) : []} onClose={()=>setModal(null)} onCreated={()=>{setModal(null);load();}} />}
-      {modal?.type==='lab'      && <LabModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
-      {modal?.type==='reg'      && <RegModal data={modal.data} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} onDeleted={()=>{setModal(null);load();}} />}
-      {modal?.type==='material' && <MaterialModal data={modal.data} labs={labs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
-      {modal?.type==='report'   && <ReportModal preset={modal.data} data={modal.row} materials={materials} products={products} labs={labs} regs={regs} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
+      {/* ── LAND ON WHAT WAS JUST CREATED ───────────────────────────────────
+          The four create buttons live in the PAGE HEADER and none of them is
+          guarded by ui.tab, so a material logged while Products is on screen
+          lands on a tab nobody is looking at. Each create moves the tab to the
+          list that holds that record and clears the search box.
+
+          matFilter, repFilter and catSel are left alone on purpose. catSel needs
+          no help -- a new product is active:null, which keys as notset and is
+          inside the ['active','notset'] default -- and the two pill filters are a
+          narrowing somebody chose, which is not this fix to undo.
+
+          + LAB MOVES NO TAB, because there is no tab to move to. TABS is
+          products, materials, reports and regs; labs are a lookup that fills the
+          Lab dropdown on the report form and have no list of their own. Clearing
+          search is all that can honestly be done for it.
+
+          Create is told from edit by what the modal was opened WITH -- data for a
+          material or a rule, row for a report -- read before setModal(null)
+          clears it. Editing leaves every filter untouched. */}
+      {modal?.type==='lab'      && <LabModal onClose={()=>setModal(null)} onSaved={()=>{setModal(null);setUi('search','');load();}} />}
+      {modal?.type==='reg'      && <RegModal data={modal.data} onClose={()=>setModal(null)} onSaved={()=>{const created=!modal.data;setModal(null);if(created){setUi('tab','regs');setUi('search','');}load();}} onDeleted={()=>{setModal(null);load();}} />}
+      {modal?.type==='material' && <MaterialModal data={modal.data} labs={labs} onClose={()=>setModal(null)} onSaved={()=>{const created=!modal.data;setModal(null);if(created){setUi('tab','materials');setUi('search','');}load();}} />}
+      {modal?.type==='report'   && <ReportModal preset={modal.data} data={modal.row} materials={materials} products={products} labs={labs} regs={regs} onClose={()=>setModal(null)} onSaved={()=>{const created=!modal.row;setModal(null);if(created){setUi('tab','reports');setUi('search','');}load();}} />}
       {modal?.type==='link'     && <LinkModal product={modal.data} materials={materials} existing={prodMats.filter(l=>l.product_id===modal.data.id)} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} />}
       {/* regs is already filtered to active, so a retired rule cannot be linked to a
           new product while ones already linked to it keep their link. */}

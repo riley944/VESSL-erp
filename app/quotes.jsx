@@ -959,6 +959,36 @@ function Platform({ session, newQuote = null }) {
         const exists = prev.some((q) => q.id === savedRow.id);
         return exists ? prev.map((q) => (q.id === savedRow.id ? confirmed : q)) : [confirmed, ...prev];
       });
+
+      // ── LAND ON THE QUOTE JUST SAVED, AND ONLY WHEN IT IS NEW ───────────────
+      // Saving a new quote used to drop somebody back on whatever the list was
+      // showing before they started -- often a search for something else, or
+      // another client's card -- with the quote they had just written nowhere on
+      // screen. The view now opens on that quote's client card, where the newest
+      // quote sits at the top.
+      //
+      // !f.id IS THE TEST, and it is the same one the insert branch above uses --
+      // `before` is computed from it on the first line of this function. A second
+      // way of asking "is this new" is a second thing to keep in agreement.
+      //
+      // AN EDIT MUST MOVE NOTHING. Somebody editing a quote found it by searching
+      // or by opening a client, and throwing that away would make correcting a
+      // typo cost them their place. So this is inside the new-quote branch rather
+      // than applying to every successful save.
+      //
+      // The client is normalised exactly as the deep link, the task jump and the
+      // dropdown normalise it -- clientQuotes filters on this display string, so
+      // an id here would match no card and open an empty view. Read from
+      // savedRow, not from f, because savedRow is what is now in the list.
+      //
+      // Only these two keys are touched. usePageState('quotes', ...) persists
+      // search and activeClient and nothing else, and `expanded` is plain state
+      // left alone deliberately -- opening the row as well was not asked for, and
+      // the new quote is already the top card.
+      if (!f.id) {
+        setUi('search', '');
+        setUi('activeClient', (savedRow.client || "Unassigned").trim() || "Unassigned");
+      }
     }
 
     setEditing(null);

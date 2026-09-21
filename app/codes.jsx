@@ -346,9 +346,19 @@ export default function Codes({ canDeleteCodes = true }) {
 
       {/* One modal slot, two editors -- which one opens follows the toggle, so a row
           can only ever be opened by the editor for its own table. */}
+      {/* ── LAND ON THE ROW JUST CREATED ────────────────────────────────────
+          mode needs no help: setModal({}) opens the editor for whichever table
+          the toggle names, so a new row is always created into the list on
+          screen. The search box is the one that hides it -- a term typed to find
+          something else rarely matches a code nobody has typed yet.
+
+          modal is {} for a new row and the row itself for an edit, so !modal.id
+          is the create test. Read BEFORE setModal(null), which would otherwise
+          have cleared the answer by the time it is asked. Deleting is not
+          creating, so onDeleted is untouched. */}
       {modal && (hts
-        ? <CodeModal data={modal} canDelete={canDeleteCodes} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} onDeleted={()=>{setModal(null);load();}} />
-        : <RegModal  data={modal} onClose={()=>setModal(null)} onSaved={()=>{setModal(null);load();}} onDeleted={()=>{setModal(null);load();}} />)}
+        ? <CodeModal data={modal} canDelete={canDeleteCodes} onClose={()=>setModal(null)} onSaved={()=>{const created=!modal.id;setModal(null);if(created)setUi('search','');load();}} onDeleted={()=>{setModal(null);load();}} />
+        : <RegModal  data={modal} onClose={()=>setModal(null)} onSaved={()=>{const created=!modal.id;setModal(null);if(created)setUi('search','');load();}} onDeleted={()=>{setModal(null);load();}} />)}
     </div>
   );
 }

@@ -4301,7 +4301,27 @@ function Companies() {
         </div>
       )}
 
-      {showCreate && <CreateCompanyModal onClose={()=>setShowCreate(false)} onCreated={()=>{setShowCreate(false);load();}} />}
+      {/* ── LAND ON THE COMPANY JUST CREATED ──────────────────────────────────
+          rows is fetched .eq('type', TYPE_KEYS[ui.tab]), so a company created as
+          a type other than the open tab is not merely filtered out -- it was
+          never fetched. Moving the tab is the whole fix; clearing search is what
+          stops a stale term hiding it once it is there.
+
+          TWO BRANCHES, BECAUSE THE EFFECT ALREADY DOES HALF THE WORK. The
+          useEffect on [ui.tab] above refetches AND clears search whenever the tab
+          changes, so on a type change setting the tab is enough -- calling load()
+          here as well would fetch the OLD tab, since load closes over the ui.tab
+          of this render. When the type matches the open tab the effect never
+          fires, so the refetch and the clear have to happen by hand.
+
+          Creates only: this modal only ever creates, and editing a company goes
+          through CompanyDetailModal below, which is left exactly as it was. */}
+      {showCreate && <CreateCompanyModal onClose={()=>setShowCreate(false)} onCreated={(type)=>{
+        setShowCreate(false);
+        const i = TYPE_KEYS.indexOf(type);
+        if (i !== -1 && i !== ui.tab) { setUi('tab', i); }
+        else { setUi('search', ''); load(); }
+      }} />}
       {openId && <CompanyDetailModal id={openId} onClose={()=>setOpenId(null)} onSaved={()=>{setOpenId(null);load();}} />}
     </>
   );
@@ -4596,6 +4616,16 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
         // reload -- and proves the widened key matched it back.
         setProds(prev => [...prev, data]);
         await linkQuoteToProduct(q.id, data.id);
+        // ── LAND ON THE PRODUCT JUST CREATED ────────────────────────────────
+        // Search only. activeF needs no help: this insert carries the very state
+        // the dropdown just set, so the row lands in the bucket somebody chose.
+        // client and factoryF are narrowings they chose too, and clearing those
+        // would move the list further than the problem warrants.
+        //
+        // The 23505 branch below is deliberately NOT given this: adopting a row
+        // somebody else already created is not a create, and the row was already
+        // wherever the filters put it.
+        setUi('search', '');
         return;
       }
       // products_name_nullsku_key (or products_sku_name_key) fired: somebody got here
@@ -6151,7 +6181,21 @@ function Shipments({ onNewShipment, userEmail }) {
       ))}
 
       {openId && <ShipmentDetailModal id={openId} onClose={()=>setOpenId(null)} onSaved={()=>{setOpenId(null);reload();}} />}
-      {quoteModal && <ShipmentQuoteModal data={quoteModal==='new'?null:quoteModal} onClose={()=>setQuoteModal(null)} onSaved={()=>{setQuoteModal(null);reloadQuotes();}} />}
+      {/* ── LAND ON THE FREIGHT QUOTE JUST CREATED ──────────────────────────
+          + Freight Quote sits in the page header and is NOT guarded by ui.view,
+          so it is clickable while the shipments half is on screen -- and the new
+          quote then lands in the half nobody is looking at. Moving the view is
+          the fix; clearing search stops a stale term hiding it once there.
+
+          qSel is deliberately left alone. Both create paths land inside the
+          default set already: save() writes 'draft', and generate() writes
+          'sent', which this page buckets as 'awaiting'. Clearing a status filter
+          somebody chose would be a bigger change than the problem.
+
+          quoteModal === 'new' is the create test. Editing routes through the
+          same onSaved with the row in quoteModal, and leaves every filter as it
+          was. */}
+      {quoteModal && <ShipmentQuoteModal data={quoteModal==='new'?null:quoteModal} onClose={()=>setQuoteModal(null)} onSaved={()=>{const created=quoteModal==='new';setQuoteModal(null);if(created){setUi('view','quotes');setUi('search','');}reloadQuotes();}} />}
       {rfqQuote && <ForwarderRFQModal quote={rfqQuote} onClose={()=>setRfqQuote(null)} onSent={()=>{setRfqQuote(null); reloadQuotes();}} />}
       {showBidImport && <ImportBidsModal quotes={quotes} onClose={()=>setShowBidImport(false)} onApplied={()=>{setShowBidImport(false); reloadBids();}} />}
       {bidsQuote && <BidsCompareModal quote={bidsQuote} bids={bids.filter(b=>b.shipment_quote_id===bidsQuote.id)} onClose={()=>setBidsQuote(null)} onDeleted={async()=>{ await reloadBids(); await reloadQuotes(); }} onAward={awardRfq} />}
@@ -7580,7 +7624,10 @@ function CreateCompanyModal({ onClose, onCreated }) {
         await SBQ.from('factory_presets').insert({factory:form.name,factory_email:form.email||null,factory_phone:form.phone||null}).select();
       }
     } catch(e) {}
-    onCreated();
+    // THE TYPE TRAVELS BACK, because the list is fetched per type and the page
+    // cannot otherwise know which tab the new company landed on. Reading it off
+    // the refetched rows would mean guessing which row is new.
+    onCreated(co.type);
   };
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
