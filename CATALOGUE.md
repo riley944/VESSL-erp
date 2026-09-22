@@ -2516,6 +2516,73 @@ each company that has contacts.
 
 ---
 
+## Script 71, as run — 2026-09-22, three spellings become the names the companies carry
+
+`z0` on the **second** rehearsal — the first failed on one branch, and that failure
+is the most useful thing in this entry. Re-points `quotes.factory` for three
+strings naming companies the catalogue already held under a slightly different
+spelling. **52 rows**, three aliases, no company row touched.
+
+| alias | rows | becomes |
+|---|---|---|
+| `LIAONING KANGPING PLASTIC INDUSTRY CO.,LTD` | 44 | Liaoning Kangping Plastic Industry Co., Ltd |
+| `Aung crown` | 7 | Aung Crown |
+| `Baoquan` | 1 | Shenzhen Baoquan Industrial Co., Ltd |
+
+**Why now.** The quote form stopped accepting free text in the factory box in the
+same push — it is a closed select over the factory companies, carrying the same
+structural rule `HtsField` does, so a stored name matching no company still
+*displays* and nothing is erased. But 52 quotes the app could not resolve to a
+company is 52 quotes where the select can only show text. All three were
+spellings, not unknown firms.
+
+**Spelling only, never a merge.** Every target already existed as a `factory`
+company, and the guard refuses unless all three do. The only column written is
+`quotes.factory`.
+
+### The branch that failed, and why it was wrong
+
+`b4` asserted the distinct spelling count would go **9 → 6**. The rehearsal
+returned **9 → 8**.
+
+The `want` was written on the assumption that all three aliases fold into names
+already in the set. Only one does. **Re-pointing an alias removes a distinct value
+only when its target already carries quotes** — Baoquan's target had 2, so that
+one merges; the Liaoning and Aung Crown targets had **0**, so those two are
+*renames* into values the set did not previously hold. Nine, minus the single
+merge, is eight.
+
+The evidence was already in the script: branch `a1` measures the targets as
+`0 / 2`. The assertion was written without deriving it from a figure the same
+file was printing.
+
+**What limited the damage.** `b4` is a reporting branch — nothing acts on it. Every
+branch guarding real change passed first time: `b1` no alias survives, `b2` the
+targets hold 44/7/3, `b3` **zero quotes whose factory matches no company**, `c1`
+no quote added, removed or left factory-less, `c2` no company row touched. A wrong
+`want` that fails loudly is the cheap version of this mistake; one that happens to
+pass would have certified something nobody checked.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| quotes matching **no** company | 52 | **0** |
+| `Liaoning Kangping Plastic Industry Co., Ltd` | 0 | **44** |
+| `Aung Crown` | 0 | **7** |
+| `Shenzhen Baoquan Industrial Co., Ltd` | 2 | **3** |
+| the three aliases | 52 | **0** |
+| distinct spellings | 9 | **8** |
+| quotes total / with factory text | 340 / 337 | 340 / 337 |
+| factory companies | 8 | 8 |
+
+**The alias fold in the Companies export stays.** `FACTORY_ALIASES` folds two of
+these three when building the factory list. It costs nothing now that the data is
+clean, and it is what catches the same spelling arriving again from an older quote
+or an import.
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the
