@@ -33,6 +33,13 @@ import { CodeModal } from "@/app/components/CodeModal";
 // structural rule it carries has to govern both, and a comment only governs the
 // file it is in. useHtsCodes owns the active-only fetch for every host.
 import { HtsField, useHtsCodes } from "@/app/components/HtsField";
+// The factory box is a closed select now, the same shape as HtsField and for the
+// same reason -- free text is how one firm ends up in the catalogue twice.
+import { FactorySelect, useFactoryCompanies, factoryFillFor, contactFieldsFrom,
+         ContactPickModal } from "@/app/components/FactorySelect";
+// Rendered as a sibling of this form so "+ Add new factory" can create the
+// company without leaving the quote. Extracted out of page.jsx for this.
+import { CreateCompanyModal } from "@/app/components/CreateCompanyModal";
 import { HtsRuleHints, useHtsRuleMap } from "@/app/components/HtsRuleHints";
 import { ProductCpscRules, useProductCpscRules, matchSkuToProduct } from "@/app/components/ProductCpscRules";
 // A backdrop click used to discard everything typed into these modals. The guard
@@ -1338,7 +1345,7 @@ function Platform({ session, newQuote = null }) {
         </div>
       )}
 
-      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} factories={factories} clientNames={clients.map((c) => c.name).filter((n) => n !== "Unassigned")} contacts={contacts} onSaveFactory={saveFactoryPreset} onSaveContact={saveContact} userEmail={userEmail} staff={staff} />}
+      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} clientNames={clients.map((c) => c.name).filter((n) => n !== "Unassigned")} contacts={contacts} onSaveContact={saveContact} userEmail={userEmail} staff={staff} />}
       {/* Opens after a SKU change is saved. onDone reloads so the list shows the
           result; the modal stays up because the report IS the result. */}
       {skuChoice && <QuoteSkuChoiceModal product={skuChoice.product} quote={skuChoice.quote} updatedBy={userEmail} onClose={() => setSkuChoice(null)} onDone={() => load()} />}
@@ -2563,7 +2570,18 @@ function SelectField({ label, k, placeholder, options, hint, f, set }) {
   );
 }
 
-function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [], contacts = [], onSaveFactory, onSaveContact, userEmail, staff = [] }) {
+// TWO PROPS WENT WITH THE FREE-TEXT FACTORY SAVE.
+//
+// onSaveFactory, because nothing here writes a preset any more. Platform still
+// owns saveFactoryPreset and the Directory panel still edits the library through
+// it, which is where factory records belong.
+//
+// `factories`, because nothing here reads it. It was the factory_presets list and
+// it fed the saved-factory chips; the fill needs presets too, but it gets them
+// from useFactoryCompanies, which fetches companies, contacts and presets
+// together so the select and the fill cannot disagree about what a factory is.
+// Platform keeps its own factories state for DirectoryPanel and FactoryList.
+function QuoteForm({ initial, onClose, onSave, clientNames = [], contacts = [], onSaveContact, userEmail, staff = [] }) {
   // The form this guard exists for. About eleven of its edits are click-driven --
   // the saved-factory chips, the client suggestions, picking an HTS code, Add
   // tier, Preset qtys, auto, the Air/Ocean toggles -- and not one of them fires
@@ -2610,8 +2628,18 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   const [f, setF] = useState(() => ({ ...initial, tiers: (initial.tiers && initial.tiers.length ? initial.tiers.map((t) => ({ ...t })) : [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }]) }));
   const [fbTier, setFbTier] = useState(null); // index of tier whose freight builder is open
   const [showClientSug, setShowClientSug] = useState(false);
-  const [savingFactory, setSavingFactory] = useState(false);
-  const [factoryPresetName, setFactoryPresetName] = useState("");
+  // savingFactory and factoryPresetName went with the free-text save. The factory
+  // library is still editable, from the Directory panel, which is where company
+  // data belongs -- a quote form that could mint a company by typing is exactly
+  // how UPM came to exist alongside Universal Plastic and Metal Manufacturing LTD.
+  //
+  // The factory directory, and which company is being asked about. addingFactory
+  // holds the typed name so "+ Add new factory Baoquan" opens the modal with
+  // something in it; pickContact holds the company whose contacts need choosing.
+  const { companies: factoryCompanies, contacts: factoryContacts,
+          presets: factoryPresets, addCompany } = useFactoryCompanies();
+  const [addingFactory, setAddingFactory] = useState(null);
+  const [pickContact, setPickContact] = useState(null);
   const [savingContact, setSavingContact] = useState(false);
   const set = (k) => (e) => {
     const v = e && e.target ? (e.target.type === "checkbox" ? e.target.checked : e.target.value) : e;
@@ -2729,25 +2757,62 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
     if (ok) setSavingContact(false);
   };
 
-  const applyFactory = (preset) => {
+  // ── PICKING A FACTORY FILLS THE OTHER FIVE FIELDS ─────────────────────────
+  // applyFactory no longer writes `factory` -- the select owns that, and a fill
+  // that could set a name no company answers to would put back the free text this
+  // change removes. It writes the five fields BENEATH the name and nothing else.
+  //
+  // CLEARED FIRST, ALWAYS. Choosing a different factory has to leave no trace of
+  // the last one: a contact from the previous factory sitting under a new name is
+  // worse than a blank, because it reads as somebody who works there.
+  //
+  // ON CHANGE ONLY. Opening an existing quote never runs this -- it is called
+  // from the select's onPick, which only fires when somebody chooses.
+  const applyFactory = (company, contact) => {
+    const fill = factoryFillFor(company, { contacts: factoryContacts, presets: factoryPresets });
+    // WRITTEN ONCE EACH. An earlier version cleared country and leadTime here and
+    // then set them again below the spread -- correct, because the later key wins,
+    // but it read as a mistake and a reorder would have broken the fill silently.
+    // contactFieldsFrom always returns all three contact fields, blank where it has
+    // nothing, so the clear it used to need is built into its own answer.
     setF((p) => ({
       ...p,
-      factory: preset.factory || "", factoryContact: preset.factory_contact || "",
-      factoryEmail: preset.factory_email || "", factoryPhone: preset.factory_phone || "",
-      country: preset.country || "", leadTime: preset.lead_time || "",
+      ...contactFieldsFrom(contact, fill.preset, company),
+      country: fill.country,
+      leadTime: fill.leadTime,
     }));
   };
-  const doSaveFactory = async () => {
-    const name = factoryPresetName.trim() || f.factory.trim();
-    if (!name) return;
-    const ok = await onSaveFactory({
-      name,
-      factory: f.factory || null, factory_contact: f.factoryContact || null,
-      factory_email: f.factoryEmail || null, factory_phone: f.factoryPhone || null,
-      country: f.country || null, lead_time: f.leadTime || null,
-      created_by: userEmail || null,
-    });
-    if (ok) { setSavingFactory(false); setFactoryPresetName(""); }
+
+  // The select hands back a company, or null when cleared. One contact fills
+  // silently, several ask, none falls through to the preset -- the counting is in
+  // factoryFillFor so the popup and the silent path cannot disagree about who a
+  // company's contacts are.
+  const onPickFactory = (company) => {
+    if (!company) {
+      setF((p) => ({ ...p, factory: "", factoryContact: "", factoryEmail: "",
+                     factoryPhone: "", country: "", leadTime: "" }));
+      return;
+    }
+    setF((p) => ({ ...p, factory: company.name || "" }));
+    const fill = factoryFillFor(company, { contacts: factoryContacts, presets: factoryPresets });
+    if (fill.contacts.length > 1) {
+      // Filled after the choice rather than before it, so the fields do not flash
+      // one contact and settle on another.
+      setPickContact({ company, contacts: fill.contacts });
+      return;
+    }
+    applyFactory(company, fill.contacts[0] || null);
+  };
+
+  // The created company is selected immediately and its row is handed to the
+  // directory, so the select finds it without waiting for a refetch. A brand-new
+  // factory has no contacts, so this always takes the silent path.
+  const onFactoryCreated = (type, company) => {
+    setAddingFactory(null);
+    if (!company || type !== 'factory') return;
+    addCompany(company);
+    setF((p) => ({ ...p, factory: company.name || "" }));
+    applyFactory(company, null);
   };
 
   // Read-only, and only the active codes: a retired one should not be offered for a
@@ -3148,6 +3213,40 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
           <CodeModal data={addingCode} onClose={() => setAddingCode(null)} onSaved={onCodeAdded} />
         </div>
       )}
+      {/* ── THE TWO FACTORY MODALS, AS SIBLINGS ─────────────────────────────
+          Outside S.modal and before it, wrapped the way CodeModal above is.
+          S.modalBody is a scroll container and both of these are fixed-position
+          overlays; nesting one inside the other is the arrangement HtsField
+          avoids for exactly this reason. The stopPropagation wrapper keeps a
+          click inside either of them from reaching the quote form backdrop. */}
+      {pickContact && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <ContactPickModal
+            company={pickContact.company}
+            contacts={pickContact.contacts}
+            onPick={(contact) => { applyFactory(pickContact.company, contact); setPickContact(null); }}
+            onClose={() => {
+              // Closing without choosing still fills what does not depend on a
+              // person -- country and lead time are facts about the factory. The
+              // three contact fields stay blank and typable, which is the honest
+              // result of declining to pick one.
+              applyFactory(pickContact.company, null);
+              setPickContact(null);
+            }} />
+        </div>
+      )}
+      {addingFactory && (
+        <div onClick={(e) => e.stopPropagation()}>
+          {/* initialType is what makes the guard in onFactoryCreated unreachable
+              in normal use. Without it this opens set to Client, and somebody who
+              clicked "add new factory" would create a client that the handler
+              then declines to select -- a dead end with nothing said. */}
+          <CreateCompanyModal
+            initialType="factory"
+            onClose={() => setAddingFactory(null)}
+            onCreated={onFactoryCreated} />
+        </div>
+      )}
       <div ref={cardRef} style={S.modal} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
           <h2 style={S.modalTitle}>{initial.id ? "Edit Quote" : "New Quote"}</h2>
@@ -3476,39 +3575,49 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
           </FormSection>
 
           <FormSection icon={<Factory size={15} />} title="Factory / Facility Info">
-            <div style={{ gridColumn: "1 / -1" }}>
-              {factories.length > 0 && (
-                <div style={{ marginBottom: 4 }}>
-                  <div style={S.presetLabel}>Saved factories — tap to auto-fill</div>
-                  <div style={S.presetPills}>
-                    {factories.map((p) => (
-                      <button key={p.id} type="button" style={S.factoryPill} onClick={() => applyFactory(p)}>
-                        <Factory size={12} /> {p.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-            <Field label="Factory" k="factory" placeholder="Factory / facility name" f={f} set={set} />
+            {/* ── THE FACTORY IS CHOSEN, NOT TYPED ──────────────────────────
+                The saved-factory chips are gone with the free text. They wrote
+                all six fields from a preset, which was a second door to the same
+                place and one that could set a factory name no company answers
+                to. One door now, and it is the directory.
+
+                The stored value renders directly -- a quote whose factory matches
+                no company shows exactly what it has always said, with a caption,
+                until somebody changes it. Script 71 re-points the 52 rows in that
+                state; this rule is what keeps the next one visible. */}
+            {/* THREE TRACKS WIDE, because a factory name is the longest value in
+                this section and one track of a minmax(150px, 1fr) grid truncates
+                most of them. span rather than a fixed width: the grid is
+                auto-fit, so the track COUNT changes with the modal width, and a
+                span degrades with it instead of overflowing. */}
+            <FactorySelect value={f.factory} companies={factoryCompanies}
+              onPick={onPickFactory}
+              onAddNew={(seed) => setAddingFactory({ name: seed || "" })}
+              fieldStyle={{ ...S.field, gridColumn: "span 3" }}
+              labelStyle={S.fieldLabel} inputStyle={S.input} />
+            {/* All five stay editable after a fill. The fill is a starting point
+                from the directory, not a claim that this quote must match it --
+                a factory contact changes more often than a company record does. */}
             <Field label="Contact" k="factoryContact" placeholder="Name" f={f} set={set} />
             <Field label="Email" k="factoryEmail" placeholder="email@factory.com" f={f} set={set} />
+            {/* ── THE ROW BREAK ──────────────────────────────────────────────
+                S.formGrid is repeat(auto-fit, minmax(150px, 1fr)), so the number
+                of tracks depends on how wide the modal is -- six at about
+                1000px, fewer below that. Without this, Phone would join row 1 at
+                seven tracks and Email would fall to row 2 at five, and the
+                arrangement would only be the intended one at one width.
+
+                A full-width item ends the row wherever it lands, so the split
+                holds at every size while the tracks stay fluid.
+
+                THE NEGATIVE MARGIN IS NOT A FUDGE. A zero-height row still sits
+                between two 12px gaps, so this break would otherwise be 24px
+                where every other row change in this form is 12px. Remove it if
+                a wider break is wanted here. */}
+            <div aria-hidden="true" style={{ gridColumn: "1 / -1", height: 0, marginBottom: -12 }} />
             <Field label="Phone" k="factoryPhone" placeholder="Phone" f={f} set={set} />
             <Field label="Country" k="country" placeholder="e.g. China" f={f} set={set} />
             <Field label="Lead Time" k="leadTime" placeholder="e.g. 45 days" f={f} set={set} />
-            <div style={{ gridColumn: "1 / -1" }}>
-              {!savingFactory ? (
-                <button type="button" style={S.saveFactoryBtn} disabled={!f.factory} onClick={() => { setFactoryPresetName(f.factory || ""); setSavingFactory(true); }}>
-                  + Save this factory to the team library
-                </button>
-              ) : (
-                <div style={S.saveFactoryRow}>
-                  <input style={{ ...S.input, flex: 1 }} value={factoryPresetName} onChange={(e) => setFactoryPresetName(e.target.value)} placeholder="Name this preset (e.g. Emily's Factory)" />
-                  <button type="button" style={S.primaryBtnSm} onClick={doSaveFactory}>Save</button>
-                  <button type="button" style={S.ghostBtnSm} onClick={() => setSavingFactory(false)}>Cancel</button>
-                </div>
-              )}
-            </div>
           </FormSection>
 
           <FormSection icon={<Package size={15} />} title="Carton Info">

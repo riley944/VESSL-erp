@@ -110,6 +110,10 @@ import { CreateProductModal } from '@/app/components/CreateProductModal';
 // so an exported date cannot land a day early west of Greenwich.
 import { excelDate, loadExcelJS } from '@/lib/excel';
 import { ExportButton } from '@/app/components/ExportButton';
+// Extracted from this file so app/quotes.jsx can create a factory without free
+// text. page.jsx imports quotes.jsx, so this could not have stayed here and been
+// imported the other way.
+import { CreateCompanyModal } from '@/app/components/CreateCompanyModal';
 // Filters that survive going into a detail view and coming back, and die on reload.
 // See the note at the top of lib/pageState.js for what may and may not go in it.
 import { usePageState } from '@/lib/pageState';
@@ -8009,71 +8013,15 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
 }
 
 // ── Create Company Modal ──────────────────────────────────────────────────────
-function CreateCompanyModal({ onClose, onCreated }) {
-  // Plain form, every field an input or select. No click-driven setters at all.
-  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
-  const [form, setForm] = useState({name:'',type:'client',email:'',phone:'',website:'',vendor_number:'',pallet_info:'',billing_address:'',shipping_address:'',cname:'',cemail:'',cphone:''});
-  const f = k => v => setForm(prev=>({...prev,[k]:v}));
-  const submit = async () => {
-    if (!form.name) { alert('Company name required'); return; }
-    const { data: co, error } = await SB.from('companies').upsert({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
-    if (error) { alert('Error: '+error.message); return; }
-    // PRIMARY ONLY IF THIS COMPANY HAS NOBODY YET. This modal is an UPSERT on
-    // (name, type), so "create" can adopt a company that already exists and
-    // already has contacts -- and hardcoding true here is one of the ways three
-    // companies ended up with several primaries. The count is one extra read on
-    // a path somebody takes once.
-    if (form.cname) {
-      const { count } = await SB.from('contacts')
-        .select('id', { count:'exact', head:true }).eq('company_id', co.id);
-      await SB.from('contacts').insert({company_id:co.id,full_name:form.cname,email:form.cemail||null,phone:form.cphone||null,is_primary:!(count||0)});
-    }
-    // Mirror into Quotes directory so it appears in quote autofill
-    try {
-      if (form.type==='client') {
-        await SBQ.from('client_contacts').insert({client:form.name,contact:form.cname||null,email:form.cemail||null,phone:form.phone||null}).select();
-      } else if (form.type==='factory') {
-        await SBQ.from('factory_presets').insert({factory:form.name,factory_email:form.email||null,factory_phone:form.phone||null}).select();
-      }
-    } catch(e) {}
-    // THE TYPE TRAVELS BACK, because the list is fetched per type and the page
-    // cannot otherwise know which tab the new company landed on. Reading it off
-    // the refetched rows would mean guessing which row is new.
-    onCreated(co.type);
-  };
-  return (
-    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
-      <div ref={cardRef} className="modal-box">
-        <div className="modal-head"><h3>New Company</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
-        <div className="modal-body">
-          <div className="form-row-2">
-            <div><label>Company Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
-            <div><label>Type</label><select className="form-select" value={form.type} onChange={e=>f('type')(e.target.value)}>{COMPANY_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></div>
-          </div>
-          <div className="form-row-2">
-            <div><label>Email</label><input type="email" className="form-input" value={form.email} onChange={e=>f('email')(e.target.value)} /></div>
-            <div><label>Phone</label><input className="form-input" value={form.phone} onChange={e=>f('phone')(e.target.value)} /></div>
-          </div>
-          <div className="form-row"><label>Website</label><input className="form-input" value={form.website} onChange={e=>f('website')(e.target.value)} placeholder="https://" /></div>
-          <div className="form-row"><label>Billing Address</label><textarea className="form-input" rows={3} value={form.billing_address} onChange={e=>f('billing_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
-          <div className="form-row"><label>Shipping Address <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(prefills the ship-to on new orders)</span></label><textarea className="form-input" rows={3} value={form.shipping_address} onChange={e=>f('shipping_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
-          {form.type==='client' && (
-            <div className="form-row-2">
-              <div><label>Vendor # <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(internal)</span></label><input className="form-input" value={form.vendor_number} onChange={e=>f('vendor_number')(e.target.value)} /></div>
-              <div><label>Pallet info</label><input className="form-input" value={form.pallet_info} onChange={e=>f('pallet_info')(e.target.value)} placeholder="e.g. 48x40 GMA" /></div>
-            </div>
-          )}
-          <span className="form-section-label">Primary Contact</span>
-          <div className="form-row-2">
-            <div><label>Full Name</label><input className="form-input" value={form.cname} onChange={e=>f('cname')(e.target.value)} /></div>
-            <div><label>Email</label><input type="email" className="form-input" value={form.cemail} onChange={e=>f('cemail')(e.target.value)} /></div>
-          </div>
-        </div>
-        <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={submit}>Save Company</button></div>
-      </div>
-    </div>
-  );
-}
+// MOVED to app/components/CreateCompanyModal.jsx, imported at the top of this
+// file. The quote form needs to create a factory now that its factory box is a
+// closed select, and page.jsx imports app/quotes.jsx rather than the other way
+// round -- so exporting it from here would have made a cycle. Same move HtsField,
+// CodeModal and OwnerSelect already made.
+//
+// Its onCreated takes a second argument now, the created row, which the quote
+// form uses to select what it just made. The call site above passes a handler
+// that ignores it, so nothing about this page changed.
 
 // ── Create Shipment Modal ─────────────────────────────────────────────────────
 function CreateShipmentModal({ onClose, onCreated }) {
