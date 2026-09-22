@@ -101,11 +101,14 @@ function cartonForSize(it, e) {
 import { useDirtyGuard } from '@/app/components/ModalGuard';
 import { RenameSkuModal, QuoteSkuChoiceModal } from '@/app/components/RenameSkuModal';
 import { CreateProductModal } from '@/app/components/CreateProductModal';
-// excelDate only. This file carries its own loadExcelJS at :5944, and lib/excel.js says
-// consolidating that copy is a change of its own -- importing both names here would
-// collide with it. excelDate is the half that matters for a date cell: it builds the
-// Date at NOON, so an exported date cannot land a day early west of Greenwich.
-import { excelDate } from '@/lib/excel';
+// BOTH NAMES NOW. This file used to keep its own loadExcelJS, so importing the
+// shared one would have been a duplicate binding -- which is why only excelDate
+// came across when lib/excel.js was written. That local copy is gone and this is
+// the single loader; the note where it stood records the swap.
+//
+// excelDate is the half that matters for a date cell: it builds the Date at NOON,
+// so an exported date cannot land a day early west of Greenwich.
+import { excelDate, loadExcelJS } from '@/lib/excel';
 import { ExportButton } from '@/app/components/ExportButton';
 // Filters that survive going into a detail view and coming back, and die on reload.
 // See the note at the top of lib/pageState.js for what may and may not go in it.
@@ -4202,6 +4205,39 @@ const COMPANY_TYPES = [
   ['freight_forwarder', 'Freight Forwarder'],
 ];
 
+// ── EXPORT PLUMBING, SHARED BY EVERY EXPORT IN THIS FILE ────────────────────
+// Both of these were local to Products. Companies exports too and is declared
+// above it, so it could not see them -- and a second copy of a two-line helper is
+// how one export writes products-2026-09-22.xlsx and another writes something
+// subtly different. Module scope, one definition, both callers.
+const stampToday = () => {
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+};
+const downloadFile = (blob, filename) => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+};
+
+// ── THE TWO QUOTE SPELLINGS THAT ARE THE SAME FIRM ──────────────────────────
+// quotes.factory is typed by hand, so one factory arrives under several
+// spellings. These two are the same company beyond argument and are folded onto
+// the company name wherever a factory-to-product list is built.
+//
+// Anything NOT in this table keeps its own name, deliberately. The live data also
+// carries "emily" -- a person, not a factory; Emily Chen is the contact at Fuzhou
+// Xiangxing -- and folding that would assert a quote was placed with a factory
+// nobody has named. It stays visible under its own name so it can be corrected at
+// source rather than hidden by the export.
+const FACTORY_ALIASES = {
+  'liaoning kangping plastic industry co.,ltd': 'Liaoning Kangping Plastic Industry Co., Ltd',
+  'baoquan': 'Shenzhen Baoquan Industrial Co., Ltd',
+};
+const foldFactoryName = n => FACTORY_ALIASES[String(n || '').trim().toLowerCase()] || String(n || '').trim();
+
 function Companies() {
   const TYPE_LABELS = { client:'Clients', factory:'Factories', carrier:'Carriers', freight_forwarder:'Freight Forwarders' };
   const TYPE_KEYS = Object.keys(TYPE_LABELS);
@@ -4230,6 +4266,281 @@ function Companies() {
         (c.email||'').toLowerCase().includes(ui.search.toLowerCase()))
     : rows;
 
+  // ── EXPORT WHAT IS ON SCREEN ──────────────────────────────────────────────
+  // shown, not rows: the tab already decides the type and the search already
+  // narrows it, so the file is the list. Exporting the unfiltered set would make
+  // the button a different feature wearing the same label -- the rule Testing and
+  // Products settled on.
+  const [exporting, setExporting] = useState(false);
+  const typeKey   = TYPE_KEYS[ui.tab];
+  const typeLabel = TYPE_LABELS[typeKey];
+  const fileBase  = 'KUI_' + typeLabel.replace(/\s+/g, '_') + '_' + stampToday();
+
+  // ONE COLUMN LIST, TWO FORMATS, the shape every export in this codebase uses:
+  // [header, read, kind]. Both writers walk it, so XLSX and CSV cannot drift and
+  // a column added here reaches both.
+  //
+  // The primary contact rides along because load() already embeds contacts -- it
+  // costs no query and it is the first thing anybody opens a company card to see.
+  const primaryOf = c => (c.contacts||[]).find(x=>x.is_primary) || (c.contacts||[])[0] || {};
+  const COMPANY_COLS = [
+    ['Name',             c => c.name || ''],
+    ['Contact',          c => primaryOf(c).full_name || ''],
+    ['Contact email',    c => primaryOf(c).email || ''],
+    ['Contact phone',    c => primaryOf(c).phone || ''],
+    ['Email',            c => c.email || ''],
+    ['Phone',            c => c.phone || ''],
+    ['Website',          c => c.website || ''],
+    ['Vendor number',    c => c.vendor_number || ''],
+    ['Billing address',  c => c.billing_address || ''],
+    ['Shipping address', c => c.shipping_address || ''],
+    ['Pallet info',      c => c.pallet_info || ''],
+    ['Notes',            c => c.po_notes || ''],
+  ];
+
+  // Factories get six more columns from vessl.factory_presets, which is the
+  // directory people actually maintain -- companies has no contact, country or
+  // lead time at all. THE PRESET WINS on the three fields both can answer, and the
+  // company values keep their own columns above, so the coalesce hides nothing.
+  const FACTORY_COLS = [
+    ['Name',             c => c.name || ''],
+    ['Contact',          c => (c.preset||{}).factory_contact || primaryOf(c).full_name || ''],
+    ['Email',            c => (c.preset||{}).factory_email || c.email || ''],
+    ['Phone',            c => (c.preset||{}).factory_phone || c.phone || ''],
+    ['Country',          c => (c.preset||{}).country || ''],
+    ['Lead time',        c => (c.preset||{}).lead_time || ''],
+    ['HTS',              c => (c.preset||{}).hts || ''],
+    ['Website',          c => c.website || ''],
+    ['Vendor number',    c => c.vendor_number || ''],
+    ['Billing address',  c => c.billing_address || ''],
+    ['Shipping address', c => c.shipping_address || ''],
+    ['Pallet info',      c => c.pallet_info || ''],
+    ['Notes',            c => c.po_notes || ''],
+    ['Company email',    c => c.email || ''],
+    ['Company phone',    c => c.phone || ''],
+  ];
+
+  const PAIR_COLS = [
+    ['Factory',   r => r.factory || ''],
+    ['SKU',       r => r.sku || ''],
+    ['Product',   r => r.product_name || ''],
+    ['Source',    r => r.source || ''],
+    ['Last date', r => r.last_date || null, 'date'],
+  ];
+
+  // FETCHED ON DEMAND, NOT AT PAGE LOAD. Sheet 2 needs four tables this page has
+  // never had a reason to read, and pulling them on every visit to the Clients tab
+  // would be a real cost for a button most people never press.
+  const fetchFactoryExtras = async () => {
+    const [pres, po, poi, qs, prods] = await Promise.all([
+      SB.from('factory_presets').select('factory,factory_contact,factory_email,factory_phone,country,lead_time,hts'),
+      SB.from('purchase_orders').select('id,factory_company_id,order_date').not('factory_company_id','is',null),
+      SB.from('purchase_order_items').select('purchase_order_id,product_id').not('product_id','is',null),
+      SB.from('quotes').select('factory,product_id,quote_date,created_at').not('product_id','is',null),
+      SB.from('products').select('id,sku,name'),
+    ]);
+    const err = [pres,po,poi,qs,prods].find(r => r.error);
+    if (err) throw new Error(err.error.message);
+    return { presets: pres.data||[], pos: po.data||[], poItems: poi.data||[],
+             quotes: qs.data||[], products: prods.data||[] };
+  };
+
+  // ── FACTORY x PRODUCT ─────────────────────────────────────────────────────
+  // Built exactly as the KUI_Factory_List script built it, and the two halves are
+  // deliberately NOT merged: a product on a purchase order was actually made by
+  // that factory, while the same pairing on a quote is an intention. One Source
+  // column says which, and collapsing them would assert the stronger claim free.
+  //
+  // Keyed on factory + sku + product + source with the LATEST date kept, so a
+  // factory quoted for one product five times is one row, not five.
+  const buildPairs = (extras, shownFactories) => {
+    const prodById = new Map(extras.products.map(p => [p.id, p]));
+    const poById   = new Map(extras.pos.map(p => [p.id, p]));
+    const coByName = new Map(shownFactories.map(c => [String(c.name||'').trim().toLowerCase(), c]));
+    const q = ui.search.trim().toLowerCase();
+    const searchOk = n => !q || String(n||'').toLowerCase().includes(q);
+
+    const out = new Map();
+    const add = (factory, prod, source, date) => {
+      if (!factory || !prod) return;
+      const key = [factory, prod.sku||'', prod.name||'', source].join(' ');
+      const prev = out.get(key);
+      if (prev) { if (String(date||'') > String(prev.last_date||'')) prev.last_date = date; return; }
+      out.set(key, { factory, sku: prod.sku, product_name: prod.name, source, last_date: date });
+    };
+
+    // PO side: the foreign key, populated on every purchase order, and the link to
+    // trust. Restricted to the factories on sheet 1 so the two sheets agree.
+    extras.poItems.forEach(i => {
+      const po = poById.get(i.purchase_order_id);
+      if (!po) return;
+      const co = shownFactories.find(c => c.id === po.factory_company_id);
+      if (!co) return;
+      add(co.name, prodById.get(i.product_id), 'PO', po.order_date || null);
+    });
+
+    // Quote side: free text, matched case-insensitively after the alias fold. A
+    // name that resolves to a company only travels if that company is on sheet 1;
+    // one that resolves to nothing keeps its own name and is filtered by the same
+    // search the tab uses, so the file stays the list.
+    extras.quotes.forEach(qr => {
+      const folded = foldFactoryName(qr.factory);
+      if (!folded) return;
+      const co = coByName.get(folded.toLowerCase());
+      const date = qr.quote_date || (qr.created_at ? String(qr.created_at).slice(0,10) : null);
+      if (co) add(co.name, prodById.get(qr.product_id), 'Quote', date);
+      else if (searchOk(folded)) add(folded, prodById.get(qr.product_id), 'Quote', date);
+    });
+
+    return [...out.values()].sort((a,b) =>
+      String(a.factory).localeCompare(String(b.factory)) ||
+      String(a.source).localeCompare(String(b.source)) ||
+      String(a.sku||'').localeCompare(String(b.sku||'')));
+  };
+
+  // Sheet 1 rows for the Factories tab: the shown companies with their preset
+  // attached, joined on the trimmed lowercase name the same way everything else
+  // in this codebase matches a factory string to a company.
+  const withPresets = (companies, presets) => {
+    const byName = new Map(presets.map(p => [String(p.factory||'').trim().toLowerCase(), p]));
+    return companies.map(c => ({ ...c, preset: byName.get(String(c.name||'').trim().toLowerCase()) || null }));
+  };
+
+  const sheet = (wb, name, cols, data) => {
+    const ws = wb.addWorksheet(name);
+    ws.addRow(cols.map(c => c[0]));
+    data.forEach(r => ws.addRow(cols.map(c => c[2] === 'date' ? excelDate(c[1](r)) : c[1](r))));
+    ws.getRow(1).font = { bold: true };
+    ws.views = [{ state:'frozen', ySplit:1 }];
+    ws.autoFilter = { from:{ row:1, column:1 }, to:{ row:1, column:cols.length } };
+    cols.forEach((c, i) => {
+      const col = ws.getColumn(i + 1);
+      if (c[2] === 'date') col.numFmt = 'yyyy-mm-dd';
+      let w = String(c[0]).length;
+      data.forEach(r => {
+        const v = c[1](r);
+        const len = v == null ? 0 : (c[2] === 'date' ? 10 : String(v).length);
+        if (len > w) w = len;
+      });
+      col.width = Math.min(Math.max(w + 3, 9), 52);
+    });
+  };
+
+  // ── THE ABOUT SHEET ───────────────────────────────────────────────────────
+  // A count with no provenance is a number somebody has to guess at later, and
+  // the covering email always goes missing before the attachment does. This says
+  // where the rows came from, which link is trustworthy, and what is known to be
+  // imperfect about the one that is not.
+  //
+  // EVERY FIGURE IS COMPUTED FROM THE ROWS ACTUALLY WRITTEN. The one-off script
+  // printed its measured totals as prose -- 70 POs, 8 factories, 88 products --
+  // which was true of that file and would be a lie here the moment somebody types
+  // in the search box. The principle is stated; the numbers are counted.
+  const aboutRows = (factoryRows, pairs) => {
+    const poRows = pairs.filter(r => r.source === 'PO').length;
+    const qRows  = pairs.filter(r => r.source === 'Quote').length;
+    const known  = new Set(factoryRows.map(c => String(c.name||'').trim().toLowerCase()));
+    // Named because they are in the file, not because they were in the data the
+    // day this was written.
+    const unmatched = [...new Set(pairs.map(r => r.factory).filter(n => !known.has(String(n).trim().toLowerCase())))].sort();
+    return [
+      ['Export', 'King Universal - Factories'],
+      ['Generated', new Date()],
+      ['Source', 'vessl schema, read-only'],
+      ['Search in force', ui.search.trim() || '(none)'],
+      [],
+      ['Factories on sheet 1', factoryRows.length],
+      ['Factory x product rows', pairs.length],
+      ['  of which from purchase orders', poRows],
+      ['  of which from quotes', qRows],
+      [],
+      ['WHAT THE SOURCE COLUMN MEANS', ''],
+      ['PO', 'the product appears on a purchase order placed with this factory. purchase_orders.factory_company_id is a real foreign key, so this link is exact.'],
+      ['Quote', 'the product was quoted with this factory named on the quote. quotes.factory is free text typed by hand, so it reaches further than the purchase orders do but is less reliable.'],
+      ['', 'The two are kept as separate rows on purpose. A product on a purchase order was actually made by that factory; the same pairing on a quote is an intention. Merging them would assert the stronger of the two claims for free.'],
+      [],
+      ['TWO QUOTE SPELLINGS ARE FOLDED ONTO THEIR COMPANY', ''],
+      ['LIAONING KANGPING PLASTIC INDUSTRY CO.,LTD', 'counted as Liaoning Kangping Plastic Industry Co., Ltd - the same name without the space after the comma. Left alone it splits one factory across two entries, one from purchase orders and one from quotes.'],
+      ['Baoquan', 'counted as Shenzhen Baoquan Industrial Co., Ltd - shorthand for the same firm.'],
+      [],
+      ['UNMATCHED QUOTE TEXT KEEPS ITS OWN NAME', ''],
+      ['', 'A factory name typed on a quote that matches no company row is listed under whatever was typed, rather than being folded into a company nobody named or dropped. It is visible here so it can be corrected at source.'],
+      ['In this file', unmatched.length ? unmatched.join(', ') : '(none)'],
+      ['emily', 'when it appears, it is a person rather than a factory - Emily Chen is the contact at Fuzhou Xiangxing Textile - and the quote filed under her name needs reassigning at source.'],
+      [],
+      ['ADDRESSES COME FROM THE COMPANY RECORD', ''],
+      ['', 'Billing and shipping addresses are companies.billing_address and companies.shipping_address. They are not held on the factory preset, so a factory with contact details and a lead time can still show no address - that means the company record has none, not that the export dropped it.'],
+    ];
+  };
+
+  const exportXlsx = async () => {
+    if (!shown.length) return;
+    setExporting(true);
+    try {
+      const isFactory = typeKey === 'factory';
+      const extras = isFactory ? await fetchFactoryExtras() : null;
+      const ExcelJS = await loadExcelJS();
+      const wb = new ExcelJS.Workbook();
+      wb.creator = 'VESSL'; wb.created = new Date();
+      if (isFactory) {
+        const withP = withPresets(shown, extras.presets);
+        const pairs = buildPairs(extras, shown);
+        sheet(wb, 'Factories', FACTORY_COLS, withP);
+        sheet(wb, 'Factory x Product', PAIR_COLS, pairs);
+        // Third sheet, not first: the data is what somebody opened the file for,
+        // and the notes are what they read when a number surprises them.
+        const ws3 = wb.addWorksheet('About');
+        aboutRows(shown, pairs).forEach(r => ws3.addRow(r));
+        ws3.getRow(1).font = { bold: true };
+        ws3.getCell('B2').numFmt = 'yyyy-mm-dd hh:mm';
+        ws3.getColumn(1).width = 44;
+        ws3.getColumn(2).width = 104;
+      } else {
+        sheet(wb, typeLabel, COMPANY_COLS, shown);
+      }
+      const buf = await wb.xlsx.writeBuffer();
+      downloadFile(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+                   fileBase + '.xlsx');
+    } catch (e) {
+      alert('Could not build the export: ' + ((e && e.message) || e));
+    }
+    setExporting(false);
+  };
+
+  // CSV. EVERY field quoted, not just the ones that need it -- a conditional quote
+  // has to decide what "needs" means for an address holding a comma or a newline,
+  // and that decision is where CSV writers go wrong. CRLF and a BOM, both for
+  // Excel: without the BOM an accented company name arrives mangled.
+  const exportCsv = async () => {
+    if (!shown.length) return;
+    setExporting(true);
+    try {
+      const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+      const table = (cols, data) => [
+        cols.map(c => cell(c[0])).join(','),
+        ...data.map(r => cols.map(c => cell(c[1](r))).join(',')),
+      ];
+      let lines;
+      if (typeKey === 'factory') {
+        const extras = await fetchFactoryExtras();
+        // TWO TABLES, ONE FILE, a blank line between them -- the CSV answer to the
+        // workbook's second sheet. Two files would be one more to lose.
+        lines = [
+          ...table(FACTORY_COLS, withPresets(shown, extras.presets)),
+          '',
+          ...table(PAIR_COLS, buildPairs(extras, shown)),
+        ];
+      } else {
+        lines = table(COMPANY_COLS, shown);
+      }
+      const csv = '﻿' + lines.join('\r\n') + '\r\n';
+      downloadFile(new Blob([csv], { type:'text/csv;charset=utf-8;' }), fileBase + '.csv');
+    } catch (e) {
+      alert('Could not build the export: ' + ((e && e.message) || e));
+    }
+    setExporting(false);
+  };
+
   return (
     <>
       {/* ── Type tabs ── */}
@@ -4248,6 +4559,22 @@ function Companies() {
           <input className="co-search" placeholder={'Search ' + TYPE_LABELS[TYPE_KEYS[ui.tab]].toLowerCase() + '…'} value={ui.search} onChange={e=>setUi('search', e.target.value)} />
         </div>
         <span style={{fontSize:12,color:'var(--muted)',fontFamily:'var(--mono)'}}>{shown.length} {shown.length===1 ? TYPE_KEYS[ui.tab].replace(/_/g,' ') : TYPE_LABELS[TYPE_KEYS[ui.tab]].toLowerCase()}</span>
+        {/* ── EXPORT, ONE PER CATEGORY ──────────────────────────────────────
+            A third flex child on the existing toolbar row -- co-toolbar is a
+            flex with a 14px gap, the search box takes flex:1 up to 340px and
+            the count sits beside it, so this needs no CSS of its own.
+
+            count={shown.length} is what makes the pill live, and it is the
+            filtered count deliberately: the button says how many rows are about
+            to leave, which is the same number printed to its left.
+
+            ONE CONTROL FOR FOUR CATEGORIES. Which tab is open decides the
+            columns, the sheet names and the filename, so there is nothing to
+            choose here -- the same reason Codes has one Export following its
+            toggle rather than one per list. */}
+        <ExportButton count={shown.length} busy={exporting}
+                      onXlsx={exportXlsx} onCsv={exportCsv} align="left"
+                      note={shown.length + ' ' + (shown.length === 1 ? 'row' : 'rows') + ', as searched'} />
       </div>
 
       {/* ── Grid ── */}
@@ -4912,17 +5239,10 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
       ['Sort', ui.sort ? (SORT_LABEL[ui.sort.col] || ui.sort.col) + (ui.sort.dir === 'desc' ? ' (Z to A)' : ' (A to Z)') : 'None - query order'],
     ];
   };
-  const stampToday = () => {
-    const d = new Date();
-    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-  };
-  const downloadFile = (blob, filename) => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    a.click();
-    setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
-  };
+  // stampToday and downloadFile moved to module scope above Companies, which
+  // exports too and sits above this component, so it could not have reached them
+  // here. Same reasoning as the ExcelJS loader: a second copy of a two-line helper
+  // is how two exports end up naming their files differently.
   // Only the building flag lives here. The pill, its menu and the open state are
   // ExportButton's, shared with Testing / Products so the two cannot drift.
   const [exporting, setExporting] = useState(false);
@@ -6204,16 +6524,13 @@ function Shipments({ onNewShipment, userEmail }) {
 }
 
 // ── Forwarder RFQ loop ────────────────────────────────────────────────────────
-function loadExcelJS() {
-  return new Promise(function(resolve, reject){
-    if (typeof window!=='undefined' && window.ExcelJS) { resolve(window.ExcelJS); return; }
-    var el = document.createElement('script');
-    el.src = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
-    el.onload = function(){ resolve(window.ExcelJS); };
-    el.onerror = function(){ reject(new Error('Could not load the Excel engine — check the connection and try again.')); };
-    document.head.appendChild(el);
-  });
-}
+// THE LOCAL loadExcelJS IS GONE, and lib/excel.js is imported at the top instead.
+// It was a character-for-character second copy of that file -- same CDN, same
+// pinned 4.4.0, same window.ExcelJS cache -- kept only because the two would have
+// collided as bindings. lib/excel.js has said since it was written that this file
+// held the last duplicate and that consolidating it was a change of its own; this
+// is that change. The three callers here need no edit: loadExcelJS() now resolves
+// to the import rather than to this function.
 
 // RFQ_* geometry now lives in lib/rfqSheet.js, imported above.
 
