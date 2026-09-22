@@ -2400,6 +2400,122 @@ loading entirely. Script and app change landed together.
 
 ---
 
+## Script 68, as run — 2026-09-22, two company rows for one factory become one
+
+`z0` on the first rehearsal, and preflight passed after one fix. Merges the
+company `UPM` into `Universal Plastic and Metal Manufacturing LTD` — confirmed the
+same firm — and removes the duplicate row.
+
+| | |
+|---|---|
+| kept | `9ea6b132-6d75-421a-b770-d9deea39f9f0` Universal Plastic and Metal Manufacturing LTD |
+| removed | `765b2a44-a681-4cff-860c-911fc577fa70` UPM |
+
+**The duplicate was born of an upsert, seven weeks later.** The kept row was
+created 2026-07-02 and carries all the history — 3 purchase orders, the only
+contact. `UPM` was created 2026-08-27 by somebody typing a short name rather than
+picking the company that already existed, and carries nothing.
+
+**Nothing pointed at it by key, and that was measured across all of them.**
+`vessl.companies` is referenced by **24 foreign key columns**, seven of them in the
+`portal` schema. The list came from `pg_constraint` rather than from enumeration,
+because a merge that leaves one orphaned key is a row nobody finds until it
+errors. All 24 held zero. `b1` re-asserted every one at run time, so a reference
+created between writing and running would have stopped the script.
+
+**So the only live references were two pieces of free text.** `quotes.factory` had
+2 rows reading `UPM`. Two *other* quotes already carried the full name and were
+deliberately left alone — an update matching them would have changed nothing while
+looking like it changed something.
+
+**The company merge was a no-op, and the script says so rather than pretending.**
+Every fillable column — phone, website, vendor_number, pallet_info, po_notes, both
+addresses — was null on **both** rows. The only populated field was email, and the
+kept row already had one, so never-overwrite left it alone. There is no `UPDATE`
+on `companies` in the script because there was nothing for it to do.
+
+**What that cost, stated rather than hidden.** `Crystal.zhang@upm.hk` was on the
+removed row and its preset. Both survivors hold `dp4@upm.hk`, which is non-null, so
+the never-overwrite rule dropped the Crystal address from structured data — no
+contact row held it. It survives in the script's JSON archive and on the
+`factory_email` of two quotes.
+
+**The preset merge is where data actually moved.** The kept preset gained
+`factory_contact`, `country` and `lead_time` — three fields it never had.
+
+**What preflight caught.** `b5` read `coalesce(factory_email, …)` with no cast, no
+`||`, no `string_agg`. Text at run time, but rule 7 exists because a UNION type
+mismatch takes down the whole statement rather than one branch.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| factory companies for this firm | 2 | **1** |
+| UPM company row | present | **gone** |
+| UPM preset | present | **gone** |
+| kept preset contact / country / lead | — / — / — | **Crystal / China / 45-50** |
+| kept preset email | `dp4@upm.hk` | unchanged |
+| quotes reading `UPM` | 2 | **0** |
+| quotes reading the full name | 2 | **4** |
+| kept company POs / contacts | 3 / 1 | 3 / 1 |
+| keys pointing at the removed id | 0 | **0** |
+
+---
+
+## Script 69, as run — 2026-09-22, one primary contact per company
+
+`z0` on the first rehearsal, preflight passed first time. Demotes every primary
+contact except the oldest where a company carried several, and promotes the oldest
+contact where a company carried none. Touches `contacts.is_primary` and nothing
+else.
+
+**Why the data drifted, and it was the app doing it.** `is_primary` was a free
+checkbox on the company card, so ticking one contact never cleared the others —
+and **both** automated insert paths hardcoded it true. Both write to a company
+obtained by `UPSERT`, so creating a company that already existed, or saving a quote
+naming a new contact at an established client, added a second primary to a company
+that already had one.
+
+**Why it mattered rather than being untidy.** Two readers answer "who is the
+contact here" — the company card and the export column — and both take the *first*
+row flagged primary. With several flagged, the answer was whichever row the query
+happened to return first, which is not a decision anybody made.
+
+**Oldest wins, and the tie-break earns its place.** Order is `created_at` then
+`id`. The contacts loaded in the bulk import of 2026-06-04 all carry an identical
+timestamp, so `created_at` alone cannot order them and `id` is what decides. The
+app uses the same order when it promotes after a removal, so the form and the
+repair agree about who is oldest.
+
+**Demote keeps the oldest already-flagged primary, not the oldest contact.** A
+company that deliberately chose a later contact as its primary keeps that choice;
+only the duplicates go.
+
+**The arithmetic closes:** 18 primaries − 5 demoted + 4 promoted = **17**, one for
+each company that has contacts.
+
+| | count |
+|---|---|
+| companies carrying several primaries | 3 — Buc-ee's 2, **Legoland 4**, Peppa Pig 2 |
+| rows demoted | 5 |
+| companies carrying contacts and no primary | 4 — BucketGolf, Johnnie-O, Madame Tussauds, Ritz Carlton |
+| rows promoted | 4 |
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| contacts | 30 | 30 |
+| companies with contacts | 17 | 17 |
+| rows flagged primary | 18 | **17** |
+| companies with **exactly one** primary | 10 | **17** |
+| companies with more than one | 3 | **0** |
+| companies with none | 4 | **0** |
+| the nine named rows | — | **3 kept true, 5 demoted false, 4 promoted true**, each checked by id |
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the
