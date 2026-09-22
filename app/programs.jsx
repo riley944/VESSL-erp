@@ -36,14 +36,22 @@ import { loadExcelJS, excelDate } from '@/lib/excel';
 // coming back, and are gone on reload. See the note at the top of lib/pageState.js.
 import { usePageState } from '@/lib/pageState';
 // COL, the per-stage colour table, went with the derived tiles and columns it
-// dressed, and the BOARD is still one ink -- the rail, the group headings and the
-// cards all use a single dark dot, because colour competing with the stale flag
-// would cost the only colour down there that means something.
+// dressed, and for a long time the BOARD was deliberately ONE INK -- a single
+// dark dot on every heading and every card -- so that no colour competed with
+// the stale flag, which was the only colour down there that meant anything.
 //
-// THE ANALYTICS TILES ARE THE ONE EXCEPTION, on Riley word. They match the
-// Insights cards, and those carry a coloured dot per metric; six identical grey
-// dots would read as a different component wearing the same shape. STAGE_ACCENT
-// below dresses the tiles and nothing else.
+// THAT DECISION IS NOW REVERSED, on request. The board is colour-coded by stage,
+// from one table that hangs off MANUAL_STAGES itself, so a stage carries its
+// colour to its dot, its drop target, its count tile and the stripe along the
+// bottom of every card sitting in it. Dragging a tile to another section
+// repaints it, which is the point -- a card visibly becomes where it was put.
+//
+// THE COST THE OLD RULE WAS PROTECTING IS REAL, AND IT IS THIS. Testing is red
+// and the stale flag is red, so on the Testing section a stripe and a warning
+// now share a colour. Stale is still WORDED on the tile -- "stale past 21" next
+// to the day count, not colour alone -- so the information survives the
+// collision. If the two do start being confused in practice, this note is why,
+// and the table below is the single place to change.
 
 
 const norm = t => (t || '').toLowerCase();
@@ -70,11 +78,17 @@ const norm = t => (t || '').toLowerCase();
 // Complete is on this list because it is a stage somebody sets -- a sales order
 // does NOT move a card, on Riley decision. It lives in its own section at the
 // bottom rather than among the pipeline, for the same reason Archived always did.
+//
+// THE COLOUR IS THE THIRD ELEMENT, on this list rather than in an object keyed
+// by the same strings beside it. Two lists keyed alike is exactly how a stage
+// gets added to one and forgotten in the other -- the fault the hardcoded
+// six-column grid already cost this page once. Everything that destructures
+// [k,l] is untouched by a third item, so no reader below had to move.
 const MANUAL_STAGES = [
-  ['quoted',         'Quoted'],
-  ['sampling',       'Sampling'],
-  ['testing',        'Testing'],
-  ['purchase_order', 'Purchase Order'],
+  ['quoted',         'Quoted',         '#8E8E93'],
+  ['sampling',       'Sampling',       '#c2790b'],
+  ['testing',        'Testing',        '#d6492f'],
+  ['purchase_order', 'Purchase Order', '#3461e0'],
 ];
 const COMPLETE = 'complete';
 // THE STORED VALUE STAYS complete, AND ONLY THE WORD CHANGES. Riley reads the end
@@ -88,14 +102,31 @@ const COMPLETE = 'complete';
 // screen is a question somebody has to stop and work out.
 const COMPLETE_LABEL = 'In Production';
 
-// Tile dots only, and the palette is the Insights one in pipeline order, so the
-// two pages read as one product rather than as two designs that both happen to
-// use circles.
-const STAGE_ACCENT = {
-  quoted:         '#0A84FF',
-  sampling:       '#5E5CE6',
-  testing:        '#30B050',
-  purchase_order: '#0066CC',
+// In Production is green and lives here rather than on MANUAL_STAGES, because
+// COMPLETE is not a pipeline stage -- it has its own section, its own list shape
+// and its own label constant already, and putting it on that list would put it
+// back among the sections every reader of that list renders.
+const COMPLETE_COLOR = '#0f9d6e';
+
+// THE ONE COLOUR TABLE, derived rather than typed a second time. The hexes are
+// the globals.css tokens -- warn, hot, info, ok -- so the board wears the
+// palette the rest of the app already carries instead of a sixth private one.
+// Quoted keeps its grey deliberately, since a stage nobody has acted on yet
+// should not be the loudest thing on the page.
+const STAGE_ACCENT = Object.fromEntries(
+  [...MANUAL_STAGES, [COMPLETE, COMPLETE_LABEL, COMPLETE_COLOR]].map(([k, , c]) => [k, c]));
+
+// No stage set has no colour of its own and must not borrow one. It is the
+// absence of an answer, and a pale grey is what says that.
+const accentOf = k => STAGE_ACCENT[k] || '#C7C7CC';
+
+// A drop target tints in its OWN colour now, rather than every section flashing
+// the same blue. Derived from the hex so a stage colour is still stated once and
+// once only -- a second rgba table would be the two-lists fault again, in a
+// place where nobody would think to look for it.
+const tintOf = (k, a) => {
+  const n = parseInt(accentOf(k).slice(1), 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
 };
 
 // 21 days, on Riley word. One threshold rather than one per stage: a per-stage
@@ -650,13 +681,14 @@ function SampleLog({ productId, programId, userEmail, busy = false, onTouched })
 // inside the card, so typed-but-unsaved text turns the backdrop click into a
 // confirm instead of a dismissal. Nothing here has to arrange that beyond using
 // Overlay.
-function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onProduct, onClose, onTouched }) {
+function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onProduct, onArchive, onClose, onTouched }) {
   return (
     // Wider than it was, because the card carries two tabs now. Still inside the
     // range the other modals in this app use, 420 through 640.
     <Overlay onClose={onClose} maxWidth={720}>
       <ProgramCard r={r} userEmail={userEmail} staff={staff} busy={busy}
-                   onStage={onStage} onOwner={onOwner} onProduct={onProduct} onTouched={onTouched} />
+                   onStage={onStage} onOwner={onOwner} onProduct={onProduct}
+                   onArchive={onArchive} onTouched={onTouched} />
     </Overlay>
   );
 }
@@ -1039,7 +1071,7 @@ const buildCardDoc = ({ r, general, sampling, samples, logo }) => {
 // Split out so the x can read guardedClose from context. The provider lives
 // INSIDE Overlay, so a hook called in ProgramDetail would sit above it and get
 // the default -- the close button has to be a child to be guarded.
-function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner, onProduct, onTouched }) {
+function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner, onProduct, onArchive, onTouched }) {
   const p = r.products || {};
   const guardedClose = useGuardedClose();
   // ── TWO TABS, BECAUSE THEY ANSWER TO DIFFERENT OWNERS ─────────────────────
@@ -1318,6 +1350,34 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       <NotesPanel table="program_notes" keyCol="program_id" keyId={r.id}
         insertExtra={{ source: 'manual' }} extraCol="source" extraDefault="manual"
         title="General Notes" programId={r.id} userEmail={userEmail} onTouched={onTouched} />
+      {/* ── OFF THE BOARD, NOT OUT OF EXISTENCE ─────────────────────────────
+          Last in the tab, which is where CodeModal and RegModal put the control
+          that disposes of a record. A card is read before it is put away, and a
+          removal button above the notes would carry more weight on the screen
+          than the notes it sits over.
+
+          NOT DRESSED AS A DELETE. Those two modals use a red border because the
+          row is about to be gone for good. This one is reversible from the
+          toggle under the Complete section, and borrowing the red would make
+          people hesitate over a reversible act -- or, worse, read this as the
+          way a card gets deleted. */}
+      {onArchive && (
+        <div style={{marginTop:'18px',paddingTop:'13px',borderTop:'1px solid #ECECEE',
+                     display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
+          <button onClick={()=>onArchive(r, !r.archived)} disabled={busy}
+            style={{background:'none',border:'1px solid rgba(0,0,0,.14)',borderRadius:'10px',
+                    padding:'9px 16px',fontSize:'13px',fontWeight:600,color:'#5A5A5E',
+                    fontFamily:'inherit',cursor:busy?'default':'pointer',opacity:busy?0.6:1,
+                    flexShrink:0}}>
+            {r.archived ? 'Put back on the board' : 'Remove from board'}
+          </button>
+          <span style={{fontSize:'12px',color:'#A0A0A4',flex:'1 1 220px',lineHeight:1.45}}>
+            {r.archived
+              ? 'This card is off the board. Putting it back returns it to the stage it was in.'
+              : 'Keeps the card and its notes. It moves under ' + COMPLETE_LABEL + ', behind Include removed.'}
+          </span>
+        </div>
+      )}
       </>
       )}
     </>
@@ -1338,7 +1398,7 @@ export default function Programs({ userEmail }) {
   // to select and the key is deleted rather than kept empty. A stale key left in the
   // store by an earlier mount is harmless -- usePageState merges the store over
   // these defaults, and a name that is not here is never read.
-  const [ui, setUi] = usePageState('programs', { search:'', showRetired:false, doneOpen:false, ownerSel:[] });
+  const [ui, setUi] = usePageState('programs', { search:'', showRetired:false, showRemoved:false, doneOpen:false, ownerSel:[] });
   const [openId, setOpenId] = useState(null);
   const [staff, setStaff] = useState([]);
   // Set while a stage or an owner is being written, so the control can say so and
@@ -1620,6 +1680,48 @@ export default function Programs({ userEmail }) {
     await load(); setSaving(null);
   };
 
+  // ── TAKING A CARD OFF THE BOARD, AND PUTTING IT BACK ────────────────────────
+  // One function for both directions, for the same reason setStage serves the
+  // select and the drag -- two write paths for one column is how they drift.
+  //
+  // archived, NOT a delete. authenticated holds no DELETE on programs (measured,
+  // relacl arw), so a delete would fail with permission denied even if one were
+  // written -- but that is not why this archives. A card is the only record that
+  // a product was ever worked on for a client, and the board is kept by hand, so
+  // the reversible act is the right one whatever the grant says.
+  //
+  // THE CONFIRM NAMES THE CARD, because the modal can be open over a board of
+  // near-identical rows and "are you sure" answers a question nobody asked. It
+  // also says where the card goes, since a control that makes something vanish
+  // without saying where is indistinguishable from one that destroys it.
+  const setArchived = async (r, next) => {
+    const p = r.products || {};
+    const what = (p.sku || 'no SKU') + ' — ' + (p.name || 'no name')
+               + ' for ' + ((r.client || {}).name || 'no client');
+    const msg = next
+      ? 'Remove ' + what + ' from the board?\n\nNothing is deleted. The card and its notes are kept, and it moves under '
+        + COMPLETE_LABEL + ' behind Include removed, where it can be put back.'
+      : 'Put ' + what + ' back on the board?\n\nIt returns to the stage it was in.';
+    if (!window.confirm(msg)) return;
+    setSaving(r.id);
+    // updated_at and updated_by by hand, exactly as setStage and setOwner do --
+    // there is no archived_at column on programs and this is not the script that
+    // adds one. Removing a card is a touch like any other.
+    const { error } = await SB.from('programs')
+      .update({ archived: next, updated_at: new Date().toISOString(), updated_by: userEmail || null })
+      .eq('id', r.id);
+    if (error) {
+      window._toast?.((next ? 'Could not remove the card — ' : 'Could not put the card back — ') + error.message, 'err');
+      setSaving(null);
+      return;
+    }
+    window._toast?.(next ? 'Removed from the board' : 'Back on the board', 'ok');
+    // THE MODAL STAYS OPEN and the button flips to the other direction, so an
+    // accidental removal is undone where it happened rather than hunted for
+    // under a toggle somebody has to be told about first.
+    await load(); setSaving(null);
+  };
+
   // ── WRITING A PRODUCT FIELD FROM THE CARD ───────────────────────────────────
   // Stage, compliance, catalogue status and the sample date live on products, not
   // on the program, so these writes reach a table this page has only ever read.
@@ -1672,7 +1774,20 @@ export default function Programs({ userEmail }) {
     },
   });
 
-  const board = useMemo(() => enriched.filter(r => r.onBoard), [enriched]);
+  // ── REMOVED CARDS ARE OFF EVERY LIST, NOT JUST THE PIPELINE ────────────────
+  // archived has been selected since this board was built and never once read, so
+  // a card marked archived sat on screen exactly like any other. Everything below
+  // derives from live rather than from enriched, so what the sections show, what
+  // the tiles count, what the owner filter offers and what the heading totals
+  // cannot come to disagree -- which is what happens when the filter is added in
+  // one place and forgotten in the other four.
+  //
+  // removed is the same list inverted, and it is the only way back to a card once
+  // it is off the board. Nothing is deleted, so nothing needs recovering; it needs
+  // finding, which is what the toggle under the Complete section is for.
+  const live    = useMemo(() => enriched.filter(r => r.archived !== true), [enriched]);
+  const removed = useMemo(() => enriched.filter(r => r.archived === true), [enriched]);
+  const board   = useMemo(() => live.filter(r => r.onBoard), [live]);
   // COMPLETED MEANS COMPLETED. The tab was everything not on the board, which
   // quietly bundled 52 RETIRED PRODUCTS THAT WERE NEVER ORDERED in with 192 real
   // completions and called the total 244. A retired product that never sold is
@@ -1684,13 +1799,21 @@ export default function Programs({ userEmail }) {
   // COMPLETE IS A STAGE SOMEBODY SET, not an order arriving. A sales order does
   // not finish a card, on Riley decision, so this reads declared_stage and never
   // the records.
-  const finished = useMemo(() => enriched.filter(r => r.stage === COMPLETE), [enriched]);
+  const finished = useMemo(() => live.filter(r => r.stage === COMPLETE), [live]);
   // Cards on a product that has left the catalogue. Still reachable, still off the
   // board by default, exactly as before -- the difference is that being retired no
   // longer decides anything about the stage.
-  const history  = useMemo(() => enriched.filter(r => r.retired && r.stage !== COMPLETE), [enriched]);
-  const done     = useMemo(() => ui.showRetired ? finished.concat(history) : finished,
-                           [finished, history, ui.showRetired]);
+  const history  = useMemo(() => live.filter(r => r.retired && r.stage !== COMPLETE), [live]);
+  // TWO INDEPENDENT TOGGLES, not one control with three states. Retired is about
+  // the product leaving the catalogue and removed is about somebody taking the
+  // card off the board -- different facts, with different ways back -- and a
+  // single switch covering both would hide one behind the other.
+  const done     = useMemo(() => {
+    let out = finished;
+    if (ui.showRetired) out = out.concat(history);
+    if (ui.showRemoved) out = out.concat(removed);
+    return out;
+  }, [finished, history, removed, ui.showRetired, ui.showRemoved]);
 
   const counts = useMemo(() => {
     const c = { none: 0 };
@@ -1883,6 +2006,19 @@ export default function Programs({ userEmail }) {
             </div>
           </div>
         )}
+        {/* ── THE STRIPE SAYS WHERE THE CARD IS ────────────────────────────────
+            4px along the bottom. No radius of its own -- the tile already clips
+            with overflow hidden, so the stripe follows the corner it is in and
+            there is no second radius to keep in step with the first.
+
+            It reads r.stage, so a tile dropped on another section is repainted
+            the moment setStage lands. That is the whole reason for colouring the
+            board rather than only its headings.
+
+            BOTTOM RATHER THAN A LEFT EDGE. A left bar would fight the pills and
+            the SKU for the same corner, and a wrapped grid of tiles reads as
+            rows far more clearly when the colour runs along the bottom of each. */}
+        <div style={{height:'4px',background:accentOf(r.stage || 'none')}} />
       </div>
     );
   };
@@ -1894,6 +2030,7 @@ export default function Programs({ userEmail }) {
       {openRow && <ProgramDetail r={openRow} userEmail={userEmail} staff={staff}
                                  busy={saving === openRow.id} onStage={setStage} onOwner={setOwner}
                                  onProduct={setProductField}
+                                 onArchive={setArchived}
                                  onTouched={load}
                                  onClose={()=>setOpenId(null)} />}
       {/* Centred, and the count on its own line beneath. The description
@@ -1933,7 +2070,7 @@ export default function Programs({ userEmail }) {
             <div key={k} style={{padding:'20px 22px',borderLeft:i>0?'1px solid rgba(0,0,0,.06)':'none'}}>
               <div style={{display:'flex',alignItems:'center',gap:'7px',marginBottom:'13px'}}>
                 <span style={{width:'6px',height:'6px',borderRadius:'50%',flexShrink:0,
-                              background:STAGE_ACCENT[k]||'#86868B'}} />
+                              background:accentOf(k)}} />
                 <span style={{fontSize:'13px',color:'#86868B',fontWeight:400,letterSpacing:'-.006em'}}>{l}</span>
               </div>
               <div style={{fontSize:'27px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.026em',
@@ -1976,15 +2113,23 @@ export default function Programs({ userEmail }) {
             const inGroup = shownBoard.filter(r => (r.stage || 'none') === k);
             const droppable = k !== 'none';
             const over = droppable && dropTarget === k;
+            // A JS comment, not a JSX one. This sits in the expression position
+            // straight after return, where {/* */} is an object literal rather
+            // than a comment and the parser dies on the next attribute.
+            //
+            // The section tints and rings in ITS OWN colour while a card is over
+            // it, so the answer to "where am I dropping this" is the same colour
+            // the card is about to become. No stage set is not a drop target at
+            // all, so it never lights up.
             return (
               <div key={k} {...(droppable ? dropProps(k) : {})}
                 style={{marginBottom:'22px',borderRadius:'14px',padding:'10px 12px 6px',
-                        background:over?'rgba(10,132,255,.06)':'transparent',
-                        boxShadow:over?'inset 0 0 0 2px #0A84FF':'none',
+                        background:over?tintOf(k,.07):'transparent',
+                        boxShadow:over?'inset 0 0 0 2px '+accentOf(k):'none',
                         transition:'background .12s'}}>
                 <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'0 2px 12px'}}>
                   <span style={{width:'8px',height:'8px',borderRadius:'50%',flexShrink:0,
-                                background:k==='none'?'#C7C7CC':'#1D1D1F'}} />
+                                background:accentOf(k)}} />
                   <span style={{fontSize:'14px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.01em'}}>{l}</span>
                   <span style={{fontSize:'12.5px',color:'#A0A0A4',fontVariantNumeric:'tabular-nums'}}>{inGroup.length}</span>
                 </div>
@@ -2026,26 +2171,37 @@ export default function Programs({ userEmail }) {
               whose stage control is how a completed program is reopened. */}
           <div {...dropProps(COMPLETE)}
             style={{borderRadius:'14px',padding:'12px',marginTop:'4px',
-                    background:dropTarget===COMPLETE?'rgba(10,132,255,.06)':'#FAFAFA',
-                    boxShadow:dropTarget===COMPLETE?'inset 0 0 0 2px #0A84FF':'none',
+                    background:dropTarget===COMPLETE?tintOf(COMPLETE,.07):'#FAFAFA',
+                    boxShadow:dropTarget===COMPLETE?'inset 0 0 0 2px '+accentOf(COMPLETE):'none',
                     transition:'background .12s'}}>
             <button onClick={()=>setUi('doneOpen', !ui.doneOpen)}
               style={{display:'flex',alignItems:'center',gap:'8px',width:'100%',textAlign:'left',
                       background:'none',border:'none',padding:'2px',cursor:'pointer',fontFamily:'inherit'}}>
               <span style={{fontSize:'10px',color:'#86868B',width:'10px',flexShrink:0}}>{ui.doneOpen ? '▾' : '▸'}</span>
-              <span style={{width:'8px',height:'8px',borderRadius:'50%',flexShrink:0,background:'#8E8E93'}} />
+              <span style={{width:'8px',height:'8px',borderRadius:'50%',flexShrink:0,background:accentOf(COMPLETE)}} />
               <span style={{fontSize:'14px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.01em'}}>{COMPLETE_LABEL}</span>
               <span style={{fontSize:'12.5px',color:'#A0A0A4',fontVariantNumeric:'tabular-nums'}}>{finished.length}</span>
             </button>
 
             {ui.doneOpen && (
               <div style={{marginTop:'12px'}}>
-                <div style={{display:'flex',justifyContent:'flex-end',marginBottom:'9px'}}>
+                {/* Two toggles, side by side and both off by default. The second
+                    is the only route back to a removed card, so it names the
+                    count even when it is zero -- a control that disappears when
+                    the list is empty is one nobody learns is there. */}
+                <div style={{display:'flex',justifyContent:'flex-end',gap:'16px',
+                             flexWrap:'wrap',marginBottom:'9px'}}>
                   <label style={{display:'inline-flex',alignItems:'center',gap:'7px',fontSize:'12.5px',
                                  color:'#5A5A5E',cursor:'pointer',fontFamily:'inherit'}}>
                     <input type="checkbox" checked={ui.showRetired} onChange={e=>setUi('showRetired', e.target.checked)}
                       style={{cursor:'pointer'}} />
                     Include {history.length} on retired products
+                  </label>
+                  <label style={{display:'inline-flex',alignItems:'center',gap:'7px',fontSize:'12.5px',
+                                 color:'#5A5A5E',cursor:'pointer',fontFamily:'inherit'}}>
+                    <input type="checkbox" checked={ui.showRemoved} onChange={e=>setUi('showRemoved', e.target.checked)}
+                      style={{cursor:'pointer'}} />
+                    Include {removed.length} removed from the board
                   </label>
                 </div>
                 <div style={{background:'#fff',borderRadius:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',overflow:'hidden'}}>
@@ -2070,8 +2226,14 @@ export default function Programs({ userEmail }) {
                               background: p.active === false ? 'var(--hot)' : p.active === true ? 'var(--ok)' : 'var(--muted)'}} />
                             {p.active === false ? 'Inactive' : p.active === true ? 'Active' : 'Not set'}
                           </span>
+                          {/* Removed is checked FIRST, because a removed card can
+                              also be complete or on a retired product, and saying
+                              "Product retired" about a card somebody took off the
+                              board answers the wrong question. */}
                           <span style={{fontSize:'12.5px',color:'#8A8A8E',minWidth:'150px'}}>
-                            {r.stage === COMPLETE ? 'In production since ' + fmt(r.since) : 'Product retired'}
+                            {r.archived ? 'Removed from the board'
+                              : r.stage === COMPLETE ? 'In production since ' + fmt(r.since)
+                              : 'Product retired'}
                           </span>
                           <span style={{fontSize:'12.5px',minWidth:'110px',color:r.ownerName?'#8A8A8E':'var(--hot)'}}>
                             {r.ownerName || 'Unowned'}
