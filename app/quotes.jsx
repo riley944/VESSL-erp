@@ -2582,6 +2582,31 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   // ── INACTIVE MEANS NOT FOR NEW WORK ────────────────────────────────────────
   // null while unknown or irrelevant; otherwise { known, inactiveOnly }.
   const [skuState, setSkuState] = useState(null);
+  // ── WHAT THE SETTLED SKU RESOLVES TO ───────────────────────────────────────
+  // null until a SKU settles; then { sku, kind, product, count } where kind is
+  // 'one', 'several' or 'none'. ONE OBJECT, not three pieces of state, for the
+  // reason the effect below gives -- the caption and the fill read the same
+  // answer or they can disagree for a frame.
+  const [skuLookup, setSkuLookup] = useState(null);
+  // The catalogue name is read-only once it fills, and this is the way back out.
+  // Reset whenever the SKU changes, so unlocking one SKU does not leave the next
+  // one editable by accident.
+  const [nameUnlocked, setNameUnlocked] = useState(false);
+  // ── WHAT THE AUTOFILL PUT THERE ────────────────────────────────────────────
+  // The name this form filled in, so that changing the SKU to one the catalogue
+  // does not answer can withdraw it again. Without this, typing a SKU that fills
+  // "Needlepoint Belt" and then correcting the SKU to a new code leaves the old
+  // product name sitting under it, looking typed.
+  //
+  // A REF, NOT STATE. Nothing renders from it -- the lock reads skuLookup -- so
+  // state would add a render and would have to join the fill effect dependency
+  // array, where writing it from inside that same effect is a loop waiting to
+  // happen.
+  //
+  // ONLY EVER COMPARED, NEVER TRUSTED AS OWNERSHIP. The withdraw below fires only
+  // while f.product still equals this exactly; the moment somebody edits the
+  // name, it stops matching and the name is theirs.
+  const lastFilledRef = useRef('');
   const [f, setF] = useState(() => ({ ...initial, tiers: (initial.tiers && initial.tiers.length ? initial.tiers.map((t) => ({ ...t })) : [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }]) }));
   const [fbTier, setFbTier] = useState(null); // index of tier whose freight builder is open
   const [showClientSug, setShowClientSug] = useState(false);
@@ -2944,19 +2969,145 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
   });
   const removeTier = (i) => setF((p) => ({ ...p, tiers: p.tiers.filter((_, idx) => idx !== i) }));
 
+  // ── TAKING BACK A NAME THIS FORM WROTE ─────────────────────────────────────
+  // Two paths end with the catalogue no longer answering for the SKU in the box
+  // -- it resolved to none or several, or it was cleared altogether -- and both
+  // have to withdraw a filled name on the same terms. One function, because two
+  // copies of "does the box still read exactly what we wrote" is two places for
+  // that rule to drift.
+  //
+  // Only while it matches exactly. A name somebody typed, or edited after the
+  // fill, stops matching and is left alone.
+  const withdrawFilledName = () => {
+    const filled = lastFilledRef.current;
+    if (!filled) return;
+    setF((p) => ((p.product || '') === filled ? { ...p, product: '' } : p));
+    lastFilledRef.current = '';
+  };
+
   // Looks the SKU up as it is typed, debounced. Only the ANSWER is stored, never
   // the in-flight request, and a stale reply cannot overwrite a newer one because
   // the effect re-runs and clears first.
+  //
+  // ── AND RESOLVES THE CATALOGUE MATCH IN THE SAME PASS ──────────────────────
+  // THE SETTLED VALUE, NEVER skuMatch. skuMatch is a useMemo over f.sku and
+  // recomputes on every keystroke, which is right for the rule hints it feeds and
+  // wrong here: filling from it would write a product name the moment a partial
+  // SKU happened to match something, and then write another as the next character
+  // arrived. The fill waits for the same 350ms the retired check waits for.
+  //
+  // BOTH ANSWERS LAND IN ONE setState. The caption under the field and the fill
+  // itself read the same object, so there is no frame in which the row says
+  // "several products carry this SKU" while holding a name it filled.
+  //
+  // THE TEST IS m.product WITHOUT m.products, not kind and not answered.
+  // matchSkuToProduct has no 'one' branch -- a single hit splits into 'unlinked'
+  // when the product has no CPSC rule links and a resolved kind when it does, and
+  // both carry product. answered is FALSE on the unlinked branch, which is most
+  // of the catalogue, so keying on it would fill for a handful of products and
+  // silently skip the rest.
   useEffect(() => {
     const s = (f.sku || '').trim();
-    if (!s) { setSkuState(null); return; }
+    setNameUnlocked(false);
+    // AN EMPTIED SKU IS THE SAME EVENT AS ONE THAT STOPS RESOLVING. The lookup
+    // is cleared, so the fill effect below returns early and never reaches its
+    // own withdraw -- which is exactly how a filled name used to survive having
+    // its SKU deleted out from under it. Withdrawn here instead, on the same
+    // terms, and immediately rather than after the debounce: there is nothing to
+    // wait for once the box is empty.
+    if (!s) { setSkuState(null); setSkuLookup(null); withdrawFilledName(); return; }
     let cancelled = false;
     const t = setTimeout(async () => {
       const a = await skuActivity(s);
-      if (!cancelled) setSkuState(a);
+      const m = matchSkuToProduct(s, productRuleMap);
+      const one = (m && m.product && !m.products) ? m.product : null;
+      let hts = '';
+      // NARROW, AND ONLY ON A SINGLE MATCH. useProductCpscRules fetches
+      // id, sku, name and active -- widening that shared select to carry
+      // hts_code would push a column into a hook whose other consumer has no
+      // use for it. One lookup, for the one product that answered.
+      //
+      // DORMANT TODAY, said plainly rather than discovered later: hts_code is
+      // empty on all 358 product rows, so this fills nothing until somebody
+      // starts recording it. The wiring is here so that the day they do, the
+      // quote form already reads it.
+      if (one && one.id) {
+        try {
+          const { data } = await SB.from('products').select('hts_code').eq('id', one.id).single();
+          hts = (data && data.hts_code) || '';
+        } catch (e) {}
+      }
+      if (cancelled) return;
+      setSkuState(a);
+      setSkuLookup({
+        sku: s,
+        kind: one ? 'one' : (m && m.products ? 'several' : 'none'),
+        product: one,
+        hts,
+        count: (m && m.products) ? m.products.length : (one ? 1 : 0),
+      });
     }, 350);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [f.sku]);
+  }, [f.sku, productRuleMap]);
+
+  // ── FILLING THE NAME, AND ONLY WHEN THE SKU CHANGED ────────────────────────
+  // Opening an existing quote must not rewrite what it already holds. skuChanged
+  // is the comparison the retired-SKU rule already makes -- initial.sku against
+  // f.sku -- so a quote opened and left alone never enters this branch, however
+  // firmly its SKU matches the catalogue.
+  //
+  // A NEW QUOTE HAS NO initial.sku, so any SKU typed into one counts as changed
+  // and fills, which is the intent.
+  //
+  // Writes only when the value would actually differ, so this cannot loop and
+  // cannot mark a pristine form dirty by rewriting a name with itself.
+  // AND WITHDRAWS IT AGAIN when the SKU stops resolving. A name this form filled
+  // is the form's to take back; a name somebody typed is not. The comparison
+  // against lastFilledRef is the whole distinction -- it holds only while the box
+  // still reads exactly what was written into it.
+  useEffect(() => {
+    if (!skuLookup) return;
+    // Stale answer against a SKU that has moved on. Applies to both branches.
+    if ((skuLookup.sku || '') !== (f.sku || '').trim()) return;
+
+    if (skuLookup.kind === 'one' && skuLookup.product) {
+      // Opening an existing quote must not rewrite what it already holds.
+      if ((initial.sku || '').trim() === (f.sku || '').trim()) return;
+      const name = skuLookup.product.name || '';
+      setF((p) => {
+        const next = {};
+        if (name && (p.product || '') !== name) next.product = name;
+        // The stored code wins over an empty box and never over a typed one -- a
+        // classification somebody entered by hand is not overwritten by a fill.
+        if (skuLookup.hts && !(p.hts || '').trim()) next.hts = skuLookup.hts;
+        return Object.keys(next).length ? { ...p, ...next } : p;
+      });
+      // Recorded even when the box already read this -- see the note on the ref.
+      // Two identical strings should not behave differently because of history
+      // nobody can see.
+      if (name) lastFilledRef.current = name;
+      return;
+    }
+
+    // none or several: the catalogue has no single answer for this SKU, so a name
+    // this form filled earlier is no longer describing anything. Withdrawn only
+    // while it is still untouched.
+    //
+    // THE HTS IS NOT WITHDRAWN, deliberately. It fills only into an empty box, so
+    // whatever is there is either a classification somebody chose or the one this
+    // form filled -- and a tariff code stays true of the goods whether or not the
+    // catalogue can name the product. Clearing it would be the silent data loss
+    // HtsField exists to prevent.
+    withdrawFilledName();
+  }, [skuLookup, f.sku, initial.sku]);
+
+  // Read-only when the catalogue answered for the SKU currently in the box and
+  // nobody has asked to change it. Keyed on the settled sku matching what is
+  // typed, so the lock lifts the instant the SKU is edited again rather than
+  // lingering against a stale answer.
+  const nameFromCatalogue = !!(skuLookup && skuLookup.kind === 'one' && skuLookup.product
+                               && skuLookup.sku === (f.sku || '').trim());
+  const nameLocked = nameFromCatalogue && !nameUnlocked;
 
   // BLOCKED, WARNED, OR NEITHER -- and the difference is the whole design.
   //
@@ -3146,7 +3297,52 @@ function QuoteForm({ initial, onClose, onSave, factories = [], clientNames = [],
                 </span>
               </label>
             )}
-            <Field label="Product" k="product" placeholder="e.g. Needlepoint Belt" f={f} set={set} />
+            {/* ── THE PRODUCT NAME ────────────────────────────────────────
+                Rendered inline rather than through Field. Field is the shared
+                six-line wrapper every text box on this form uses, and giving it
+                lock, caption and unlock props would push this row's concerns
+                into every unrelated field. Same reason HtsField renders its own
+                label rather than routing through Field.
+
+                The three styles are Field's own -- S.field, S.fieldLabel,
+                S.input -- so the row sits on the FormSection grid exactly as it
+                did before. */}
+            <label style={S.field}>
+              <span style={S.fieldLabel}>Product</span>
+              <input
+                style={nameLocked ? { ...S.input, background: "#f6f7f9", color: "#4a5262" } : S.input}
+                value={f.product ?? ""}
+                onChange={set("product")}
+                readOnly={nameLocked}
+                placeholder="e.g. Needlepoint Belt" />
+              {/* Not a warning. The name came from the catalogue and is right;
+                  the link is there because a quote occasionally describes a
+                  variant the catalogue row does not name. */}
+              {nameLocked && (
+                <span style={{ fontSize: 11.5, color: "#6a7488", lineHeight: 1.45 }}>
+                  from the catalogue
+                  {/* Taking the name over ends the form's claim on it. Without
+                      clearing the ref, editing the name here and then changing
+                      the SKU to one the catalogue does not answer would wipe what
+                      was just typed -- the box would still equal what autofill
+                      wrote right up until the first keystroke. */}
+                  <button type="button" onClick={() => { setNameUnlocked(true); lastFilledRef.current = ''; }}
+                    style={{ background: "transparent", border: "none", padding: "0 0 0 6px", color: "#3461e0", fontSize: 11.5, cursor: "pointer" }}>
+                    change
+                  </button>
+                </span>
+              )}
+              {/* SEVERAL ROWS CARRY THIS SKU, so there is no single answer to
+                  fill in. matchSkuToProduct drops retired rows before counting,
+                  so this is several rows that are all still current -- 30 SKUs
+                  are in that state. Nothing is filled and the box stays free. */}
+              {skuLookup && skuLookup.kind === 'several'
+                && skuLookup.sku === (f.sku || '').trim() && (
+                <span style={S.fieldWarn}>
+                  {skuLookup.count + " products carry this SKU — pick by name"}
+                </span>
+              )}
+            </label>
             {/* The three style props reproduce exactly what this file used to apply
                 inline, so the row renders the same as before the extraction. */}
             <HtsField value={f.hts} onChange={pickHts} codes={htsCodes}
