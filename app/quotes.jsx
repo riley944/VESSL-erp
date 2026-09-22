@@ -37,6 +37,11 @@ import { HtsField, useHtsCodes } from "@/app/components/HtsField";
 // same reason -- free text is how one firm ends up in the catalogue twice.
 import { FactorySelect, useFactoryCompanies, factoryFillFor, contactFieldsFrom,
          ContactPickModal } from "@/app/components/FactorySelect";
+// The client box is the same control over the client companies. FactorySelect is
+// a wrapper over this now; both sides share the combobox, the directory fetch and
+// the contact popup, so the rule that an unmatched stored value still displays is
+// true in one place rather than two.
+import { CompanySelect, useCompanyDirectory, contactsOf } from "@/app/components/CompanySelect";
 // Rendered as a sibling of this form so "+ Add new factory" can create the
 // company without leaving the quote. Extracted out of page.jsx for this.
 import { CreateCompanyModal } from "@/app/components/CreateCompanyModal";
@@ -811,30 +816,15 @@ function Platform({ session, newQuote = null }) {
     if (!error) setStaff(data || []);
   }, []);
 
-  const saveContact = async (contact) => {
-    const { error } = await supabase.from("client_contacts").upsert(contact).select();
-    if (error && !/duplicate|unique/i.test(error.message)) { flash("Couldn't save contact: " + error.message); return false; }
-    // Mirror into ERP company directory
-    try {
-      const { data: co } = await SB.from('companies').upsert({name:contact.client,type:'client',email:contact.email||null,phone:contact.phone||null},{onConflict:'name,type'}).select('id').single();
-      if (co?.id && contact.contact) {
-        const exists = await SB.from('contacts').select('id').eq('company_id',co.id).ilike('full_name',contact.contact).limit(1);
-        if (!exists.data?.length) {
-          // PRIMARY ONLY IF THE COMPANY HAS NOBODY YET. This ran on every quote
-          // save that named a new contact, and the company above is an upsert --
-          // so an established client gaining a second contact here used to gain a
-          // second PRIMARY with it. Both readers take .find(is_primary), which
-          // then returned whichever row the query happened to order first.
-          const { count } = await SB.from('contacts')
-            .select('id', { count:'exact', head:true }).eq('company_id', co.id);
-          await SB.from('contacts').insert({company_id:co.id,full_name:contact.contact,email:contact.email||null,phone:contact.phone||null,is_primary:!(count||0)}).select();
-        }
-      }
-    } catch(e) {}
-    await loadContacts();
-    flash("Contact saved to library");
-    return true;
-  };
+  // saveContact is gone with the quote form button that called it. It upserted a
+  // client_contacts row and then UPSERTED A COMPANY from the typed client name,
+  // inserting a contact against it -- which made the quote form a door into the
+  // company directory, the same door the factory side closed in Stage 2 and the
+  // mechanism that produced two rows for one firm.
+  //
+  // The Directory panel keeps editing client_contacts through onAddContact,
+  // onUpdateContact and onDeleteContact below; Platform still loads it for them.
+  // What is gone is a quote being able to create a company as a side effect.
 
   const saveFactoryPreset = async (preset) => {
     const { error } = await supabase.from("factory_presets").upsert(preset).select();
@@ -1345,7 +1335,7 @@ function Platform({ session, newQuote = null }) {
         </div>
       )}
 
-      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} clientNames={clients.map((c) => c.name).filter((n) => n !== "Unassigned")} contacts={contacts} onSaveContact={saveContact} userEmail={userEmail} staff={staff} />}
+      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} userEmail={userEmail} staff={staff} />}
       {/* Opens after a SKU change is saved. onDone reloads so the list shows the
           result; the modal stays up because the report IS the result. */}
       {skuChoice && <QuoteSkuChoiceModal product={skuChoice.product} quote={skuChoice.quote} updatedBy={userEmail} onClose={() => setSkuChoice(null)} onDone={() => load()} />}
@@ -2633,7 +2623,17 @@ function SelectField({ label, k, placeholder, options, hint, f, set }) {
 // from useFactoryCompanies, which fetches companies, contacts and presets
 // together so the select and the fill cannot disagree about what a factory is.
 // Platform keeps its own factories state for DirectoryPanel and FactoryList.
-function QuoteForm({ initial, onClose, onSave, clientNames = [], contacts = [], onSaveContact, userEmail, staff = [] }) {
+// THREE MORE PROPS WENT WITH THE CLIENT SUGGESTION LIST.
+//
+// clientNames and contacts fed it -- a mixture of quote-derived names and
+// client_contacts rows, offered as suggestions over a box that still accepted
+// anything typed over them. The client is chosen from the company directory now,
+// which useCompanyDirectory fetches for itself.
+//
+// onSaveContact, because nothing here writes client_contacts any more. That
+// table still exists and is still edited from the Directory panel; it is simply
+// no longer something a quote can create a company through.
+function QuoteForm({ initial, onClose, onSave, userEmail, staff = [] }) {
   // The form this guard exists for. About eleven of its edits are click-driven --
   // the saved-factory chips, the client suggestions, picking an HTS code, Add
   // tier, Preset qtys, auto, the Air/Ocean toggles -- and not one of them fires
@@ -2679,7 +2679,8 @@ function QuoteForm({ initial, onClose, onSave, clientNames = [], contacts = [], 
   const lastFilledRef = useRef('');
   const [f, setF] = useState(() => ({ ...initial, tiers: (initial.tiers && initial.tiers.length ? initial.tiers.map((t) => ({ ...t })) : [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }]) }));
   const [fbTier, setFbTier] = useState(null); // index of tier whose freight builder is open
-  const [showClientSug, setShowClientSug] = useState(false);
+  // showClientSug went with the suggestion list; the picker owns its own open
+  // state. savingContact went with the save-to-library button below it.
   // savingFactory and factoryPresetName went with the free-text save. The factory
   // library is still editable, from the Directory panel, which is where company
   // data belongs -- a quote form that could mint a company by typing is exactly
@@ -2691,8 +2692,16 @@ function QuoteForm({ initial, onClose, onSave, clientNames = [], contacts = [], 
   const { companies: factoryCompanies, contacts: factoryContacts,
           presets: factoryPresets, addCompany } = useFactoryCompanies();
   const [addingFactory, setAddingFactory] = useState(null);
+  // The client directory, the same shape. Its contacts come from vessl.contacts
+  // like the factory side -- client_contacts is free text keyed on a name and is
+  // no longer read or written here; the Directory panel still maintains it.
+  const { companies: clientCompanies, contacts: clientContacts,
+          addCompany: addClientCompany } = useCompanyDirectory('client');
+  const [addingClient, setAddingClient] = useState(null);
+  // ONE POPUP, BOTH SIDES. kind says which box raised it, so the factory and the
+  // client cannot drift into two behaviours -- the same argument that put the
+  // control in CompanySelect rather than copying it.
   const [pickContact, setPickContact] = useState(null);
-  const [savingContact, setSavingContact] = useState(false);
   const set = (k) => (e) => {
     const v = e && e.target ? (e.target.type === "checkbox" ? e.target.checked : e.target.value) : e;
     setF((p) => ({ ...p, [k]: v }));
@@ -2776,37 +2785,53 @@ function QuoteForm({ initial, onClose, onSave, clientNames = [], contacts = [], 
     setF((p) => ({ ...p, tiers: p.tiers.map((t, idx) => idx === i ? { ...t, sizeQty: { ...(t.sizeQty || {}), [key]: digits } } : t) }));
   };
 
-  const clientMatches = (() => {
-    const typed = (f.client || "").trim().toLowerCase();
-    if (!typed) return [];
-    const fromContacts = contacts
-      .filter((c) => (c.client || "").toLowerCase().includes(typed))
-      .map((c) => ({ type: "contact", client: c.client, contact: c.contact || "", email: c.email || "", phone: c.phone || "" }));
-    const contactClients = new Set(contacts.map((c) => (c.client || "").toLowerCase()));
-    const fromNames = clientNames
-      .filter((n) => n.toLowerCase().includes(typed) && !contactClients.has(n.toLowerCase()))
-      .map((n) => ({ type: "name", client: n }));
-    return [...fromContacts, ...fromNames].slice(0, 8);
-  })();
-
-  const pickClient = (match) => {
-    setF((p) => {
-      if (match.type === "contact") {
-        return { ...p, client: match.client, clientContact: match.contact || p.clientContact, clientEmail: match.email || p.clientEmail, clientPhone: match.phone || p.clientPhone };
-      }
-      return { ...p, client: match.client };
-    });
-    setShowClientSug(false);
+  // ── PICKING A CLIENT FILLS THE OTHER FOUR FIELDS ──────────────────────────
+  // The mirror of applyFactory, and cleared the same way: choosing a different
+  // client must leave no trace of the last one. A buyer from the previous client
+  // sitting under a new company name is worse than a blank, because it reads as
+  // somebody who works there.
+  //
+  // THE ADDRESS COMES FROM THE COMPANY, billing first then shipping. Neither
+  // client_contacts nor the old suggestion list ever carried an address, so this
+  // is new rather than a port -- the quote has had a clientAddress column all
+  // along with nothing to fill it from.
+  //
+  // CONTACT IS NOT REQUIRED. Twelve of the twenty four client companies have no
+  // contact rows at all, so blank is an ordinary outcome rather than a gap to
+  // apologise for.
+  const applyClient = (company, contact) => {
+    setF((p) => ({
+      ...p,
+      clientContact: contact ? (contact.full_name || "") : "",
+      clientEmail: contact ? (contact.email || "") : "",
+      clientPhone: contact ? (contact.phone || "") : "",
+      clientAddress: (company && (company.billing_address || company.shipping_address)) || "",
+    }));
   };
 
-  const doSaveContact = async () => {
-    if (!f.client) return;
-    const ok = await onSaveContact({
-      client: f.client, contact: f.clientContact || null,
-      email: f.clientEmail || null, phone: f.clientPhone || null,
-      created_by: userEmail || null,
-    });
-    if (ok) setSavingContact(false);
+  const onPickClient = (company) => {
+    if (!company) {
+      setF((p) => ({ ...p, client: "", clientContact: "", clientEmail: "",
+                     clientPhone: "", clientAddress: "" }));
+      return;
+    }
+    setF((p) => ({ ...p, client: company.name || "" }));
+    const own = contactsOf(company, clientContacts);
+    if (own.length > 1) {
+      // Filled after the choice rather than before it, so the fields do not flash
+      // one contact and settle on another.
+      setPickContact({ kind: 'client', company, contacts: own });
+      return;
+    }
+    applyClient(company, own[0] || null);
+  };
+
+  const onClientCreated = (type, company) => {
+    setAddingClient(null);
+    if (!company || type !== 'client') return;
+    addClientCompany(company);
+    setF((p) => ({ ...p, client: company.name || "" }));
+    applyClient(company, null);
   };
 
   // ── PICKING A FACTORY FILLS THE OTHER FIVE FIELDS ─────────────────────────
@@ -3273,18 +3298,35 @@ function QuoteForm({ initial, onClose, onSave, clientNames = [], contacts = [], 
           click inside either of them from reaching the quote form backdrop. */}
       {pickContact && (
         <div onClick={(e) => e.stopPropagation()}>
+          {/* ONE MODAL, EITHER SIDE. kind decides which fill runs and which noun
+              the sentence uses; everything else about the question is identical,
+              which is why there is one of these rather than two. */}
           <ContactPickModal
             company={pickContact.company}
             contacts={pickContact.contacts}
-            onPick={(contact) => { applyFactory(pickContact.company, contact); setPickContact(null); }}
+            noun={pickContact.kind === 'client' ? 'This client' : 'This factory'}
+            onPick={(contact) => {
+              if (pickContact.kind === 'client') applyClient(pickContact.company, contact);
+              else applyFactory(pickContact.company, contact);
+              setPickContact(null);
+            }}
             onClose={() => {
               // Closing without choosing still fills what does not depend on a
-              // person -- country and lead time are facts about the factory. The
-              // three contact fields stay blank and typable, which is the honest
-              // result of declining to pick one.
-              applyFactory(pickContact.company, null);
+              // person -- country and lead time are facts about the factory, and
+              // the address is a fact about the client. The contact fields stay
+              // blank and typable, which is the honest result of declining.
+              if (pickContact.kind === 'client') applyClient(pickContact.company, null);
+              else applyFactory(pickContact.company, null);
               setPickContact(null);
             }} />
+        </div>
+      )}
+      {addingClient && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <CreateCompanyModal
+            initialType="client"
+            onClose={() => setAddingClient(null)}
+            onCreated={onClientCreated} />
         </div>
       )}
       {addingFactory && (
@@ -3589,41 +3631,28 @@ function QuoteForm({ initial, onClose, onSave, clientNames = [], contacts = [], 
                   onChange={(v) => setF((p) => ({ ...p, programOwnerId: v }))} />
               </div>
             )}
-            <label style={{ ...S.field, position: "relative" }}>
-              <span style={S.fieldLabel}>Client</span>
-              <input
-                style={S.input}
-                value={f.client ?? ""}
-                onChange={(e) => { set("client")(e); setShowClientSug(true); }}
-                onFocus={() => setShowClientSug(true)}
-                onBlur={() => setTimeout(() => setShowClientSug(false), 150)}
-                placeholder="e.g. Stitch Golf"
-                autoComplete="off"
-              />
-              {showClientSug && clientMatches.length > 0 && (
-                <div style={S.sugBox}>
-                  <div style={S.sugHint}>Pick a saved buyer (auto-fills contact) or existing client</div>
-                  {clientMatches.map((mm, idx) => (
-                    <button key={idx} type="button" style={S.sugItem} onMouseDown={(e) => { e.preventDefault(); pickClient(mm); }}>
-                      <span style={{ ...S.sugDot, background: clientColor(mm.client).accent }} />
-                      <span style={{ flex: 1 }}>
-                        <span style={{ fontWeight: 600 }}>{mm.client}</span>
-                        {mm.type === "contact" && mm.contact ? <span style={S.sugBuyer}> — {mm.contact}{mm.email ? ` · ${mm.email}` : ""}</span> : null}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </label>
+            {/* ── THE CLIENT IS CHOSEN, NOT TYPED ───────────────────────────
+                The suggestion list is gone with the free text. It offered saved
+                BUYERS as well as names, so the thing being picked was sometimes a
+                person and sometimes a company, and either way it only ever
+                suggested -- the box still accepted anything typed over it.
+
+                The stored value renders directly, so the two quotes naming a
+                client with no company row still show exactly what they have
+                always said until somebody changes them. */}
+            <CompanySelect value={f.client} companies={clientCompanies}
+              onPick={onPickClient}
+              onAddNew={(seed) => setAddingClient({ name: seed || "" })}
+              label="Client" placeholder="Select a client"
+              emptyNoun="clients" addLabel="Add new client"
+              fieldStyle={{ ...S.field, gridColumn: "span 3" }}
+              labelStyle={S.fieldLabel} inputStyle={S.input} />
+            {/* All four stay editable after a fill, and none is required. */}
             <Field label="Contact" k="clientContact" placeholder="Buyer name" f={f} set={set} />
             <Field label="Email" k="clientEmail" placeholder="email@client.com" f={f} set={set} />
+            <div aria-hidden="true" style={{ gridColumn: "1 / -1", height: 0, marginBottom: -12 }} />
             <Field label="Phone" k="clientPhone" placeholder="Phone" f={f} set={set} />
             <Field label="Address" k="clientAddress" placeholder="Address" f={f} set={set} />
-            <div style={{ gridColumn: "1 / -1" }}>
-              <button type="button" style={S.saveFactoryBtn} disabled={!f.client || !f.clientContact} onClick={doSaveContact}>
-                + Save this buyer contact to the team library
-              </button>
-            </div>
           </FormSection>
 
           <FormSection icon={<Factory size={15} />} title="Factory / Facility Info">
