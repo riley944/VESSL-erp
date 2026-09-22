@@ -4673,14 +4673,88 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
   },[id]);
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   const setC = (i,k,v) => setContacts(prev=>prev.map((c,idx)=>idx===i?{...c,[k]:v}:c));
+  // A new row is primary only when it is the first one. Same rule as before, and
+  // the radio below is what keeps it true from then on.
   const addContact = () => setContacts(prev=>[...prev,{__new:true,company_id:id,full_name:'',email:'',phone:'',is_primary:prev.length===0}]);
+
+  // ── EXACTLY ONE PRIMARY, ENFORCED IN THE SETTER ──────────────────────────
+  // It was a checkbox, so nothing cleared the others and a company could carry
+  // several primaries -- 3 of them do today, Legoland with four. Both readers
+  // take .find(x => x.is_primary), so which one won was whichever the query
+  // happened to return first. A radio cannot express the broken state at all:
+  // this writes true on one row and false on every other in a single update, so
+  // the invariant holds in state rather than being checked after the fact.
+  const setPrimary = (i) => setContacts(prev => prev.map((c,idx)=>({...c, is_primary: idx===i})));
+
+  // ── REMOVING A CONTACT ───────────────────────────────────────────────────
+  // Hard delete, on Riley word -- a contact is not a record anybody archives,
+  // and script 64 settled that a row nobody can see and nobody can remove only
+  // accumulates. An unsaved row just leaves the array; there is nothing stored
+  // to delete yet.
+  //
+  // REMOVING THE PRIMARY PROMOTES THE OLDEST SURVIVOR, silently. A company left
+  // with contacts and no primary is the state script 69 exists to repair, and
+  // this form should not be able to create it. Oldest by created_at with id as
+  // the tie-break, which is the same order 69 uses -- and the tie-break earns
+  // its place: the bulk import of 2026-06-04 gave several contacts identical
+  // timestamps, so created_at alone does not order them.
+  const oldestIdx = (list) => {
+    let best = -1;
+    list.forEach((c,idx) => {
+      if (!(c.full_name||'').trim()) return;
+      if (best === -1) { best = idx; return; }
+      const a = list[best], b = c;
+      const at = String(a.created_at||''), bt = String(b.created_at||'');
+      if (bt < at || (bt === at && String(b.id||'') < String(a.id||''))) best = idx;
+    });
+    return best;
+  };
+  const removeContact = (i) => {
+    const c = contacts[i];
+    const who = (c.full_name||'').trim() || 'this contact';
+    if (!c.__new && !window.confirm('Remove '+who+'? This cannot be undone.')) return;
+    setContacts(prev => {
+      // A stored row is marked rather than dropped, so save() knows to delete it.
+      // A new row never reached the database and simply goes.
+      const next = c.__new
+        ? prev.filter((_,idx)=>idx!==i)
+        : prev.map((x,idx)=> idx===i ? {...x, __del:true} : x);
+      const live = next.filter(x => !x.__del);
+      if (live.length && !live.some(x => x.is_primary)) {
+        const k = oldestIdx(live);
+        if (k !== -1) {
+          const promote = live[k];
+          return next.map(x => x === promote ? {...x, is_primary:true} : x);
+        }
+      }
+      return next;
+    });
+  };
+
   const save = async () => {
     if(!form.name){alert('Name required');return;}
     await SB.from('companies').update({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,po_notes:form.po_notes||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null}).eq('id',id);
+    // DELETES FIRST. A row being removed must not be counted when the primary is
+    // settled below, and doing them last would mean writing is_primary onto a
+    // row that is about to disappear.
     for(const c of contacts){
-      if(!(c.full_name||'').trim()) continue;
-      if(c.__new) await SB.from('contacts').insert({company_id:id,full_name:c.full_name,email:c.email||null,phone:c.phone||null,is_primary:!!c.is_primary});
-      else await SB.from('contacts').update({full_name:c.full_name,email:c.email||null,phone:c.phone||null,is_primary:!!c.is_primary}).eq('id',c.id);
+      if(c.__del && c.id) await SB.from('contacts').delete().eq('id',c.id);
+    }
+    const keep = contacts.filter(c => !c.__del && (c.full_name||'').trim());
+    // The blank-name skip stays as it was: a row with no name is not a contact,
+    // and clearing a name has never been the way to delete one. Remove is.
+    //
+    // ONE PRIMARY, GUARANTEED AT THE WRITE. The radio keeps state honest, but a
+    // save can still arrive with none -- the primary row cleared by the blank-name
+    // skip, or a company whose only primary was just removed. Settled here so what
+    // is stored carries the invariant whatever the form did.
+    let primaryKey = keep.findIndex(c => c.is_primary);
+    if (keep.length && primaryKey === -1) primaryKey = Math.max(oldestIdx(keep), 0);
+    for(let i=0;i<keep.length;i++){
+      const c = keep[i];
+      const isPrimary = i === primaryKey;
+      if(c.__new) await SB.from('contacts').insert({company_id:id,full_name:c.full_name,email:c.email||null,phone:c.phone||null,is_primary:isPrimary});
+      else await SB.from('contacts').update({full_name:c.full_name,email:c.email||null,phone:c.phone||null,is_primary:isPrimary}).eq('id',c.id);
     }
     onSaved();
   };
@@ -4745,12 +4819,24 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
                 </div>
               )}
               <span className="form-section-label">Contacts</span>
-              {contacts.map((c,i)=>(
-                <div key={i} className="form-row-2" style={{marginBottom:'10px'}}>
+              {/* Rows marked for deletion are filtered out rather than styled as
+                  struck through: the confirm already asked, and a row that lingers
+                  looking deleted invites a second click on something gone. */}
+              {contacts.map((c,i)=>({c,i})).filter(({c})=>!c.__del).map(({c,i})=>(
+                <div key={c.id||('new-'+i)} className="form-row-2" style={{marginBottom:'10px'}}>
                   <div><label>Name</label><input className="form-input" value={c.full_name||''} onChange={e=>setC(i,'full_name',e.target.value)} /></div>
                   <div><label>Email</label><input className="form-input" value={c.email||''} onChange={e=>setC(i,'email',e.target.value)} /></div>
                   <div><label>Phone</label><input className="form-input" value={c.phone||''} onChange={e=>setC(i,'phone',e.target.value)} /></div>
-                  <div style={{display:'flex',alignItems:'flex-end',gap:'8px'}}><label style={{display:'flex',alignItems:'center',gap:'6px',textTransform:'none',letterSpacing:0,fontFamily:'var(--sans)',fontSize:'12.5px',color:'var(--ink-2)',margin:0}}><input type="checkbox" checked={!!c.is_primary} onChange={e=>setC(i,'is_primary',e.target.checked)} /> Primary contact</label></div>
+                  {/* A RADIO, NOT A CHECKBOX. name is scoped to this company so two
+                      modals could never share a group, and picking one clears the
+                      rest in the setter -- the browser's own exclusivity is the
+                      affordance, setPrimary is what makes it true in state. */}
+                  <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'8px'}}>
+                    <label style={{display:'flex',alignItems:'center',gap:'6px',textTransform:'none',letterSpacing:0,fontFamily:'var(--sans)',fontSize:'12.5px',color:'var(--ink-2)',margin:0}}>
+                      <input type="radio" name={'primary-'+id} checked={!!c.is_primary} onChange={()=>setPrimary(i)} /> Primary contact
+                    </label>
+                    <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)'}} onClick={()=>removeContact(i)}>Remove</button>
+                  </div>
                 </div>
               ))}
               <button className="btn btn-ghost btn-sm" onClick={addContact}>+ Add Contact</button>
@@ -7932,7 +8018,16 @@ function CreateCompanyModal({ onClose, onCreated }) {
     if (!form.name) { alert('Company name required'); return; }
     const { data: co, error } = await SB.from('companies').upsert({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
     if (error) { alert('Error: '+error.message); return; }
-    if (form.cname) await SB.from('contacts').insert({company_id:co.id,full_name:form.cname,email:form.cemail||null,phone:form.cphone||null,is_primary:true});
+    // PRIMARY ONLY IF THIS COMPANY HAS NOBODY YET. This modal is an UPSERT on
+    // (name, type), so "create" can adopt a company that already exists and
+    // already has contacts -- and hardcoding true here is one of the ways three
+    // companies ended up with several primaries. The count is one extra read on
+    // a path somebody takes once.
+    if (form.cname) {
+      const { count } = await SB.from('contacts')
+        .select('id', { count:'exact', head:true }).eq('company_id', co.id);
+      await SB.from('contacts').insert({company_id:co.id,full_name:form.cname,email:form.cemail||null,phone:form.cphone||null,is_primary:!(count||0)});
+    }
     // Mirror into Quotes directory so it appears in quote autofill
     try {
       if (form.type==='client') {

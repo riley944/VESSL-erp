@@ -812,7 +812,16 @@ function Platform({ session, newQuote = null }) {
       const { data: co } = await SB.from('companies').upsert({name:contact.client,type:'client',email:contact.email||null,phone:contact.phone||null},{onConflict:'name,type'}).select('id').single();
       if (co?.id && contact.contact) {
         const exists = await SB.from('contacts').select('id').eq('company_id',co.id).ilike('full_name',contact.contact).limit(1);
-        if (!exists.data?.length) await SB.from('contacts').insert({company_id:co.id,full_name:contact.contact,email:contact.email||null,phone:contact.phone||null,is_primary:true}).select();
+        if (!exists.data?.length) {
+          // PRIMARY ONLY IF THE COMPANY HAS NOBODY YET. This ran on every quote
+          // save that named a new contact, and the company above is an upsert --
+          // so an established client gaining a second contact here used to gain a
+          // second PRIMARY with it. Both readers take .find(is_primary), which
+          // then returned whichever row the query happened to order first.
+          const { count } = await SB.from('contacts')
+            .select('id', { count:'exact', head:true }).eq('company_id', co.id);
+          await SB.from('contacts').insert({company_id:co.id,full_name:contact.contact,email:contact.email||null,phone:contact.phone||null,is_primary:!(count||0)}).select();
+        }
       }
     } catch(e) {}
     await loadContacts();
