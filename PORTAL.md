@@ -196,6 +196,8 @@ this entry records the read-back result rather than the update alone.
 
 ### ⚠ The client-side delivery-request render path crashes
 
+**Resolved 21 Sep, see the 2026-09-21 entry under "Deploying KUI-portal" below.**
+
 Opening a shipment detail card **as a client** throws:
 
     ReferenceError: requests is not defined
@@ -235,6 +237,40 @@ The trap: **the same author email builds fine on VESSL-erp.** Authorship alone
 never explains a difference between the two projects, because the requirement is
 per-Vercel-account linkage, not per-commit. Do not conclude "the author is fine
 because the other repo deploys".
+
+### ✅ RESOLVED 2026-09-21: the 28 Aug crash fix had never deployed
+
+Killian (Elevate/BucketGolf) reported "Application error: a client-side exception
+has occurred" on opening a shipment — the `ReferenceError: requests is not defined`
+crash described below. Its fix, `472567e` (plus the `ba5545f` re-trigger), was
+committed on 28 Aug and **never reached `kui.vessl.io`**.
+
+kui-portal had blocked every push from the `mdill97` GitHub account since late
+Aug, because that account was not linked to a Vercel account. GitHub commit
+statuses show "Deployment was blocked" on `e0299ad`, `472567e` and `ba5545f`
+(all 28 Aug). An empty commit, `a60d2dd`, was blocked the same way on 21 Sep.
+The domain kept serving `087be33` (26 Aug) the whole time. Before the fix the
+page `Age` stood at 2,265,597s, about 26 days.
+
+**Fix:** linked GitHub on the Vercel account (Account Settings → Authentication),
+then redeployed. `a60d2dd`, whose code is identical to `ba5545f`, completed at
+22 Sep 01:26 UTC.
+
+**Confirmed live by the bundle check, not the dashboard:** the page chunk
+changed from `page-a41a09325550b5d3.js` to `page-061eeec8c115e9eb.js`, and it
+contains "KUI proposed" and "Request withdrawn" (0 hits before). The unrenamed
+`requests.find` that caused the crash is gone.
+
+**The dashboard's Ready / Current label is not proof. The bundle string check
+below is.**
+
+**Open:** why kui-portal enforces the author check when vessl-erp does not.
+Both repos push as the same GitHub login (`mdill97`, same email, same
+credential), under the same `riley944s-projects` scope. On 21 Sep vessl-erp
+built those commits while kui-portal blocked them, so the difference is a
+per-project Vercel setting, not git identity. Riley to compare the two
+projects' Git settings. Until that is answered, assume the next kui-portal push
+may be blocked, and verify on the domain.
 
 ### Verify the DOMAIN, never the deployment
 
