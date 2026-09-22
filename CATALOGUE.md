@@ -2583,6 +2583,72 @@ or an import.
 
 ---
 
+## Script 72, as run — 2026-09-22, the quotes whose client the catalogue can name
+
+`z0` on the first rehearsal, preflight passed first time. Sets
+`quotes.client_company_id` on the **3** rows where it was null and the trimmed
+lowercase client text matched exactly one company of type `client`. Rows matching
+zero or several are left exactly as they were.
+
+| quote | sku | client text | → |
+|---|---|---|---|
+| `a1913a2f…` | LLN-500 | Legoland New York | `1c4f5a5f…` Legoland New York |
+| `ed5e4669…` | LLN-473 | Legoland New York | `1c4f5a5f…` Legoland New York |
+| `3d1c731a…` | BUC-157 KU2607001-copy | Buc-ees | `14cf63ad…` Buc-ees |
+
+**The same resolution `saveQuote` uses, deliberately.** That function matches the
+free text case-insensitively and takes the answer only when there is exactly one
+hit — zero and several both leave the column null, because either is a guess. This
+script is that rule applied once to the rows that predate it. A backfill
+resolving more loosely than the app would leave rows the app itself would never
+have produced.
+
+**Why the nulls existed.** `client_company_id` was backfilled by script 48 and
+then nothing maintained it until the quote form began resolving on every save. A
+quote saved before that, or never re-saved since its company was created, keeps a
+null. The two Legoland New York rows are exactly that: they named a client the
+catalogue had no company for at the time, and the company was created 2026-09-16.
+
+**The ambiguous branch is written and empty.** No client company name is
+duplicated case-insensitively today, so nothing matches several. The guard still
+refuses if that changes, because the right answer then is to merge the companies,
+not to have a script pick one.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| quotes with no client company | 5 | **2** |
+| linked by this script | — | **3**, each checked by id |
+| resolving to zero / several | 2 / 0 | 2 / 0 |
+| linked quotes pointing at a non-client or missing company | 0 | **0** (all 340 checked) |
+| company rows touched | — | **none** |
+
+### The twenty-fifth client company, and why the count moved
+
+The script asserted **24** client companies and passed — there were 24 when it
+ran. A later check read **25**.
+
+`Broughton HS` was created by hand at **21:21 on 2026-09-22**
+(`eeeba436-0419-467f-a058-512843bb23f6`), **after** this script ran. Nothing is
+wrong with either number; they describe different moments.
+
+**What it changes.** Quote `6398b185…` (BRO-001) still carries a null
+`client_company_id`, but its text now matches exactly one company. It is no
+longer unresolvable — it is **unsaved**. Opening and re-saving that quote links
+it, because `saveQuote` resolves on every save. No second script is needed.
+
+**What it would have changed.** Had the company been created *before* this ran,
+the guard would have **refused** — `resolvable` would have been 4 and
+`zero_match` 1, neither matching the measured 3 and 2. That is the intended
+behaviour, and it is worth recording that the guard was never actually tested by
+it.
+
+So only **`Legal`** is now genuinely a client the catalogue cannot name, and that
+one needs a person to say what it is rather than a script.
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the
