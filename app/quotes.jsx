@@ -13,9 +13,10 @@ import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
 import { productByKey, ensureProductForQuote, skuActivity } from "@/lib/products";
 // The one door into the programs table. See the note at the top of lib/programs.js.
 import { createProgram } from "@/lib/programs";
-// The house modal, and the one owner picker both doors share. Overlay rather than
-// a hand-rolled backdrop or a window.prompt: this file already has one modal
-// pattern and a second would be a second set of behaviours to keep in step.
+// The house modal, and the owner picker the Create PLM Card popup uses. Overlay
+// rather than a hand-rolled backdrop or a window.prompt: this file already has
+// one modal pattern and a second would be a second set of behaviours to keep in
+// step.
 import { Overlay } from "@/app/components/ModalGuard";
 import { OwnerSelect, ownerIdForEmail } from "@/app/components/OwnerSelect";
 // The search term and the open client survive navigation, and go on reload.
@@ -634,14 +635,9 @@ const SKU_SIZE_SUFFIX = /[-_\/ ]\s*(?:[0-9]?X{0,3}(?:S|M|L|XS|SM|MED|LG|XL|XXL|S
 const skuLooksSized = (sku) => SKU_SIZE_SUFFIX.test((sku || "").trim());
 
 const BLANK = {
-  // FORM STATE ONLY, and that is what makes it safe. formToRow is a destructive
-  // whitelist -- anything it does not name is dropped on every save -- so this
-  // never reaches the quotes table. It travels with the form object to saveQuote,
-  // which reads it and then forgets it.
-  createProgram: false,
-  // Who the card opens owned by. Null is Unowned and is a real answer, so it is
-  // also the blank value -- the tick fills it with the saver when it is turned on.
-  programOwnerId: null,
+  // createProgram and programOwnerId lived here as form state for the tick that
+  // opened a PLM card on save. Both are gone with it: a card is created from the
+  // quote card now and from nowhere else, so the form carries nothing about PLM.
   id: null, quoteDate: "", product: "", sku: "", sizeScales: [], sizeDeltas: {}, sizePlateFees: {}, sizeCartons: {}, notes: "",
   updatedAt: "", updatedBy: "",
   client: "", clientContact: "", clientEmail: "", clientPhone: "", clientAddress: "",
@@ -1045,29 +1041,12 @@ function Platform({ session, newQuote = null }) {
         }
       } catch (e) {}
 
-      // ── THE TICK, AND ONLY THE TICK ───────────────────────────────────────
-      // A program is created here when somebody asked for one on this form, and
-      // never otherwise. f carries createProgram as form state; formToRow dropped
-      // it on the way to the table, which is why it is read from f rather than
-      // from savedRow.
+      // SAVING A QUOTE CREATES NO PLM CARD. It used to, when the form carried a
+      // tick asking for one. The card is opened from the quote card now, by the
+      // green button, which reads the saved row and asks who should own it -- so
+      // the one moment a card is created is a moment somebody chose it, rather
+      // than a side effect of a save that was mostly about something else.
       //
-      // The owner is whoever the picker beside the tick names, defaulted to the
-      // person saving. It is passed as an ID and never as an email: Unowned is a
-      // choice the picker offers, and an email fallback here would quietly overrule
-      // somebody who made it. A quote with no product or no resolved client names
-      // no program, and says so rather than failing the save -- 3 quotes carry a
-      // client the catalogue has no company for, which is a known question rather
-      // than a fault here.
-      if (f.createProgram) {
-        if (!savedRow.product_id || !savedRow.client_company_id) {
-          flash("Quote saved — no PLM card, it needs a product and a matched client");
-        } else {
-          const { error: pErr } = await createProgram(savedRow.product_id, savedRow.client_company_id,
-                                                      { stage: 'quoted', ownerId: f.programOwnerId || null,
-                                                        createdBy: userEmail });
-          flash(pErr ? "Quote saved — PLM card failed, " + pErr.message : "Quote saved — PLM card opened at Quoted");
-        }
-      }
       // Ask on the OLD key -- renamed, or a different product? Kristy's words on
       // why any of this exists: "if I have to update information on multiple
       // screens, it allows more chance for me to miss something."
@@ -1335,7 +1314,7 @@ function Platform({ session, newQuote = null }) {
         </div>
       )}
 
-      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} userEmail={userEmail} staff={staff} />}
+      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} userEmail={userEmail} />}
       {/* Opens after a SKU change is saved. onDone reloads so the list shows the
           result; the modal stays up because the report IS the result. */}
       {skuChoice && <QuoteSkuChoiceModal product={skuChoice.product} quote={skuChoice.quote} updatedBy={userEmail} onClose={() => setSkuChoice(null)} onDone={() => load()} />}
@@ -2633,7 +2612,10 @@ function SelectField({ label, k, placeholder, options, hint, f, set }) {
 // onSaveContact, because nothing here writes client_contacts any more. That
 // table still exists and is still edited from the Directory panel; it is simply
 // no longer something a quote can create a company through.
-function QuoteForm({ initial, onClose, onSave, userEmail, staff = [] }) {
+// staff went with the PLM tick. It fed the owner picker that appeared when the
+// box was ticked, and nothing else in this form ever read it -- the quote CARD
+// still passes its own staff to MarkWonButton, which is a different binding.
+function QuoteForm({ initial, onClose, onSave, userEmail }) {
   // The form this guard exists for. About eleven of its edits are click-driven --
   // the saved-factory chips, the client suggestions, picking an HTS code, Add
   // tier, Preset qtys, auto, the Air/Ocean toggles -- and not one of them fires
@@ -3587,50 +3569,11 @@ function QuoteForm({ initial, onClose, onSave, userEmail, staff = [] }) {
           </FormSection>
 
           <FormSection icon={<Building2 size={15} />} title="Client / Vendor Info">
-            {/* ── THE ONE DOOR INTO PLM ──────────────────────────────────────
-                In the Client section rather than beside the SKU, because a card is
-                a product FOR a client -- and the field it depends on is right
-                below it. Unticked by default on every quote, new or reopened: a
-                card is something somebody asks for, and a box that remembers
-                being ticked would start creating them quietly again.
-
-                A real checkbox, like the size scales above, so the modal dirty
-                guard sees it natively without a markDirty call. */}
-            <label style={{ ...S.field, gridColumn: "1 / -1", display: "flex", flexDirection: "row",
-                            alignItems: "flex-start", gap: 9, margin: 0, fontFamily: "inherit",
-                            fontSize: 13, letterSpacing: 0, textTransform: "none" }}>
-              <input type="checkbox" style={{ marginTop: 2 }}
-                     checked={!!f.createProgram}
-                     onChange={(e) => {
-                       const on = e.target.checked;
-                       // Ticking it defaults the owner to whoever is saving, which is
-                       // what it always did silently. Unticking clears the choice
-                       // rather than remembering it, for the same reason the tick
-                       // itself never persists.
-                       setF((p) => ({ ...p, createProgram: on,
-                                      programOwnerId: on ? (p.programOwnerId || ownerIdForEmail(staff, userEmail)) : null }));
-                     }} />
-              <span>
-                Create PLM program
-                <span style={{ display: "block", fontSize: 11.5, color: "#6a7488", marginTop: 2 }}>
-                  Opens a card at Quoted, owned by whoever you pick. Needs a product and a
-                  client the catalogue knows. Nothing else creates one.
-                </span>
-              </span>
-            </label>
-            {/* ── WHO KEEPS IT ───────────────────────────────────────────────
-                Revealed by the tick and gone without it: an owner picker beside an
-                unticked box would be asking about a card nobody has asked for.
-                OUTSIDE the label above rather than inside it, because a select
-                inside a label toggles the checkbox on every click. */}
-            {!!f.createProgram && (
-              <div style={{ ...S.field, gridColumn: "1 / -1", display: "flex", flexDirection: "row",
-                            alignItems: "center", gap: 10, margin: 0 }}>
-                <span style={{ fontSize: 12.5, color: "#6a7488" }}>Owner</span>
-                <OwnerSelect value={f.programOwnerId} staff={staff}
-                  onChange={(v) => setF((p) => ({ ...p, programOwnerId: v }))} />
-              </div>
-            )}
+            {/* The Create PLM program tick and its owner picker stood here. A
+                card is opened from the quote card now, by the green button, and
+                from nowhere else -- so this form asks nothing about PLM and the
+                owner is chosen at the moment the card is made rather than on a
+                save that was mostly about pricing. */}
             {/* ── THE CLIENT IS CHOSEN, NOT TYPED ───────────────────────────
                 The suggestion list is gone with the free text. It offered saved
                 BUYERS as well as names, so the thing being picked was sometimes a

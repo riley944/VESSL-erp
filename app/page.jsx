@@ -2568,8 +2568,8 @@ function CreateSOModal({onClose,onCreated}){
     // program would otherwise be missed.
     // NO PROGRAM IS CREATED HERE ANY MORE. Saving a sales order used to mint a PLM
     // card for every product and client pair on it. PLM is kept by hand now, on
-    // Riley decision, and the only door is the tick on the quote form -- a board
-    // that fills itself is the thing the rework exists to stop.
+    // Riley decision, and the only door is the Create PLM Card button on the quote
+    // card -- a board that fills itself is the thing the rework exists to stop.
     setLoading(false); onCreated(so.id);
   };
   return (
