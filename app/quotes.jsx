@@ -1328,7 +1328,8 @@ function Platform({ session, newQuote = null }) {
 // It was removed when the automatic doors were closed, because it called
 // ensurePrograms directly and would have opened a card with no owner and no
 // stage. It returns writing what the manual board needs -- stage quoted, owner
-// the person pressing it -- through the same helper the quote-form tick uses.
+// the person pressing it -- through createProgram, of which it is now the only
+// caller.
 //
 // IT READS THE QUOTE ROW RATHER THAN THE CARD, as it always did. The card object
 // is a UI shape assembled at load, and whether it carries product_id and
@@ -1364,13 +1365,60 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
     setState('idle'); setMissing(null);
     try {
       const { data: row, error } = await SB.from('quotes')
-        .select('product_id,client_company_id').eq('id', q.id).single();
+        .select('product_id,client_company_id,client,sku,product').eq('id', q.id).single();
+      if (error) { setBusy(false); alert('Could not read the quote: ' + error.message); return; }
+
+      // ── RESOLVE BEFORE REFUSING ───────────────────────────────────────────
+      // A null link is not the same as an unlinkable quote. Both columns are
+      // maintained on save, so a quote saved before that existed -- or one whose
+      // company was added to Companies afterwards -- can be perfectly resolvable
+      // and still read null here. Refusing it sent somebody to re-save a quote
+      // they had no edit to make, which is the kind of errand that teaches people
+      // the button is broken.
+      //
+      // THE SAME RULES SAVEQUOTE USES, deliberately, so the two cannot disagree
+      // about what a match is: trimmed, case-insensitive, and EXACTLY ONE hit.
+      // Zero and several are both "cannot be trusted" and stay null.
+      let productId = (row && row.product_id) || null;
+      let clientId  = (row && row.client_company_id) || null;
+
+      if (!clientId) {
+        const name = ((row && row.client) || '').trim();
+        if (name) {
+          const { data: hits } = await SB.from('companies').select('id').ilike('name', name);
+          if (hits && hits.length === 1) {
+            clientId = hits[0].id;
+            // is(null) so a link somebody made while this was resolving wins over
+            // the one inferred here -- the same guard the product write has used
+            // since quotes started linking themselves.
+            try { await SB.from('quotes').update({ client_company_id: clientId }).eq('id', q.id).is('client_company_id', null); } catch (e) {}
+          }
+        }
+      }
+
+      // productByKey RATHER THAN ensureProductForQuote. The two differ on the
+      // one thing that matters here: ensureProductForQuote CREATES the product
+      // when none matches, and a card button must not mint catalogue rows -- the
+      // quote save is the only thing that does that, on purpose. This looks, and
+      // links what it finds.
+      //
+      // A retired row is not a match, by the same rule ensureProductForQuote
+      // applies: active false means taken out of service, and adopting one here
+      // would quietly put a card on it. NULL stays orderable.
+      if (!productId) {
+        const p = await productByKey((row && row.sku) || '', (row && row.product) || '');
+        if (p && p.active !== false) {
+          productId = p.id;
+          try { await SB.from('quotes').update({ product_id: productId }).eq('id', q.id).is('product_id', null); } catch (e) {}
+        }
+      }
+
       setBusy(false);
-      if (error) { alert('Could not read the quote: ' + error.message); return; }
-      // BOTH ANSWERS, NOT THE FIRST ONE. The read already fetches both columns,
-      // so saying which is missing costs nothing -- it was simply thrown away.
-      const needsProduct = !row || !row.product_id;
-      const needsClient  = !row || !row.client_company_id;
+      // BOTH ANSWERS, NOT THE FIRST ONE. Asked after the resolve, so what it
+      // reports is what is genuinely missing rather than what merely had not been
+      // looked up yet.
+      const needsProduct = !productId;
+      const needsClient  = !clientId;
       if (needsProduct || needsClient) {
         setMissing({ needsClient, needsProduct });
         setState('cannot');
@@ -1378,7 +1426,12 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
       }
       // Defaulted to the person who pressed it, which is what it always did --
       // the difference is that it is now visible and can be changed.
-      setAsk({ row, ownerId: ownerIdForEmail(staff, userEmail) });
+      //
+      // The RESOLVED ids travel on, not the row as read: the card is created from
+      // what this just established, so a write that failed above still opens the
+      // right card and leaves only the quote's own link to fix.
+      setAsk({ row: { ...row, product_id: productId, client_company_id: clientId },
+               ownerId: ownerIdForEmail(staff, userEmail) });
     } catch (e) {
       setBusy(false);
       alert('Something went wrong: ' + (e && e.message ? e.message : e));
@@ -1443,7 +1496,7 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
           {missing.needsClient && (
             <div>
               {clientName
-                ? "Client “" + clientName + "” isn’t in Companies yet — add it as a client, then edit and re-save this quote."
+                ? "Client “" + clientName + "” isn’t in Companies yet — add it as a client, then try again."
                 : "This quote has no client name yet — add one, then edit and re-save this quote."}
             </div>
           )}
