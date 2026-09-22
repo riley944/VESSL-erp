@@ -1370,6 +1370,11 @@ function Platform({ session, newQuote = null }) {
 function MarkWonButton({ q, userEmail, staff = [] }) {
   const [busy, setBusy] = useState(false);
   const [state, setState] = useState('idle');   // idle | done | cannot
+  // WHICH link is missing, not merely that one is. null unless state is
+  // 'cannot'; then { needsClient, needsProduct }. Kept as two booleans rather
+  // than a finished sentence so the short button label and the long explanation
+  // below it are derived from one answer and cannot come to disagree.
+  const [missing, setMissing] = useState(null);
   // null when shut; { row, ownerId } while the popup is asking.
   const [ask, setAsk] = useState(null);
 
@@ -1383,13 +1388,24 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
   // it should not have opened.
   const open = async () => {
     setBusy(true);
+    // A fresh press clears the last refusal. The reason below has no timer any
+    // more -- six seconds was not long enough to read one sentence, let alone
+    // two, and a message that erases itself while somebody is still reading it
+    // is worse than one that waits to be dismissed by the next attempt.
+    setState('idle'); setMissing(null);
     try {
       const { data: row, error } = await SB.from('quotes')
         .select('product_id,client_company_id').eq('id', q.id).single();
       setBusy(false);
       if (error) { alert('Could not read the quote: ' + error.message); return; }
-      if (!row || !row.product_id || !row.client_company_id) {
-        setState('cannot'); setTimeout(()=>setState('idle'), 6000); return;
+      // BOTH ANSWERS, NOT THE FIRST ONE. The read already fetches both columns,
+      // so saying which is missing costs nothing -- it was simply thrown away.
+      const needsProduct = !row || !row.product_id;
+      const needsClient  = !row || !row.client_company_id;
+      if (needsProduct || needsClient) {
+        setMissing({ needsClient, needsProduct });
+        setState('cannot');
+        return;
       }
       // Defaulted to the person who pressed it, which is what it always did --
       // the difference is that it is now visible and can be changed.
@@ -1418,9 +1434,17 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
     }
   };
 
+  // SHORT ON THE BUTTON, FULL SENTENCE BENEATH IT. The instructions for fixing
+  // this run to a hundred characters and will not fit on a control that sits in
+  // a right-aligned row with two others.
+  const clientName = (q.client || '').trim();
+  const cannotLabel = !missing ? 'Cannot open yet'
+    : missing.needsClient && missing.needsProduct ? 'Needs a client and a product'
+    : missing.needsClient ? 'Needs a client'
+    : 'Needs a product';
   const label = state==='done'   ? 'PLM card ready — see Programs'
-    : state==='cannot' ? 'Needs a product and a client first'
-    : busy && !ask ? 'Opening…' : 'Mark won · start PLM card';
+    : state==='cannot' ? cannotLabel
+    : busy && !ask ? 'Opening…' : 'Create PLM Card';
   const bg = state==='done' ? '#e7f5ec' : state==='cannot' ? '#fef3e2' : '#0f7d43';
   const col = state==='done' ? '#2f7d52' : state==='cannot' ? '#b45309' : '#fff';
 
@@ -1429,15 +1453,43 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
       <button
         style={{ display:'inline-flex', alignItems:'center', gap:7, background:bg, border:'1px solid '+(state==='idle'?'#0f7d43':'transparent'), color:col, borderRadius:10, padding:'9px 16px', fontSize:13.5, fontWeight:600, cursor:'pointer' }}
         onClick={open} disabled={busy}
-        title="Open a PLM card for this quote, at Quoted, owned by whoever you choose"
+        title="Create a PLM card for this quote, at Quoted, owned by whoever you choose"
       >
         <CheckCircle2 size={15} /> {label}
       </button>
 
+      {/* ── WHY IT CANNOT, AND WHAT TO DO ────────────────────────────────────
+          flexBasis 100% because the row this sits in is a wrapping flex row
+          holding three controls -- without it, a sentence this long becomes a
+          fourth item beside the buttons and lands on its own line only when the
+          viewport happens to be narrow enough to wrap. A full basis takes its
+          own line at every width, which is what the row already sets flexWrap
+          for.
+
+          Right-aligned to match the buttons above it rather than starting a
+          second alignment on the same block. */}
+      {state==='cannot' && missing && (
+        <div style={{ flexBasis:'100%', textAlign:'right', fontSize:12.5, lineHeight:1.5,
+                      color:'#b45309', marginTop:-2 }}>
+          {missing.needsClient && (
+            <div>
+              {clientName
+                ? "Client “" + clientName + "” isn’t in Companies yet — add it as a client, then edit and re-save this quote."
+                : "This quote has no client name yet — add one, then edit and re-save this quote."}
+            </div>
+          )}
+          {missing.needsProduct && (
+            <div style={{ marginTop: missing.needsClient ? 4 : 0 }}>
+              Product isn’t linked — edit and re-save this quote.
+            </div>
+          )}
+        </div>
+      )}
+
       {ask && (
         <Overlay onClose={()=>setAsk(null)} maxWidth={420}>
           <div style={{ fontSize:17, fontWeight:600, color:'#0f1729', letterSpacing:'-.01em' }}>
-            Start PLM card for {q.sku || 'this quote'}
+            Create PLM card for {q.sku || 'this quote'}
           </div>
           <div style={{ fontSize:12.5, color:'#6a7488', marginTop:6, lineHeight:1.5 }}>
             Opens a card at Quoted. Nothing is written until you press Start.

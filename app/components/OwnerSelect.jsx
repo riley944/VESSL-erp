@@ -1,7 +1,7 @@
 'use client';
 
 // ── ONE OWNER PICKER, TWO DOORS ─────────────────────────────────────────────
-// The tick on the quote form and the Mark won popup both have to ask the same
+// The tick on the quote form and the Create PLM Card popup both have to ask the same
 // question -- who keeps this card -- against the same staff_profiles list the PLM
 // card modal offers for reassignment. Two copies of a select would be two places
 // for the default to drift, and the default is the part that matters: a card that
