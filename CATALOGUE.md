@@ -2813,6 +2813,61 @@ trusting it.
 
 ---
 
+## The PLM rebuild, as built — 2026-09-23
+
+Riley's 11 Aug board and card on today's data model, in four staged commits,
+each passed on localhost before the next began. PLM.md's top box is the current
+description; this is the record of how it got there and what was decided on
+the way.
+
+| Stage | Commit | What |
+|---|---|---|
+| 1 | `cfdadb4` | Six-stage ladder, 272px columns, drag removed, Removed column behind a toggle, owner chips from `staff_profiles` |
+| 2 | `fb6db4d` | Card tabs: **Sampling** (pills, Advance, owner, sample strip, quick emails, notes, Remove) and **Card** (system knows, sampling log, exports) |
+| 3 | `35eba46` | `program_tasks` checklist, seeded once per stage; blocker pills and the three waiting tiles |
+| 4 | `ea7001c` | A saved PO moves its cards to Production; seeding shared in `lib/programs.js`; Create PLM Card owner = quote creator |
+
+Stage 5 was the deletions, and there were none to make: *New Program*, the
+factory sheet and import, and Riley's inline notes block were never ported.
+
+### Decisions taken in the build, not in the plan
+
+- **The "to Emily" emails go to the factory.** No Emily is on staff; Emily Chen
+  (`emily@xxwy.cn`) is the Fuzhou factory contact, so Riley's hardcoded
+  `emily@kinguniversal.com` was a factory email all along.
+- **Pre-Production's tasks fold into Production**, minus "PO issued" — a PO is
+  what puts a card there now.
+- **Pills seed the checklist, not only Advance.** 11 Aug seeded on Advance only,
+  which left a card moved by a pill with no list.
+- **The PO rule counts new lines only on an edited PO.** Re-saving an old PO must
+  not pull back a card somebody moved off Production by hand. A changed product
+  or client on an existing line moves nothing either.
+- **A task delete asks first.** 11 Aug did not; the × sits beside the blocker.
+
+### Two faults found and fixed on the way
+
+**The board reload unmounted the open card.** `load()` set `loading` true on every
+call, and the page returns a placeholder while loading — so every stage move,
+note or sample swapped the whole page out and remounted the card: tab reset,
+half-typed text elsewhere on the card lost. Only the first load shows the
+placeholder now.
+
+**`useDirtyGuard` counted every change as unsaved.** Its snapshot already skipped
+`data-noguard` controls and nested modals, but its `change` listener did not — so
+any self-saving control, and any typing inside a nested modal, marked the outer
+card dirty. The remount above had been hiding it. Both listeners now apply the
+same two exclusions. **This is app-wide**: search boxes inside modals no longer
+make a close ask for confirmation, which is what their `data-noguard` said they
+wanted.
+
+### What is open
+
+- Two stale thresholds: health 14 days, the pill 21. Unifying them is a decision.
+- `ensurePrograms` in `lib/programs.js` has no callers left.
+- The card exports carry neither the checklist nor the sample strip.
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the

@@ -1,6 +1,43 @@
 # Product Lifecycle Management — design brief
 
-> ## THE MODEL CHANGED ON 2026-09-17. READ THIS FIRST.
+> ## THE BOARD WAS REBUILT ON 2026-09-23. READ THIS FIRST.
+>
+> **Riley's 11 Aug design, on today's data model.** Still manual, as the
+> 2026-09-17 box below explains, with one deliberate exception: a saved purchase
+> order moves its cards to Production. The page is still called *Product Life
+> Management*. Scripts 75, 76 and 77 laid the ground; the build is recorded in
+> CATALOGUE.md under *The PLM rebuild, as built — 2026-09-23*.
+>
+> ### What is true now
+>
+> | | |
+> |---|---|
+> | **The one door in** | *Create PLM Card* on a quote card. `createProgram` in `lib/programs.js` is the only writer of new rows. Nothing else creates a card — not a quote save, not an order, not a PO. |
+> | **Owner at creation** | Defaults to the quote's creator — the staff member whose address is in `quotes.updated_by` — not whoever pressed the button. No staff match reads *Unowned*, visibly; it never falls back to the presser. Changeable in the popup and on the card. |
+> | **Stages** | `quoted` (labelled **Quoting**) → `sampling` → `revision` → `testing` → `production` → `shipped`. NULL is legal and gets its own *No stage set* column. **Shipped is the end.** No Inquiry, no Pre-Production, no Purchase Order stage, no Delivered. |
+> | **The board** | Fixed 272px columns scrolling sideways, one per stage. **No drag** — a tile opens the card, and the card moves it. Tile edge is health (green / amber / red); pills for days in stage, open tasks, the blocker, sample overdue, notes, retired, no testing. |
+> | **Health tiles** | Stalled, Overdue samples, Waiting on us / clients / factories. The three waiting tiles are filters. |
+> | **Stale** | Two numbers, knowingly: health turns amber past **14** days in a stage (Riley's), and the tile pill says *stale* past **21** (`STALE_DAYS`). Unifying them is an open decision, not a tidy-up. |
+> | **The card, Sampling tab** | Stage pills, *Advance to X →*, owner, days in stage, the **sample strip** (round, master sample, sent, due back — on `programs`, per client) in Sampling and Revision, **quick emails**, the **checklist**, notes, *Remove from board*. |
+> | **The card, Card tab** | What the system knows (read-only records plus three product fields), the product's **sampling log** and sampling notes (shared by every card for the SKU), and the PDF / XLSX / CSV exports. |
+> | **Checklist** | `program_tasks`. Riley's templates, seeded **once per stage, ever** — the first time a card enters a stage, whether by pill, Advance or PO. Coming back to a stage finds the old list. Seeded tasks go to the card's owner. Anyone on staff can tick, block or delete any task; there is no author rule. Blockers: none / factory / client / us. |
+> | **The PO rule** | Saving a PO — a new one, or new lines on an existing one — moves every card for that client and a product on those lines from Quoting, Sampling, Revision, Testing **or no stage** to Production, writes a `po-auto` note, and seeds the Production checklist. Production and Shipped cards are untouched. **It never creates a card and never touches a removed one.** Re-saving an old PO moves nothing. `advanceToProductionForPO` in `lib/programs.js`. |
+> | **Quick emails** | Opens the user's mail client; nothing is sent from VESSL. Recipients come from the latest quote for the product and client, else the company's primary contact. Riley's "to Emily" templates are factory emails — Emily Chen is the Fuzhou factory contact, not staff. |
+> | **Removed, not deleted** | *Remove from board* sets `archived`. The card, its notes and tasks are kept, and it sits in a *Removed* column behind *Show N removed*, from which *Put back on the board* returns it to its stage. `authenticated` has no DELETE on `programs` and nothing in the app deletes one. |
+> | **Notes** | `program_notes`, authored by **email** — the restrictive policies compare `lower(author)` to the token's email, so a note is editable and deletable only by its writer. Riley's name-based author would have made notes undeletable by the people who wrote them. |
+>
+> ### What did not come back from 11 Aug
+>
+> *New Program* (the quote card is the only door), the factory update sheet and
+> its import (Phase 2B moved off PLM, and still stands), `STAGE_OWNER`
+> auto-assignment, drag-and-drop, and the hardcoded team list — `staff_profiles`
+> replaces it.
+
+> ## THE MODEL CHANGED ON 2026-09-17.
+>
+> **Superseded in its specifics by the 2026-09-23 box above** — the tick on the
+> quote form, the sample rungs, Purchase Order and Complete are all gone. What
+> still holds is the principle: a person creates, stages and owns a card.
 >
 > **PLM is manual. A card exists because somebody asked for one, sits at the stage
 > somebody set, and belongs to somebody by name.** Nothing derived creates a card
@@ -12,7 +49,7 @@
 > read-only block on today's card still reports exactly those signals. **It is no
 > longer how the board behaves.**
 >
-> ### What is true now
+> ### What was true on 2026-09-17
 >
 > | | |
 > |---|---|
