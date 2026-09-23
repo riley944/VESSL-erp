@@ -2728,6 +2728,91 @@ disagreeing — a separate question, and not this script to answer.
 
 ---
 
+## Scripts 75, 76 and 77, as run — 2026-09-23, the PLM rebuild groundwork
+
+One `z0` each, preflight passed first time on all three, and all three verified
+from outside afterwards with fresh queries rather than by re-reading their own
+branches. Together they are everything the database needs before the board is
+rebuilt on Riley's 11 Aug design.
+
+### 75 — the six-stage ladder
+
+`quoted` → `sampling` → `revision` → `testing` → `production` → `shipped`, with
+NULL still allowed because a card with no stage set is a real state the board
+draws a column for. `purchase_order` migrates to `production`, `complete` to
+`shipped`. **`quoted` keeps its stored value and is merely labelled Quoting on
+screen** — the same trade `COMPLETE_LABEL` already made, and renaming it would
+have meant migrating every row and every reader for a word.
+
+**Zero rows moved**, measured rather than hoped: 2 on `quoted`, 1 on `sampling`,
+none on either retired value. The UPDATE and its guards are still written,
+because the board is in use and that could be false by the time it ran.
+
+**The trigger was the trap.** `trg_programs_declared_stage_at` fires on
+`UPDATE OF declared_stage`. A migration writing that column would have
+**restamped `declared_stage_at`** — turning a card that had sat in Purchase Order
+for forty days into one that entered Production this morning, and resetting the
+days-in-stage the whole board is read by. With no rows to move, that damage would
+have been completely invisible today and would have landed the next time anyone
+reran the shape. The trigger is disabled around the UPDATE and re-enabled after;
+`b5` asserts the stamp did not move and `b6` asserts the trigger is armed again,
+because a disabled trigger left behind would silently stop stamping every future
+stage move.
+
+### 76 — `vessl.program_tasks`
+
+The per-stage checklist, recreated on today's model: `owner_id` is a
+`staff_profiles` key rather than Riley's email string, `assigned_by` stays an
+address because an audit crumb has to survive somebody leaving, and `program_id`
+cascades exactly as `program_notes` does.
+
+**The schema default privileges are the dangerous part.** `pg_default_acl` for
+relations in `vessl` reads `{authenticated=arwdDxtm/postgres}`, so a table created
+the obvious way arrives with INSERT, SELECT, UPDATE, DELETE, **TRUNCATE**,
+REFERENCES and TRIGGER already granted. Everything is revoked first and four
+privileges granted back. Same lesson as scripts 21 and 34, in its table form.
+
+**No author policy, deliberately.** `program_notes` carries two RESTRICTIVE
+policies confining edits and deletes to the person who wrote the row, because a
+note is somebody's words. A task is shared work — the point of a checklist is
+that anybody can tick an item off — so the only rule is the staff gate.
+
+### 77 — the sample strip on the card
+
+`sample_round`, `master_sample_included`, `sample_sent_date`, `sample_due_back`.
+All nullable, none defaulted: a card that has never been sampled should say
+nothing rather than claim round 1 on the day it was created.
+
+**On the program, not the product**, and that is the whole decision. The sampling
+*log* lives in `product_notes` and is shared by every card for a SKU, because a
+round that happened happened once whoever it was for. These four describe the
+round *in flight for one client* — two clients sampling the same product are on
+different rounds with different dates. On the product they would overwrite each
+other, which is the fault script 67 already fixed once.
+
+**No grant block, and that is asserted rather than assumed.** `authenticated`
+holds table-level UPDATE on `programs`, and a table-level privilege covers columns
+added afterwards; `b4` checks `has_column_privilege` on all four rather than
+trusting it.
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| declared_stage CHECK | 5 values + NULL | **6 values + NULL**, no `purchase_order`, no `complete` |
+| rows on the retired values | 0 | **0** |
+| stage distribution | quoted 2, sampling 1 | **unchanged** |
+| `trg_programs_declared_stage_at` | enabled | **enabled**, stamps unmoved (`420bfbfd` still 2026-09-18 21:52) |
+| `program_tasks` | absent | **present**, 0 rows |
+| its ACL | — | **`authenticated=arwd`**, TRUNCATE false, anon false×4 |
+| its RLS | — | **on**, one permissive `staff_only` on `is_staff()` both sides |
+| its keys | — | `program_id` cascade `c`, `owner_id` no-action `a` |
+| sample columns | 0 of 4 | **4 of 4**, all nullable, all undefaulted |
+| `programs` ACL | `arw` | **`arw`**, unchanged |
+| `programs` columns | 14 | **18** |
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the
