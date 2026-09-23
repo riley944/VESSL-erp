@@ -2728,6 +2728,25 @@ disagreeing — a separate question, and not this script to answer.
 
 ---
 
+## Script 73, as run — DELETE on `programs`
+
+`authenticated` gained DELETE on `vessl.programs`; `anon` and PUBLIC were revoked
+first and `anon` still holds none. Measured afterwards: relacl
+`{postgres=arwdDxtm/postgres,authenticated=arwd/postgres}`.
+
+**It was run before `program_tasks` existed**, so its header describes a world
+that has since moved: it names `program_notes` as the only table cascading from
+`programs`, and its `b5` checks that one key alone. Script 76 then created
+`program_tasks` with `program_id` **on delete cascade** too, so a delete now takes
+the card, its notes **and its checklist** — measured, both keys `confdeltype = c`.
+The script is committed as written, not edited to match.
+
+The header's open question — whether the missing DELETE was a deliberate revoke —
+was answered by use: the card gained *Delete card* in `4e0031d`, behind a typed
+`DELETE` confirm, beside the reversible *Remove from board*.
+
+---
+
 ## Scripts 75, 76 and 77, as run — 2026-09-23, the PLM rebuild groundwork
 
 One `z0` each, preflight passed first time on all three, and all three verified
