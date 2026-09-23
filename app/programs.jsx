@@ -1,7 +1,9 @@
 'use client';
-import { useState, useEffect, useMemo, useRef } from 'react';
+// useRef went with the drag guard, and FilterSelect with the owner dropdown the
+// chips replaced. Neither would have errored if left -- an unused import resolves
+// perfectly well -- which is why they are removed by hand.
+import { useState, useEffect, useMemo } from 'react';
 import { SB } from '@/lib/supabase';
-import { FilterSelect } from '@/app/components/FilterSelect';
 // Overlay, not a hand-rolled backdrop. It carries useDirtyGuard, so a typed note
 // is protected from a backdrop click by importing this and nothing else -- which
 // is precisely why the guard was put there rather than in each modal.
@@ -85,54 +87,79 @@ const norm = t => (t || '').toLowerCase();
 // six-column grid already cost this page once. Everything that destructures
 // [k,l] is untouched by a third item, so no reader below had to move.
 const MANUAL_STAGES = [
-  ['quoted',         'Quoted',         '#8E8E93'],
-  ['sampling',       'Sampling',       '#c2790b'],
-  ['testing',        'Testing',        '#d6492f'],
-  ['purchase_order', 'Purchase Order', '#3461e0'],
+  ['quoted',     'Quoting',    '#8E8E93'],
+  ['sampling',   'Sampling',   '#c2790b'],
+  ['revision',   'Revision',   '#7d5bd6'],
+  ['testing',    'Testing',    '#d6492f'],
+  ['production', 'Production', '#3461e0'],
+  ['shipped',    'Shipped',    '#0f9d6e'],
 ];
-const COMPLETE = 'complete';
-// THE STORED VALUE STAYS complete, AND ONLY THE WORD CHANGES. Riley reads the end
-// of the pipeline as In Production, so that is what the section, the stage control
-// and the finished list say -- but renaming the value would mean a script, a CHECK
-// change and a migration for a relabelling, and every row already on complete.
+// THE STORED VALUE STAYS quoted AND ONLY THE WORD CHANGES, which is the trade
+// COMPLETE_LABEL used to make for In Production. Renaming the value would mean a
+// script, a CHECK change and a migration for a relabelling.
 //
-// IN PRODUCTION rather than bare Production, deliberately. products.product_stage
-// has its own Production value, and the card shows both within inches of each
-// other in what the system knows. Two different things called the same word on one
-// screen is a question somebody has to stop and work out.
-const COMPLETE_LABEL = 'In Production';
-
-// In Production is green and lives here rather than on MANUAL_STAGES, because
-// COMPLETE is not a pipeline stage -- it has its own section, its own list shape
-// and its own label constant already, and putting it on that list would put it
-// back among the sections every reader of that list renders.
-const COMPLETE_COLOR = '#0f9d6e';
-
-// THE ONE COLOUR TABLE, derived rather than typed a second time. The hexes are
-// the globals.css tokens -- warn, hot, info, ok -- so the board wears the
-// palette the rest of the app already carries instead of a sixth private one.
-// Quoted keeps its grey deliberately, since a stage nobody has acted on yet
-// should not be the loudest thing on the page.
-const STAGE_ACCENT = Object.fromEntries(
-  [...MANUAL_STAGES, [COMPLETE, COMPLETE_LABEL, COMPLETE_COLOR]].map(([k, , c]) => [k, c]));
+// SHIPPED IS THE END, and it is a column like any other rather than a collapsed
+// section beneath the board. A finished program is still a program, and the old
+// arrangement -- pipeline above, Complete shut below -- was built when Complete
+// meant something a sales order had done. It is a stage somebody sets now.
+const SHIPPED = 'shipped';
+// The two stages a sample can be out during. Both the overdue flag and the card
+// sample strip ask this, so it is stated once.
+const SAMPLING_STAGES = ['sampling', 'revision'];
+// THE ONE COLOUR TABLE, derived rather than typed a second time. Five of the six
+// are globals.css tokens -- warn, hot, info, ok and a grey -- so the board wears
+// the palette the rest of the app carries. Revision is the one invented colour,
+// a purple, because it sits between amber Sampling and red Testing and needed to
+// be distinct from both.
+//
+// Quoting keeps its grey deliberately, since a stage nobody has acted on yet
+// should not be the loudest thing on the page. Production is blue and Shipped is
+// green, which is where Purchase Order and In Production were.
+const STAGE_ACCENT = Object.fromEntries(MANUAL_STAGES.map(([k, , c]) => [k, c]));
 
 // No stage set has no colour of its own and must not borrow one. It is the
 // absence of an answer, and a pale grey is what says that.
 const accentOf = k => STAGE_ACCENT[k] || '#C7C7CC';
 
-// A drop target tints in its OWN colour now, rather than every section flashing
-// the same blue. Derived from the hex so a stage colour is still stated once and
-// once only -- a second rgba table would be the two-lists fault again, in a
-// place where nobody would think to look for it.
-const tintOf = (k, a) => {
-  const n = parseInt(accentOf(k).slice(1), 16);
-  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
-};
+// tintOf went with the drop targets. It existed only to tint a section while a
+// card was over it, and there is nothing to drag any more.
 
 // 21 days, on Riley word. One threshold rather than one per stage: a per-stage
 // table would be a tuning conversation nobody has had yet, and a single number
 // can be argued with, which is what makes it honest.
 const STALE_DAYS = 21;
+
+// ── HEALTH, THE 11 AUG MODEL ────────────────────────────────────────────────
+// Three states, and the left edge of every tile carries one. It answers a
+// different question from the stage -- the stage says WHERE a card is, this says
+// whether it is moving -- and that is why Riley had both on one tile.
+//
+// IT TAKES THE TASKS IT IS GIVEN AND DEFAULTS TO NONE, which is how it survives
+// stage 1. program_tasks exists in the database but nothing writes to it yet, so
+// two of the four rules below are dormant and the other two are live. When the
+// checklist ships the same function gets sharper without being rewritten.
+//
+// THE THRESHOLDS ARE RILEY NUMBERS -- 7 days blocked on us, 14 days in a stage --
+// and they are NOT the same as STALE_DAYS, which is 21 and is what the tile pill
+// says in words. Two numbers describing nearby things is a real smell; they are
+// left as they are because unifying them is a decision about what the board
+// should warn at, not a tidy-up, and nobody has made it.
+const HEALTH = {
+  on_track: { label:'On track', color:'#30D158' },
+  at_risk:  { label:'At risk',  color:'#FF9F0A' },
+  stalled:  { label:'Stalled',  color:'#FF375F' },
+};
+const sampleOverdue = r =>
+  !!r.sample_due_back && daysSince(r.sample_due_back) > 0 && SAMPLING_STAGES.includes(r.stage);
+const healthOf = (r, tasks = []) => {
+  const open = (tasks || []).filter(t => !t.done);
+  const days = r.days || 0;
+  if (sampleOverdue(r)) return 'stalled';
+  if (open.some(t => t.blocker === 'us') && days > 7) return 'stalled';
+  if (days > 14) return 'at_risk';
+  if (open.some(t => t.due_date && daysSince(t.due_date) > 0)) return 'at_risk';
+  return 'on_track';
+};
 
 // compliance_status = 'not_required' is a DELIBERATE STATEMENT, and rare: 17 of
 // 352 products carry it, against 291 still sitting at 'tbd'. Somebody decided
@@ -706,7 +733,7 @@ function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onProduct,
 // rather than be recomputed by whoever happens to be rendering it.
 const STAGE_HINT = { quoted:'Quoted', sampling:'Sampling (product stage)', tested:'Tested (report or compliance)' };
 
-const STAGE_LABEL = Object.fromEntries([...MANUAL_STAGES, [COMPLETE, COMPLETE_LABEL]]);
+const STAGE_LABEL = Object.fromEntries(MANUAL_STAGES.map(([k, l]) => [k, l]));
 const stageLabel = s => s ? (STAGE_LABEL[s] || s) : 'No stage set';
 // The word a select would show for a stored value, read from the same option list
 // the select is built from -- so a file and a dropdown cannot offer two different
@@ -1322,7 +1349,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
                     fontFamily:'inherit',background:'#fff',color:'#1D1D1F',letterSpacing:0,textTransform:'none',
                     cursor:busy?'default':'pointer',minWidth:'165px'}}>
             {!r.stage && <option value="">No stage set</option>}
-            {[...MANUAL_STAGES, [COMPLETE, COMPLETE_LABEL]].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+            {MANUAL_STAGES.map(([v,l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </label>
         <label style={{display:'flex',flexDirection:'column',gap:'4px',fontSize:'11px',fontWeight:600,
@@ -1374,7 +1401,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
           <span style={{fontSize:'12px',color:'#A0A0A4',flex:'1 1 220px',lineHeight:1.45}}>
             {r.archived
               ? 'This card is off the board. Putting it back returns it to the stage it was in.'
-              : 'Keeps the card and its notes. It moves under ' + COMPLETE_LABEL + ', behind Include removed.'}
+              : 'Keeps the card and its notes. It moves to the Removed column, behind Show removed.'}
           </span>
         </div>
       )}
@@ -1398,49 +1425,31 @@ export default function Programs({ userEmail }) {
   // to select and the key is deleted rather than kept empty. A stale key left in the
   // store by an earlier mount is harmless -- usePageState merges the store over
   // these defaults, and a name that is not here is never read.
-  const [ui, setUi] = usePageState('programs', { search:'', showRetired:false, showRemoved:false, doneOpen:false, ownerSel:[] });
+  // showRetired and doneOpen are gone with the Complete section they belonged to.
+  // Shipped is a column now, so there is nothing to open or shut, and a card on a
+  // retired product sits in its own stage column like any other -- the tile says
+  // so with a pill rather than the card being filed somewhere else.
+  const [ui, setUi] = usePageState('programs', { search:'', showRemoved:false, ownerSel:[] });
   const [openId, setOpenId] = useState(null);
   const [staff, setStaff] = useState([]);
   // Set while a stage or an owner is being written, so the control can say so and
   // refuse a second click. Not in the page store -- it is in-flight, not a choice.
   const [saving, setSaving] = useState(null);
-  // ── DRAG STATE, ALL OF IT TRANSIENT ─────────────────────────────────────────
-  // Which section the pointer is currently over, and which card is in the air.
-  // Neither belongs in the page store: a drag that survived navigation would be a
-  // card stuck at half opacity on a board nobody is touching.
-  const [dropTarget, setDropTarget] = useState(null);
-  // THERE IS NO dragId STATE ANY MORE, deliberately. The tile that is in the air
-  // used to be identified in React state and faded by a style that read it, and
-  // that could be left set by any path where dragend did not arrive -- which is a
-  // class of bug, not one bug. The fade is now an inline style written straight
-  // onto the drag handle and wiped off it, so a remounted tile starts at full
-  // opacity by definition and no state can be stale.
-  // Which card is showing its detail, and only ever one. Transient like openId --
-  // a row left open across navigation would be somebody else's place, not yours.
-  const [expandedId, setExpandedId] = useState(null);
+  // ── DRAG IS GONE, AND SO IS EVERYTHING THAT SERVED IT ───────────────────────
+  // dropTarget, dragMovedRef, endDrag, the document dragend listener and the
+  // expanded-tile state all existed for dragging cards between sections. The
+  // board is columns now and a tile opens the card, which is the 11 Aug gesture
+  // and one fewer way to move a program by accident.
+  //
+  // THE EXPANSION WENT WITH IT rather than separately. A tile that expanded to
+  // say what the card IS, with an Open button inside it to change the card, was
+  // two answers to one click; the modal is the answer now.
+  //
   // program_id -> how many notes, filled in bulk by load().
   const [noteCounts, setNoteCounts] = useState({});
   // product_id -> every sample event for it, filled in bulk by load(). Reduced to
   // the latest one per card in enriched below.
   const [samples, setSamples] = useState({});
-  // A CLICK MUST NOT FOLLOW A DRAG, and a drag must not swallow a real click.
-  // Cleared on mousedown, which always precedes both, and set on dragstart -- so
-  // the click handler can tell the two apart without a timer. A timer would be a
-  // guess about how fast somebody let go.
-  const dragMovedRef = useRef(false);
-
-  // ── ENDING A DRAG IS NOT THE SAME AS dragend ────────────────────────────────
-  // This clears the SECTION HIGHLIGHT only. The fade on the tile is an inline
-  // style the handle writes and wipes itself, for the reason above.
-  //
-  // dragend is dispatched to the SOURCE element. A tile dropped on another section
-  // is unmounted before that happens -- setStage patches rows optimistically, the
-  // sections recompute, and React remounts the card under a different parent -- so
-  // the handler attached to the old node never runs. That is why this is called
-  // from every path that can finish a drag rather than from dragend alone, and why
-  // the document listener below exists behind it. Calling it twice is free.
-  const endDrag = () => setDropTarget(null);
-  // showRetired is ui.showRetired, in the page store above.
 
   const load = async () => {
     setLoad(true); setErr('');
@@ -1506,27 +1515,9 @@ export default function Programs({ userEmail }) {
   };
   useEffect(()=>{ load(); }, []);
 
-  // ── THE LAST RESORT, OUTSIDE THE REACT TREE ─────────────────────────────────
-  // dragend goes to the source element, so a source that was unmounted mid-drag
-  // never receives it and its handler never runs. drop goes to the TARGET, which
-  // is still mounted, and both events bubble to the document.
-  //
-  // So the document keeps its own pair of listeners. They wipe the inline fade off
-  // every drag handle on the board and drop the section highlight, from outside
-  // the tree entirely -- which is the point, because nothing here can be defeated
-  // by a remount. Wiping a handle that was never faded costs nothing.
-  useEffect(() => {
-    const clear = () => {
-      setDropTarget(null);
-      document.querySelectorAll('[data-plm-drag]').forEach(el => { el.style.opacity = ''; });
-    };
-    document.addEventListener('dragend', clear);
-    document.addEventListener('drop', clear);
-    return () => {
-      document.removeEventListener('dragend', clear);
-      document.removeEventListener('drop', clear);
-    };
-  }, []);
+  // The document-level dragend and drop listeners were here. They existed to wipe
+  // a fade off a drag handle that a remount had orphaned, which is a problem only
+  // a draggable board has.
 
   const buckets = useMemo(() => {
     if (!ev) return null;
@@ -1591,7 +1582,7 @@ export default function Programs({ userEmail }) {
                // STALE IS ABOUT THE CARD, NOT THE PRODUCT. It counts days since the
                // stage was set, so a card nobody has moved in three weeks says so
                // whatever the records are doing underneath.
-               stale: stage !== COMPLETE && days !== null && days >= STALE_DAYS,
+               stale: stage !== SHIPPED && days !== null && days >= STALE_DAYS,
                ownerName: (r.owner || {}).full_name || (r.owner || {}).email || null,
                // LAST TOUCH, which is a different question from the stage date.
                // declared_stage_at answers when the card last MOVED; updated_at
@@ -1608,8 +1599,7 @@ export default function Programs({ userEmail }) {
                // null when nothing has shipped and nothing is planned.
                shipping: departedOn ? { kind:'departed', on: departedOn }
                        : etdOn      ? { kind:'etd',      on: etdOn }
-                       : null,
-               onBoard: stage !== COMPLETE };
+                       : null };
     });
     // staff and noteCounts are dependencies now: without them a name stays
     // unresolved and a count stays zero until some other change happens to
@@ -1625,18 +1615,18 @@ export default function Programs({ userEmail }) {
   // is written after the update lands; a failed note leaves a correct owner and a
   // missing line, which is the better way round.
 
-  // ONE FUNCTION, TWO CALLERS. The select in the card modal and a card dropped on
-  // a section both come through here. That is the whole reason dragging was worth
-  // building: declared_stage_at is stamped by the same trigger either way, a
-  // failure is reported the same way, and there is no second write path to drift.
+  // ONE FUNCTION, EVERY CALLER. The select in the card modal comes through here
+  // today, and the stage pills and Advance-to button join it in stage 2 --
+  // declared_stage_at is stamped by the same trigger whichever it is, a failure is
+  // reported the same way, and there is no second write path to drift.
   //
-  // OPTIMISTIC, BECAUSE A DROP HAS TO LOOK LIKE IT LANDED. A card that sits in its
-  // old section for the length of a round trip reads as a refused drop, and the
-  // obvious response is to drag it again. So rows is patched first and the write
-  // follows; if the write fails the row is put back exactly as it was and the toast
-  // says why. declared_stage_at is guessed locally only so the age line does not
-  // flash a stale number -- the trigger owns the real value and the load() below
-  // replaces the guess with it.
+  // STILL OPTIMISTIC, though the reason changed. It was written that way because a
+  // dropped card had to look like it landed; the drag is gone, but a card that sits
+  // in its old column for the length of a round trip still reads as a refused move.
+  // So rows is patched first and the write follows; a failure puts the row back
+  // exactly as it was and the toast says why. declared_stage_at is guessed locally
+  // only so the age line does not flash a stale number -- the trigger owns the real
+  // value and the load() below replaces the guess with it.
   const setStage = async (r, next) => {
     if (!next || next === r.stage) return;
     const before = rows.find(x => x.id === r.id) || null;
@@ -1651,14 +1641,10 @@ export default function Programs({ userEmail }) {
     if (error) {
       if (before) setRows(prev => prev.map(x => x.id === r.id ? before : x));
       window._toast?.('Could not move the card — ' + error.message, 'err');
-      endDrag();
       setSaving(null);
       return;
     }
     await load();
-    // Both exits clear it, because both of them have already replaced the element
-    // the drag began on. See the note on endDrag.
-    endDrag();
     setSaving(null);
   };
 
@@ -1699,8 +1685,8 @@ export default function Programs({ userEmail }) {
     const what = (p.sku || 'no SKU') + ' — ' + (p.name || 'no name')
                + ' for ' + ((r.client || {}).name || 'no client');
     const msg = next
-      ? 'Remove ' + what + ' from the board?\n\nNothing is deleted. The card and its notes are kept, and it moves under '
-        + COMPLETE_LABEL + ' behind Include removed, where it can be put back.'
+      ? 'Remove ' + what + ' from the board?\n\nNothing is deleted. The card and its notes are kept, and it moves to the '
+        + 'Removed column behind Show removed, where it can be put back.'
       : 'Put ' + what + ' back on the board?\n\nIt returns to the stage it was in.';
     if (!window.confirm(msg)) return;
     setSaving(r.id);
@@ -1747,32 +1733,8 @@ export default function Programs({ userEmail }) {
     await load(); setSaving(null);
   };
 
-  // ── WHAT MAKES A SECTION A DROP TARGET ──────────────────────────────────────
-  // Spread onto the section wrapper. onDragOver has to preventDefault or the drop
-  // never fires at all -- the default action for a dragover is to refuse it, which
-  // is the one piece of HTML5 drag and drop that reads backwards.
-  //
-  // The dragleave guard is why the highlight does not flicker: moving the pointer
-  // from a section onto a card INSIDE it fires dragleave on the section, so the
-  // target is only cleared when the pointer has actually left the subtree.
-  const dropProps = (stageKey) => ({
-    onDragOver: e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; },
-    onDragEnter: () => setDropTarget(stageKey),
-    onDragLeave: e => { if (!e.currentTarget.contains(e.relatedTarget)) setDropTarget(t => (t === stageKey ? null : t)); },
-    onDrop: e => {
-      e.preventDefault();
-      // Cleared here as well as in setStage, because the drop is the last moment
-      // the source element is certainly still mounted. A no-op drop -- back onto
-      // the section it came from -- returns early inside setStage and would
-      // otherwise leave the tile faded with nothing left to clear it.
-      endDrag();
-      const id = e.dataTransfer.getData('text/plain');
-      const row = enriched.find(x => x.id === id);
-      // setStage returns early when the stage has not changed, so a card dropped
-      // back where it started writes nothing.
-      if (row) setStage(row, stageKey);
-    },
-  });
+  // dropProps was here -- the dragover, dragenter, dragleave and drop handlers a
+  // section needed to be a drop target. A card changes stage from the card now.
 
   // ── REMOVED CARDS ARE OFF EVERY LIST, NOT JUST THE PIPELINE ────────────────
   // archived has been selected since this board was built and never once read, so
@@ -1787,33 +1749,16 @@ export default function Programs({ userEmail }) {
   // finding, which is what the toggle under the Complete section is for.
   const live    = useMemo(() => enriched.filter(r => r.archived !== true), [enriched]);
   const removed = useMemo(() => enriched.filter(r => r.archived === true), [enriched]);
-  const board   = useMemo(() => live.filter(r => r.onBoard), [live]);
-  // COMPLETED MEANS COMPLETED. The tab was everything not on the board, which
-  // quietly bundled 52 RETIRED PRODUCTS THAT WERE NEVER ORDERED in with 192 real
-  // completions and called the total 244. A retired product that never sold is
-  // not a finished program -- it is a program that stopped -- and counting the
-  // two together overstates the finished work by 27 percent.
+  // EVERY LIVE CARD IS ON THE BOARD NOW. board used to exclude the finished ones
+  // because Complete was a collapsed section beneath the pipeline rather than a
+  // part of it. Shipped is a column, so a finished card sits where it finished and
+  // the board is simply everything that has not been removed.
   //
-  // They are still reachable, because they are the only record that the pair
-  // existed at all, but behind a toggle that is off by default.
-  // COMPLETE IS A STAGE SOMEBODY SET, not an order arriving. A sales order does
-  // not finish a card, on Riley decision, so this reads declared_stage and never
-  // the records.
-  const finished = useMemo(() => live.filter(r => r.stage === COMPLETE), [live]);
-  // Cards on a product that has left the catalogue. Still reachable, still off the
-  // board by default, exactly as before -- the difference is that being retired no
-  // longer decides anything about the stage.
-  const history  = useMemo(() => live.filter(r => r.retired && r.stage !== COMPLETE), [live]);
-  // TWO INDEPENDENT TOGGLES, not one control with three states. Retired is about
-  // the product leaving the catalogue and removed is about somebody taking the
-  // card off the board -- different facts, with different ways back -- and a
-  // single switch covering both would hide one behind the other.
-  const done     = useMemo(() => {
-    let out = finished;
-    if (ui.showRetired) out = out.concat(history);
-    if (ui.showRemoved) out = out.concat(removed);
-    return out;
-  }, [finished, history, removed, ui.showRetired, ui.showRemoved]);
+  // finished, history and done went with that section. A card on a retired product
+  // is no longer filed away from its own stage either -- it sits in its column with
+  // a pill on the tile saying the product has left the catalogue, which is the
+  // honest place for it and one fewer list to keep in step.
+  const board   = live;
 
   const counts = useMemo(() => {
     const c = { none: 0 };
@@ -1833,11 +1778,8 @@ export default function Programs({ userEmail }) {
     return c;
   }, [board]);
 
-  const ownerOptions = useMemo(() => ([
-    { value:'', label:'All owners', count:board.length },
-    { value:'none', label:'Unowned', color:'var(--hot)', count:ownerCounts.none || 0 },
-    ...staff.map(s => ({ value:s.id, label:s.full_name || s.email, count:ownerCounts[s.id] || 0 })),
-  ]), [staff, ownerCounts, board.length]);
+  // ownerOptions was the shape FilterSelect wanted. The chips read ownerCounts
+  // and staff directly, so the intermediate list had nothing left to do.
 
   const ownerMatches = r => !ui.ownerSel.length || ui.ownerSel.includes(r.owner_id || 'none');
 
@@ -1848,12 +1790,14 @@ export default function Programs({ userEmail }) {
   };
 
   // SEARCH AND OWNER, AND NOTHING ELSE. The stage filter went with the rail --
-  // every section is on screen at once now, so narrowing to one stage is what
-  // scrolling does. Each section takes its own slice of this list below.
-  const shownBoard = useMemo(() => board.filter(r => matches(r) && ownerMatches(r)),
+  // every column is on screen at once, so narrowing to one stage is what scrolling
+  // does. Each column takes its own slice of this list below.
+  const shownBoard   = useMemo(() => board.filter(r => matches(r) && ownerMatches(r)),
     [board, ui.search, ui.ownerSel]);
-  const shownDone  = useMemo(() => done.filter(r => matches(r) && ownerMatches(r))
-    .sort((a,b) => String(b.since||'').localeCompare(String(a.since||''))), [done, ui.search, ui.ownerSel]);
+  // The removed column reads the same two filters, so a search narrows it too --
+  // which is the point, since finding one removed card is what it is for.
+  const shownRemoved = useMemo(() => removed.filter(r => matches(r) && ownerMatches(r)),
+    [removed, ui.search, ui.ownerSel]);
 
   // railStages was here. The sections carry their own headings and counts now, and
   // the tiles above carry the totals, so a second list of the same six labels had
@@ -1868,162 +1812,127 @@ export default function Programs({ userEmail }) {
   if (loading) return <div style={{padding:'28px 30px',color:'#86868B',fontSize:'14px'}}>Reading programs…</div>;
   if (err) return <div style={{padding:'28px 30px',color:'var(--hot)',fontSize:'14px'}}>Could not read programs — {err}</div>;
 
-  // ── A TILE, MODELLED ON THE PRODUCTION BOARD CARD ───────────────────────────
-  // The surface values here are lifted from the purchase order card in
-  // ProductionBoard, not invented: radius 11, padding 12 by 13, a 1px #EFEFF1
-  // border, the two-layer shadow, grab cursor, and half opacity while in the air.
-  // Two draggable boards in one app that dress their cards differently would be
-  // two designs; the same values make them one.
+  // ── THE TILE, ON THE 11 AUG MODEL ───────────────────────────────────────────
+  // A left edge in the health colour, the identity, a pill row for the exceptions
+  // and the owner at the foot. ONE CLICK OPENS THE CARD -- there is no expansion
+  // and no second button, because a tile that both explained itself and carried an
+  // Open button to the thing that explains it was two answers to one gesture.
   //
-  // WHAT THE COLLAPSED TILE SAYS is what a scan needs and nothing else -- the
-  // exceptions first as pills, then what it is, then who touched it. The pill row
-  // is absent rather than empty when there is nothing to flag, because a reserved
-  // blank strip is a row of nothing repeated across the whole board.
-  //
-  // EXPANSION AND THE MODAL ARE DIFFERENT ANSWERS. The tile expands to say what the
-  // card IS; the modal is where it gets changed. Clicking does the cheap one, and
-  // Open is a deliberate second step rather than the accident of a click.
+  // THE EDGE IS HEALTH, NOT STAGE. The column heading already says the stage; the
+  // edge says whether the card is moving, which is what a board is scanned for.
+  // The bottom stripe that used to carry the stage colour is gone with the wrapped
+  // grid -- inside a column every tile is in the same stage, so a stripe repeating
+  // it on each one said nothing.
   const Card = ({ r }) => {
     const p = r.products || {};
-    const open = expandedId === r.id;
+    const h = healthOf(r);
     const notReq = testingNotRequired(p);
-    // The same guard the drag already uses: cleared on mousedown, set on
-    // dragstart. A drag must not toggle the tile, and a click must not be eaten.
-    const toggle = () => {
-      if (dragMovedRef.current) { dragMovedRef.current = false; return; }
-      setExpandedId(open ? null : r.id);
-    };
-    const line = (label, value, muted) => (
-      <div style={{display:'flex',gap:'8px',alignItems:'baseline'}}>
-        <span style={{fontSize:'11px',color:'#86868B',minWidth:'92px',flexShrink:0}}>{label}</span>
-        <span style={{fontSize:'12px',color:muted?'#A0A0A4':'#1D1D1F',minWidth:0,
-                      overflow:'hidden',textOverflow:'ellipsis'}}>{value}</span>
-      </div>
-    );
+    const late = sampleOverdue(r);
     return (
-      <div style={{background:'#fff',borderRadius:'11px',border:'1px solid #EFEFF1',overflow:'hidden',
-                   boxShadow:'0 1px 2px rgba(0,0,0,.05),0 1px 3px rgba(0,0,0,.04)'}}>
+      <button onClick={()=>setOpenId(r.id)}
+        title={HEALTH[h].label}
+        style={{background:'#fff',borderRadius:'16px',padding:'15px 16px',border:'none',
+                boxShadow:'0 1px 3px rgba(0,0,0,.05)',cursor:'pointer',textAlign:'left',
+                display:'block',width:'100%',borderLeft:'3px solid '+HEALTH[h].color,
+                fontFamily:'inherit',boxSizing:'border-box'}}>
+        <div style={{fontFamily:'var(--mono)',fontSize:'11.5px',fontWeight:700,color:'#1A1A1C',
+                     whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.sku || '—'}</div>
+        {/* Two lines then cut. A product name is the one field here with no length
+            discipline behind it, and one long name must not set the height of
+            every tile in the column. */}
+        <div style={{fontSize:'14px',fontWeight:600,color:'#1D1D1F',lineHeight:1.35,
+                     letterSpacing:'-.012em',marginTop:'2px',overflow:'hidden',
+                     display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>
+          {p.name || 'Untitled'}
+        </div>
+        <div style={{fontSize:'12px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',
+                     overflow:'hidden',textOverflow:'ellipsis'}}>{(r.client||{}).name || '—'}</div>
 
-        {/* ── THE HANDLE IS THE COLLAPSED HEADER, AND ONLY IT ─────────────────
-            draggable used to sit on the whole tile, which made the expansion a
-            drag handle too -- including the Open button. Dragging a card by its
-            own button is not a gesture anybody meant to offer.
-
-            A wrapper div rather than draggable on the button itself: draggable on
-            a form control behaves differently across browsers, and every other
-            draggable in this app is a div. The click guard is untouched, because
-            mousedown, dragstart and click all still sit in this one subtree.
-
-            THE FADE IS WRITTEN HERE AND WIPED HERE. No state holds it, so a tile
-            that gets remounted mid-drag comes back with no inline style at all,
-            which is full opacity by definition. data-plm-drag is what lets the
-            document listener above find any handle a lost dragend left faded. */}
-        <div draggable data-plm-drag=""
-          onMouseDown={()=>{ dragMovedRef.current = false; }}
-          onDragStart={e=>{
-            e.dataTransfer.setData('text/plain', r.id);
-            e.dataTransfer.effectAllowed = 'move';
-            dragMovedRef.current = true;
-            e.currentTarget.style.opacity = '.5';
-          }}
-          onDragEnd={e=>{ e.currentTarget.style.opacity = ''; endDrag(); }}
-          style={{cursor:'grab'}}>
-
-        <button onClick={toggle}
-          style={{display:'flex',flexDirection:'column',alignItems:'stretch',gap:'4px',width:'100%',
-                  minHeight:'112px',textAlign:'left',background:'none',border:'none',
-                  padding:'12px 13px',cursor:'pointer',fontFamily:'inherit',boxSizing:'border-box'}}>
-
-          {(r.stale || notReq) && (
-            <div style={{display:'flex',gap:'5px',flexWrap:'wrap',marginBottom:'2px'}}>
-              {r.stale && (
-                <span title={'Nothing has moved this card in ' + r.days + ' days'}
-                  style={{fontSize:'10px',fontWeight:700,color:'#8a5a00',background:'#FDF0DC',
-                          borderRadius:'980px',padding:'2px 7px',fontVariantNumeric:'tabular-nums'}}>
-                  {r.days}d
-                </span>
-              )}
-              {notReq && (
-                <span style={{fontSize:'9.5px',fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',
-                              color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 7px'}}>
-                  Testing not required
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* THE THREE IDENTITY LINES ARE CENTRED, and only these three. The pills
-              above and the expansion below stay left, because those are lists and a
-              centred list has no edge for the eye to run down. */}
-          <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:700,color:'#1A1A1C',
-                       textAlign:'center',whiteSpace:'nowrap',overflow:'hidden',
-                       textOverflow:'ellipsis'}}>{p.sku || '—'}</div>
-
-          {/* Two lines, then cut. A product name is the one field here with no
-              length discipline behind it, and one long name must not be allowed to
-              set the height of every tile in the row. */}
-          <div style={{fontSize:'12.5px',color:'#1D1D1F',lineHeight:1.35,textAlign:'center',
-                       display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',
-                       overflow:'hidden'}}>{p.name || '—'}</div>
-
-          <div style={{fontSize:'11.5px',color:'#8A8A8E',textAlign:'center',whiteSpace:'nowrap',
-                       overflow:'hidden',textOverflow:'ellipsis'}}>{(r.client||{}).name || '—'}</div>
-
-          {/* marginTop auto pins this to the bottom, so the footer sits on the same
-              line across a row of tiles whatever the name above it did.
-              TWO LINES, because a name without a date says how recently somebody
-              touched it only if you already know. The date stands even when the
-              name does not -- updated_at is NOT NULL, so it is genuinely known on
-              every row, including the ones that predate the updated_by stamp.
-              Hiding a date this card actually has would be the worse lie. */}
-          <div style={{fontSize:'11px',color:'#A0A0A4',marginTop:'auto',paddingTop:'8px',
-                       lineHeight:1.4,textAlign:'center'}}>
-            <div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-              Last touch: {r.lastTouchBy || 'not recorded'}
-            </div>
-            {r.lastTouchAt && (
-              <div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                Last touch date: {fmt(r.lastTouchAt)}
-              </div>
+        {/* THE PILL ROW IS ABSENT RATHER THAN EMPTY when a card has nothing to
+            flag, because a reserved blank strip is a row of nothing repeated down
+            the whole board. */}
+        {(r.days !== null && r.days !== undefined) || late || r.noteCount > 0 || notReq || r.retired ? (
+          <div style={{display:'flex',alignItems:'center',gap:'6px',marginTop:'11px',flexWrap:'wrap'}}>
+            {(r.days !== null && r.days !== undefined) && (
+              <span title={'In this stage for ' + r.days + ' days'}
+                style={{fontSize:'11px',fontWeight:500,borderRadius:'6px',padding:'2px 8px',
+                        fontVariantNumeric:'tabular-nums',
+                        color:r.stale?'#8a5a00':'#86868B',background:r.stale?'#FDF0DC':'#F5F5F7'}}>
+                {r.days}d{r.stale ? ' · stale' : ''}
+              </span>
+            )}
+            {late && (
+              <span style={{fontSize:'11px',fontWeight:600,color:'#FF375F',
+                            background:'rgba(255,55,95,.08)',borderRadius:'6px',padding:'2px 8px'}}>
+                sample overdue
+              </span>
+            )}
+            {r.noteCount > 0 && (
+              <span style={{fontSize:'11px',fontWeight:500,color:'#86868B',background:'#F5F5F7',
+                            borderRadius:'6px',padding:'2px 8px'}}>
+                {r.noteCount} note{r.noteCount === 1 ? '' : 's'}
+              </span>
+            )}
+            {notReq && (
+              <span style={{fontSize:'10px',fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',
+                            color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 7px'}}>
+                No testing
+              </span>
+            )}
+            {/* A retired product no longer files the card away in a separate list.
+                It sits in its own stage column and says so here instead. */}
+            {r.retired && (
+              <span title="This product has left the catalogue"
+                style={{fontSize:'10px',fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',
+                        color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 7px'}}>
+                Retired
+              </span>
             )}
           </div>
-        </button>
+        ) : null}
+
+        <div style={{fontSize:'11px',marginTop:'9px',color:r.ownerName?'#B0B0B4':'var(--hot)'}}>
+          {r.ownerName || 'Unowned'}
         </div>
-
-        {open && (
-          <div style={{borderTop:'1px solid #F2F2F4',padding:'11px 13px 12px',
-                       display:'flex',flexDirection:'column',gap:'6px'}}>
-            {line('Owner', r.ownerName || 'Unowned', !r.ownerName)}
-            {line('Last touch date', r.lastTouchAt ? fmt(r.lastTouchAt) : 'Not recorded', !r.lastTouchAt)}
-            {line('Stage set', r.since ? fmt(r.since) : 'Not recorded', !r.since)}
-            {line('Notes', r.noteCount === 1 ? '1 note' : r.noteCount + ' notes', !r.noteCount)}
-            <div style={{marginTop:'5px'}}>
-              <button onClick={()=>setOpenId(r.id)}
-                style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 14px',border:'none',
-                        background:'#1D1D1F',color:'#fff',fontFamily:'inherit',cursor:'pointer'}}>
-                Open
-              </button>
-            </div>
-          </div>
-        )}
-        {/* ── THE STRIPE SAYS WHERE THE CARD IS ────────────────────────────────
-            4px along the bottom. No radius of its own -- the tile already clips
-            with overflow hidden, so the stripe follows the corner it is in and
-            there is no second radius to keep in step with the first.
-
-            It reads r.stage, so a tile dropped on another section is repainted
-            the moment setStage lands. That is the whole reason for colouring the
-            board rather than only its headings.
-
-            BOTTOM RATHER THAN A LEFT EDGE. A left bar would fight the pills and
-            the SKU for the same corner, and a wrapped grid of tiles reads as
-            rows far more clearly when the colour runs along the bottom of each. */}
-        <div style={{height:'4px',background:accentOf(r.stage || 'none')}} />
-      </div>
+      </button>
     );
   };
 
   const openRow = enriched.find(x => x.id === openId) || null;
+
+  // ── THE COLUMNS, BUILT ONCE ─────────────────────────────────────────────────
+  // The six stages in ladder order, then No stage set only when something is
+  // actually in it, then Removed only when the toggle asks for it. Building the
+  // list here rather than inline means the heading, the count and the cards in
+  // every column come from one place and cannot disagree.
+  //
+  // NO STAGE SET IS NOT A COLUMN CARDS CAN BE PUT IN, only one they can be found
+  // in -- none is a display key for a null stage, not a value the CHECK accepts.
+  // Nothing drags any more, so that is no longer something the board has to
+  // defend against; it is why the column has no heading dot in a stage colour.
+  const columns = [
+    ...MANUAL_STAGES.map(([k, l]) => ({
+      key: k, label: l, color: accentOf(k), list: shownBoard.filter(r => r.stage === k),
+    })),
+    ...((counts.none || 0) > 0
+      ? [{ key:'none', label:'No stage set', color: accentOf('none'),
+           list: shownBoard.filter(r => !r.stage) }]
+      : []),
+    ...(ui.showRemoved
+      ? [{ key:'removed', label:'Removed', color:'#C7C7CC', list: shownRemoved, muted:true }]
+      : []),
+  ];
+
+  // ── THE TWO HEALTH TILES, AND WHY THERE ARE ONLY TWO ────────────────────────
+  // The 11 Aug strip carried five -- stalled, overdue samples, and one each for
+  // waiting on us, on the client and on the factory. The last three are counted
+  // from task blockers, and nothing writes program_tasks yet, so they would read
+  // zero on every board however much work was actually blocked.
+  //
+  // A tile that is structurally always zero is worse than a missing tile. The
+  // three arrive with the checklist.
+  const stalledCards = board.filter(r => healthOf(r) === 'stalled');
+  const overdueCards = board.filter(sampleOverdue);
 
   return (
     <div style={{padding:'26px 30px 60px'}}>
@@ -2033,235 +1942,135 @@ export default function Programs({ userEmail }) {
                                  onArchive={setArchived}
                                  onTouched={load}
                                  onClose={()=>setOpenId(null)} />}
-      {/* Centred, and the count on its own line beneath. The description
-          paragraph that sat here is gone -- the columns and their placeholders
-          already say what the board is, and a paragraph nobody rereads after the
-          first visit is a paragraph that only costs vertical space above the
-          thing people came for. */}
+
       <div style={{textAlign:'center',marginBottom:'18px'}}>
         <h1 style={{fontSize:'26px',fontWeight:700,letterSpacing:'-.02em',color:'#1D1D1F',margin:0}}>Product Life Management</h1>
         <div style={{fontSize:'13px',color:'#86868B',marginTop:'5px'}}>
-          {board.length} in the pipeline
+          {board.length} on the board
         </div>
       </div>
 
-      {/* ── LIVE COUNTS, AS ANALYTICS TILES ──────────────────────────────────
-          Matching the Insights KPI cards -- one white card, a coloured dot beside
-          a muted label, the number large and tabular beneath -- so the two pages
-          read as one product. No sparkline: a stage count has no history to draw,
-          and a flat line pretending to be a trend is worse than no line.
+      {/* ── HEALTH, NOT STAGE COUNTS ─────────────────────────────────────────
+          The stage counts moved into the column headings, where the 11 Aug board
+          had them and where they cost no vertical space. What earns the strip
+          instead is the thing a column heading cannot say -- how many cards are
+          in trouble, wherever they happen to be sitting.
 
-          DISPLAY ONLY, AND DELIBERATELY NOT BUTTONS. The rail is the filter. A
-          tile that also filtered would be a second control for the same choice,
-          able to disagree with the rail on screen -- which is the exact fault the
-          tiles-plus-dropdown arrangement had before the rail replaced both.
-
-          They read the WHOLE board rather than the filtered view, so narrowing
-          never makes a total lie. */}
-      <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',
-                   overflow:'hidden',marginBottom:'18px'}}>
-        {/* The column count comes from the array rather than a number typed here.
-            It was a hardcoded six, and collapsing the three sample rungs into one
-            Sampling stage left four tiles sitting in a six column grid with two
-            empty slots on the right -- a stage list and a layout that disagreed
-            because only one of them knew the stages had changed. */}
-        <div style={{display:'grid',gridTemplateColumns:`repeat(${MANUAL_STAGES.length},1fr)`}}>
-          {MANUAL_STAGES.map(([k,l],i)=>(
-            <div key={k} style={{padding:'20px 22px',borderLeft:i>0?'1px solid rgba(0,0,0,.06)':'none'}}>
-              <div style={{display:'flex',alignItems:'center',gap:'7px',marginBottom:'13px'}}>
-                <span style={{width:'6px',height:'6px',borderRadius:'50%',flexShrink:0,
-                              background:accentOf(k)}} />
-                <span style={{fontSize:'13px',color:'#86868B',fontWeight:400,letterSpacing:'-.006em'}}>{l}</span>
-              </div>
-              <div style={{fontSize:'27px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.026em',
-                           lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{counts[k]||0}</div>
-            </div>
-          ))}
-        </div>
+          DISPLAY ONLY, as the count tiles were. These read the whole board rather
+          than the filtered view, so narrowing never makes a total lie. */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',
+                   gap:'12px',marginBottom:'18px'}}>
+        {[
+          { k:'Stalled',         v:stalledCards.length, c:HEALTH.stalled.color,
+            t:'A sample is overdue, or the card has not moved and somebody is waiting on us' },
+          { k:'Overdue samples', v:overdueCards.length, c:HEALTH.stalled.color,
+            t:'Due back date has passed while the card is in Sampling or Revision' },
+        ].map(m => (
+          <div key={m.k} title={m.t}
+            style={{background:'#fff',borderRadius:'16px',padding:'14px 16px',
+                    boxShadow:'0 1px 3px rgba(0,0,0,.04)'}}>
+            <div style={{fontSize:'24px',fontWeight:600,letterSpacing:'-.02em',lineHeight:1,
+                         color:m.v > 0 ? m.c : '#1D1D1F',fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
+            <div style={{fontSize:'11.5px',color:'#86868B',marginTop:'5px',letterSpacing:'-.006em'}}>{m.k}</div>
+          </div>
+        ))}
       </div>
 
-      <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',marginBottom:'18px'}}>
+      <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',marginBottom:'14px'}}>
         <div style={{position:'relative',flex:'1 1 240px',maxWidth:'320px'}}>
           <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Search product, SKU or client…"
             style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 12px',
                     fontSize:'13.5px',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'}} />
         </div>
-        {/* The All stages dropdown was here. The rail on the left of the board is
-            that control now -- it selects the same thing and shows every count
-            without a click, so keeping both would be two controls for one choice
-            that could disagree on screen. */}
-        {/* Owner narrows every view, because "what is Kristy carrying" is as fair a
-            question about finished work as about live work. */}
-        <FilterSelect multiple label="All owners" value={ui.ownerSel} onChange={v=>setUi('ownerSel', v)} options={ownerOptions} />
         <div style={{flex:1}} />
+        {/* THE ONLY ROUTE BACK TO A REMOVED CARD, so it names its count even at
+            zero -- a control that disappears when the list is empty is one nobody
+            learns is there. */}
+        <label style={{display:'inline-flex',alignItems:'center',gap:'7px',fontSize:'12.5px',
+                       color:'#5A5A5E',cursor:'pointer',fontFamily:'inherit'}}>
+          <input type="checkbox" checked={ui.showRemoved}
+            onChange={e=>setUi('showRemoved', e.target.checked)} style={{cursor:'pointer'}} />
+          Show {removed.length} removed
+        </label>
       </div>
 
-      <>
-          {/* ── THE SECTIONS ARE THE BOARD ────────────────────────────────────
-              The rail is gone and the stage groups take its place, full width,
-              Quoted through Purchase Order stacked top to bottom. The rail bought
-              one thing -- a stage list always on screen -- at the price of showing
-              one section at a time. The tiles above carry the counts now, so what
-              is left for the board to do is BE the board.
+      {/* ── OWNER CHIPS, FROM staff_profiles ─────────────────────────────────
+          The 11 Aug row, with the hardcoded team replaced by the staff list the
+          board already fetches. Multi-select rather than Riley single-select,
+          because ownerSel is an array in the page store and narrowing to two
+          people is a question somebody actually asks.
 
-              EVERY SECTION IS A DROP TARGET, and a card dropped on one goes through
-              the same setStage the modal select calls. No stage set is deliberately
-              NOT one: none is a display key for a null stage, not a value the CHECK
-              accepts, so writing it would be a constraint violation dressed up as a
-              move. It stays a place cards can sit and not a place they can be put. */}
-          {[...MANUAL_STAGES, ...((counts.none||0) > 0 ? [['none','No stage set']] : [])].map(([k,l])=>{
-            const inGroup = shownBoard.filter(r => (r.stage || 'none') === k);
-            const droppable = k !== 'none';
-            const over = droppable && dropTarget === k;
-            // A JS comment, not a JSX one. This sits in the expression position
-            // straight after return, where {/* */} is an object literal rather
-            // than a comment and the parser dies on the next attribute.
-            //
-            // The section tints and rings in ITS OWN colour while a card is over
-            // it, so the answer to "where am I dropping this" is the same colour
-            // the card is about to become. No stage set is not a drop target at
-            // all, so it never lights up.
-            return (
-              <div key={k} {...(droppable ? dropProps(k) : {})}
-                style={{marginBottom:'22px',borderRadius:'14px',padding:'10px 12px 6px',
-                        background:over?tintOf(k,.07):'transparent',
-                        boxShadow:over?'inset 0 0 0 2px '+accentOf(k):'none',
-                        transition:'background .12s'}}>
-                <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'0 2px 12px'}}>
-                  <span style={{width:'8px',height:'8px',borderRadius:'50%',flexShrink:0,
-                                background:accentOf(k)}} />
-                  <span style={{fontSize:'14px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.01em'}}>{l}</span>
-                  <span style={{fontSize:'12.5px',color:'#A0A0A4',fontVariantNumeric:'tabular-nums'}}>{inGroup.length}</span>
-                </div>
-                {/* ONE LINE, NOT A BOX. Six dashed placeholders down a page is
-                    scaffolding pretending to be content. A sentence says the same
-                    thing and lets the eye skip it. It keeps its height while a card
-                    is in the air, so an empty section is still somewhere to aim. */}
-                {inGroup.length === 0 ? (
-                  <div style={{fontSize:'13px',color:'#A0A0A4',padding:'0 2px 10px'}}>Nothing here yet.</div>
-                ) : (
-                  /* TILES THAT WRAP, not a column that scrolls. A stage with a
-                     hundred cards was a hundred rows and a page of scrolling; the
-                     same hundred is a few rows of tiles, and the section still
-                     reads as one block you can drop onto.
+          Unowned is a chip with a count rather than an absence, on Riley word --
+          a card with no owner is the one state worth surfacing. */}
+      <div style={{display:'flex',gap:'6px',marginBottom:'18px',flexWrap:'wrap',alignItems:'center'}}>
+        {(() => {
+          const toggle = v => setUi('ownerSel', ui.ownerSel.includes(v)
+            ? ui.ownerSel.filter(x => x !== v) : ui.ownerSel.concat([v]));
+          const chip = (key, label, active, count, hot) => (
+            <button key={key} onClick={key === '' ? () => setUi('ownerSel', []) : () => toggle(key)}
+              style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',
+                      cursor:'pointer',fontFamily:'inherit',boxShadow:'0 1px 2px rgba(0,0,0,.05)',
+                      background:active ? '#1D1D1F' : '#fff',
+                      color:active ? '#fff' : (hot && !active ? 'var(--hot)' : '#5A5A5E')}}>
+              {label}{count === null ? '' : ' ' + count}
+            </button>
+          );
+          return [
+            chip('', 'Everyone', ui.ownerSel.length === 0, board.length, false),
+            chip('none', 'Unowned', ui.ownerSel.includes('none'), ownerCounts.none || 0, true),
+            ...staff.map(s => chip(s.id, s.full_name || s.email,
+                                   ui.ownerSel.includes(s.id), ownerCounts[s.id] || 0, false)),
+          ];
+        })()}
+        {ui.ownerSel.length > 0 && (
+          <span style={{fontSize:'12px',color:'#86868B',marginLeft:'4px'}}>{shownBoard.length} shown</span>
+        )}
+      </div>
 
-                     alignItems start rather than the grid default of stretch, so an
-                     expanded tile grows on its own instead of dragging every tile
-                     beside it to the same height. The minHeight on the tile is what
-                     keeps the collapsed ones even without it. */
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(230px,1fr))',
-                               gap:'10px',alignItems:'start'}}>
-                    {inGroup.map(r => <Card key={r.id} r={r} />)}
-                  </div>
+      {/* ── THE COLUMNS ARE THE BOARD ────────────────────────────────────────
+          Fixed 272px columns scrolling sideways, which is the 11 Aug layout. The
+          stacked full-width sections it replaces were built for dragging -- a
+          drop target wants to be wide -- and nothing drags now.
+
+          An empty column keeps its place and says so, because a ladder with a
+          missing rung reads as a bug rather than as an empty stage. */}
+      {board.length === 0 && removed.length === 0 ? (
+        <div style={{background:'#fff',borderRadius:'20px',padding:'64px 32px',textAlign:'center',
+                     boxShadow:'0 1px 3px rgba(0,0,0,.04)'}}>
+          <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',marginBottom:'8px',
+                       letterSpacing:'-.018em'}}>The board is clear</div>
+          <div style={{color:'#86868B',fontSize:'14px',maxWidth:'440px',margin:'0 auto',lineHeight:1.6}}>
+            A card appears when somebody presses Create PLM Card on a quote. Nothing else makes one.
+          </div>
+        </div>
+      ) : (
+        <div style={{display:'flex',gap:'14px',overflowX:'auto',paddingBottom:'14px'}}>
+          {columns.map(col => (
+            <div key={col.key} style={{flex:'0 0 272px',minWidth:'272px'}}>
+              <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'2px 6px 12px'}}>
+                <span style={{width:'9px',height:'9px',borderRadius:'50%',flexShrink:0,background:col.color}} />
+                <span style={{fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',
+                              color:col.muted ? '#86868B' : '#1D1D1F'}}>{col.label}</span>
+                <span style={{fontSize:'12px',color:'#86868B',fontVariantNumeric:'tabular-nums'}}>{col.list.length}</span>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:'10px'}}>
+                {col.list.map(r => <Card key={r.id} r={r} />)}
+                {col.list.length === 0 && (
+                  <div style={{border:'1.5px dashed rgba(0,0,0,.08)',borderRadius:'16px',padding:'22px 0',
+                               textAlign:'center',fontSize:'12px',color:'#C0C0C4'}}>empty</div>
                 )}
               </div>
-            );
-          })}
+            </div>
+          ))}
+        </div>
+      )}
 
-          {/* ── COMPLETE, LAST AND SHUT ───────────────────────────────────────
-              A finished program is not part of the pipeline, so it sits beneath it
-              rather than among it, and it opens only when somebody asks. The header
-              is the drop target as well as the toggle: a card dropped here is marked
-              complete through the same setStage, open or shut, so finishing a
-              program is the same gesture as any other move.
-
-              It keeps the row layout rather than becoming cards. The catalogue dot,
-              the date it was marked complete and the History badge are what this
-              list is read for, and a Card carries none of them. Rows open the modal,
-              whose stage control is how a completed program is reopened. */}
-          <div {...dropProps(COMPLETE)}
-            style={{borderRadius:'14px',padding:'12px',marginTop:'4px',
-                    background:dropTarget===COMPLETE?tintOf(COMPLETE,.07):'#FAFAFA',
-                    boxShadow:dropTarget===COMPLETE?'inset 0 0 0 2px '+accentOf(COMPLETE):'none',
-                    transition:'background .12s'}}>
-            <button onClick={()=>setUi('doneOpen', !ui.doneOpen)}
-              style={{display:'flex',alignItems:'center',gap:'8px',width:'100%',textAlign:'left',
-                      background:'none',border:'none',padding:'2px',cursor:'pointer',fontFamily:'inherit'}}>
-              <span style={{fontSize:'10px',color:'#86868B',width:'10px',flexShrink:0}}>{ui.doneOpen ? '▾' : '▸'}</span>
-              <span style={{width:'8px',height:'8px',borderRadius:'50%',flexShrink:0,background:accentOf(COMPLETE)}} />
-              <span style={{fontSize:'14px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.01em'}}>{COMPLETE_LABEL}</span>
-              <span style={{fontSize:'12.5px',color:'#A0A0A4',fontVariantNumeric:'tabular-nums'}}>{finished.length}</span>
-            </button>
-
-            {ui.doneOpen && (
-              <div style={{marginTop:'12px'}}>
-                {/* Two toggles, side by side and both off by default. The second
-                    is the only route back to a removed card, so it names the
-                    count even when it is zero -- a control that disappears when
-                    the list is empty is one nobody learns is there. */}
-                <div style={{display:'flex',justifyContent:'flex-end',gap:'16px',
-                             flexWrap:'wrap',marginBottom:'9px'}}>
-                  <label style={{display:'inline-flex',alignItems:'center',gap:'7px',fontSize:'12.5px',
-                                 color:'#5A5A5E',cursor:'pointer',fontFamily:'inherit'}}>
-                    <input type="checkbox" checked={ui.showRetired} onChange={e=>setUi('showRetired', e.target.checked)}
-                      style={{cursor:'pointer'}} />
-                    Include {history.length} on retired products
-                  </label>
-                  <label style={{display:'inline-flex',alignItems:'center',gap:'7px',fontSize:'12.5px',
-                                 color:'#5A5A5E',cursor:'pointer',fontFamily:'inherit'}}>
-                    <input type="checkbox" checked={ui.showRemoved} onChange={e=>setUi('showRemoved', e.target.checked)}
-                      style={{cursor:'pointer'}} />
-                    Include {removed.length} removed from the board
-                  </label>
-                </div>
-                <div style={{background:'#fff',borderRadius:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',overflow:'hidden'}}>
-                  {shownDone.length === 0 ? (
-                    <div style={{padding:'44px 24px',textAlign:'center',fontSize:'13.5px',color:'#86868B'}}>Nothing here.</div>
-                  ) : shownDone.map((r,i) => {
-                    const p = r.products || {};
-                    return (
-                      <div key={r.id} style={{borderTop:i>0?'1px solid #F5F5F7':'none'}}>
-                        <button onClick={()=>setOpenId(openId===r.id?null:r.id)}
-                          style={{display:'flex',width:'100%',textAlign:'left',background:'none',border:'none',gap:'12px',
-                                  padding:'13px 18px',cursor:'pointer',fontFamily:'inherit',alignItems:'center',flexWrap:'wrap'}}>
-                          <span style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:700,color:'#1D1D1F',minWidth:'110px'}}>{p.sku || '—'}</span>
-                          <span style={{fontSize:'14px',color:'#1D1D1F',flex:'1 1 200px'}}>{p.name || '—'}</span>
-                          <span style={{fontSize:'13px',color:'#5A5A5E',minWidth:'130px'}}>{(r.client||{}).name || '—'}</span>
-                          {/* CATALOGUE STATUS, worded and coloured exactly as on the
-                              Products list -- green Active, red Inactive, grey Not
-                              set. products.active is three-state and only false is
-                              Inactive; NULL is undecided, not retired. */}
-                          <span style={{fontSize:'12.5px',color:'#86868B',minWidth:'80px',display:'inline-flex',alignItems:'center',gap:'5px'}}>
-                            <span style={{width:'6px',height:'6px',borderRadius:'50%',flexShrink:0,
-                              background: p.active === false ? 'var(--hot)' : p.active === true ? 'var(--ok)' : 'var(--muted)'}} />
-                            {p.active === false ? 'Inactive' : p.active === true ? 'Active' : 'Not set'}
-                          </span>
-                          {/* Removed is checked FIRST, because a removed card can
-                              also be complete or on a retired product, and saying
-                              "Product retired" about a card somebody took off the
-                              board answers the wrong question. */}
-                          <span style={{fontSize:'12.5px',color:'#8A8A8E',minWidth:'150px'}}>
-                            {r.archived ? 'Removed from the board'
-                              : r.stage === COMPLETE ? 'In production since ' + fmt(r.since)
-                              : 'Product retired'}
-                          </span>
-                          <span style={{fontSize:'12.5px',minWidth:'110px',color:r.ownerName?'#8A8A8E':'var(--hot)'}}>
-                            {r.ownerName || 'Unowned'}
-                          </span>
-                          {testingNotRequired(p) && (
-                            <span style={{fontSize:'10px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',
-                                          color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 8px'}}>No testing</span>
-                          )}
-                          {r.retired && (
-                            <span style={{fontSize:'10px',fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',
-                                          color:'#86868B',background:'#F2F2F4',borderRadius:'980px',padding:'2px 8px'}}>History</span>
-                          )}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <p style={{margin:'18px 0 0',fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.55,maxWidth:'720px'}}>
-            Drag a card to move it, or open one to change its stage, change its owner or
-            add a note. Nothing here moves on its own &mdash; an order, a test report or a
-            change on Testing is reported on the card and never acts on it. A card appears
-            only when somebody ticks Create PLM program on a quote.
-          </p>
-        </>
+      <p style={{margin:'18px 0 0',fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.55,maxWidth:'720px'}}>
+        Open a card to change its stage, change its owner or add a note. A card appears
+        only when somebody presses Create PLM Card on a quote. Nothing here moves on its
+        own &mdash; an order, a test report or a change on Testing is reported on the card
+        and never acts on it.
+      </p>
     </div>
   );
 }
