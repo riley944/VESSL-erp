@@ -1001,17 +1001,6 @@ function Platform({ session, newQuote = null }) {
     // Runs after the save is confirmed, never before: offering to propagate a
     // change that failed would be worse than offering nothing.
     if (savedRow) {
-      // Link on the NEW key, and only when unlinked, so a deliberate link is
-      // never re-pointed by an unrelated edit. Creates the product when none
-      // matches -- a quote implies a product, and nothing else was making them.
-      if (!savedRow.product_id) {
-        const p = await ensureProductForQuote(savedRow.sku, savedRow.product, { origin: "quote-save", updatedBy: userEmail });
-        if (p) {
-          try { await supabase.from("quotes").update({ product_id: p.id }).eq("id", savedRow.id).is("product_id", null); } catch (e) {}
-          savedRow = { ...savedRow, product_id: p.id };
-        }
-      }
-
       // ── THE CLIENT LINK, RESOLVED ON EVERY SAVE ───────────────────────────
       // quotes.client is free text and client_company_id is the real link.
       // Script 48 backfilled 328 of 331, but NOTHING WAS MAINTAINING IT -- the
@@ -1040,6 +1029,30 @@ function Platform({ session, newQuote = null }) {
           savedRow = { ...savedRow, client_company_id: cid };
         }
       } catch (e) {}
+
+      // Link on the NEW key, and only when unlinked, so a deliberate link is
+      // never re-pointed by an unrelated edit. Creates the product when none
+      // matches -- a quote implies a product, and nothing else was making them.
+      //
+      // ── THIS RUNS AFTER THE CLIENT BLOCK, AND IT HAS TO ───────────────────
+      // It used to run before it, which was harmless while a new product carried
+      // no client. Now that it does, the order is the whole thing -- the client
+      // is resolved from the free text on every save, so reading savedRow before
+      // that block would pass whatever the column held when the row was written,
+      // which on a brand new quote is nothing at all. The product would be minted
+      // with no client on exactly the saves this is meant to serve.
+      //
+      // Nothing else depends on which of the two goes first. Both write their own
+      // column on their own row, and neither reads what the other wrote.
+      if (!savedRow.product_id) {
+        const p = await ensureProductForQuote(savedRow.sku, savedRow.product,
+                                              { origin: "quote-save", updatedBy: userEmail,
+                                                clientCompanyId: savedRow.client_company_id || null });
+        if (p) {
+          try { await supabase.from("quotes").update({ product_id: p.id }).eq("id", savedRow.id).is("product_id", null); } catch (e) {}
+          savedRow = { ...savedRow, product_id: p.id };
+        }
+      }
 
       // SAVING A QUOTE CREATES NO PLM CARD. It used to, when the form carried a
       // tick asking for one. The card is opened from the quote card now, by the

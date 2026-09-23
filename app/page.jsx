@@ -2564,7 +2564,16 @@ function CreateSOModal({onClose,onCreated}){
     for(const r of (inserted||[])){
       if(r.product_id) continue;
       try{
-        const prod=await ensureProductForQuote(r.client_sku, r.description, { origin:'so-save' });
+        // The order names a client, so a product minted from one of its lines
+        // starts with that client -- the same rule the quote paths follow, and
+        // only ever on an INSERT. A product this adopts keeps whatever client it
+        // already had, including none.
+        //
+        // form.clientId rather than so.client_company_id, which happen to be the
+        // same value here because the insert above wrote one from the other. It
+        // is the form value that says what this order is FOR, and that stays true
+        // whatever order the writes above end up in.
+        const prod=await ensureProductForQuote(r.client_sku, r.description, { origin:'so-save', clientCompanyId: form.clientId||null });
         if(prod) await SB.from('sales_order_items').update({product_id:prod.id}).eq('id',r.id).is('product_id',null);
       }catch(e){}
     }
@@ -2832,7 +2841,12 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
         // the create modal above. PLM is manual.
         if(made){
           try{
-            const prod=await ensureProductForQuote(made.client_sku, made.description, { origin:'so-save' });
+            // Same rule as the create modal, and form.clientId for the same
+            // reason -- it is what this order is for as the person editing it has
+            // it now, which is the honest answer whether or not the order row has
+            // been written yet. Insert only; an adopted product is never
+            // re-pointed at this order client.
+            const prod=await ensureProductForQuote(made.client_sku, made.description, { origin:'so-save', clientCompanyId: form.clientId||null });
             if(prod) await SB.from('sales_order_items').update({product_id:prod.id}).eq('id',made.id).is('product_id',null);
           }catch(e){}
         }

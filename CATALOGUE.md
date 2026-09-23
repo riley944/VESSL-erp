@@ -2649,6 +2649,85 @@ one needs a person to say what it is rather than a script.
 
 ---
 
+## Script 74, as run — 2026-09-23, products that only ever belonged to one client
+
+`z0` after **two failed rehearsals**, both raising `21000 more than one row
+returned by a subquery used as an expression`, and both from the same expression
+for different reasons. Sets `products.client_company_id` on the **72** rows where
+it was null and every quote on that product resolved to the same single client
+company. Verified from outside afterwards with fresh queries rather than by
+re-reading the branches of the script itself.
+
+**Why the nulls existed.** `ensureProductForQuote` minted a product from a quote
+and wrote `sku`, `name` and `origin` — nothing else. The client was known at that
+moment and thrown away. The code shipping alongside this script passes it on the
+insert, so this is that rule applied once to the rows that predate it.
+
+### The two rehearsals, and why the first fix was the wrong fix
+
+**Rehearsal one** failed. The diagnosis offered was that `count(distinct x)`
+ignores nulls while `select distinct x` does not — so a product with one real
+client plus a quote resolving to nobody would pass `count(distinct) = 1` and then
+return two rows, one of them null. That is **a real defect** and the null filters
+went in.
+
+**Rehearsal two failed identically**, which is the instructive part. The null trap
+is **latent, not live** — there are **0** products in that state today, so
+filtering nulls could not have changed the outcome.
+
+The actual cause is different: **a condition sitting beside a scalar subquery in
+the same `AND` chain does not guard it.** Postgres may evaluate the parts of a
+`WHERE` clause in any order, so `count(distinct …) = 1` does not run first merely
+because it is written first.
+
+| site | position | survived? |
+|---|---|---|
+| archive `client_company_id_after` | target list | yes |
+| `UPDATE … SET` | set clause | yes |
+| `already_disagreeing` | **where clause** | **no** |
+| `b6` | **where clause** | **no** |
+
+A target list and a `SET` clause are evaluated only for rows that already
+qualified; a `WHERE` clause is not ordered at all. All four sites now use
+`max(x::text)::uuid`, which returns exactly one row whatever the data does — one
+value, or null when nothing matches — so no site depends on that distinction.
+
+**Found by measuring, not by reasoning.** Two rounds of reading the SQL produced a
+confident and wrong answer. Running each statement's read-only parts in isolation
+settled it in one pass: the archive returned 72 rows, `already_disagreeing` raised
+on its own, and a grouped query named the offending product immediately.
+
+### `LLF-1617` — the row that raised it twice
+
+`0ea36842…` **VIP Drawstring Bag Black**, two quotes naming two different
+companies: **Legoland** and **Legoland Florida**.
+
+It already carries a client, so the backfill never considered it and no branch
+counts it. But two names that close together read like one client recorded twice —
+the same shape as the `UPM` merge in script 68 — and a product quoted to both is
+worth knowing about either way. **Open question for a person.**
+
+### Verified from outside
+
+| | before | after |
+|---|---|---|
+| products | 358 | **358** |
+| carrying no client | 84 | **12** |
+| linked by this script | — | **72** |
+| of the 12 left — no quote at all | 11 | **11** |
+| of the 12 left — every quote unresolved | 1 | **1** |
+| still linkable by this rule | 72 | **0** |
+| already disagreeing with their own quotes | 12 | **12**, untouched |
+| linked products pointing at a non-client or missing company | 0 | **0** (all 346) |
+| quotes with no client company | 1 | **1**, untouched |
+
+**Nothing was overwritten.** The only column written is
+`products.client_company_id`, and only where it was null. The **12** products
+carrying a client their own quotes disagree with are still there and still
+disagreeing — a separate question, and not this script to answer.
+
+---
+
 ## Script 59, as run — 2026-09-16, nine parents from a sheet
 
 `z0` on the second rehearsal, and verified from a fresh query afterwards. What the

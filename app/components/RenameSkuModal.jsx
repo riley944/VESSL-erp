@@ -265,7 +265,12 @@ export function QuoteSkuChoiceModal({ product, quote, updatedBy = null, onClose,
     // Was this insert-then-adopt written out by hand; it is lib/products now, so
     // this path and the two quote-save paths cannot drift apart.
     const before = await productByKey(newSku, name);
-    const row = await ensureProductForQuote(newSku, name, { origin: 'quote-save', updatedBy });
+    // The quote carries its resolved client, so a product minted here starts with
+    // the same one -- this is a quote creating a product exactly as a save is, and
+    // the two paths would otherwise disagree about whether that fills the column.
+    // Only an insert reads it; an adopted product keeps whatever client it had.
+    const row = await ensureProductForQuote(newSku, name, { origin: 'quote-save', updatedBy,
+                                                            clientCompanyId: quote?.client_company_id || null });
     const created = !!row && !before;
     if (!row) { setBusy(false); setErr('Could not create a product for that SKU and name, and no existing one matched.'); return; }
     const upd = await SB.from('quotes').update({ product_id: row.id, ...(updatedBy ? { updated_by: updatedBy } : {}) }).eq('id', quote.id);
