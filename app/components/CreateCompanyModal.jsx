@@ -24,7 +24,13 @@ import { useDirtyGuard } from '@/app/components/ModalGuard';
 // THE UPSERT IS THE POINT, not an implementation detail. onConflict is
 // (name, type), so saving a company that already exists ADOPTS it rather than
 // failing or duplicating -- which is why the contact insert below counts first.
-const COMPANY_TYPES = [
+// ── THE ONE LIST OF COMPANY TYPES ───────────────────────────────────────────
+// [value, label] -- the value is what is stored and compared, the label is only
+// ever rendered. Exported because page.jsx reads it too (the Companies edit modal
+// and the + New button), and a second copy there is how the two drifted apart
+// once already. Singular on purpose: it names one company's type. The Companies
+// tabs keep their own plural list, which titles a tab rather than a company.
+export const COMPANY_TYPES = [
   ['client',            'Client'],
   ['factory',           'Factory'],
   ['carrier',           'Carrier'],
@@ -39,8 +45,13 @@ export function CreateCompanyModal({ onClose, onCreated, initialType = 'client' 
   // of four when the button said "add new factory" is a step that can go wrong.
   const [form, setForm] = useState({name:'',type:initialType,email:'',phone:'',website:'',vendor_number:'',pallet_info:'',billing_address:'',shipping_address:'',cname:'',cemail:'',cphone:''});
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
+  // THE WORD FOLLOWS THE TYPE SELECT, so the title, the name label, the save
+  // button and the required-name alert all say Factory once somebody picks
+  // Factory -- read from form.type on every render rather than from initialType,
+  // which only seeds it. An empty or unknown type says Company, as it always did.
+  const typeLabel = (COMPANY_TYPES.find(([v]) => v === form.type) || [null, 'Company'])[1];
   const submit = async () => {
-    if (!form.name) { alert('Company name required'); return; }
+    if (!form.name) { alert(typeLabel + ' name required'); return; }
     const { data: co, error } = await SB.from('companies').upsert({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
     if (error) { alert('Error: '+error.message); return; }
     // PRIMARY ONLY IF THIS COMPANY HAS NOBODY YET. This modal is an UPSERT on
@@ -75,10 +86,10 @@ export function CreateCompanyModal({ onClose, onCreated, initialType = 'client' 
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box">
-        <div className="modal-head"><h3>New Company</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
+        <div className="modal-head"><h3>New {typeLabel}</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
           <div className="form-row-2">
-            <div><label>Company Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
+            <div><label>{typeLabel} Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
             <div><label>Type</label><select className="form-select" value={form.type} onChange={e=>f('type')(e.target.value)}>{COMPANY_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></div>
           </div>
           <div className="form-row-2">
@@ -100,7 +111,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType = 'client' 
             <div><label>Email</label><input type="email" className="form-input" value={form.cemail} onChange={e=>f('cemail')(e.target.value)} /></div>
           </div>
         </div>
-        <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={submit}>Save Company</button></div>
+        <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={submit}>Save {typeLabel}</button></div>
       </div>
     </div>
   );

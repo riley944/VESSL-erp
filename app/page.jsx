@@ -116,7 +116,7 @@ import { ExportButton } from '@/app/components/ExportButton';
 // Extracted from this file so app/quotes.jsx can create a factory without free
 // text. page.jsx imports quotes.jsx, so this could not have stayed here and been
 // imported the other way.
-import { CreateCompanyModal } from '@/app/components/CreateCompanyModal';
+import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompanyModal';
 // Filters that survive going into a detail view and coming back, and die on reload.
 // See the note at the top of lib/pageState.js for what may and may not go in it.
 import { usePageState } from '@/lib/pageState';
@@ -4230,20 +4230,18 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
 // │ database and compared against, the right side is only ever rendered.       │
 // └───────────────────────────────────────────────────────────────────────────┘
 //
-// One list, used by both company modals. They previously held identical copies
-// of the value array and each did its own `.replace(/_/g,' ')` at render, which
-// is how "freight forwarder" reached the dropdown in lowercase in two places at
-// once. Order preserved from those arrays, so no dropdown reorders.
+// COMPANY_TYPES LIVES IN app/components/CreateCompanyModal.jsx and is imported
+// at the top of this file. One list, used by both company modals and the
+// Companies + New button. When CreateCompanyModal was extracted it took a copy
+// with it and this file kept its own, so for a while there were two again --
+// the fault this list was created to end, when each modal held its own array
+// and did its own `.replace(/_/g,' ')`, which is how "freight forwarder" reached
+// the dropdown in lowercase in two places at once. Order preserved, so no
+// dropdown reorders.
 //
 // Not merged with Companies' own TYPE_LABELS: that one is plural and titles a
 // tab ("Freight Forwarders"), where these are singular and name one company's
 // type. Same words, different grammatical job.
-const COMPANY_TYPES = [
-  ['client',            'Client'],
-  ['factory',           'Factory'],
-  ['carrier',           'Carrier'],
-  ['freight_forwarder', 'Freight Forwarder'],
-];
 
 // ── EXPORT PLUMBING, SHARED BY EVERY EXPORT IN THIS FILE ────────────────────
 // Both of these were local to Products. Companies exports too and is declared
