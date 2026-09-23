@@ -278,7 +278,25 @@ export default function Testing({ userEmail = '' }) {
       // cpsc_code stays out deliberately. The payload omits it so a certificate number
       // written by hand survives an edit here, and a column the modal neither reads nor
       // writes has no business in the select.
-      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,product_stage,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,active,manual_test_date,client:companies!client_company_id(name)').order('sku',{nullsFirst:false}),
+      // ── NEWEST FIRST, AND SKU ONLY TO BREAK A TIE ──────────────────────────
+      // This list was ordered by SKU, which is a stable order and a useless one
+      // for the question people actually bring to it: what have we just taken
+      // on. A product created from a quote today landed wherever its code put
+      // it -- for a SKU starting with R or T, most of the way down 358 rows.
+      //
+      // nullsFirst:false, stated rather than inherited. Postgres sorts NULLS
+      // FIRST on DESC, so a row with no created_at would lead a list ordered by
+      // it -- reading as the newest thing here rather than as the one row that
+      // cannot say. All 358 carry one today (measured, 0 nulls, and the column
+      // defaults to now()), so this is about the 359th.
+      //
+      // SKU IS STILL HERE as the tiebreak. created_at is a timestamp, so a true
+      // tie means the same instant -- a backfill, or two rows from one import --
+      // and those used to be adjacent in SKU order. Without it Postgres may
+      // return such a group differently between loads, which is the fault the
+      // regulations fetch below already carries a note about.
+      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,product_stage,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,active,manual_test_date,created_at,client:companies!client_company_id(name)')
+        .order('created_at',{ascending:false,nullsFirst:false}).order('sku',{nullsFirst:false}),
       // By MAT number, not by age. These twelve fibres are a reference library, not a
       // feed -- there is no "latest" worth surfacing, and newest-first put MAT-0013
       // (Tritan, added by hand after the import) above MAT-0001. A fixed order means a
@@ -749,6 +767,16 @@ export default function Testing({ userEmail = '' }) {
     ['Rules (count)',     p => prodRegs.filter(l => l.product_id === p.id).length, 'num'],
     ['Last ordered',      p => (ordersByProduct[p.id] || {}).last || null, 'date'],
     ['Orders',            p => (ordersByProduct[p.id] || {}).count || 0, 'num'],
+    // Last, so every column that was in this file before keeps the position it
+    // had -- a workbook somebody has a saved filter or a formula against does
+    // not shift under them.
+    //
+    // SLICED TO A DATE, unlike every other entry here, because created_at is the
+    // only timestamp in this table -- the rest are real date columns. The CSV
+    // writer prints whatever this returns, so the full ISO string would put a
+    // time and an offset in a column of plain dates. The workbook reads the same
+    // ten characters through excelDate and gets the same day.
+    ['Created',           p => p.created_at ? String(p.created_at).slice(0,10) : null, 'date'],
   ];
 
   // The applied filters, as [label, value] pairs. Shared: sheet 2 of the workbook
@@ -1415,10 +1443,29 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, orderState 
                   Client is also a GROUPING attribute -- it is read down the column, not
                   across the row -- and that only works from a fixed vertical position,
                   which a segment after a variable-length SKU is not.
-                  Nothing rendered when unresolved, same rule as the order segment. Here
-                  the blank is rare (6 of 271) rather than the norm, so it reads as the
-                  exception it is. */}
-              {p.client?.name && <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.client.name}</div>}
+                  It used to render nothing at all when the client was unresolved,
+                  by the same rule the order segment follows. That no longer holds
+                  and the note below says why: the line carries a created date as
+                  well now, and that is known on every row. */}
+              {/* CREATED RIDES ON THE CLIENT LINE rather than taking one of its
+                  own. It is the same class of fact -- context about the row, not
+                  a value being compared down the column -- and a third line
+                  under every SKU would cost a row of height across 358 of them
+                  to say something most people read once.
+
+                  THE LINE NOW RENDERS FOR A ROW WITH NO CLIENT, which is a
+                  change: it used to be absent entirely on those 6 rows. A
+                  created date is known for every row, so suppressing it to
+                  preserve a blank would be hiding a fact to protect a layout.
+                  The separator only appears between two things that are both
+                  there, so no row reads as having a missing half. */}
+              {(p.client?.name || p.created_at) && (
+                <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                  {p.client?.name || ''}
+                  {p.client?.name && p.created_at ? ' · ' : ''}
+                  {p.created_at ? 'Created ' + fmtDate(p.created_at) : ''}
+                </div>
+              )}
             </div>
             {/* The 'Built from' cell was here. It rendered up to two material pills and
                 otherwise the words "no materials linked" -- which was 268 of 271 rows,
