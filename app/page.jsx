@@ -8,11 +8,14 @@ import Codes from '@/app/codes';
 import Testing from '@/app/testing';
 import Pricing from '@/app/pricing';
 import Programs from '@/app/programs';
+import { advanceToProductionForPO } from '@/lib/programs';
 import { FilterSelect } from '@/app/components/FilterSelect';
 // A sales order or purchase order line for a client IS a program starting.
 // See lib/programs.js -- idempotent by the unique constraint, never updates.
-// ensurePrograms is gone from this file. Saving an order no longer opens a PLM
-// card -- the board is kept by hand and the quote form is the only way in.
+// ensurePrograms is gone from this file. Saving an order never OPENS a PLM card
+// -- Create PLM Card on a quote is the only way in. What a purchase order does
+// do, since PLM stage 4, is MOVE an existing card into Production; see
+// advanceToProductionForPO in lib/programs.js and its two call sites below.
 import { SizeGrid, sizesForSelection, toScaleList, skuToken, storedQtyToMap } from '@/app/components/SizeGrid';
 // The SAME cost model the quote editor uses. This page carried a hand-written copy
 // that had drifted on both the mold divisor and the duty term; see lib/tierCost.js.
@@ -4008,6 +4011,10 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
       alert('No valid line items to save — leaving existing items untouched to prevent data loss. Each item needs a product/description and a quantity.');
       return;
     }
+    // Product ids on NEW lines that saved. Only a new line moves a card: an edit
+    // to a PO that already existed is not a PO arriving, and re-saving an old one
+    // must not drag back a card somebody deliberately moved off Production.
+    const newProducts=[];
     const rowFor=it=>({product_id:it.prodId||null,quantity:Number(it.qty),unit_price:Number(it.price)||0,currency:form.currency,ci_value:Number(it.ci)||null,carton_info:it.carton||null,vpn:it.vpn||null,master_sku:it.masterSku||null,pack_sku:it.packSku||null,baby_sku:it.babySku||null,retail_price:it.retailPrice?Number(it.retailPrice):null});
     for(const it of valid){
       const base=rowFor(it); const desc=(it.desc||'').trim();
@@ -4016,11 +4023,13 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
         if(e1 && /description/i.test(e1.message)) await SB.from('purchase_order_items').update(base).eq('id',it.id);
       } else {
         let { error:e1 } = await SB.from('purchase_order_items').insert({...base,purchase_order_id:po.id,description:desc||null});
-        if(e1 && /description/i.test(e1.message)) await SB.from('purchase_order_items').insert({...base,purchase_order_id:po.id});
+        if(e1 && /description/i.test(e1.message)) { const r2 = await SB.from('purchase_order_items').insert({...base,purchase_order_id:po.id}); e1 = r2.error; }
+        if(!e1 && base.product_id) newProducts.push(base.product_id);
       }
     }
-    // A purchase order line used to open a PLM card for its client. It no longer
-    // does: PLM is kept by hand, and the quote-form tick is the only door.
+    // A new line on an existing PO moves its card into Production exactly as a
+    // new PO does -- same function, same rule, same note.
+    await movePlmCardsForPO(form.clientId||null, newProducts, form.num);
     // delete only rows the user explicitly removed
     const keepIds=valid.filter(it=>it.id).map(it=>it.id);
     const removed=(initialItems||[]).map(it=>it.id).filter(Boolean).filter(oid=>!keepIds.includes(oid));
@@ -7323,6 +7332,17 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
 
 
 // ── Create PO Modal ───────────────────────────────────────────────────────────
+// ── THE PLM MOVE, AS BOTH PO MODALS CALL IT ─────────────────────────────────
+// The rule is advanceToProductionForPO's; this only reports it. A failure is a
+// toast, never an alert and never a throw -- the PO is saved by the time this
+// runs, and a card that did not move is one somebody can move by hand.
+async function movePlmCardsForPO(clientCompanyId, productIds, poNumber) {
+  if (!clientCompanyId || !(productIds || []).length) return;
+  const { moved, error } = await advanceToProductionForPO({ clientCompanyId, productIds, poNumber });
+  if (error) window._toast?.('PO saved, but a PLM card could not be moved to Production — '+(error.message||String(error)),'err');
+  else if (moved.length) window._toast?.(moved.length+' PLM card'+(moved.length===1?'':'s')+' moved to Production','ok');
+}
+
 function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   // markDirty for the sample-type chips only. applyQuote, pickTier (which calls
   // applyQuote), addExtraFromQuote and rmItem all rewrite form fields and item
@@ -7656,6 +7676,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     }
     if (!po) { alert('Error creating PO: '+(lastErr?.message||'unknown')); return; }
     let added=0, failed=[];
+    // Product ids on lines that actually SAVED -- a line that failed to insert is
+    // not on the PO, so it cannot move a card.
+    const savedProducts=[];
     // A sized line expands to one row per size carrying a quantity; an unsized line
     // still writes exactly one row, with size NULL. vpn / master_sku / pack_sku /
     // baby_sku are user-entered rather than derived, so the size column carries the
@@ -7693,11 +7716,14 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
           const r = await SB.from('purchase_order_items').insert(row);
           e1 = r.error;
         }
-        if (e1) failed.push(e1.message); else added++;
+        if (e1) failed.push(e1.message); else { added++; if (row.product_id) savedProducts.push(row.product_id); }
       }
     }
     if (failed.length) alert('PO created, but '+failed.length+' line item(s) failed:\n'+failed[0]);
-    // No PLM card is created from a new purchase order any more -- PLM is manual.
+    // THE ONE AUTOMATIC PLM MOVE. A card for this client and any product on the
+    // PO, sitting before Production, moves there with a note. No card is created.
+    // After the lines, and never able to fail the PO -- it is already saved.
+    await movePlmCardsForPO(po.client_company_id, savedProducts, po.order_number || orderNumber);
     onCreated(po.id);
   };
 

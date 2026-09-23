@@ -35,6 +35,7 @@ import { loadExcelJS, excelDate } from '@/lib/excel';
 // The quote form's reading of a company's people -- primary first -- so the
 // quick emails fall back to the same contact the quote form would have filled.
 import { contactsOf, sameName } from '@/app/components/CompanySelect';
+import { seedStageTasks as seedTasksFor } from '@/lib/programs';
 // Sync from records is gone with the derived board -- nothing here creates a
 // program any more. The quote-form tick is the only door.
 // Tab, search, stage filter and the retired toggle survive going into a program and
@@ -153,27 +154,9 @@ const HEALTH = {
   at_risk:  { label:'At risk',  color:'#FF9F0A' },
   stalled:  { label:'Stalled',  color:'#FF375F' },
 };
-// ── THE CHECKLIST, RILEY'S TEMPLATES ON THE SIX-STAGE LADDER ────────────────
-// Seeded the first time a card enters a stage (see seedStageTasks), and only
-// then -- a card that leaves Sampling and comes back finds the list it left, not
-// a second copy of it. Quoting has none, as it had none on 11 Aug.
-//
-// PRE-PRODUCTION FOLDED INTO PRODUCTION. Its three tasks were PO issued, the
-// pre-production sample approved and the deposit paid. A saved PO is what puts
-// a card in Production now, so "PO issued" is true on arrival and is dropped;
-// the other two are real work that still happens after the PO, and lead the
-// Production list.
-//
-// NO OWNER PER STAGE. The 11 Aug STAGE_OWNER table assigned every seeded task to
-// a named person by stage; that went on decision, so seeded tasks belong to
-// whoever owns the card when it moves, and nobody when nobody does.
-const STAGE_TASKS = {
-  sampling:   ['Request sample from factory', 'Sample received from factory', 'Sample sent to client', 'Client feedback received'],
-  revision:   ['Log requested changes', 'Changes sent to factory', 'Revised sample received', 'Client sign-off'],
-  testing:    ['Submit to lab', 'Results received', 'Compliance filed'],
-  production: ['Pre-production sample approved', 'Production deposit paid', 'Production started', 'Production complete', 'QC / inspection booked'],
-  shipped:    ['Freight quote issued', 'Booking confirmed', 'Docs sent to client'],
-};
+// STAGE_TASKS and seedStageTasks live in lib/programs.js since stage 4. A saved
+// purchase order moves a card into Production from page.jsx, and it has to leave
+// the same checklist a person moving the card here would -- one list, one rule.
 // Who a task is waiting on. The four values are the CHECK script 76 put on
 // program_tasks.blocker, and the colours are the 11 Aug ones.
 const BLOCKERS = {
@@ -2236,29 +2219,15 @@ export default function Programs({ userEmail }) {
 
   // ── SEEDING A STAGE'S CHECKLIST ─────────────────────────────────────────────
   // After the move lands, never before -- a refused move must not leave a
-  // checklist behind for a stage the card is not in. Every stage move comes
-  // through setStage, so a pill and Advance seed alike; 11 Aug seeded on Advance
-  // only, which left a card moved by a pill with an empty checklist.
+  // checklist behind for a stage the card is not in. Every stage move on the
+  // board comes through setStage, so a pill and Advance seed alike; 11 Aug seeded
+  // on Advance only, which left a card moved by a pill with an empty checklist.
   //
-  // ONCE PER STAGE, EVER. The test is whether this card has ANY task for the
-  // stage, done or not, read from the database rather than from the board -- so
-  // a card coming back to Sampling finds its old list, and a board that is a
-  // second stale does not seed twice.
-  //
-  // A failed seed does not undo the move. The card is where somebody put it; the
-  // toast says the list is missing, and tasks can still be added by hand.
+  // The rule itself -- once per stage, ever, read from the database -- is in
+  // lib/programs.js, shared with the purchase-order move. This wrapper only says
+  // so when it fails; a failed seed does not undo the move.
   const seedStageTasks = async (r, stage) => {
-    const list = STAGE_TASKS[stage];
-    if (!list) return;
-    const { count, error: ce } = await SB.from('program_tasks')
-      .select('id', { count:'exact', head:true })
-      .eq('program_id', r.id).eq('stage', stage);
-    if (ce) { window._toast?.('The card moved, but its checklist could not be checked — ' + ce.message, 'err'); return; }
-    if ((count || 0) > 0) return;
-    const { error } = await SB.from('program_tasks').insert(list.map((task, i) => ({
-      program_id: r.id, stage, task, owner_id: r.owner_id || null,
-      assigned_by: userEmail || null, blocker: 'none', sort_order: i,
-    })));
+    const { error } = await seedTasksFor(r.id, stage, { ownerId: r.owner_id, byEmail: userEmail });
     if (error) window._toast?.('The card moved, but its checklist could not be added — ' + error.message, 'err');
   };
 

@@ -1378,7 +1378,7 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
     setState('idle'); setMissing(null);
     try {
       const { data: row, error } = await SB.from('quotes')
-        .select('product_id,client_company_id,client,sku,product').eq('id', q.id).single();
+        .select('product_id,client_company_id,client,sku,product,updated_by').eq('id', q.id).single();
       if (error) { setBusy(false); alert('Could not read the quote: ' + error.message); return; }
 
       // ── RESOLVE BEFORE REFUSING ───────────────────────────────────────────
@@ -1437,14 +1437,21 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
         setState('cannot');
         return;
       }
-      // Defaulted to the person who pressed it, which is what it always did --
-      // the difference is that it is now visible and can be changed.
+      // DEFAULTED TO THE QUOTE'S CREATOR, on decision -- not to whoever pressed
+      // the button. The person who quoted it is the one who knows the product and
+      // the client; pressing Create PLM Card is often done for someone else.
+      // quotes.updated_by is the address the quote form stamps on every save, and
+      // it is the nearest thing to a creator the table holds.
+      //
+      // NO FALLBACK TO THE PRESSER. An address with no staff row reads Unowned,
+      // visibly, in the picker -- quietly substituting whoever is signed in would
+      // be the old default wearing the new one's name.
       //
       // The RESOLVED ids travel on, not the row as read: the card is created from
       // what this just established, so a write that failed above still opens the
       // right card and leaves only the quote's own link to fix.
       setAsk({ row: { ...row, product_id: productId, client_company_id: clientId },
-               ownerId: ownerIdForEmail(staff, userEmail) });
+               ownerId: ownerIdForEmail(staff, row && row.updated_by) });
     } catch (e) {
       setBusy(false);
       alert('Something went wrong: ' + (e && e.message ? e.message : e));
