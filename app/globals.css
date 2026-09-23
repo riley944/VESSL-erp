@@ -185,6 +185,13 @@ html,body{height:100%;overflow:hidden;font-family:var(--sans);font-size:14px;col
 .page-header{padding:22px 32px 16px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
 .page-title{font-family:var(--serif);font-weight:500;font-size:26px;letter-spacing:-.02em;color:var(--ink);}
 .page-actions{display:flex;gap:10px;}
+/* A centred title with the actions still on the right edge. Three columns, the
+   outer two equal, so the title is centred on the row -- and so on the content
+   below, which shares its side padding -- whatever width the button is. Opted
+   into per page; Companies is the only user. */
+.page-header--center{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;}
+.page-header--center .page-title{grid-column:2;text-align:center;}
+.page-header--center .page-actions{grid-column:3;justify-self:end;}
 .page-content{padding:0 32px 56px;}
 
 /* ── BUTTONS ───────────────────────────────────────────── */

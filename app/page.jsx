@@ -10155,7 +10155,10 @@ export default function App() {
       <div className="main-area">
         {/* codes draws its own heading, like testing — without it here the page
             would show two stacked titles. */}
-        <div className="page-header" style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='codes'||page==='inventory'||page==='shipments'||page==='pricing'||page==='programs')?{display:'none'}:undefined}>
+        {/* page-header--center is Companies only: its title sits centred over the
+            tab strip while + New keeps the right edge. Every other page keeps the
+            shared left-aligned row. */}
+        <div className={'page-header'+(page==='companies'?' page-header--center':'')} style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='codes'||page==='inventory'||page==='shipments'||page==='pricing'||page==='programs')?{display:'none'}:undefined}>
           <h1 className="page-title">{titles[page]||''}</h1>
           <div className="page-actions">{pageActions[page]}</div>
         </div>
