@@ -871,6 +871,17 @@ function Checklist({ r, staff = [], userEmail, onTouched }) {
   const [due, setDue] = useState('');
   const [pending, setPending] = useState(null);
   const [adding, setAdding] = useState(false);
+  // ── OPEN ELSEWHERE SHOWS WHAT IS WAITING ──────────────────────────────────
+  // A card that has been through four stages carries every task it left
+  // behind, and nineteen rows under the checklist buried the few that matter:
+  // the ones somebody is waiting on. So the section lists only tasks with a
+  // blocker, and Show all opens the rest. Collapsed on every opening -- per
+  // card-open, not remembered. A blocker cleared here drops the row out of the
+  // waiting list on the next render, which is the point of clearing it.
+  //
+  // Display only. The tile pill, the Waiting tiles and the Stalled edge read
+  // every task on the card, not this list.
+  const [showAllElsewhere, setShowAllElsewhere] = useState(false);
   const [err, setErr] = useState('');
 
   const settle = async () => {
@@ -960,16 +971,41 @@ function Checklist({ r, staff = [], userEmail, onTouched }) {
       )}
       {err && <div style={{fontSize:'11.5px',color:'var(--hot)',marginTop:'7px'}}>{err}</div>}
 
-      {elsewhere.length > 0 && (
-        <div style={{marginTop:'16px'}}>
-          <div style={{fontSize:'11px',fontWeight:600,color:'#B0B0B4',textTransform:'uppercase',
-                       letterSpacing:'.06em',marginBottom:'5px'}}>Open elsewhere ({elsewhere.length})</div>
-          {elsewhere.map(t => (
-            <TaskRow key={t.id} t={t} staff={staff} dim pending={pending === t.id}
-                     onToggle={toggle} onBlocker={setBlocker} onDel={del} />
-          ))}
-        </div>
-      )}
+      {elsewhere.length > 0 && (() => {
+        const waiting = elsewhere.filter(t => t.blocker && t.blocker !== 'none');
+        const link = (label, onClick) => (
+          <button onClick={onClick}
+            style={{background:'none',border:'none',padding:0,fontSize:'11px',fontWeight:500,color:'#A0A0A4',
+                    textTransform:'none',letterSpacing:0,cursor:'pointer',fontFamily:'inherit',
+                    textDecoration:'underline',textUnderlineOffset:'2px'}}>{label}</button>
+        );
+        // Nothing waiting and not expanded: one muted line rather than an empty
+        // heading, so the section says how much is there without listing it.
+        if (!waiting.length && !showAllElsewhere) {
+          return (
+            <div style={{marginTop:'16px',fontSize:'11.5px',color:'#B0B0B4'}}>
+              {elsewhere.length} open elsewhere · {link('Show all', () => setShowAllElsewhere(true))}
+            </div>
+          );
+        }
+        const rows = showAllElsewhere ? elsewhere : waiting;
+        return (
+          <div style={{marginTop:'16px'}}>
+            <div style={{display:'flex',alignItems:'baseline',gap:'8px',marginBottom:'5px'}}>
+              <span style={{fontSize:'11px',fontWeight:600,color:'#B0B0B4',textTransform:'uppercase',letterSpacing:'.06em'}}>
+                Open elsewhere · {waiting.length ? waiting.length + ' waiting' : elsewhere.length}
+              </span>
+              {showAllElsewhere
+                ? link('Show waiting only', () => setShowAllElsewhere(false))
+                : link('Show all ' + elsewhere.length, () => setShowAllElsewhere(true))}
+            </div>
+            {rows.map(t => (
+              <TaskRow key={t.id} t={t} staff={staff} dim pending={pending === t.id}
+                       onToggle={toggle} onBlocker={setBlocker} onDel={del} />
+            ))}
+          </div>
+        );
+      })()}
     </div>
   );
 }
