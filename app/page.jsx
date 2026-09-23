@@ -4278,7 +4278,15 @@ const FACTORY_ALIASES = {
 };
 const foldFactoryName = n => FACTORY_ALIASES[String(n || '').trim().toLowerCase()] || String(n || '').trim();
 
-function Companies() {
+// ── THE NEW BUTTON FOLLOWS THE TAB ──────────────────────────────────────────
+// The + New button lives in the shell's top bar, not in this component, so the
+// two talk through two props. onTypeChange tells the shell which tab is open, so
+// the button can say + New Factory on Factories. createRequest is a counter the
+// shell bumps on each press, and this component answers by opening ITS OWN
+// create modal -- the one below that lands on the company just made. The shell
+// used to open a second copy that only closed on create and never refreshed the
+// list, so a new company did not appear until the page was left and re-entered.
+function Companies({ onTypeChange, createRequest = 0 }) {
   const TYPE_LABELS = { client:'Clients', factory:'Factories', carrier:'Carriers', freight_forwarder:'Freight Forwarders' };
   const TYPE_KEYS = Object.keys(TYPE_LABELS);
   // Which type tab and what was typed, kept across navigation. openId and showCreate
@@ -4300,6 +4308,16 @@ function Companies() {
   // Switching tab still clears the search, because a term that matched a client
   // rarely matches a carrier. The dependency is ui.tab now, not tab.
   useEffect(() => { load(); setUi('search', ''); }, [ui.tab]);
+  // Reported on mount too, so a tab restored by usePageState labels the button
+  // correctly before anybody has clicked a tab.
+  useEffect(() => { if (onTypeChange) onTypeChange(TYPE_KEYS[ui.tab]); }, [ui.tab]);
+  // THE COUNT AT MOUNT IS NOT A PRESS. The shell's counter outlives this page, so
+  // coming back to Companies after one earlier press would otherwise open the
+  // modal unasked. Only a change after mount opens it.
+  const seenRequest = useRef(createRequest);
+  useEffect(() => {
+    if (createRequest !== seenRequest.current) { seenRequest.current = createRequest; setShowCreate(true); }
+  }, [createRequest]);
 
   const shown = ui.search.trim()
     ? rows.filter(c => c.name.toLowerCase().includes(ui.search.toLowerCase()) ||
@@ -4683,7 +4701,10 @@ function Companies() {
 
           Creates only: this modal only ever creates, and editing a company goes
           through CompanyDetailModal below, which is left exactly as it was. */}
-      {showCreate && <CreateCompanyModal onClose={()=>setShowCreate(false)} onCreated={(type)=>{
+      {/* initialType is the open tab, so + New Factory opens as a factory. The
+          Type select stays changeable, and the landing logic below still moves
+          the tab when somebody changes it. */}
+      {showCreate && <CreateCompanyModal initialType={TYPE_KEYS[ui.tab]} onClose={()=>setShowCreate(false)} onCreated={(type)=>{
         setShowCreate(false);
         const i = TYPE_KEYS.indexOf(type);
         if (i !== -1 && i !== ui.tab) { setUi('tab', i); }
@@ -9881,9 +9902,20 @@ export default function App() {
   // checked BEFORE the !user branch.
   const [blocked, setBlocked] = useState(null);
 
+  // Which Companies tab is open, reported up by Companies, and a counter the
+  // + New button bumps to ask it to open its create modal.
+  // ABOVE pageActions, because it reads companyType while it is built -- below
+  // it, that is a temporal dead zone crash on every render of the shell.
+  const [companyType, setCompanyType] = useState('client');
+  const [companyCreateReq, setCompanyCreateReq] = useState(0);
   const pageActions = {
     orders:    <button className="btn btn-dark" onClick={()=>setModal('create-po')}>+ New PO</button>,
-    companies: <button className="btn btn-dark" onClick={()=>setModal('create-company')}>+ New Company</button>,
+    // The label and the type follow the Companies tab -- see the note at
+    // Companies. The press is handed to Companies rather than opening a modal
+    // here, so the list the company lands in is the one that refreshes.
+    companies: <button className="btn btn-dark" onClick={()=>setCompanyCreateReq(n=>n+1)}>
+                 + New {(COMPANY_TYPES.find(([k])=>k===companyType)||[null,'Company'])[1]}
+               </button>,
     // products has no action. The key is absent rather than set to null, because
     // pageActions[page] is rendered directly and an absent key gives undefined,
     // which React renders as nothing -- same result, one less thing to read.
@@ -10135,7 +10167,7 @@ export default function App() {
           {page==='so-detail'        && <SalesOrderDetail id={params.id} navigate={navigate} />}
           {page==='orders'           && <Orders navigate={navigate} />}
           {page==='order-detail'     && <OrderDetail id={params.id} navigate={navigate} />}
-          {page==='companies'        && <Companies />}
+          {page==='companies'        && <Companies onTypeChange={setCompanyType} createRequest={companyCreateReq} />}
           {page==='products'         && <Products navigate={navigate} canCreateProducts={role !== 'limited_qc'} userEmail={user?.email||''} />}
           {page==='testing'          && <Testing userEmail={user?.email||''} />}
           {page==='codes'            && <Codes canDeleteCodes={role !== 'limited_qc'} />}
@@ -10157,7 +10189,6 @@ export default function App() {
       </div>
       )}
       {modal==='create-po'      && <CreatePOModal onClose={()=>setModal(null)} onCreated={id=>{setModal(null);navigate('order-detail',{id});}} />}
-      {modal==='create-company' && <CreateCompanyModal onClose={()=>setModal(null)} onCreated={()=>setModal(null)} />}
       {modal==='create-shipment'&& <CreateShipmentModal onClose={()=>setModal(null)} onCreated={()=>{setModal(null);setShipmentsRefresh(n=>n+1);navigate('shipments');}} />}
     </div>
     </ToastProvider>
