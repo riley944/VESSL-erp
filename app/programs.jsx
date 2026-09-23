@@ -139,10 +139,9 @@ const STALE_DAYS = 21;
 // different question from the stage -- the stage says WHERE a card is, this says
 // whether it is moving -- and that is why Riley had both on one tile.
 //
-// IT TAKES THE TASKS IT IS GIVEN AND DEFAULTS TO NONE, which is how it survives
-// stage 1. program_tasks exists in the database but nothing writes to it yet, so
-// two of the four rules below are dormant and the other two are live. When the
-// checklist ships the same function gets sharper without being rewritten.
+// IT TAKES THE CARD'S TASKS, which the board reads in bulk with everything else.
+// Two of the four rules below read them -- blocked on us for a week, and a task
+// past its due date -- and a card with no checklist simply never trips those two.
 //
 // THE THRESHOLDS ARE RILEY NUMBERS -- 7 days blocked on us, 14 days in a stage --
 // and they are NOT the same as STALE_DAYS, which is 21 and is what the tile pill
@@ -153,6 +152,42 @@ const HEALTH = {
   on_track: { label:'On track', color:'#30D158' },
   at_risk:  { label:'At risk',  color:'#FF9F0A' },
   stalled:  { label:'Stalled',  color:'#FF375F' },
+};
+// ── THE CHECKLIST, RILEY'S TEMPLATES ON THE SIX-STAGE LADDER ────────────────
+// Seeded the first time a card enters a stage (see seedStageTasks), and only
+// then -- a card that leaves Sampling and comes back finds the list it left, not
+// a second copy of it. Quoting has none, as it had none on 11 Aug.
+//
+// PRE-PRODUCTION FOLDED INTO PRODUCTION. Its three tasks were PO issued, the
+// pre-production sample approved and the deposit paid. A saved PO is what puts
+// a card in Production now, so "PO issued" is true on arrival and is dropped;
+// the other two are real work that still happens after the PO, and lead the
+// Production list.
+//
+// NO OWNER PER STAGE. The 11 Aug STAGE_OWNER table assigned every seeded task to
+// a named person by stage; that went on decision, so seeded tasks belong to
+// whoever owns the card when it moves, and nobody when nobody does.
+const STAGE_TASKS = {
+  sampling:   ['Request sample from factory', 'Sample received from factory', 'Sample sent to client', 'Client feedback received'],
+  revision:   ['Log requested changes', 'Changes sent to factory', 'Revised sample received', 'Client sign-off'],
+  testing:    ['Submit to lab', 'Results received', 'Compliance filed'],
+  production: ['Pre-production sample approved', 'Production deposit paid', 'Production started', 'Production complete', 'QC / inspection booked'],
+  shipped:    ['Freight quote issued', 'Booking confirmed', 'Docs sent to client'],
+};
+// Who a task is waiting on. The four values are the CHECK script 76 put on
+// program_tasks.blocker, and the colours are the 11 Aug ones.
+const BLOCKERS = {
+  none:    { label:'No blocker',        dot:'transparent', text:'#8A8A8E' },
+  factory: { label:'Waiting · factory', dot:'#0A84FF',     text:'#0A84FF' },
+  client:  { label:'Waiting · client',  dot:'#FF9F0A',     text:'#B45309' },
+  us:      { label:'Waiting · us',      dot:'#FF375F',     text:'#B91C1C' },
+};
+const openTasks = r => (r.tasks || []).filter(t => !t.done);
+// The blocker a tile names -- us first, because that is the one this office can
+// act on, then client, then factory.
+const blockerOf = r => {
+  const open = openTasks(r);
+  return ['us', 'client', 'factory'].find(b => open.some(t => t.blocker === b)) || null;
 };
 const sampleOverdue = r =>
   !!r.sample_due_back && daysSince(r.sample_due_back) > 0 && SAMPLING_STAGES.includes(r.stage);
@@ -994,6 +1029,175 @@ function SampleStrip({ r, busy, onSample }) {
   );
 }
 
+// ── THE CHECKLIST ───────────────────────────────────────────────────────────
+// The 11 Aug checklist on program_tasks, script 76. The stage the card is in
+// gets the list; open tasks left behind in other stages sit under it as "Open
+// elsewhere", so moving a card never hides work that was not finished.
+//
+// SHARED WORK, NO AUTHOR RULE. Anybody on staff can tick, block or delete
+// anybody's task -- script 76 gives program_tasks one permissive staff policy
+// and deliberately no restrictive one, unlike the notes. A checklist is the
+// team's, not the writer's.
+//
+// Every write stamps the program and re-reads the board, because the tile's
+// open count, its blocker pill and the waiting tiles all read these rows.
+function TaskRow({ t, staff, dim, pending, onToggle, onBlocker, onDel }) {
+  const overdue = !!t.due_date && !t.done && daysSince(t.due_date) > 0;
+  const b = BLOCKERS[t.blocker] || BLOCKERS.none;
+  // A task with no owner is a real state -- a card nobody owned when it moved
+  // seeds its list unowned -- so it says so rather than rendering a blank.
+  const owner = t.owner_id ? ((staff.find(s => s.id === t.owner_id) || {}).full_name
+                              || (staff.find(s => s.id === t.owner_id) || {}).email || 'Unknown') : 'Unassigned';
+  return (
+    <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',
+                 borderBottom:'1px solid rgba(0,0,0,.05)',opacity:(dim && t.done) || pending ? 0.5 : 1}}>
+      <button onClick={()=>onToggle(t)} disabled={pending} aria-label={t.done ? 'Mark not done' : 'Mark done'}
+        style={{background:'none',border:'none',cursor:pending?'default':'pointer',padding:0,flexShrink:0,display:'flex'}}>
+        {t.done
+          ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#30D158" strokeWidth="2.2"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg>
+          : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#C7C7CC" strokeWidth="1.8"><circle cx="12" cy="12" r="10"/></svg>}
+      </button>
+      <div style={{flex:1,minWidth:0}}>
+        <div title={t.task}
+          style={{fontSize:'13.5px',color:t.done?'#B0B0B4':'#1D1D1F',textDecoration:t.done?'line-through':'none',
+                  fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.task}</div>
+        <div style={{fontSize:'11px',color:overdue?'#FF375F':'#B0B0B4',marginTop:'1px'}}>
+          {owner}
+          {dim ? ' · ' + stageLabel(t.stage) : ''}
+          {t.due_date ? ' · due ' + shortDate(t.due_date) : ''}
+          {overdue ? ' · overdue' : ''}
+        </div>
+      </div>
+      {/* data-noguard: it saves the moment it changes. */}
+      {!t.done && (
+        <select data-noguard value={t.blocker || 'none'} disabled={pending} aria-label="Blocker"
+          onChange={e=>onBlocker(t, e.target.value)}
+          style={{fontSize:'11px',border:'none',borderRadius:'980px',padding:'5px 9px',color:b.text,fontWeight:600,
+                  cursor:pending?'default':'pointer',background:'#F5F5F7',flexShrink:0,fontFamily:'inherit'}}>
+          {Object.entries(BLOCKERS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </select>
+      )}
+      <button onClick={()=>onDel(t)} disabled={pending} aria-label="Delete task"
+        style={{background:'none',border:'none',color:'#C7C7CC',cursor:pending?'default':'pointer',
+                fontSize:'16px',flexShrink:0,fontFamily:'inherit'}}>×</button>
+    </div>
+  );
+}
+
+function Checklist({ r, staff = [], userEmail, onTouched }) {
+  const tasks = r.tasks || [];
+  const here = tasks.filter(t => t.stage === r.stage);
+  const elsewhere = tasks.filter(t => t.stage !== r.stage && !t.done);
+  const [text, setText] = useState('');
+  // The new task's owner starts as the card's owner, which is who the seeded
+  // tasks went to -- the 11 Aug default was the stage owner, which is gone.
+  const [who, setWho] = useState(r.owner_id || '');
+  const [due, setDue] = useState('');
+  const [pending, setPending] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const [err, setErr] = useState('');
+
+  const settle = async () => {
+    await touchProgram(r.id, userEmail);
+    if (onTouched) await onTouched();
+  };
+  const write = async (t, fn) => {
+    setPending(t.id); setErr('');
+    const { error } = await fn();
+    if (error) { setErr(error.message); setPending(null); return; }
+    await settle();
+    setPending(null);
+  };
+  const stamp = () => ({ updated_at: new Date().toISOString() });
+
+  const toggle = t => write(t, () => SB.from('program_tasks')
+    .update({ done: !t.done, done_at: !t.done ? new Date().toISOString() : null, ...stamp() }).eq('id', t.id));
+  const setBlocker = (t, b) => write(t, () => SB.from('program_tasks')
+    .update({ blocker: b, ...stamp() }).eq('id', t.id));
+  // ASKED, where 11 Aug did not ask. The × sits a thumb's width from the
+  // blocker, and a deleted task is gone -- there is no archive for tasks.
+  const del = t => {
+    if (!window.confirm('Delete the task "' + t.task + '"? This cannot be undone.')) return;
+    return write(t, () => SB.from('program_tasks').delete().eq('id', t.id));
+  };
+
+  const add = async () => {
+    const body = text.trim();
+    if (!body || !r.stage) return;
+    setAdding(true); setErr('');
+    const nextOrder = here.reduce((m, t) => Math.max(m, t.sort_order || 0), -1) + 1;
+    const { error } = await SB.from('program_tasks').insert({
+      program_id: r.id, stage: r.stage, task: body, owner_id: who || null,
+      assigned_by: userEmail || null, due_date: due || null, blocker: 'none', sort_order: nextOrder,
+    });
+    if (error) { setErr(error.message); setAdding(false); return; }
+    setText(''); setDue('');
+    await settle();
+    setAdding(false);
+  };
+
+  const inp = { border:'1px solid rgba(0,0,0,.1)', borderRadius:'10px', padding:'8px 10px', fontSize:'13px',
+                outline:'none', fontFamily:'inherit', boxSizing:'border-box', background:'#fff' };
+  const doneHere = here.filter(t => t.done).length;
+
+  return (
+    <div style={{marginTop:'16px',paddingTop:'13px',borderTop:'1px solid #ECECEE'}}>
+      <div style={{display:'flex',alignItems:'baseline',gap:'8px',marginBottom:'6px'}}>
+        <span style={{fontSize:'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',color:'#86868B'}}>
+          {r.stage ? stageLabel(r.stage) + ' checklist' : 'Checklist'}
+        </span>
+        {here.length > 0 && (
+          <span style={{fontSize:'11.5px',color:'#A0A0A4',fontVariantNumeric:'tabular-nums'}}>{doneHere} of {here.length} done</span>
+        )}
+      </div>
+
+      {!r.stage ? (
+        // stage is NOT NULL on program_tasks, so a card with no stage has
+        // nowhere to file a task. Said, rather than offering a box that fails.
+        <div style={{fontSize:'13px',color:'#B0B0B4',marginBottom:'4px'}}>Set a stage to start a checklist.</div>
+      ) : (
+        <>
+          {here.length === 0 && <div style={{fontSize:'13px',color:'#B0B0B4',marginBottom:'6px'}}>No tasks in this stage.</div>}
+          {here.map(t => (
+            <TaskRow key={t.id} t={t} staff={staff} pending={pending === t.id}
+                     onToggle={toggle} onBlocker={setBlocker} onDel={del} />
+          ))}
+          <div style={{display:'flex',gap:'6px',marginTop:'10px',flexWrap:'wrap'}}>
+            <select value={who} onChange={e=>setWho(e.target.value)} disabled={adding} aria-label="Task owner"
+              style={{...inp,flex:'0 0 130px',cursor:'pointer'}}>
+              <option value="">Unassigned</option>
+              {staff.map(s => <option key={s.id} value={s.id}>{s.full_name || s.email}</option>)}
+            </select>
+            <input value={text} onChange={e=>setText(e.target.value)} disabled={adding}
+              onKeyDown={e=>{ if (e.key === 'Enter') add(); }} placeholder="Add a task…"
+              style={{...inp,flex:'1 1 160px'}} />
+            <input type="date" value={due} onChange={e=>setDue(e.target.value)} disabled={adding}
+              aria-label="Due date" style={{...inp,flex:'0 0 140px'}} />
+            <button onClick={add} disabled={adding || !text.trim()}
+              style={{background:text.trim()?'#1D1D1F':'#E5E5EA',color:text.trim()?'#fff':'#A0A0A4',border:'none',
+                      borderRadius:'10px',padding:'8px 15px',fontSize:'13px',fontWeight:600,fontFamily:'inherit',
+                      cursor:(adding || !text.trim())?'default':'pointer'}}>
+              {adding ? 'Adding…' : 'Add'}
+            </button>
+          </div>
+        </>
+      )}
+      {err && <div style={{fontSize:'11.5px',color:'var(--hot)',marginTop:'7px'}}>{err}</div>}
+
+      {elsewhere.length > 0 && (
+        <div style={{marginTop:'16px'}}>
+          <div style={{fontSize:'11px',fontWeight:600,color:'#B0B0B4',textTransform:'uppercase',
+                       letterSpacing:'.06em',marginBottom:'5px'}}>Open elsewhere ({elsewhere.length})</div>
+          {elsewhere.map(t => (
+            <TaskRow key={t.id} t={t} staff={staff} dim pending={pending === t.id}
+                     onToggle={toggle} onBlocker={setBlocker} onDel={del} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // THE LADDER IS GONE, replaced by SystemKnows further down. It drew four rungs
 // inferred from the records -- quoted, sampling, tested, and whichever order
 // completed the program -- which was the right card for a board that derived its
@@ -1733,8 +1937,8 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         </div>
       )}
 
-      {/* The checklist arrives here in stage 3, between the emails and the notes,
-          which is where the 11 Aug card had it. */}
+      {/* Between the emails and the notes, where the 11 Aug card had it. */}
+      <Checklist r={r} staff={staff} userEmail={userEmail} onTouched={onTouched} />
 
       {/* author is the caller's EMAIL, inside NotesPanel. The 11 Aug card wrote
           a display name, and the restrictive policies compare lower(author) to
@@ -1793,7 +1997,7 @@ export default function Programs({ userEmail }) {
   // Shipped is a column now, so there is nothing to open or shut, and a card on a
   // retired product sits in its own stage column like any other -- the tile says
   // so with a pill rather than the card being filed somewhere else.
-  const [ui, setUi] = usePageState('programs', { search:'', showRemoved:false, ownerSel:[] });
+  const [ui, setUi] = usePageState('programs', { search:'', showRemoved:false, ownerSel:[], blocker:'' });
   const [openId, setOpenId] = useState(null);
   const [staff, setStaff] = useState([]);
   // Set while a stage or an owner is being written, so the control can say so and
@@ -1814,6 +2018,8 @@ export default function Programs({ userEmail }) {
   // product_id -> every sample event for it, filled in bulk by load(). Reduced to
   // the latest one per card in enriched below.
   const [samples, setSamples] = useState({});
+  // program_id -> its checklist, every stage, filled in bulk by load().
+  const [tasks, setTasks] = useState({});
 
   // QUIET AFTER THE FIRST READ. loading starts true and only the first load
   // shows the placeholder; every later one -- after a stage move, a note, a
@@ -1823,7 +2029,7 @@ export default function Programs({ userEmail }) {
   const load = async () => {
     setErr('');
     try {
-      const [p, nt, se, q, poi, soi, tr, st] = await Promise.all([
+      const [p, nt, se, q, poi, soi, tr, st, tk] = await Promise.all([
         // declared_stage and declared_stage_at are the board now -- the stage a
         // person set, and when they set it. owner_id joins staff_profiles for the
         // name on the card and the owner filter.
@@ -1865,11 +2071,18 @@ export default function Programs({ userEmail }) {
         // own a card today -- a filter that grows as work is assigned would keep
         // changing shape under whoever is using it.
         SB.from('staff_profiles').select('id,email,full_name').order('full_name', { nullsFirst:false }),
+        // EVERY CHECKLIST, IN BULK. The tile's blocker pill, its health edge and
+        // the three waiting tiles all read tasks, so they arrive with the board
+        // rather than when a card opens -- the trade the note counts make.
+        SB.from('program_tasks')
+          .select('id,program_id,stage,task,owner_id,assigned_by,due_date,blocker,done,done_at,sort_order,created_at')
+          .order('sort_order').order('created_at'),
       ]);
-      const e = [p,nt,se,q,poi,soi,tr,st].find(r => r.error);
+      const e = [p,nt,se,q,poi,soi,tr,st,tk].find(r => r.error);
       if (e) throw new Error(e.error.message);
       setRows(p.data || []);
       setStaff(st.data || []);
+      setTasks((tk.data || []).reduce((m, t) => { (m[t.program_id] = m[t.program_id] || []).push(t); return m; }, {}));
       setNoteCounts((nt.data || []).reduce((m, n) => { m[n.program_id] = (m[n.program_id] || 0) + 1; return m; }, {}));
       // Grouped by product and reduced to the latest, by the rule latestSampleOf
       // owns. Keyed as a string because product_id arrives as one everywhere else
@@ -1964,6 +2177,7 @@ export default function Programs({ userEmail }) {
                lastTouchAt: r.updated_at || null,
                lastTouchBy: staffName(staff, r.updated_by),
                noteCount: noteCounts[r.id] || 0,
+               tasks: tasks[r.id] || [],
                // The most recent sample for this PRODUCT, so two cards for the
                // same SKU report the same round -- which is the point of the log
                // hanging off the product rather than the program.
@@ -1976,7 +2190,7 @@ export default function Programs({ userEmail }) {
     // staff and noteCounts are dependencies now: without them a name stays
     // unresolved and a count stays zero until some other change happens to
     // recompute this.
-  }, [rows, buckets, staff, noteCounts, samples]);
+  }, [rows, buckets, staff, noteCounts, samples, tasks]);
 
   // ── WRITING A STAGE, AND WRITING AN OWNER ───────────────────────────────────
   // The only two things this page changes. Both re-read from the database after
@@ -2015,8 +2229,37 @@ export default function Programs({ userEmail }) {
       setSaving(null);
       return;
     }
+    await seedStageTasks(r, next);
     await load();
     setSaving(null);
+  };
+
+  // ── SEEDING A STAGE'S CHECKLIST ─────────────────────────────────────────────
+  // After the move lands, never before -- a refused move must not leave a
+  // checklist behind for a stage the card is not in. Every stage move comes
+  // through setStage, so a pill and Advance seed alike; 11 Aug seeded on Advance
+  // only, which left a card moved by a pill with an empty checklist.
+  //
+  // ONCE PER STAGE, EVER. The test is whether this card has ANY task for the
+  // stage, done or not, read from the database rather than from the board -- so
+  // a card coming back to Sampling finds its old list, and a board that is a
+  // second stale does not seed twice.
+  //
+  // A failed seed does not undo the move. The card is where somebody put it; the
+  // toast says the list is missing, and tasks can still be added by hand.
+  const seedStageTasks = async (r, stage) => {
+    const list = STAGE_TASKS[stage];
+    if (!list) return;
+    const { count, error: ce } = await SB.from('program_tasks')
+      .select('id', { count:'exact', head:true })
+      .eq('program_id', r.id).eq('stage', stage);
+    if (ce) { window._toast?.('The card moved, but its checklist could not be checked — ' + ce.message, 'err'); return; }
+    if ((count || 0) > 0) return;
+    const { error } = await SB.from('program_tasks').insert(list.map((task, i) => ({
+      program_id: r.id, stage, task, owner_id: r.owner_id || null,
+      assigned_by: userEmail || null, blocker: 'none', sort_order: i,
+    })));
+    if (error) window._toast?.('The card moved, but its checklist could not be added — ' + error.message, 'err');
   };
 
   const setOwner = async (r, nextId) => {
@@ -2179,6 +2422,9 @@ export default function Programs({ userEmail }) {
   // and staff directly, so the intermediate list had nothing left to do.
 
   const ownerMatches = r => !ui.ownerSel.length || ui.ownerSel.includes(r.owner_id || 'none');
+  // A waiting tile, pressed. Any OPEN task with that blocker qualifies, as on
+  // 11 Aug -- the tile counts cards, and this shows the cards it counted.
+  const blockerMatches = r => !ui.blocker || openTasks(r).some(t => t.blocker === ui.blocker);
 
   const matches = r => {
     if (!ui.search) return true;
@@ -2189,12 +2435,12 @@ export default function Programs({ userEmail }) {
   // SEARCH AND OWNER, AND NOTHING ELSE. The stage filter went with the rail --
   // every column is on screen at once, so narrowing to one stage is what scrolling
   // does. Each column takes its own slice of this list below.
-  const shownBoard   = useMemo(() => board.filter(r => matches(r) && ownerMatches(r)),
-    [board, ui.search, ui.ownerSel]);
+  const shownBoard   = useMemo(() => board.filter(r => matches(r) && ownerMatches(r) && blockerMatches(r)),
+    [board, ui.search, ui.ownerSel, ui.blocker]);
   // The removed column reads the same two filters, so a search narrows it too --
   // which is the point, since finding one removed card is what it is for.
-  const shownRemoved = useMemo(() => removed.filter(r => matches(r) && ownerMatches(r)),
-    [removed, ui.search, ui.ownerSel]);
+  const shownRemoved = useMemo(() => removed.filter(r => matches(r) && ownerMatches(r) && blockerMatches(r)),
+    [removed, ui.search, ui.ownerSel, ui.blocker]);
 
   // railStages was here. The sections carry their own headings and counts now, and
   // the tiles above carry the totals, so a second list of the same six labels had
@@ -2222,9 +2468,14 @@ export default function Programs({ userEmail }) {
   // it on each one said nothing.
   const Card = ({ r }) => {
     const p = r.products || {};
-    const h = healthOf(r);
+    const h = healthOf(r, r.tasks);
     const notReq = testingNotRequired(p);
     const late = sampleOverdue(r);
+    // Open tasks in the stage the card is IN -- the count the checklist heading
+    // shows. The blocker reads every open task, because a card waiting on the
+    // client for something left in Sampling is still waiting.
+    const openHere = openTasks(r).filter(t => t.stage === r.stage).length;
+    const blk = blockerOf(r);
     return (
       <button onClick={()=>setOpenId(r.id)}
         title={HEALTH[h].label}
@@ -2248,7 +2499,7 @@ export default function Programs({ userEmail }) {
         {/* THE PILL ROW IS ABSENT RATHER THAN EMPTY when a card has nothing to
             flag, because a reserved blank strip is a row of nothing repeated down
             the whole board. */}
-        {(r.days !== null && r.days !== undefined) || late || r.noteCount > 0 || notReq || r.retired ? (
+        {(r.days !== null && r.days !== undefined) || late || openHere > 0 || blk || r.noteCount > 0 || notReq || r.retired ? (
           <div style={{display:'flex',alignItems:'center',gap:'6px',marginTop:'11px',flexWrap:'wrap'}}>
             {(r.days !== null && r.days !== undefined) && (
               <span title={'In this stage for ' + r.days + ' days'}
@@ -2262,6 +2513,19 @@ export default function Programs({ userEmail }) {
               <span style={{fontSize:'11px',fontWeight:600,color:'#FF375F',
                             background:'rgba(255,55,95,.08)',borderRadius:'6px',padding:'2px 8px'}}>
                 sample overdue
+              </span>
+            )}
+            {openHere > 0 && (
+              <span style={{fontSize:'11px',fontWeight:500,color:'#86868B',background:'#F5F5F7',
+                            borderRadius:'6px',padding:'2px 8px'}}>
+                {openHere} open
+              </span>
+            )}
+            {blk && (
+              <span style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'11px',fontWeight:600,
+                            color:BLOCKERS[blk].text,background:'#F5F5F7',borderRadius:'6px',padding:'2px 8px'}}>
+                <span style={{width:'6px',height:'6px',borderRadius:'50%',background:BLOCKERS[blk].dot}} />
+                {BLOCKERS[blk].label}
               </span>
             )}
             {r.noteCount > 0 && (
@@ -2320,16 +2584,13 @@ export default function Programs({ userEmail }) {
       : []),
   ];
 
-  // ── THE TWO HEALTH TILES, AND WHY THERE ARE ONLY TWO ────────────────────────
-  // The 11 Aug strip carried five -- stalled, overdue samples, and one each for
-  // waiting on us, on the client and on the factory. The last three are counted
-  // from task blockers, and nothing writes program_tasks yet, so they would read
-  // zero on every board however much work was actually blocked.
-  //
-  // A tile that is structurally always zero is worse than a missing tile. The
-  // three arrive with the checklist.
-  const stalledCards = board.filter(r => healthOf(r) === 'stalled');
+  // ── THE FIVE HEALTH TILES ───────────────────────────────────────────────────
+  // The 11 Aug strip whole again: stalled, overdue samples, and one each for
+  // waiting on us, the client and the factory, which count cards with at least
+  // one open task carrying that blocker. A card can sit in more than one.
+  const stalledCards = board.filter(r => healthOf(r, r.tasks) === 'stalled');
   const overdueCards = board.filter(sampleOverdue);
+  const waitingOn = b => board.filter(r => openTasks(r).some(t => t.blocker === b));
 
   return (
     <div style={{padding:'26px 30px 60px'}}>
@@ -2354,8 +2615,8 @@ export default function Programs({ userEmail }) {
           instead is the thing a column heading cannot say -- how many cards are
           in trouble, wherever they happen to be sitting.
 
-          DISPLAY ONLY, as the count tiles were. These read the whole board rather
-          than the filtered view, so narrowing never makes a total lie. */}
+          These read the whole board rather than the filtered view, so narrowing
+          never makes a total lie. */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',
                    gap:'12px',marginBottom:'18px'}}>
         {[
@@ -2363,15 +2624,31 @@ export default function Programs({ userEmail }) {
             t:'A sample is overdue, or the card has not moved and somebody is waiting on us' },
           { k:'Overdue samples', v:overdueCards.length, c:HEALTH.stalled.color,
             t:'Due back date has passed while the card is in Sampling or Revision' },
-        ].map(m => (
-          <div key={m.k} title={m.t}
-            style={{background:'#fff',borderRadius:'16px',padding:'14px 16px',
-                    boxShadow:'0 1px 3px rgba(0,0,0,.04)'}}>
-            <div style={{fontSize:'24px',fontWeight:600,letterSpacing:'-.02em',lineHeight:1,
-                         color:m.v > 0 ? m.c : '#1D1D1F',fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
-            <div style={{fontSize:'11.5px',color:'#86868B',marginTop:'5px',letterSpacing:'-.006em'}}>{m.k}</div>
-          </div>
-        ))}
+          { k:'Waiting on us',        v:waitingOn('us').length,      c:BLOCKERS.us.dot,      f:'us',
+            t:'Cards with an open task waiting on us. Click to show only those' },
+          { k:'Waiting on clients',   v:waitingOn('client').length,  c:BLOCKERS.client.dot,  f:'client',
+            t:'Cards with an open task waiting on the client. Click to show only those' },
+          { k:'Waiting on factories', v:waitingOn('factory').length, c:BLOCKERS.factory.dot, f:'factory',
+            t:'Cards with an open task waiting on the factory. Click to show only those' },
+        ].map(m => {
+          // THE THREE WAITING TILES ARE FILTERS, as on 11 Aug; a second press
+          // clears. Stalled and Overdue stay display-only -- the tile edges and
+          // the overdue pill already mark those cards where they sit.
+          const on = !!m.f && ui.blocker === m.f;
+          const Tag = m.f ? 'button' : 'div';
+          return (
+            <Tag key={m.k} title={m.t}
+              {...(m.f ? { onClick: () => setUi('blocker', on ? '' : m.f), 'aria-pressed': on } : {})}
+              style={{background:on?'#1D1D1F':'#fff',borderRadius:'16px',padding:'14px 16px',border:'none',
+                      boxShadow:'0 1px 3px rgba(0,0,0,.04)',textAlign:'left',fontFamily:'inherit',
+                      cursor:m.f?'pointer':'default'}}>
+              <div style={{fontSize:'24px',fontWeight:600,letterSpacing:'-.02em',lineHeight:1,
+                           color:on ? '#fff' : (m.v > 0 ? m.c : '#1D1D1F'),fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
+              <div style={{fontSize:'11.5px',color:on?'rgba(255,255,255,.65)':'#86868B',marginTop:'5px',
+                           letterSpacing:'-.006em'}}>{m.k}</div>
+            </Tag>
+          );
+        })}
       </div>
 
       <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',marginBottom:'14px'}}>
@@ -2420,7 +2697,7 @@ export default function Programs({ userEmail }) {
                                    ui.ownerSel.includes(s.id), ownerCounts[s.id] || 0, false)),
           ];
         })()}
-        {ui.ownerSel.length > 0 && (
+        {(ui.ownerSel.length > 0 || ui.blocker) && (
           <span style={{fontSize:'12px',color:'#86868B',marginLeft:'4px'}}>{shownBoard.length} shown</span>
         )}
       </div>
