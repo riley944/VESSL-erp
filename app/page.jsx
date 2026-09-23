@@ -447,7 +447,20 @@ const isStaffEmail = email =>
 const UNIVERSAL_PAGES = ['settings'];
 // Appended last on purpose, so allowedPages[0] is still 'testing' and a limited
 // role landing on a genuinely disallowed page falls back where it always did.
-const ROLE_PAGES = { limited_qc: ['testing', 'products', 'shipments', 'codes', ...UNIVERSAL_PAGES] };
+//
+// PROGRAMS IS ON THIS LIST, and it is the one page here that is not a list of
+// things to check. The PLM board is where a product's stage, its owner and its
+// sampling history are kept, and QC work is most of what moves a card off
+// Sampling and off Testing -- so the person doing that work could see neither
+// the board they were moving nor the notes on it. Granted as a page rather than
+// by making the role unrestricted: this list is still the whole of what
+// limited_qc may render, and quotes, orders, companies, pricing and banking
+// stay off it.
+//
+// NOT AT POSITION 0, deliberately, whatever else moves around it. allowedPages[0]
+// is the fallback a limited role lands on when a hash names a page it may not
+// see, and that has always been testing.
+const ROLE_PAGES = { limited_qc: ['testing', 'products', 'programs', 'shipments', 'codes', ...UNIVERSAL_PAGES] };
 // Returns the allowed page ids for a limited role, or null meaning unrestricted.
 // hasOwnProperty guard: role is free text, so a value like 'constructor' must
 // not pick up an inherited Object.prototype member and read as limited.
