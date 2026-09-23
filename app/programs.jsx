@@ -730,10 +730,15 @@ function SampleLog({ productId, programId, userEmail, busy = false, onTouched })
 //
 // No mail is sent from here. The composer opens the person's own mail client
 // with the fields filled, which is what the 11 Aug version did.
+//
+// chips:'client' NARROWS THE RECIPIENT CHIPS to the client company's own
+// contacts that carry an email -- no staff, no factory. body:'' opens the
+// Message empty. Both are on Send quote to client only, on request; every other
+// template keeps the full chip list and its prefilled text.
 const STAGE_EMAILS = {
   quoted: [
     { label:'Send quote to client', to:'client', subject:'Quote — {product} ({sku})',
-      body:'Hi {clientContact},\n\nPlease find our quote for {product} attached. Happy to walk through any of it.\n\nBest,' },
+      chips:'client', body:'' },
   ],
   sampling: [
     { label:'Chase factory sample', to:'factory', subject:'Sample status — {product} ({sku})',
@@ -801,11 +806,13 @@ const fillTemplate = (text, r, who) => {
 // first answer that carries one. Read when the card opens, not in the board's
 // bulk fetch -- nobody needs every card's contacts to look at the board.
 function useCardContacts(r) {
-  const [who, setWho] = useState({ loading:true, client:null, factory:null, factoryName:'' });
+  const [who, setWho] = useState({ loading:true, client:null, factory:null, factoryName:'', clientContacts:[] });
   useEffect(() => {
     let dead = false;
     (async () => {
-      const out = { loading:false, client:null, factory:null, factoryName:'' };
+      // clientContacts is every contact of the card's client company that has an
+      // email, primary first -- the chip list for a template marked chips:'client'.
+      const out = { loading:false, client:null, factory:null, factoryName:'', clientContacts:[] };
       const firstWithEmail = list => (list || []).find(c => (c.email || '').trim()) || null;
       const fromDirectory = async companyId => {
         const { data } = await SB.from('contacts').select('company_id,full_name,email,phone,is_primary')
@@ -824,10 +831,19 @@ function useCardContacts(r) {
             .limit(1);
           q = (data || [])[0] || null;
         }
+        // The client's directory contacts are read whenever the card has a
+        // client, not only as a fallback, because the client chips list them all.
+        let clientDir = [];
+        if (r.client_company_id) {
+          const { data } = await SB.from('contacts').select('company_id,full_name,email,phone,is_primary')
+            .eq('company_id', r.client_company_id);
+          clientDir = contactsOf({ id: r.client_company_id }, data || []).filter(c => (c.email || '').trim());
+        }
+        out.clientContacts = clientDir.map(c => ({ name: c.full_name || '', email: c.email.trim() }));
         if (q && (q.client_email || '').trim()) {
           out.client = { name: q.client_contact || '', email: q.client_email.trim(), from: 'quote' };
-        } else if (r.client_company_id) {
-          out.client = await fromDirectory(r.client_company_id);
+        } else if (clientDir.length) {
+          out.client = { name: clientDir[0].full_name || '', email: clientDir[0].email.trim(), from: 'directory' };
         }
         out.factoryName = (q && q.factory) || '';
         if (q && (q.factory_email || '').trim()) {
@@ -856,11 +872,19 @@ function EmailComposer({ tpl, r, who, staff = [], onClose }) {
   const [to, setTo] = useState(recipient || '');
   const [subject, setSubject] = useState(fillTemplate(tpl.subject, r, who));
   const [body, setBody] = useState(fillTemplate(tpl.body, r, who));
-  const chips = [
-    who.client ? { label: (who.client.name || (r.client || {}).name || 'Client') + ' · client', email: who.client.email } : null,
-    who.factory ? { label: (who.factory.name || who.factoryName || 'Factory') + ' · factory', email: who.factory.email } : null,
-    ...staff.filter(s => s.email).map(s => ({ label: s.full_name || s.email, email: s.email })),
-  ].filter(Boolean);
+  // CLIENT CHIPS ARE THE CLIENT COMPANY'S CONTACTS AND NOTHING ELSE on a
+  // template marked chips:'client' -- a quote goes to the buyer, and a staff or
+  // factory chip one click from the To field is a quote sent to the wrong side.
+  // No client linked, or no contact with an email, is an empty list, and the
+  // note under To says why. The To prefill is unchanged: the latest quote's
+  // client email first, then the primary contact.
+  const chips = tpl.chips === 'client'
+    ? (who.clientContacts || []).map(c => ({ label: c.name || c.email, email: c.email }))
+    : [
+        who.client ? { label: (who.client.name || (r.client || {}).name || 'Client') + ' · client', email: who.client.email } : null,
+        who.factory ? { label: (who.factory.name || who.factoryName || 'Factory') + ' · factory', email: who.factory.email } : null,
+        ...staff.filter(s => s.email).map(s => ({ label: s.full_name || s.email, email: s.email })),
+      ].filter(Boolean);
   const openMail = () => {
     window.location.href = 'mailto:' + encodeURIComponent(to || '').replace(/%40/g, '@')
       + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
