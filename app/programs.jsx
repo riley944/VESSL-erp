@@ -1196,14 +1196,14 @@ function Checklist({ r, staff = [], userEmail, onTouched }) {
 // inside the card, so typed-but-unsaved text turns the backdrop click into a
 // confirm instead of a dismissal. Nothing here has to arrange that beyond using
 // Overlay.
-function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onProduct, onSample, onArchive, onClose, onTouched }) {
+function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onProduct, onSample, onArchive, onDelete, onClose, onTouched }) {
   return (
     // Wider than it was, because the card carries two tabs now. Still inside the
     // range the other modals in this app use, 420 through 640.
     <Overlay onClose={onClose} maxWidth={720}>
       <ProgramCard r={r} userEmail={userEmail} staff={staff} busy={busy}
                    onStage={onStage} onOwner={onOwner} onProduct={onProduct} onSample={onSample}
-                   onArchive={onArchive} onTouched={onTouched} />
+                   onArchive={onArchive} onDelete={onDelete} onTouched={onTouched} />
     </Overlay>
   );
 }
@@ -1586,7 +1586,7 @@ const buildCardDoc = ({ r, general, sampling, samples, logo }) => {
 // Split out so the x can read guardedClose from context. The provider lives
 // INSIDE Overlay, so a hook called in ProgramDetail would sit above it and get
 // the default -- the close button has to be a child to be guarded.
-function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner, onProduct, onSample, onArchive, onTouched }) {
+function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner, onProduct, onSample, onArchive, onDelete, onTouched }) {
   const p = r.products || {};
   const guardedClose = useGuardedClose();
   // ── TWO TABS: WORKING THE CARD, AND WHAT IS KNOWN ABOUT IT ────────────────
@@ -1953,6 +1953,21 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
               ? 'This card is off the board. Putting it back returns it to the stage it was in.'
               : 'Keeps the card and its notes. It moves to the Removed column, behind Show removed.'}
           </span>
+          {/* ── DELETE, THE RARER ACT ───────────────────────────────────────
+              A quiet red text link, not a button, at the far end of the row.
+              Remove from board is the everyday way off the board and carries
+              the button's weight; this one destroys the card, its notes and
+              its checklist, so it is offered but not pressed on anybody. The
+              typed confirm in deleteCard is the real guard. */}
+          {onDelete && (
+            <button onClick={()=>onDelete(r)} disabled={busy}
+              style={{background:'none',border:'none',padding:0,marginLeft:'auto',flexShrink:0,
+                      fontSize:'12.5px',fontWeight:500,color:'var(--hot)',fontFamily:'inherit',
+                      textDecoration:'underline',textUnderlineOffset:'2px',
+                      cursor:busy?'default':'pointer',opacity:busy?0.6:1}}>
+              Delete card
+            </button>
+          )}
         </div>
       )}
       </>
@@ -2279,9 +2294,8 @@ export default function Programs({ userEmail }) {
   // One function for both directions, for the same reason setStage serves the
   // select and the drag -- two write paths for one column is how they drift.
   //
-  // archived, NOT a delete. authenticated holds no DELETE on programs (measured,
-  // relacl arw), so a delete would fail with permission denied even if one were
-  // written -- but that is not why this archives. A card is the only record that
+  // archived, NOT a delete. Deleting exists now -- deleteCard below, behind a
+  // typed confirm -- but it is not why this archives. A card is the only record that
   // a product was ever worked on for a client, and the board is kept by hand, so
   // the reversible act is the right one whatever the grant says.
   //
@@ -2315,6 +2329,46 @@ export default function Programs({ userEmail }) {
     // accidental removal is undone where it happened rather than hunted for
     // under a toggle somebody has to be told about first.
     await load(); setSaving(null);
+  };
+
+  // ── DELETING A CARD FOR GOOD ────────────────────────────────────────────────
+  // Script 73 granted authenticated DELETE on programs (anon still has none), and
+  // program_notes and program_tasks both cascade from it -- so one delete takes
+  // the card, its general notes and its checklist. The product's sampling log and
+  // sampling notes live on the PRODUCT and are untouched; the confirm says so, so
+  // nobody declines a delete fearing the log goes with it.
+  //
+  // TYPED, NOT CLICKED. Remove from board is the reversible way off the board and
+  // takes one confirm. This cannot be undone, so it asks for the word -- a
+  // reflexive Enter on a dialog cannot delete anything.
+  //
+  // THE ROW COUNT IS CHECKED, not only the error. A delete that RLS filters to no
+  // rows returns success and deletes nothing; select('id') makes that visible and
+  // it is reported as a failure rather than toasted as done.
+  const deleteCard = async (r) => {
+    const p = r.products || {};
+    const typed = window.prompt(
+      'Delete ' + (p.sku || 'no SKU') + ' — ' + (p.name || 'no name') + ' for ' + ((r.client || {}).name || 'no client') + '?\n\n'
+      + 'The card, its notes and its checklist are deleted with it. This cannot be undone.\n'
+      + 'The product and its sampling log are not affected.\n\n'
+      + 'To remove it from the board but keep it, cancel and use Remove from board.\n\n'
+      + 'Type DELETE to confirm.');
+    if (typed === null) return;
+    if (typed.trim() !== 'DELETE') {
+      window._toast?.('Not deleted — type DELETE, in capitals, to confirm', 'err');
+      return;
+    }
+    setSaving(r.id);
+    const { data, error } = await SB.from('programs').delete().eq('id', r.id).select('id');
+    if (error || !data || !data.length) {
+      window._toast?.('Could not delete the card — ' + (error ? error.message : 'nothing was deleted; you may not have permission'), 'err');
+      setSaving(null);
+      return;
+    }
+    window._toast?.('Card deleted', 'ok');
+    setOpenId(null);
+    await load();
+    setSaving(null);
   };
 
   // ── WRITING A PRODUCT FIELD FROM THE CARD ───────────────────────────────────
@@ -2568,6 +2622,7 @@ export default function Programs({ userEmail }) {
                                  onProduct={setProductField}
                                  onSample={setSampleFields}
                                  onArchive={setArchived}
+                                 onDelete={deleteCard}
                                  onTouched={load}
                                  onClose={()=>setOpenId(null)} />}
 
