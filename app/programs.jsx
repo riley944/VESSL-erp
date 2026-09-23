@@ -805,8 +805,7 @@ function TaskRow({ t, staff, dim, pending, onToggle, onBlocker, onDel }) {
   const owner = t.owner_id ? ((staff.find(s => s.id === t.owner_id) || {}).full_name
                               || (staff.find(s => s.id === t.owner_id) || {}).email || 'Unknown') : 'Unassigned';
   return (
-    <div className="plm-task-row"
-      style={{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',
+    <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'8px 0',
                  borderBottom:'1px solid rgba(0,0,0,.05)',opacity:(dim && t.done) || pending ? 0.5 : 1}}>
       <button onClick={()=>onToggle(t)} disabled={pending} aria-label={t.done ? 'Mark not done' : 'Mark done'}
         style={{background:'none',border:'none',cursor:pending?'default':'pointer',padding:0,flexShrink:0,display:'flex'}}>
@@ -825,34 +824,15 @@ function TaskRow({ t, staff, dim, pending, onToggle, onBlocker, onDel }) {
           {overdue ? ' · overdue' : ''}
         </div>
       </div>
-      {/* ── THE BLOCKER, SHOWN ONLY WHEN THERE IS ONE ─────────────────────────
-          A blocked task keeps the coloured pill, and picking No blocker from it
-          clears it. An unblocked task shows nothing but a faint "+ blocker" in
-          the x's own grey -- hidden until the row is hovered or the control is
-          focused, and always faintly there on touch screens, which have no
-          hover (.plm-blocker-add in globals.css). Both are the same native
-          select, so setting and changing a blocker is one picker either way.
-          A row of nineteen dropdowns all reading No blocker said nothing.
-
-          data-noguard: it saves the moment it changes. */}
-      {!t.done && (t.blocker && t.blocker !== 'none' ? (
-        <select data-noguard value={t.blocker} disabled={pending} aria-label="Blocker"
+      {/* data-noguard: it saves the moment it changes. */}
+      {!t.done && (
+        <select data-noguard value={t.blocker || 'none'} disabled={pending} aria-label="Blocker"
           onChange={e=>onBlocker(t, e.target.value)}
           style={{fontSize:'11px',border:'none',borderRadius:'980px',padding:'5px 9px',color:b.text,fontWeight:600,
                   cursor:pending?'default':'pointer',background:'#F5F5F7',flexShrink:0,fontFamily:'inherit'}}>
           {Object.entries(BLOCKERS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
-      ) : (
-        <select data-noguard value="none" disabled={pending} aria-label="Set a blocker"
-          className="plm-blocker-add"
-          onChange={e=>{ if (e.target.value !== 'none') onBlocker(t, e.target.value); }}
-          style={{fontSize:'11px',border:'none',padding:'2px 0',color:'#C7C7CC',background:'none',
-                  appearance:'none',WebkitAppearance:'none',MozAppearance:'none',
-                  cursor:pending?'default':'pointer',flexShrink:0,fontFamily:'inherit',outline:'none'}}>
-          <option value="none">+ blocker</option>
-          {Object.entries(BLOCKERS).filter(([k]) => k !== 'none').map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-        </select>
-      ))}
+      )}
       <button onClick={()=>onDel(t)} disabled={pending} aria-label="Delete task"
         style={{background:'none',border:'none',color:'#C7C7CC',cursor:pending?'default':'pointer',
                 fontSize:'16px',flexShrink:0,fontFamily:'inherit'}}>×</button>

@@ -192,13 +192,6 @@ html,body{height:100%;overflow:hidden;font-family:var(--sans);font-size:14px;col
 .page-header--center{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;}
 .page-header--center .page-title{grid-column:2;text-align:center;}
 .page-header--center .page-actions{grid-column:3;justify-self:end;}
-/* PLM checklist: the "+ blocker" on an unblocked task. Hidden until its row is
-   hovered or it takes focus, so nineteen open tasks do not carry nineteen
-   controls saying nothing. Touch screens have no hover, so there it is always
-   faintly visible instead of unreachable. */
-.plm-blocker-add{opacity:0;transition:opacity .12s;}
-.plm-task-row:hover .plm-blocker-add,.plm-blocker-add:focus,.plm-blocker-add:focus-visible{opacity:1;}
-@media (hover:none){.plm-blocker-add{opacity:.75;}}
 .page-content{padding:0 32px 56px;}
 
 /* ── BUTTONS ───────────────────────────────────────────── */
