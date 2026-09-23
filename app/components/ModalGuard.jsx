@@ -103,7 +103,16 @@ export function useDirtyGuard(onClose) {
     const node = ref.current;
     if (!node) return;
     node.setAttribute(CARD_ATTR, '');
-    const onEdit = () => { dirty.current = true; };
+    // The same two exclusions snapshot makes. A control marked data-noguard saves
+    // itself the moment it changes -- the PLM card's stage, owner and sample
+    // fields -- so there is nothing unsaved to protect. And an edit inside a
+    // nested modal belongs to that modal, not to this card.
+    const onEdit = (e) => {
+      const t = e.target instanceof Element ? e.target : null;
+      if (t && t.hasAttribute('data-noguard')) return;
+      if (t && t.closest('[' + CARD_ATTR + ']') !== node) return;
+      dirty.current = true;
+    };
     // Only an interaction this card OWNS freezes its baseline. A pointerdown
     // inside a nested modal belongs to that modal, and must not freeze the
     // outer card's baseline while the outer form is still being populated.

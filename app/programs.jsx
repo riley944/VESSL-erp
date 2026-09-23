@@ -32,6 +32,9 @@ import { ExportButton } from '@/app/components/ExportButton';
 // once carried its own copy of the loader -- see the note at the top of that
 // file, which names programs.jsx as one of the two places it was written twice.
 import { loadExcelJS, excelDate } from '@/lib/excel';
+// The quote form's reading of a company's people -- primary first -- so the
+// quick emails fall back to the same contact the quote form would have filled.
+import { contactsOf, sameName } from '@/app/components/CompanySelect';
 // Sync from records is gone with the derived board -- nothing here creates a
 // program any more. The quote-form tick is the only door.
 // Tab, search, stage filter and the retired toggle survive going into a program and
@@ -106,6 +109,8 @@ const SHIPPED = 'shipped';
 // The two stages a sample can be out during. Both the overdue flag and the card
 // sample strip ask this, so it is stated once.
 const SAMPLING_STAGES = ['sampling', 'revision'];
+// The program columns the card's sample strip may write, and nothing else.
+const SAMPLE_FIELDS = ['sample_round', 'master_sample_included', 'sample_sent_date', 'sample_due_back'];
 // THE ONE COLOUR TABLE, derived rather than typed a second time. Five of the six
 // are globals.css tokens -- warn, hot, info, ok and a grey -- so the board wears
 // the palette the rest of the app carries. Revision is the one invented colour,
@@ -693,6 +698,302 @@ function SampleLog({ productId, programId, userEmail, busy = false, onTouched })
   );
 }
 
+// ── QUICK EMAILS, THE 11 AUG TEMPLATES ON THE SIX-STAGE LADDER ──────────────
+// Riley's words, mapped onto the stages that survive. Inquiry and Delivered are
+// gone; Delivered's confirmation moves to Shipped, which is where the card ends
+// now. Pre-Production's "Confirm PO with factory" is dropped rather than moved --
+// a PO being saved is what puts a card in Production, so by the time a card is
+// there the PO it asked about already exists.
+//
+// THE "EMILY" TEMPLATES ARE FACTORY EMAILS. The 11 Aug code addressed them to
+// emily@kinguniversal.com, but no Emily is on staff -- Emily Chen is the Fuzhou
+// factory contact. So they go to the factory contact, whoever that is for the
+// card, and greet them by name.
+//
+// No mail is sent from here. The composer opens the person's own mail client
+// with the fields filled, which is what the 11 Aug version did.
+const STAGE_EMAILS = {
+  quoted: [
+    { label:'Send quote to client', to:'client', subject:'Quote — {product} ({sku})',
+      body:'Hi {clientContact},\n\nPlease find our quote for {product} attached. Happy to walk through any of it.\n\nBest,' },
+  ],
+  sampling: [
+    { label:'Chase factory sample', to:'factory', subject:'Sample status — {product} ({sku})',
+      body:'Hi {factoryContact},\n\nChecking in on the sample for {product} ({sku}) for {client}. Sent {sent}, due back {due}. Where does it stand — and did the master sample go with it?\n\nThanks,' },
+    { label:'Sample to client', to:'client', subject:'Sample on the way — {product}',
+      body:'Hi {clientContact},\n\nThe {product} sample is heading your way. Let us know your thoughts and any changes.\n\nBest,' },
+    { label:'Request feedback', to:'client', subject:'Sample feedback — {product}',
+      body:'Hi {clientContact},\n\nFollowing up on the {product} sample (round {round}) — any feedback or approval?\n\nBest,' },
+  ],
+  revision: [
+    { label:'Revisions to factory', to:'factory', subject:'Revisions — {product} ({sku})',
+      body:'Hi {factoryContact},\n\nClient changes on {product} (round {round}):\n\n[changes]\n\nCan we get a revised sample and timeline?\n\nThanks,' },
+    { label:'Request sign-off', to:'client', subject:'Revised sample — {product}',
+      body:'Hi {clientContact},\n\nThe revised {product} sample (round {round}) is with you. Good to move to production, or final tweaks?\n\nBest,' },
+  ],
+  testing: [
+    { label:'Submit to lab', to:'', subject:'Test request — {product} ({sku})',
+      body:'Hello,\n\nWe would like to submit {product} ({sku}) for compliance testing. Please advise required samples and turnaround.\n\nThanks,' },
+  ],
+  production: [
+    { label:'Production status', to:'factory', subject:'Production status — {product}',
+      body:'Hi {factoryContact},\n\nCan you give us an update on {product} for {client}? Percent complete and expected finish.\n\nThanks,' },
+  ],
+  shipped: [
+    { label:'Docs to client', to:'client', subject:'Shipping docs — {product}',
+      body:'Hi {clientContact},\n\n{product} has shipped. Documents attached — we will keep you posted on arrival.\n\nBest,' },
+    { label:'Delivery confirmation', to:'client', subject:'Delivered — {product}',
+      body:'Hi {clientContact},\n\nConfirming {product} has been delivered. Anything you need on our end?\n\nBest,' },
+  ],
+};
+
+// "Sep 18". A plain date is read as local noon so no timezone moves it a day.
+const shortDate = s => {
+  if (!s) return '';
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? s + 'T12:00:00' : s);
+  return isNaN(d) ? '' : d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+};
+
+const fillTemplate = (text, r, who) => {
+  const p = r.products || {};
+  const map = {
+    product: p.name || 'the product', sku: p.sku || '', client: (r.client || {}).name || '',
+    clientContact: (who.client && who.client.name) || (r.client || {}).name || 'there',
+    factoryContact: (who.factory && who.factory.name) || who.factoryName || 'there',
+    round: String(r.sample_round || 1),
+    sent: r.sample_sent_date ? shortDate(r.sample_sent_date) : 'recently',
+    due: r.sample_due_back ? shortDate(r.sample_due_back) : 'soon',
+  };
+  let out = text;
+  Object.keys(map).forEach(k => { out = out.split('{' + k + '}').join(map[k]); });
+  return out;
+};
+
+// ── WHO THE EMAILS GO TO ────────────────────────────────────────────────────
+// programs has no contact columns -- the 11 Aug table carried client_email and
+// factory_email on the row, and this one does not. So, on decision:
+//
+//   1. the latest quote for this product and client, which is where somebody
+//      last wrote down who the buyer and the factory contact were;
+//   2. failing that, the company's own contact, primary first -- the client from
+//      client_company_id, the factory by matching the quote's factory name to a
+//      factory company, the same match the quote form's select makes.
+//
+// A contact without an email is no use to a mail link, so each side takes the
+// first answer that carries one. Read when the card opens, not in the board's
+// bulk fetch -- nobody needs every card's contacts to look at the board.
+function useCardContacts(r) {
+  const [who, setWho] = useState({ loading:true, client:null, factory:null, factoryName:'' });
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      const out = { loading:false, client:null, factory:null, factoryName:'' };
+      const firstWithEmail = list => (list || []).find(c => (c.email || '').trim()) || null;
+      const fromDirectory = async companyId => {
+        const { data } = await SB.from('contacts').select('company_id,full_name,email,phone,is_primary')
+          .eq('company_id', companyId);
+        const c = firstWithEmail(contactsOf({ id: companyId }, data || []));
+        return c ? { name: c.full_name || '', email: c.email.trim(), from: 'directory' } : null;
+      };
+      try {
+        let q = null;
+        if (r.product_id && r.client_company_id) {
+          const { data } = await SB.from('quotes')
+            .select('client_contact,client_email,factory,factory_contact,factory_email')
+            .eq('product_id', r.product_id).eq('client_company_id', r.client_company_id)
+            .order('quote_date', { ascending:false, nullsFirst:false })
+            .order('created_at', { ascending:false })
+            .limit(1);
+          q = (data || [])[0] || null;
+        }
+        if (q && (q.client_email || '').trim()) {
+          out.client = { name: q.client_contact || '', email: q.client_email.trim(), from: 'quote' };
+        } else if (r.client_company_id) {
+          out.client = await fromDirectory(r.client_company_id);
+        }
+        out.factoryName = (q && q.factory) || '';
+        if (q && (q.factory_email || '').trim()) {
+          out.factory = { name: q.factory_contact || '', email: q.factory_email.trim(), from: 'quote' };
+        } else if (out.factoryName) {
+          const { data } = await SB.from('companies').select('id,name').eq('type', 'factory');
+          const co = (data || []).find(c => sameName(c.name, out.factoryName));
+          if (co) out.factory = await fromDirectory(co.id);
+        }
+      } catch (e) {}
+      if (!dead) setWho(out);
+    })();
+    return () => { dead = true; };
+  }, [r.id, r.product_id, r.client_company_id]);
+  return who;
+}
+
+// ── THE COMPOSER ────────────────────────────────────────────────────────────
+// The 11 Aug composer, with the hardcoded team replaced by staff_profiles and
+// the client and factory chips filled from useCardContacts. An Overlay of its
+// own above the card, so it carries its own dirty guard -- a half-written email
+// is prose, the same as a note.
+function EmailComposer({ tpl, r, who, staff = [], onClose }) {
+  const recipient = tpl.to === 'client' ? (who.client && who.client.email)
+                  : tpl.to === 'factory' ? (who.factory && who.factory.email) : '';
+  const [to, setTo] = useState(recipient || '');
+  const [subject, setSubject] = useState(fillTemplate(tpl.subject, r, who));
+  const [body, setBody] = useState(fillTemplate(tpl.body, r, who));
+  const chips = [
+    who.client ? { label: (who.client.name || (r.client || {}).name || 'Client') + ' · client', email: who.client.email } : null,
+    who.factory ? { label: (who.factory.name || who.factoryName || 'Factory') + ' · factory', email: who.factory.email } : null,
+    ...staff.filter(s => s.email).map(s => ({ label: s.full_name || s.email, email: s.email })),
+  ].filter(Boolean);
+  const openMail = () => {
+    window.location.href = 'mailto:' + encodeURIComponent(to || '').replace(/%40/g, '@')
+      + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+    onClose();
+  };
+  const inp = { width:'100%', border:'1px solid rgba(0,0,0,.1)', borderRadius:'10px', padding:'9px 12px',
+                fontSize:'13.5px', outline:'none', fontFamily:'inherit', boxSizing:'border-box', background:'#fff' };
+  const lbl = { display:'block', fontSize:'10px', fontWeight:600, textTransform:'uppercase',
+                letterSpacing:'.06em', color:'#86868B', marginBottom:'5px' };
+  const missing = (tpl.to === 'client' || tpl.to === 'factory') && !recipient;
+  return (
+    <Overlay onClose={onClose} zIndex={400} maxWidth={520}>
+      <ComposerBody tpl={tpl} missing={missing} inp={inp} lbl={lbl} chips={chips}
+        to={to} setTo={setTo} subject={subject} setSubject={setSubject}
+        body={body} setBody={setBody} openMail={openMail} />
+    </Overlay>
+  );
+}
+// Split out so the x reads guardedClose from the composer's own Overlay, the
+// same reason ProgramCard is split from ProgramDetail.
+function ComposerBody({ tpl, missing, inp, lbl, chips, to, setTo, subject, setSubject, body, setBody, openMail }) {
+  const guardedClose = useGuardedClose();
+  return (
+    <>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div style={{fontSize:'16px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.016em'}}>{tpl.label}</div>
+        <button onClick={guardedClose} aria-label="Close"
+          style={{background:'none',border:'none',fontSize:'22px',lineHeight:1,color:'#A0A0A4',
+                  cursor:'pointer',padding:'0 2px',fontFamily:'inherit'}}>×</button>
+      </div>
+      <div style={{marginTop:'14px'}}>
+        <label style={lbl}>To</label>
+        <input style={inp} value={to} onChange={e=>setTo(e.target.value)} placeholder="recipient@email.com" />
+        {/* SAID RATHER THAN LEFT BLANK. An empty To on a client email looks like
+            the composer forgot; this says the records have nobody to offer. */}
+        {missing && (
+          <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'6px'}}>
+            No {tpl.to} email on the latest quote or in the company directory.
+          </div>
+        )}
+        <div style={{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'8px',marginBottom:'14px'}}>
+          {chips.map((c, i) => (
+            <button key={i} onClick={()=>setTo(c.email)} title={c.email}
+              style={{fontSize:'11.5px',fontWeight:500,border:'none',borderRadius:'980px',padding:'5px 12px',
+                      cursor:'pointer',fontFamily:'inherit',
+                      background:to===c.email?'#1D1D1F':'#F5F5F7',color:to===c.email?'#fff':'#5A5A5E'}}>
+              {c.label}
+            </button>
+          ))}
+        </div>
+        <label style={lbl}>Subject</label>
+        <input style={{...inp,marginBottom:'14px'}} value={subject} onChange={e=>setSubject(e.target.value)} />
+        <label style={lbl}>Message</label>
+        <textarea style={{...inp,minHeight:'150px',resize:'vertical',lineHeight:1.55}}
+          value={body} onChange={e=>setBody(e.target.value)} />
+      </div>
+      <div style={{display:'flex',justifyContent:'flex-end',marginTop:'14px'}}>
+        <button onClick={openMail}
+          style={{background:'#0A84FF',color:'#fff',border:'none',borderRadius:'980px',padding:'10px 20px',
+                  fontSize:'13.5px',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Open in Mail</button>
+      </div>
+    </>
+  );
+}
+
+// ── A DATE THAT SAVES ITSELF, BUT ONLY ONCE IT IS A DATE ────────────────────
+// The sample strip writes on change, as the 11 Aug one did. A date input fires
+// change on every keystroke once each segment is filled, so typing 2026 into
+// the year passes through 0002, 0020 and 0202 -- four writes, three of them
+// nonsense. So the input keeps its own draft and commits only a full date from
+// 2000 on, or a clear. data-noguard because it is saved the moment it commits
+// and there is nothing for the close guard to protect.
+function SampleDate({ value, onCommit, disabled, style }) {
+  const [v, setV] = useState(value || '');
+  useEffect(() => { setV(value || ''); }, [value]);
+  return (
+    <input type="date" data-noguard value={v} disabled={disabled} style={style}
+      onChange={e => {
+        const x = e.target.value;
+        setV(x);
+        if (x === '') { if (value) onCommit(null); return; }
+        if (/^\d{4}-\d{2}-\d{2}$/.test(x) && Number(x.slice(0, 4)) >= 2000 && x !== value) onCommit(x);
+      }} />
+  );
+}
+
+// ── THE SAMPLE STRIP ────────────────────────────────────────────────────────
+// Round, master sample, sent and due back -- on the PROGRAM, by script 77,
+// because two clients sampling one SKU are on different rounds. The sampling
+// log on the Card tab is the product's history; this is where this card's current
+// sample stands. Shown in Sampling and Revision only, as it was on 11 Aug.
+function SampleStrip({ r, busy, onSample }) {
+  const inp = { width:'100%', border:'1px solid rgba(0,0,0,.1)', borderRadius:'10px', padding:'8px 10px',
+                fontSize:'13px', outline:'none', fontFamily:'inherit', boxSizing:'border-box', background:'#fff' };
+  const lbl = { display:'block', fontSize:'10px', fontWeight:600, textTransform:'uppercase',
+                letterSpacing:'.06em', color:'#86868B', marginBottom:'5px' };
+  const round = Number(r.sample_round) || 1;
+  const late = sampleOverdue(r);
+  const btn = { ...inp, width:'32px', padding:'6px 0', textAlign:'center', cursor:busy?'default':'pointer' };
+  return (
+    <div style={{background:'#F5F5F7',borderRadius:'16px',padding:'16px 18px',marginTop:'16px'}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'14px'}}>
+        <div>
+          <span style={lbl}>Sample round</span>
+          <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+            <button onClick={()=>onSample(r, { sample_round: Math.max(1, round - 1) })}
+              disabled={busy || round <= 1} style={btn} aria-label="Previous round">−</button>
+            {/* A null round shows 1 and is not written until somebody moves it,
+                so no card claims a round nobody recorded. */}
+            <span style={{fontSize:'16px',fontWeight:600,color:'#1D1D1F',minWidth:'22px',textAlign:'center',
+                          fontVariantNumeric:'tabular-nums'}}>{round}</span>
+            <button onClick={()=>onSample(r, { sample_round: round + 1 })}
+              disabled={busy} style={btn} aria-label="Next round">+</button>
+          </div>
+        </div>
+        <div>
+          <span style={lbl}>Master sample</span>
+          <div style={{display:'flex',gap:'6px'}}>
+            {[['Yes', true], ['No', false]].map(([l, v]) => {
+              const on = r.master_sample_included === v;
+              return (
+                <button key={l} disabled={busy}
+                  onClick={()=>onSample(r, { master_sample_included: v })}
+                  style={{...inp,flex:1,padding:'7px 0',textAlign:'center',cursor:busy?'default':'pointer',fontWeight:600,
+                          background:on?'#1D1D1F':'#fff',color:on?'#fff':'#86868B',
+                          border:'1px solid '+(on?'#1D1D1F':'rgba(0,0,0,.1)')}}>{l}</button>
+              );
+            })}
+          </div>
+        </div>
+        <div>
+          <span style={lbl}>Sent</span>
+          <SampleDate value={r.sample_sent_date} disabled={busy} style={inp}
+            onCommit={v=>onSample(r, { sample_sent_date: v })} />
+        </div>
+        <div>
+          <span style={lbl}>Due back</span>
+          <SampleDate value={r.sample_due_back} disabled={busy}
+            style={{...inp,borderColor:late?'#FF375F':'rgba(0,0,0,.1)'}}
+            onCommit={v=>onSample(r, { sample_due_back: v })} />
+        </div>
+      </div>
+      {late && (
+        <div style={{fontSize:'12.5px',color:'#FF375F',marginTop:'11px',fontWeight:500}}>
+          Sample is {daysSince(r.sample_due_back)} day{daysSince(r.sample_due_back) === 1 ? '' : 's'} overdue.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // THE LADDER IS GONE, replaced by SystemKnows further down. It drew four rungs
 // inferred from the records -- quoted, sampling, tested, and whichever order
 // completed the program -- which was the right card for a board that derived its
@@ -708,13 +1009,13 @@ function SampleLog({ productId, programId, userEmail, busy = false, onTouched })
 // inside the card, so typed-but-unsaved text turns the backdrop click into a
 // confirm instead of a dismissal. Nothing here has to arrange that beyond using
 // Overlay.
-function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onProduct, onArchive, onClose, onTouched }) {
+function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onProduct, onSample, onArchive, onClose, onTouched }) {
   return (
     // Wider than it was, because the card carries two tabs now. Still inside the
     // range the other modals in this app use, 420 through 640.
     <Overlay onClose={onClose} maxWidth={720}>
       <ProgramCard r={r} userEmail={userEmail} staff={staff} busy={busy}
-                   onStage={onStage} onOwner={onOwner} onProduct={onProduct}
+                   onStage={onStage} onOwner={onOwner} onProduct={onProduct} onSample={onSample}
                    onArchive={onArchive} onTouched={onTouched} />
     </Overlay>
   );
@@ -1098,19 +1399,29 @@ const buildCardDoc = ({ r, general, sampling, samples, logo }) => {
 // Split out so the x can read guardedClose from context. The provider lives
 // INSIDE Overlay, so a hook called in ProgramDetail would sit above it and get
 // the default -- the close button has to be a child to be guarded.
-function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner, onProduct, onArchive, onTouched }) {
+function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner, onProduct, onSample, onArchive, onTouched }) {
   const p = r.products || {};
   const guardedClose = useGuardedClose();
-  // ── TWO TABS, BECAUSE THEY ANSWER TO DIFFERENT OWNERS ─────────────────────
-  // Card is about this program -- one product for one client. Sampling is about
-  // the PRODUCT, and everything on it is shared with every other card for the
-  // same SKU and with the Testing product modal. Mixing them on one surface would
-  // mean somebody editing a shared note believing it was theirs alone.
+  // ── TWO TABS: WORKING THE CARD, AND WHAT IS KNOWN ABOUT IT ────────────────
+  // Sampling is the 11 Aug card -- where the program is and what happens next:
+  // the stage pills, Advance, the owner, the sample strip, the quick emails, the
+  // notes and Remove. Named for the work most of it serves, on Riley word.
+  // Card is what the card was before stage 2 -- what the records say, the
+  // product's sampling log and notes, and the exports -- which is read far more
+  // than it is changed.
+  //
+  // THE SAMPLING LOG AND ITS NOTES LIVE ON CARD, NOT ON SAMPLING, despite the
+  // names, because they belong to the PRODUCT and are shared with every other
+  // card for the same SKU. The strip on Sampling is this program's own sample;
+  // the log is the product's history. Side by side, somebody would edit one
+  // believing it was the other.
   //
   // Transient, and per opening. A tab remembered across cards would land somebody
-  // on Sampling for a card they opened to change an owner.
-  const [tab, setTab] = useState('card');
-  const CARD_TABS = [['card', 'Card'], ['sampling', 'Sampling']];
+  // on Card for a card they opened to move.
+  const [tab, setTab] = useState('sampling');
+  const CARD_TABS = [['sampling', 'Sampling'], ['card', 'Card']];
+  const who = useCardContacts(r);
+  const [emailTpl, setEmailTpl] = useState(null);
 
   // ── EXPORTING THE CARD ────────────────────────────────────────────────────
   // Three writers, one description of the card -- see cardGroups above. Each
@@ -1265,40 +1576,90 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
     setExporting(false);
   };
 
+  // ── THE LADDER POSITION ───────────────────────────────────────────────────
+  // A card with no stage is before the first rung, so Advance offers Quoting --
+  // the same reading the PO rule takes of a null stage. Shipped is the last rung
+  // and offers nothing, because there is nowhere further to go.
+  const idx = MANUAL_STAGES.findIndex(([k]) => k === r.stage);
+  const next = r.stage === SHIPPED ? null : (MANUAL_STAGES[idx + 1] || null);
+  const inSampling = SAMPLING_STAGES.includes(r.stage);
+  const emails = STAGE_EMAILS[r.stage] || [];
+  const secHead = { fontSize:'11px', fontWeight:600, letterSpacing:'.08em', textTransform:'uppercase',
+                    color:'#86868B', marginBottom:'9px' };
+
   return (
     <>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'12px',marginBottom:'4px'}}>
         <div style={{minWidth:0}}>
           <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:700,color:'#1D1D1F'}}>{p.sku || '—'}</div>
           <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.01em',marginTop:'2px'}}>{p.name || '—'}</div>
-          <div style={{fontSize:'13px',color:'#5A5A5E',marginTop:'3px'}}>{(r.client||{}).name || '—'}</div>
+          <div style={{fontSize:'13px',color:'#5A5A5E',marginTop:'3px'}}>
+            {[(r.client||{}).name, who.factoryName].filter(Boolean).join(' · ') || '—'}
+          </div>
         </div>
-        {/* EXPORT SITS BESIDE THE CLOSE, not on a toolbar of its own. It acts on
-            the card in front of somebody, so it belongs in the card's own corner
-            -- and aligned right, because that is the edge it ends.
-
-            count={1} is what keeps the pill live; the note under the menu says
-            what is actually leaving, since "1 row, as filtered" is the wrong
-            sentence for a document. Disabled while a stage or owner write is in
-            flight, so a file cannot be built from a card that is mid-change. */}
-        <div style={{display:'flex',alignItems:'center',gap:'10px',flexShrink:0}}>
-          <ExportButton count={1} busy={exporting || busy} compact align="right"
-            note="This card, with its notes"
-            onPdf={exportPdf} onXlsx={exportXlsx} onCsv={exportCsv} />
-          <button onClick={guardedClose} aria-label="Close"
-            style={{background:'none',border:'none',fontSize:'22px',lineHeight:1,color:'#A0A0A4',
-                    cursor:'pointer',padding:'0 2px',fontFamily:'inherit'}}>×</button>
-        </div>
+        <button onClick={guardedClose} aria-label="Close"
+          style={{background:'none',border:'none',fontSize:'22px',lineHeight:1,color:'#A0A0A4',
+                  cursor:'pointer',padding:'0 2px',fontFamily:'inherit',flexShrink:0}}>×</button>
       </div>
-      {/* No banners here. The testing-coverage caveat and the one-client note
-          earn their place on the Testing page, where the panel is all there is;
-          on a card the header already names the client, and a standing caveat
-          about catalogue coverage is not what somebody opened a program to read.
-          A card-view removal -- LifecyclePanel still shows both. */}
+
+      {/* ── THE STAGE PILLS ─────────────────────────────────────────────────
+          The 11 Aug row: the current stage in its colour, the ones already
+          passed in a darker grey than the ones ahead. Every pill is a move, and
+          every move goes through setStage, so a pill and Advance cannot write a
+          stage two different ways. */}
+      <div style={{display:'flex',gap:'4px',marginTop:'16px',flexWrap:'wrap'}}>
+        {MANUAL_STAGES.map(([k, l, c], i) => {
+          const active = k === r.stage;
+          const passed = idx >= 0 && i < idx;
+          return (
+            <button key={k} onClick={()=>onStage(r, k)} disabled={busy || active}
+              aria-pressed={active}
+              style={{fontSize:'11px',fontWeight:600,padding:'5px 10px',borderRadius:'980px',border:'none',
+                      fontFamily:'inherit',cursor:(busy || active)?'default':'pointer',
+                      background:active?c:passed?'#EAEAEE':'#F5F5F7',
+                      color:active?'#fff':passed?'#5A5A5E':'#B0B0B4'}}>{l}</button>
+          );
+        })}
+        {!r.stage && (
+          <span style={{fontSize:'11px',color:'#A0A0A4',alignSelf:'center',marginLeft:'4px'}}>No stage set</span>
+        )}
+      </div>
+
+      {/* ── ADVANCE, OWNER, AGE ─────────────────────────────────────────────
+          One row, as on 11 Aug. The owner select is the staff list rather than
+          a typed team, and changing it still writes its reassignment note.
+          data-noguard because it saves the moment it changes -- there is nothing
+          unsaved for the close guard to protect. */}
+      <div style={{display:'flex',alignItems:'center',gap:'10px',marginTop:'14px',flexWrap:'wrap'}}>
+        {next && (
+          <button onClick={()=>onStage(r, next[0])} disabled={busy}
+            style={{background:'#0A84FF',color:'#fff',border:'none',borderRadius:'980px',padding:'8px 16px',
+                    fontSize:'13px',fontWeight:600,fontFamily:'inherit',
+                    cursor:busy?'default':'pointer',opacity:busy?0.6:1}}>
+            Advance to {next[1]} →
+          </button>
+        )}
+        <select data-noguard value={r.owner_id || ''} disabled={busy} aria-label="Owner"
+          onChange={e=>onOwner(r, e.target.value)}
+          style={{border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'8px 12px',fontSize:'13px',
+                  fontFamily:'inherit',background:'#fff',color:r.owner_id?'#1D1D1F':'var(--hot)',
+                  cursor:busy?'default':'pointer',outline:'none'}}>
+          <option value="">Unowned</option>
+          {staff.map(s => <option key={s.id} value={s.id}>{s.full_name || s.email}</option>)}
+        </select>
+        {r.since && (
+          <span style={{fontSize:'12.5px',color:r.stale?'#8a5a00':'#86868B'}}>
+            {r.days === 0 ? 'Moved to ' + stageLabel(r.stage) + ' today'
+                          : r.days + ' day' + (r.days === 1 ? '' : 's') + ' in ' + stageLabel(r.stage)}
+            {r.stale ? ' · stale past ' + STALE_DAYS : ''}
+          </span>
+        )}
+      </div>
+
       {/* The segmented control the Testing page uses, at card scale. Matching it
           rather than inventing a third tab style for one modal. */}
       <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',
-                   marginTop:'14px',boxShadow:'inset 0 1px 2px rgba(0,0,0,.05)'}}>
+                   marginTop:'16px',boxShadow:'inset 0 1px 2px rgba(0,0,0,.05)'}}>
         {CARD_TABS.map(([v,l])=>(
           <button key={v} onClick={()=>setTab(v)}
             style={{padding:'7px 16px',borderRadius:'9px',border:'none',cursor:'pointer',
@@ -1310,84 +1671,86 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         ))}
       </div>
 
-      {tab === 'sampling' ? (
-        !r.product_id ? (
-          <div style={{marginTop:'16px',paddingTop:'13px',borderTop:'1px solid #ECECEE',
-                       fontSize:'12.5px',color:'#A0A0A4'}}>
-            This card has no product linked, so there is nothing to sample against.
+      {tab === 'card' ? (
+        <>
+          {/* EXPORT HEADS THE CARD TAB. It writes out what this tab shows -- the
+              records, the log and both note sets -- so it sits with them.
+
+              count={1} is what keeps the pill live; the note under the menu says
+              what is actually leaving. Disabled while a write is in flight, so a
+              file cannot be built from a card that is mid-change. */}
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'10px',
+                       marginTop:'14px',paddingTop:'13px',borderTop:'1px solid #ECECEE'}}>
+            <span style={{fontSize:'11.5px',color:'#A0A0A4'}}>The card as a file, with its notes and sample log.</span>
+            <ExportButton count={1} busy={exporting || busy} compact align="right"
+              note="This card, with its notes"
+              onPdf={exportPdf} onXlsx={exportXlsx} onCsv={exportCsv} />
           </div>
-        ) : (
-          <>
-            {/* THE LOG FIRST, THE NOTES UNDER IT. The log is the record of what
-                happened and the notes are what somebody wants to say about it,
-                which is the order they are read in. */}
-            <SampleLog productId={r.product_id} programId={r.id} userEmail={userEmail}
-                       busy={busy} onTouched={onTouched} />
-            {/* filter, because one table now holds both -- see the note on the
-                panel. Without it every sample event would list here as a note. */}
-            <NotesPanel table="product_notes" keyCol="product_id" keyId={r.product_id}
-              insertExtra={{ kind: 'sampling' }} extraCol="kind" extraDefault="sampling"
-              filter={{ col:'kind', val:'sampling' }}
-              title="Sampling Notes" subtitle="Shared with every card for this product."
-              programId={r.id} userEmail={userEmail} onTouched={onTouched} />
-          </>
-        )
+          <SystemKnows r={r} busy={busy} onProduct={onProduct} />
+          {!r.product_id ? (
+            <div style={{marginTop:'16px',paddingTop:'13px',borderTop:'1px solid #ECECEE',
+                         fontSize:'12.5px',color:'#A0A0A4'}}>
+              This card has no product linked, so there is no sampling log to show.
+            </div>
+          ) : (
+            <>
+              {/* THE LOG FIRST, THE NOTES UNDER IT. The log is the record of what
+                  happened and the notes are what somebody wants to say about it,
+                  which is the order they are read in. */}
+              <SampleLog productId={r.product_id} programId={r.id} userEmail={userEmail}
+                         busy={busy} onTouched={onTouched} />
+              {/* filter, because one table holds both -- see the note on the
+                  panel. Without it every sample event would list here as a note. */}
+              <NotesPanel table="product_notes" keyCol="product_id" keyId={r.product_id}
+                insertExtra={{ kind: 'sampling' }} extraCol="kind" extraDefault="sampling"
+                filter={{ col:'kind', val:'sampling' }}
+                title="Sampling Notes" subtitle="Shared with every card for this product."
+                programId={r.id} userEmail={userEmail} onTouched={onTouched} />
+            </>
+          )}
+        </>
       ) : (
       <>
-      {/* ── THE TWO CONTROLS ────────────────────────────────────────────────
-          Stage and owner, the only things on this tab that write to the program
-          itself. Both are plain selects rather than anything cleverer, because a
-          stage move is a deliberate act and a dropdown is the control that reads
-          as one. */}
-      <div style={{display:'flex',gap:'10px',flexWrap:'wrap',marginTop:'14px',paddingTop:'13px',borderTop:'1px solid #ECECEE'}}>
-        <label style={{display:'flex',flexDirection:'column',gap:'4px',fontSize:'11px',fontWeight:600,
-                       letterSpacing:'.08em',textTransform:'uppercase',color:'#86868B',fontFamily:'inherit'}}>
-          Stage
-          <select value={r.stage || ''} disabled={busy}
-            onChange={e=>onStage(r, e.target.value)}
-            style={{border:'1px solid rgba(0,0,0,.12)',borderRadius:'9px',padding:'7px 9px',fontSize:'13px',
-                    fontFamily:'inherit',background:'#fff',color:'#1D1D1F',letterSpacing:0,textTransform:'none',
-                    cursor:busy?'default':'pointer',minWidth:'165px'}}>
-            {!r.stage && <option value="">No stage set</option>}
-            {MANUAL_STAGES.map(([v,l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
-        </label>
-        <label style={{display:'flex',flexDirection:'column',gap:'4px',fontSize:'11px',fontWeight:600,
-                       letterSpacing:'.08em',textTransform:'uppercase',color:'#86868B',fontFamily:'inherit'}}>
-          Owner
-          <select value={r.owner_id || ''} disabled={busy}
-            onChange={e=>onOwner(r, e.target.value)}
-            style={{border:'1px solid rgba(0,0,0,.12)',borderRadius:'9px',padding:'7px 9px',fontSize:'13px',
-                    fontFamily:'inherit',background:'#fff',color:'#1D1D1F',letterSpacing:0,textTransform:'none',
-                    cursor:busy?'default':'pointer',minWidth:'175px'}}>
-            <option value="">Unowned</option>
-            {staff.map(s => <option key={s.id} value={s.id}>{s.full_name || s.email}</option>)}
-          </select>
-        </label>
-        {r.since && (
-          <div style={{alignSelf:'flex-end',fontSize:'11.5px',color:r.stale?'#8a5a00':'#8A8A8E',paddingBottom:'8px'}}>
-            {r.days === 0 ? 'Moved today' : r.days + ' days in this stage'}
-            {r.stale ? ' · stale past ' + STALE_DAYS : ''}
+      {inSampling && <SampleStrip r={r} busy={busy} onSample={onSample} />}
+
+      {/* ── QUICK EMAILS ────────────────────────────────────────────────────
+          The templates for the stage the card is in. Absent rather than empty
+          for a card with no stage, which has no templates. */}
+      {emails.length > 0 && (
+        <div style={{marginTop:'16px',paddingTop:'13px',borderTop:'1px solid #ECECEE'}}>
+          <div style={secHead}>Quick emails</div>
+          <div style={{display:'flex',gap:'7px',flexWrap:'wrap'}}>
+            {emails.map((tpl, i) => (
+              <button key={i} onClick={()=>setEmailTpl(tpl)} disabled={who.loading}
+                title={who.loading ? 'Reading contacts…' : undefined}
+                style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'8px 14px',
+                        fontSize:'12.5px',fontWeight:500,color:'#1D1D1F',fontFamily:'inherit',
+                        cursor:who.loading?'default':'pointer',opacity:who.loading?0.6:1}}>
+                ✉ {tpl.label}
+              </button>
+            ))}
           </div>
-        )}
-      </div>
-      {/* Changing the owner writes its own note, so the reassignment is on the
-          record rather than only in the column. */}
-      <SystemKnows r={r} busy={busy} onProduct={onProduct} />
+        </div>
+      )}
+
+      {/* The checklist arrives here in stage 3, between the emails and the notes,
+          which is where the 11 Aug card had it. */}
+
+      {/* author is the caller's EMAIL, inside NotesPanel. The 11 Aug card wrote
+          a display name, and the restrictive policies compare lower(author) to
+          the email in the token -- a name would insert and then be uneditable
+          and undeletable by the person who wrote it. */}
       <NotesPanel table="program_notes" keyCol="program_id" keyId={r.id}
         insertExtra={{ source: 'manual' }} extraCol="source" extraDefault="manual"
-        title="General Notes" programId={r.id} userEmail={userEmail} onTouched={onTouched} />
+        title="Notes" programId={r.id} userEmail={userEmail} onTouched={onTouched} />
       {/* ── OFF THE BOARD, NOT OUT OF EXISTENCE ─────────────────────────────
-          Last in the tab, which is where CodeModal and RegModal put the control
-          that disposes of a record. A card is read before it is put away, and a
-          removal button above the notes would carry more weight on the screen
-          than the notes it sits over.
+          Riley's Archive, and last in the tab, which is where CodeModal and
+          RegModal put the control that disposes of a record.
 
           NOT DRESSED AS A DELETE. Those two modals use a red border because the
-          row is about to be gone for good. This one is reversible from the
-          toggle under the Complete section, and borrowing the red would make
-          people hesitate over a reversible act -- or, worse, read this as the
-          way a card gets deleted. */}
+          row is about to be gone for good. This one is reversible from Show
+          removed, and borrowing the red would make people hesitate over a
+          reversible act -- or read this as the way a card gets deleted. */}
       {onArchive && (
         <div style={{marginTop:'18px',paddingTop:'13px',borderTop:'1px solid #ECECEE',
                      display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
@@ -1407,6 +1770,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       )}
       </>
       )}
+      {emailTpl && <EmailComposer tpl={emailTpl} r={r} who={who} staff={staff} onClose={()=>setEmailTpl(null)} />}
     </>
   );
 }
@@ -1451,8 +1815,13 @@ export default function Programs({ userEmail }) {
   // the latest one per card in enriched below.
   const [samples, setSamples] = useState({});
 
+  // QUIET AFTER THE FIRST READ. loading starts true and only the first load
+  // shows the placeholder; every later one -- after a stage move, a note, a
+  // sample -- swaps the rows in underneath. Setting it true again unmounted the
+  // whole page, and the open card with it: the tab snapped back to Card, a
+  // half-typed note elsewhere on the card was lost, and the page flashed.
   const load = async () => {
-    setLoad(true); setErr('');
+    setErr('');
     try {
       const [p, nt, se, q, poi, soi, tr, st] = await Promise.all([
         // declared_stage and declared_stage_at are the board now -- the stage a
@@ -1461,6 +1830,9 @@ export default function Programs({ userEmail }) {
         SB.from('programs')
           .select('id,product_id,client_company_id,expected_ship_date,archived,declared_stage,declared_stage_at,owner_id,'
                 + 'updated_at,updated_by,'
+                // The sample strip, script 77. Without these on the board read the
+                // overdue flag on a tile could never fire.
+                + 'sample_round,master_sample_included,sample_sent_date,sample_due_back,'
                 + 'products(id,sku,name,active,product_stage,compliance_status),client:companies!client_company_id(id,name),'
                 + 'owner:staff_profiles!owner_id(id,email,full_name)')
           .order('created_at', { ascending:true }),
@@ -1615,9 +1987,8 @@ export default function Programs({ userEmail }) {
   // is written after the update lands; a failed note leaves a correct owner and a
   // missing line, which is the better way round.
 
-  // ONE FUNCTION, EVERY CALLER. The select in the card modal comes through here
-  // today, and the stage pills and Advance-to button join it in stage 2 --
-  // declared_stage_at is stamped by the same trigger whichever it is, a failure is
+  // ONE FUNCTION, EVERY CALLER. The stage pills and the Advance-to button on the
+  // card both come through here -- declared_stage_at is stamped by the same trigger whichever it is, a failure is
   // reported the same way, and there is no second write path to drift.
   //
   // STILL OPTIMISTIC, though the reason changed. It was written that way because a
@@ -1664,6 +2035,32 @@ export default function Programs({ userEmail }) {
       });
     } catch (e) {}
     await load(); setSaving(null);
+  };
+
+  // ── THE SAMPLE STRIP ────────────────────────────────────────────────────────
+  // THE FOUR COLUMNS SCRIPT 77 ADDED, AND ONLY THOSE. The 11 Aug saveField
+  // forwarded whatever patch it was handed to programs; this drops anything not
+  // on the list, so a caller cannot reach the stage, the owner or archived by a
+  // side door that skips their own rules and notes.
+  //
+  // Optimistic, for the reason setStage gives: a round counter that waits a round
+  // trip before changing reads as a click that did not register.
+  const setSampleFields = async (r, patch) => {
+    const clean = Object.fromEntries(Object.entries(patch || {}).filter(([k]) => SAMPLE_FIELDS.includes(k)));
+    if (!Object.keys(clean).length) return;
+    const before = rows.find(x => x.id === r.id) || null;
+    const stamp = { updated_at: new Date().toISOString(), updated_by: userEmail || null };
+    setSaving(r.id);
+    setRows(prev => prev.map(x => x.id === r.id ? { ...x, ...clean, ...stamp } : x));
+    const { error } = await SB.from('programs').update({ ...clean, ...stamp }).eq('id', r.id);
+    if (error) {
+      if (before) setRows(prev => prev.map(x => x.id === r.id ? before : x));
+      window._toast?.('Could not save the sample — ' + error.message, 'err');
+      setSaving(null);
+      return;
+    }
+    await load();
+    setSaving(null);
   };
 
   // ── TAKING A CARD OFF THE BOARD, AND PUTTING IT BACK ────────────────────────
@@ -1939,6 +2336,7 @@ export default function Programs({ userEmail }) {
       {openRow && <ProgramDetail r={openRow} userEmail={userEmail} staff={staff}
                                  busy={saving === openRow.id} onStage={setStage} onOwner={setOwner}
                                  onProduct={setProductField}
+                                 onSample={setSampleFields}
                                  onArchive={setArchived}
                                  onTouched={load}
                                  onClose={()=>setOpenId(null)} />}
