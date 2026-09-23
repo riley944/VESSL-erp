@@ -23,7 +23,7 @@ import {
 } from '@/lib/lifecycle';
 // The three product option sets, shared with the Testing product modal so the two
 // screens cannot offer different words for the same stored value.
-import { COMPLIANCE_OPTS, STAGE_OPTS, CATALOGUE_OPTS, catalogueKey, catalogueValue } from '@/lib/products';
+import { COMPLIANCE_OPTS, STAGE_OPTS, CATALOGUE_OPTS, catalogueKey } from '@/lib/products';
 // The export control Testing, Products and Codes already use. It owns the pill,
 // the menu and the dismissal; the writers below are this page's business, which
 // is the split that file states at the top of itself.
@@ -35,7 +35,7 @@ import { loadExcelJS, excelDate } from '@/lib/excel';
 // The quote form's reading of a company's people -- primary first -- so the
 // quick emails fall back to the same contact the quote form would have filled.
 import { contactsOf, sameName } from '@/app/components/CompanySelect';
-import { seedStageTasks as seedTasksFor } from '@/lib/programs';
+import { seedStageTasks as seedTasksFor, syncProductStage } from '@/lib/programs';
 // Sync from records is gone with the derived board -- nothing here creates a
 // program any more. The quote-form tick is the only door.
 // Tab, search, stage filter and the retired toggle survive going into a program and
@@ -219,8 +219,8 @@ const testingNotRequired = product => (product || {}).compliance_status === 'not
 //
 // Newest first, because the last thing said is the thing being caught up on.
 // ── ONE NOTES PANEL, TWO TABLES ─────────────────────────────────────────────
-// General notes belong to the program; sampling notes belong to the product and
-// are shared by every card for that SKU. The add, edit and delete behaviour is
+// Card Notes belong to the program; General Notes belong to the product and
+// are shared by every card for that SKU (product_notes, kind still 'sampling'). The add, edit and delete behaviour is
 // identical, and so is the author rule the database enforces -- so this takes the
 // table, the key column and the key value rather than existing twice. Two copies
 // would be two places for the mine-means-mine test to drift from the policy that
@@ -459,262 +459,11 @@ function NotesPanel({ table, keyCol, keyId, insertExtra = {}, extraCol, extraDef
     </div>
   );
 }
-// ── THE SAMPLE LOG ──────────────────────────────────────────────────────────
-// A SAMPLE IS AN EVENT, NOT A FIELD. Script 66 put one sample_date on the
-// product, which could describe exactly one round -- recording the second sample
-// meant overwriting the first. Script 67 drops that column and gives
-// product_notes a date and a round number, so every round is its own row and the
-// history survives.
-//
-// THE ROUND AND THE DATE ARE BOTH OPTIONAL, and the CHECK requires one of them.
-// That covers the three things people actually have: a numbered round with a
-// date, a date for a sample nobody numbered, and a round somebody is recording
-// before the date is known. What it refuses is an entry that says neither, which
-// would render as a log line reporting nothing.
-const SAMPLE_STAGES = [
-  ['sample_1', 'Sample 1'], ['sample_2', 'Sample 2'], ['sample_3', 'Sample 3'],
-  ['sample_4', 'Sample 4'], ['sample_5', 'Sample 5'],
-];
-const sampleStageLabel = v => (SAMPLE_STAGES.find(s => s[0] === v) || [null, null])[1];
-// "Sample 2 · Sep 18, 2026" -- what the card row and the export header show. The
-// comment is deliberately not in here: the card reports WHICH round and WHEN, and
-// a comment of any length would push the rest of the row off.
-const sampleHead = e => [sampleStageLabel(e.sample_stage), e.sample_date ? fmt(e.sample_date) : null]
-  .filter(Boolean).join(' · ');
-// The same line with the comment on the end, for the log itself and the files.
-const sampleLine = e => {
-  const c = (e.note || '').trim();
-  const h = sampleHead(e);
-  return c ? (h ? h + ' · ' + c : c) : h;
-};
-// LATEST MEANS THE SAMPLE THAT HAPPENED LAST, not the row typed last. A date
-// entered for a round somebody is catching up on belongs where the date puts it,
-// so sample_date leads and created_at only breaks ties or stands in when no date
-// was given.
-const sampleSortKey = e => (e.sample_date || String(e.created_at || '').slice(0, 10)) + ' ' + String(e.created_at || '');
-const sortSamples = list => (list || []).slice().sort((a, b) => (sampleSortKey(a) < sampleSortKey(b) ? 1 : -1));
-const latestSampleOf = list => sortSamples(list)[0] || null;
-
-function SampleLog({ productId, programId, userEmail, busy = false, onTouched }) {
-  const [rows, setRows]   = useState(null);
-  const [stage, setStage] = useState('');
-  const [date, setDate]   = useState('');
-  const [text, setText]   = useState('');
-  const [saving, setSaving] = useState(false);
-  const [err, setErr]     = useState('');
-  // One editor at a time, for the reason NotesPanel gives -- two open editors are
-  // two unsaved drafts with no way to say which one the dirty guard is protecting.
-  const [editId, setEditId] = useState(null);
-  const [draft, setDraft]   = useState({ stage:'', date:'', text:'' });
-
-  const load = async () => {
-    const { data, error } = await SB.from('product_notes')
-      .select('id,author,note,created_at,edited_at,sample_stage,sample_date')
-      .eq('product_id', productId).eq('kind', 'sample_event');
-    if (error) { setErr(error.message); setRows([]); return; }
-    // Sorted here rather than in the query, because the order is by sample_date
-    // with created_at standing in where there is none -- which is a rule, not a
-    // column, and PostgREST cannot express it.
-    setRows(sortSamples(data || []));
-  };
-  useEffect(()=>{ setRows(null); setEditId(null); load(); }, [productId]);
-
-  const settle = async () => {
-    await touchProgram(programId, userEmail);
-    await load();
-    if (onTouched) onTouched();
-  };
-
-  // STAGE OR DATE, the same rule the CHECK enforces. The button says so by being
-  // dead until one of them is set, so the refusal happens before the round trip
-  // rather than as a constraint error afterwards.
-  const canAdd = !!(stage || date);
-
-  const add = async () => {
-    if (!canAdd) return;
-    setSaving(true); setErr('');
-    const { error } = await SB.from('product_notes').insert({
-      product_id: productId,
-      kind: 'sample_event',
-      author: userEmail || null,
-      sample_stage: stage || null,
-      sample_date: date || null,
-      // note is NOT NULL on the table and the comment is optional here, so an
-      // empty comment is stored as an empty string rather than refused.
-      note: text.trim(),
-    });
-    setSaving(false);
-    if (error) { setErr(error.message); return; }
-    setStage(''); setDate(''); setText('');
-    await settle();
-  };
-
-  const saveEdit = async (e) => {
-    const nextStage = draft.stage || null;
-    const nextDate  = draft.date || null;
-    const nextText  = draft.text.trim();
-    // The same rule as adding. An edit that empties both would fail the CHECK, so
-    // it is refused here with the reason rather than as a database error.
-    if (!nextStage && !nextDate) { setErr('A sample entry needs a round or a date.'); return; }
-    const unchanged = nextStage === (e.sample_stage || null)
-                   && nextDate === (e.sample_date || null)
-                   && nextText === (e.note || '');
-    if (unchanged) { setEditId(null); return; }
-    setSaving(true); setErr('');
-    const { error } = await SB.from('product_notes')
-      .update({ sample_stage: nextStage, sample_date: nextDate, note: nextText,
-                edited_at: new Date().toISOString() })
-      .eq('id', e.id);
-    setSaving(false);
-    if (error) { setErr(error.message); return; }
-    setEditId(null);
-    await settle();
-  };
-
-  const removeRow = async (e) => {
-    if (!window.confirm('Delete this sample entry? This cannot be undone.')) return;
-    setSaving(true); setErr('');
-    const { error } = await SB.from('product_notes').delete().eq('id', e.id);
-    setSaving(false);
-    if (error) { setErr(error.message); return; }
-    await settle();
-  };
-
-  const when = iso => {
-    if (!iso) return '';
-    try { return new Date(iso).toLocaleString('en-US',
-      { year:'numeric', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }); }
-    catch { return String(iso); }
-  };
-
-  const fieldCss = {
-    border:'1px solid rgba(0,0,0,.12)', borderRadius:'9px', padding:'7px 9px', fontSize:'13px',
-    fontFamily:'inherit', background:'#fff', color:'#1D1D1F', letterSpacing:0, textTransform:'none',
-  };
-  const lbl = {
-    display:'flex', flexDirection:'column', gap:'4px', fontSize:'11px', fontWeight:600,
-    letterSpacing:'.08em', textTransform:'uppercase', color:'#86868B', fontFamily:'inherit',
-  };
-
-  return (
-    <div style={{marginTop:'14px',paddingTop:'13px',borderTop:'1px solid #ECECEE'}}>
-      <div style={{fontSize:'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',
-                   color:'#86868B',marginBottom:'3px'}}>Sampling log</div>
-      <div style={{fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5,marginBottom:'9px'}}>
-        One row per sample round. On the product, so it reads the same on every card for this SKU.
-      </div>
-
-      {/* ── ADD A SAMPLE ────────────────────────────────────────────────────
-          Three optional fields and a button that will not fire until the entry
-          says something. Laid out on one wrapping row because it is one act. */}
-      <div style={{display:'flex',gap:'10px',flexWrap:'wrap',alignItems:'flex-end'}}>
-        <label style={lbl}>
-          Sample stage
-          <select value={stage} onChange={e=>setStage(e.target.value)} disabled={busy || saving}
-            style={{...fieldCss, minWidth:'135px', cursor:(busy||saving)?'default':'pointer'}}>
-            <option value="">— Not set —</option>
-            {SAMPLE_STAGES.map(([v,l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
-        </label>
-        <label style={lbl}>
-          Date
-          <input type="date" value={date} onChange={e=>setDate(e.target.value)} disabled={busy || saving}
-            style={{...fieldCss, minWidth:'155px'}} />
-        </label>
-        <label style={{...lbl, flex:'1 1 200px', minWidth:'180px'}}>
-          Comment
-          <input type="text" value={text} onChange={e=>setText(e.target.value)} disabled={busy || saving}
-            placeholder="Optional — what happened"
-            style={{...fieldCss, width:'100%', boxSizing:'border-box'}} />
-        </label>
-        <button onClick={add} disabled={busy || saving || !canAdd}
-          title={canAdd ? 'Add this sample' : 'Set a stage or a date first'}
-          style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'8px 16px',border:'none',
-                  fontFamily:'inherit',cursor:(busy||saving||!canAdd)?'default':'pointer',
-                  background:canAdd?'#1D1D1F':'#E5E5EA',color:canAdd?'#fff':'#A0A0A4'}}>
-          {saving ? 'Adding…' : 'Add sample'}
-        </button>
-      </div>
-      {err && <div style={{fontSize:'11.5px',color:'var(--hot)',marginTop:'7px'}}>{err}</div>}
-
-      {rows === null ? (
-        <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'12px'}}>Reading the log…</div>
-      ) : rows.length === 0 ? (
-        <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'12px'}}>No samples recorded yet.</div>
-      ) : (
-        <div style={{marginTop:'12px',display:'flex',flexDirection:'column',gap:'9px'}}>
-          {rows.map(e => {
-            const mine = authorIsMe(e.author, userEmail);
-            const editing = editId === e.id;
-            return (
-              <div key={e.id} style={{background:'#fff',border:'1px solid #ECECEE',borderRadius:'10px',padding:'9px 11px'}}>
-                {editing ? (
-                  <>
-                    <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'flex-end'}}>
-                      <label style={lbl}>
-                        Stage
-                        <select value={draft.stage} onChange={ev=>setDraft(d=>({...d, stage:ev.target.value}))}
-                          disabled={saving} style={{...fieldCss, minWidth:'128px'}}>
-                          <option value="">— Not set —</option>
-                          {SAMPLE_STAGES.map(([v,l]) => <option key={v} value={v}>{l}</option>)}
-                        </select>
-                      </label>
-                      <label style={lbl}>
-                        Date
-                        <input type="date" value={draft.date} disabled={saving}
-                          onChange={ev=>setDraft(d=>({...d, date:ev.target.value}))}
-                          style={{...fieldCss, minWidth:'150px'}} />
-                      </label>
-                      <label style={{...lbl, flex:'1 1 180px', minWidth:'160px'}}>
-                        Comment
-                        <input type="text" value={draft.text} disabled={saving}
-                          onChange={ev=>setDraft(d=>({...d, text:ev.target.value}))}
-                          style={{...fieldCss, width:'100%', boxSizing:'border-box'}} />
-                      </label>
-                    </div>
-                    <div style={{display:'flex',gap:'7px',marginTop:'8px'}}>
-                      <button onClick={()=>saveEdit(e)} disabled={saving}
-                        style={{fontSize:'11.5px',fontWeight:600,borderRadius:'980px',padding:'5px 13px',border:'none',
-                                fontFamily:'inherit',cursor:saving?'default':'pointer',
-                                background:'#1D1D1F',color:'#fff'}}>
-                        {saving ? 'Saving…' : 'Save'}
-                      </button>
-                      <button onClick={()=>{ setEditId(null); setErr(''); }} disabled={saving}
-                        style={{fontSize:'11.5px',fontWeight:600,borderRadius:'980px',padding:'5px 13px',
-                                border:'1px solid #E5E5EA',background:'#fff',color:'#5A5A5E',
-                                fontFamily:'inherit',cursor:saving?'default':'pointer'}}>
-                        Cancel
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <div style={{fontSize:'13px',color:'#1D1D1F',lineHeight:1.5}}>{sampleLine(e)}</div>
-                )}
-                <div style={{display:'flex',alignItems:'baseline',gap:'8px',marginTop:'5px',flexWrap:'wrap'}}>
-                  <span style={{fontSize:'11px',color:'#A0A0A4'}}>
-                    {e.author || 'unknown'} · {when(e.created_at)}{e.edited_at ? ' · edited' : ''}
-                  </span>
-                  {mine && !editing && (
-                    <span style={{display:'inline-flex',gap:'8px',marginLeft:'auto'}}>
-                      <button onClick={()=>{ setEditId(e.id); setErr('');
-                                             setDraft({ stage:e.sample_stage || '', date:e.sample_date || '', text:e.note || '' }); }}
-                        disabled={busy || saving}
-                        style={{fontSize:'11px',background:'none',border:'none',padding:0,color:'#0A84FF',
-                                fontFamily:'inherit',cursor:(busy||saving)?'default':'pointer'}}>Edit</button>
-                      <button onClick={()=>removeRow(e)} disabled={busy || saving}
-                        style={{fontSize:'11px',background:'none',border:'none',padding:0,color:'var(--hot)',
-                                fontFamily:'inherit',cursor:(busy||saving)?'default':'pointer'}}>Delete</button>
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
+// ── THE SAMPLE LOG IS GONE FROM THE CARD ────────────────────────────────────
+// Script 67's product_notes rows of kind sample_event are still in the table,
+// untouched; nothing on this page reads or writes them any more. Sampling is
+// recorded per card on the sample strip (script 77), and the Sampling row in
+// What the system knows reads that instead -- see sampleStripText.
 
 // ── QUICK EMAILS, THE 11 AUG TEMPLATES ON THE SIX-STAGE LADDER ──────────────
 // Riley's words, mapped onto the stages that survive. Inquiry and Delivered are
@@ -1220,13 +969,13 @@ function Checklist({ r, staff = [], userEmail, onTouched }) {
 // inside the card, so typed-but-unsaved text turns the backdrop click into a
 // confirm instead of a dismissal. Nothing here has to arrange that beyond using
 // Overlay.
-function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onProduct, onSample, onArchive, onDelete, onClose, onTouched }) {
+function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onSample, onArchive, onDelete, onClose, onTouched }) {
   return (
     // Wider than it was, because the card carries two tabs now. Still inside the
     // range the other modals in this app use, 420 through 640.
     <Overlay onClose={onClose} maxWidth={720}>
       <ProgramCard r={r} userEmail={userEmail} staff={staff} busy={busy}
-                   onStage={onStage} onOwner={onOwner} onProduct={onProduct} onSample={onSample}
+                   onStage={onStage} onOwner={onOwner} onSample={onSample}
                    onArchive={onArchive} onDelete={onDelete} onTouched={onTouched} />
     </Overlay>
   );
@@ -1252,6 +1001,22 @@ const stageLabel = s => s ? (STAGE_LABEL[s] || s) : 'No stage set';
 // words for one value. That is the whole reason lib/products.js holds the lists.
 const optLabel = (opts, v) => (opts.find(o => o[0] === (v || '')) || [null, '—'])[1];
 
+// ── THE SAMPLE STRIP IN ONE LINE ────────────────────────────────────────────
+// "Round 2 · master sample included · sent Sep 18 · due back Sep 30". Only the
+// parts somebody has set, and null when none of the four is -- so the Sampling
+// row can fall back to the product's own stage rather than print an empty line.
+// A null round is left out rather than shown as 1: the strip SHOWS 1 for null,
+// but a file saying "Round 1" would claim a round nobody recorded.
+const sampleStripText = r => {
+  const parts = [];
+  if (r.sample_round) parts.push('Round ' + r.sample_round);
+  if (r.master_sample_included === true) parts.push('master sample included');
+  if (r.master_sample_included === false) parts.push('no master sample');
+  if (r.sample_sent_date) parts.push('sent ' + fmt(r.sample_sent_date));
+  if (r.sample_due_back) parts.push('due back ' + fmt(r.sample_due_back) + (sampleOverdue(r) ? ' · overdue' : ''));
+  return parts.length ? parts.join(' · ') : null;
+};
+
 const recordRows = r => {
   const p = r.products || {};
   const ev = r.events || {};
@@ -1262,14 +1027,18 @@ const recordRows = r => {
   const none = 'Nothing recorded';
   return [
     ['Quoted', ev.quoted ? fmt(ev.quoted.on) + (ev.quoted.n > 1 ? ' · ' + ev.quoted.n + ' quotes' : '') : none, !ev.quoted],
-    // THE SAMPLE DATE IS THE BETTER ANSWER when somebody has recorded one, because
-    // it says WHEN. The product-stage flag is the fallback and says only that it
-    // happened -- product_stage records what a product IS, not when it became
-    // that. Production counts, because production implies sampling happened.
-    ['Sampling', r.latestSample ? sampleHead(r.latestSample)
+    // THE CARD'S OWN SAMPLE STRIP when anything on it is set, because it says
+    // which round and when, for this client. The product-stage flag is the
+    // fallback and says only that sampling happened -- product_stage records
+    // what a product IS, not when it became that. Production counts, because
+    // production implies sampling happened.
+    ...(() => {
+      const strip = sampleStripText(r);
+      return [['Sampling', strip ? strip
                : sampled === 'production' ? 'Product marked Production'
                : sampled === 'sample' ? 'Product marked Sample'
-               : 'Not recorded', !r.latestSample && !sampled],
+               : 'Not recorded', !strip && !sampled]];
+    })(),
     ['Purchase order', ev.ordered ? fmt(ev.ordered.on) : none, !ev.ordered],
     ['Sales order', ev.sold ? fmt(ev.sold.on) : none, !ev.sold],
     // AN ETD IS A PLAN AND SAYS SO. Departed is what actually happened and wins
@@ -1296,62 +1065,52 @@ const suggestRow = r => ['Records suggest',
 //
 // Everything here comes from data the board already bulk-fetched, so opening a
 // card costs no query.
-function SystemKnows({ r, busy = false, onProduct }) {
+function SystemKnows({ r }) {
   const p = r.products || {};
   // ev, sampled, ship and the 'Nothing recorded' fallback all moved into
   // recordRows, which this block and all three exports now read from.
   //
-  // The key is on the row itself because these arrive as an array now. Harmless
-  // on the single calls that still pass through here.
+  // The key is on the row itself because these arrive as an array now.
   const row = (label, value, muted) => (
     <div key={label} style={{display:'flex',gap:'10px',padding:'6px 0',borderTop:'1px solid #F2F2F4'}}>
       <span style={{fontSize:'11.5px',color:'#86868B',minWidth:'118px',flexShrink:0}}>{label}</span>
       <span style={{fontSize:'12.5px',color:muted?'#A0A0A4':'#1D1D1F',lineHeight:1.45}}>{value}</span>
     </div>
   );
-  // A row whose value is a control. Same geometry as row above, so the block reads
-  // as one list rather than two -- what changes is that three of these lines can
-  // be answered here instead of on another page.
-  const editRow = (label, control) => (
-    <div style={{display:'flex',gap:'10px',padding:'5px 0',borderTop:'1px solid #F2F2F4',alignItems:'center'}}>
-      <span style={{fontSize:'11.5px',color:'#86868B',minWidth:'118px',flexShrink:0}}>{label}</span>
-      {control}
-    </div>
-  );
-  // Disabled without a product, because these write to products and a card with no
-  // product_id has nothing to write to. onProduct says so too, but a control that
-  // cannot work should not look like it can.
-  const sel = (value, opts, onPick) => (
-    <select value={value} disabled={busy || !r.product_id} onChange={e=>onPick(e.target.value)}
-      style={{border:'1px solid rgba(0,0,0,.12)',borderRadius:'8px',padding:'4px 7px',fontSize:'12.5px',
-              fontFamily:'inherit',background:'#fff',color:'#1D1D1F',
-              cursor:(busy || !r.product_id)?'default':'pointer'}}>
-      {opts.map(([v,l]) => <option key={v || 'none'} value={v}>{l}</option>)}
-    </select>
-  );
+  // ── NOTHING HERE IS EDITED ON THE CARD ANY MORE ───────────────────────────
+  // Product stage, compliance and catalogue used to be selects writing straight
+  // to products. Each now has one home, and the card only reports it:
+  //   Product stage -- moved forward by this card's own stage (syncProductStage),
+  //                    and set by hand on the Testing page.
+  //   Compliance    -- the Testing page.
+  //   Catalogue     -- the Products list.
+  // Three places able to write one field is how a value ends up saying whatever
+  // was touched last; one writer each is the fix.
+  const muted = v => !v || v === '— Not set —' || v === '—';
+  const stageV = optLabel(STAGE_OPTS, p.product_stage);
+  const compV  = optLabel(COMPLIANCE_OPTS, p.compliance_status);
+  const catV   = optLabel(CATALOGUE_OPTS, catalogueKey(p));
   return (
     <div style={{marginTop:'16px',paddingTop:'13px',borderTop:'1px solid #ECECEE'}}>
       <div style={{fontSize:'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',
                    color:'#86868B',marginBottom:'4px'}}>What the system knows</div>
       <div style={{fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5,marginBottom:'7px'}}>
-        The dates come from the records and cannot be edited here. The product fields can
-        &mdash; they belong to the product, so a change shows on every card for this SKU.
+        Read-only. The dates come from the records. Product stage follows this card as it moves
+        forward and is otherwise set on Testing; compliance is set on Testing; catalogue status
+        on the Products list.
       </div>
       {/* THE SIX REPORTED ROWS, from the list the exports read too. One source
           and four readers, so a file and the screen cannot describe the same
           record differently. */}
-      {recordRows(r).map(([label, value, muted]) => row(label, value, muted))}
-      {editRow('Product stage', sel(p.product_stage || '', STAGE_OPTS,
-        v => onProduct && onProduct(r, { product_stage: v || null })))}
-      {editRow('Compliance', sel(p.compliance_status || '', COMPLIANCE_OPTS,
-        v => onProduct && onProduct(r, { compliance_status: v || null })))}
+      {recordRows(r).map(([label, value, m]) => row(label, value, m))}
+      {row('Product stage', stageV, muted(stageV))}
+      {row('Compliance', compV, muted(compV))}
       {/* What the OLD board would have called this card, kept because it is a
           useful second opinion and labelled so nobody mistakes it for the stage. */}
       {row(...suggestRow(r))}
       {/* Three-state, and only false is Inactive -- NULL is undecided, not
-          retired, which is why the option set carries Not set as a real choice. */}
-      {editRow('Catalogue', sel(catalogueKey(p), CATALOGUE_OPTS,
-        v => onProduct && onProduct(r, { active: catalogueValue(v) })))}
+          retired. */}
+      {row('Catalogue', catV, muted(catV))}
     </div>
   );
 }
@@ -1389,7 +1148,8 @@ const cardGroups = r => {
         : String(r.days) + (r.stale ? ' · stale past ' + STALE_DAYS : '')],
       ['Last touch', r.lastTouchAt
         ? fmt(r.lastTouchAt) + (r.lastTouchBy ? ' · ' + r.lastTouchBy : '') : 'Not recorded'],
-      ['Latest sample', r.latestSample ? sampleHead(r.latestSample) : 'Not recorded'],
+      // Latest sample was here and went with the sample log. The card's sample
+      // strip is reported on the Sampling row under What the system knows.
     ],
     knows: [
       ...recordRows(r).map(([label, value]) => [label, value]),
@@ -1445,51 +1205,46 @@ const downloadBlob = (blob, filename) => {
 };
 
 // BOTH NOTE SETS, FETCHED HERE rather than lifted out of NotesPanel. The panel
-// owns its own list and only ONE of the two is mounted at a time -- the Sampling
-// panel does not exist while the Card tab is showing. Reading from the panel
-// would mean an export from the Card tab wrote an empty Sampling section purely
-// because nobody had clicked the other tab, which is the kind of wrong that
+// owns its own list and only ONE of the two is mounted at a time -- General
+// Notes lives on the Card tab and Card Notes on the Sampling tab. Reading from
+// the panel would mean an export from one tab wrote an empty section for the
+// other purely because nobody had clicked it, which is the kind of wrong that
 // looks right.
+//
+// THE NAMES MATCH THE SCREEN. card is program_notes -- this card's own notes,
+// "Card Notes" on the Sampling tab. general is product_notes of kind sampling --
+// the product's notes, shared by every card for the SKU, "General Notes" on the
+// Card tab. The kind value in the table is still 'sampling'; only the label
+// changed. The sample log is no longer exported; its rows stay in the table.
 const fetchCardNotes = async r => {
-  const gen = await SB.from('program_notes')
+  const own = await SB.from('program_notes')
     .select('author,note,created_at,edited_at,source')
     .eq('program_id', r.id).order('created_at', { ascending:false });
-  if (gen.error) throw new Error(gen.error.message);
-  // A card with no product has no sampling notes to ask for. product_id is the
+  if (own.error) throw new Error(own.error.message);
+  // A card with no product has no product notes to ask for. product_id is the
   // key, and .eq on null matches nothing -- a round trip to learn what is already
   // known here.
-  let smp = { data: [] };
-  let evt = { data: [] };
+  let prod = { data: [] };
   if (r.product_id) {
-    // NARROWED ON kind, both of them. One table holds the free-text notes and the
-    // sample log since script 67, so a select on product_id alone would put every
-    // sample event in the notes section of the file.
-    smp = await SB.from('product_notes')
+    // NARROWED ON kind. One table holds these notes and the old sample log, so
+    // a select on product_id alone would put every sample event in the file.
+    prod = await SB.from('product_notes')
       .select('author,note,created_at,edited_at,kind')
       .eq('product_id', r.product_id).eq('kind', 'sampling')
       .order('created_at', { ascending:false });
-    if (smp.error) throw new Error(smp.error.message);
-    evt = await SB.from('product_notes')
-      .select('author,note,created_at,edited_at,sample_stage,sample_date')
-      .eq('product_id', r.product_id).eq('kind', 'sample_event');
-    if (evt.error) throw new Error(evt.error.message);
+    if (prod.error) throw new Error(prod.error.message);
   }
   // kind on a product note, source on a program note. Both answer the same
   // question in the file -- what sort of note is this -- so both land in one
   // column and the two tables' column names stop mattering past this line.
-  const shape = (list, kindCol) => (list || []).map(n => ({
-    kind: n[kindCol] || '', author: n.author || 'unknown',
+  // The default kind is left blank, as the screen hides it: a product note's
+  // kind is still 'sampling' in the table, and printing that under "General
+  // notes" would contradict the heading it sits under.
+  const shape = (list, kindCol, dflt) => (list || []).map(n => ({
+    kind: (n[kindCol] && n[kindCol] !== dflt) ? n[kindCol] : '', author: n.author || 'unknown',
     date: n.created_at, edited: !!n.edited_at, text: n.note || '',
   }));
-  // The log is sorted by the rule sortSamples owns -- by when the sample happened
-  // rather than by when the row was typed -- so the file reads in the same order
-  // as the card.
-  const samples = sortSamples(evt.data).map(e => ({
-    stage: sampleStageLabel(e.sample_stage) || '', date: e.sample_date || '',
-    line: sampleLine(e), comment: (e.note || '').trim(),
-    author: e.author || 'unknown', recorded: e.created_at, edited: !!e.edited_at,
-  }));
-  return { general: shape(gen.data, 'source'), sampling: shape(smp.data, 'kind'), samples };
+  return { card: shape(own.data, 'source', 'manual'), general: shape(prod.data, 'kind', 'sampling') };
 };
 
 // ── THE PRINTED CARD ────────────────────────────────────────────────────────
@@ -1505,7 +1260,7 @@ const fetchCardNotes = async r => {
 // and letting it flow the way the browser would is the honest simple thing. What
 // that costs is the "Page n of m" stamp, which cannot be written without the
 // measuring pass it pays for.
-const buildCardDoc = ({ r, general, sampling, samples, logo }) => {
+const buildCardDoc = ({ r, card, general, logo }) => {
   const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const p = r.products || {};
   const g = cardGroups(r);
@@ -1555,6 +1310,9 @@ const buildCardDoc = ({ r, general, sampling, samples, logo }) => {
     // about the card instead of as a rendering fault.
     +'<div style="margin-top:28px;border-top:2px solid #6b7280;border-left:2px solid #6b7280;display:grid;grid-template-columns:repeat(3,1fr);">'
       +g.head.map(([l, v]) => cell(l, v)).join('')
+      // Padded to a full row of three, so the grid's right and bottom rules
+      // close rather than leaving a notch where a sixth cell used to be.
+      +Array.from({ length: (3 - g.head.length % 3) % 3 }, () => cell('', '')).join('')
     +'</div>'
     +'<div style="margin-top:30px;">'
       +'<div style="'+LBL+'margin-bottom:2px;">What the system knows</div>'
@@ -1562,24 +1320,10 @@ const buildCardDoc = ({ r, general, sampling, samples, logo }) => {
         +'Reported from the records. None of it moved this card.</div>'
       +g.knows.map(([l, v]) => kv(l, v)).join('')
     +'</div>'
-    // THE LOG COMES BEFORE THE NOTES because it is the record and they are the
-    // commentary. Each entry is one line -- round, date and comment -- with the
-    // person and the moment beneath it, which is the same shape the card uses.
-    +'<div style="margin-top:26px;">'
-      +'<div style="'+LBL+'margin-bottom:8px;">Sample log</div>'
-      +((samples || []).length
-        ? samples.map(s => '<div style="border-top:1px solid #e5e7eb;padding:9px 0;">'
-            +'<div style="font-size:13.5px;color:#111827;line-height:1.55;">'+esc(s.line)+'</div>'
-            +'<div class="mono" style="font-size:10.5px;color:#6b7280;margin-top:5px;">'
-              +esc(s.author)+' · '+esc(stampText(s.recorded))+(s.edited ? ' · edited' : '')
-            +'</div></div>').join('')
-        : '<div style="border-top:1px solid #e5e7eb;padding:9px 0;font-size:13px;color:#6b7280;">'
-          +esc(r.product_id ? 'No samples recorded.' : 'No product linked, so there is nothing to sample against.')
-          +'</div>')
-    +'</div>'
-    +noteBlock('General notes', general, 'No notes.')
-    +noteBlock('Sampling notes', sampling,
-               r.product_id ? 'No notes.' : 'No product linked, so there is nothing to sample against.')
+    // The sample log went with the card's log UI; the rows are still in the table.
+    +noteBlock('Card notes', card, 'No notes.')
+    +noteBlock('General notes', general,
+               r.product_id ? 'No notes.' : 'No product linked, so there are no product notes.')
     +'<div style="margin-top:34px;padding-top:9px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;font-size:9.5px;color:#6b7280;">'
       +'<span>King Universal Inc. · PLM card · internal</span>'
       +'<span>Generated '+esc(stampText(new Date().toISOString()))+'</span>'
@@ -1610,7 +1354,7 @@ const buildCardDoc = ({ r, general, sampling, samples, logo }) => {
 // Split out so the x can read guardedClose from context. The provider lives
 // INSIDE Overlay, so a hook called in ProgramDetail would sit above it and get
 // the default -- the close button has to be a child to be guarded.
-function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner, onProduct, onSample, onArchive, onDelete, onTouched }) {
+function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner, onSample, onArchive, onDelete, onTouched }) {
   const p = r.products || {};
   const guardedClose = useGuardedClose();
   // ── TWO TABS: WORKING THE CARD, AND WHAT IS KNOWN ABOUT IT ────────────────
@@ -1667,8 +1411,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
           });
         }
       } catch (e) {}
-      const html = buildCardDoc({ r, general: notes.general, sampling: notes.sampling,
-                                  samples: notes.samples, logo });
+      const html = buildCardDoc({ r, card: notes.card, general: notes.general, logo });
       // The document prints itself once its fonts have landed, so nothing here
       // has to guess at a delay.
       if (win) { win.document.open(); win.document.write(html); win.document.close(); }
@@ -1706,32 +1449,18 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       ws.getColumn(1).width = 24;
       ws.getColumn(2).width = 62;
 
-      // SHEET 2 IS THE LOG, AND IT COMES BEFORE THE NOTES. Its own sheet rather
-      // than rows in the notes table, because a sample event has a round and a
-      // date of its own and those are not columns a note has -- sharing the table
-      // would mean two empty columns on every note.
-      const ss = wb.addWorksheet('Sample log');
-      ss.addRow(['Stage', 'Date', 'Comment', 'Author', 'Recorded', 'Edited']);
-      notes.samples.forEach(s =>
-        ss.addRow([s.stage, excelDate(s.date), s.comment, s.author, excelDate(s.recorded), s.edited ? 'Yes' : '']));
-      ss.getRow(1).font = { bold: true };
-      ss.views = [{ state:'frozen', ySplit:1 }];
-      ss.getColumn(2).numFmt = 'yyyy-mm-dd';
-      ss.getColumn(5).numFmt = 'yyyy-mm-dd hh:mm';
-      [13, 13, 60, 30, 19, 9].forEach((w, i) => { ss.getColumn(i + 1).width = w; });
-      ss.getColumn(3).alignment = { wrapText: true, vertical: 'top' };
-
-      // SHEET 3, BOTH NOTE SETS IN ONE TABLE with a Set column. Two sheets would
-      // make a reader sorting by date merge them by hand, and the sets are two
-      // halves of one conversation about the same product.
+      // SHEET 2, BOTH NOTE SETS IN ONE TABLE with a Set column -- Card for this
+      // card's notes, General for the product's, the same words the screen uses.
+      // Two sheets would make a reader sorting by date merge them by hand. The
+      // sample log sheet that sat between these went with the log.
       const ns = wb.addWorksheet('Notes');
       ns.addRow(['Set', 'Kind', 'Author', 'Date', 'Edited', 'Note']);
       const push = (setName, list) => list.forEach(n =>
         // excelDate, so the cell is a real date and sorts as one. The CSV keeps
         // the text stamp -- the same split testing.jsx makes.
         ns.addRow([setName, n.kind, n.author, excelDate(n.date), n.edited ? 'Yes' : '', n.text]));
+      push('Card', notes.card);
       push('General', notes.general);
-      push('Sampling', notes.sampling);
       ns.getRow(1).font = { bold: true };
       ns.views = [{ state:'frozen', ySplit:1 }];
       ns.getColumn(4).numFmt = 'yyyy-mm-dd hh:mm';
@@ -1763,20 +1492,14 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       lines.push(cell('# PLM card: ' + (p.sku || 'no SKU') + ' — ' + (p.name || '') + ' — ' + ((r.client || {}).name || '')));
       lines.push([cell('Field'), cell('Value')].join(','));
       cardFields(r).forEach(([label, value]) => lines.push([cell(label), cell(value)].join(',')));
-      // ONE FILE, THREE TABLES, a blank line between them -- the CSV answer to the
-      // workbook's extra sheets. Separate files would be two more for somebody to
-      // lose. The log sits before the notes, as it does everywhere else.
-      lines.push('');
-      lines.push(['Sample log'].map(cell).join(','));
-      lines.push(['Stage', 'Date', 'Comment', 'Author', 'Recorded', 'Edited'].map(cell).join(','));
-      notes.samples.forEach(s => lines.push(
-        [s.stage, s.date, s.comment, s.author, stampText(s.recorded), s.edited ? 'Yes' : ''].map(cell).join(',')));
+      // ONE FILE, TWO TABLES, a blank line between them -- the CSV answer to the
+      // workbook's second sheet. The sample log table went with the log.
       lines.push('');
       lines.push(['Set', 'Kind', 'Author', 'Date', 'Edited', 'Note'].map(cell).join(','));
       const push = (setName, list) => list.forEach(n => lines.push(
         [setName, n.kind, n.author, stampText(n.date), n.edited ? 'Yes' : '', n.text].map(cell).join(',')));
+      push('Card', notes.card);
       push('General', notes.general);
-      push('Sampling', notes.sampling);
       // CRLF and a BOM, both for Excel: without the BOM it reads the file as ANSI
       // and an accented name arrives mangled.
       const csv = '﻿' + lines.join('\r\n') + '\r\n';
@@ -1892,32 +1615,27 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
               file cannot be built from a card that is mid-change. */}
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'10px',
                        marginTop:'14px',paddingTop:'13px',borderTop:'1px solid #ECECEE'}}>
-            <span style={{fontSize:'11.5px',color:'#A0A0A4'}}>The card as a file, with its notes and sample log.</span>
+            <span style={{fontSize:'11.5px',color:'#A0A0A4'}}>The card as a file, with its notes.</span>
             <ExportButton count={1} busy={exporting || busy} compact align="right"
               note="This card, with its notes"
               onPdf={exportPdf} onXlsx={exportXlsx} onCsv={exportCsv} />
           </div>
-          <SystemKnows r={r} busy={busy} onProduct={onProduct} />
+          <SystemKnows r={r} />
           {!r.product_id ? (
             <div style={{marginTop:'16px',paddingTop:'13px',borderTop:'1px solid #ECECEE',
                          fontSize:'12.5px',color:'#A0A0A4'}}>
-              This card has no product linked, so there is no sampling log to show.
+              This card has no product linked, so there are no product notes to show.
             </div>
           ) : (
-            <>
-              {/* THE LOG FIRST, THE NOTES UNDER IT. The log is the record of what
-                  happened and the notes are what somebody wants to say about it,
-                  which is the order they are read in. */}
-              <SampleLog productId={r.product_id} programId={r.id} userEmail={userEmail}
-                         busy={busy} onTouched={onTouched} />
-              {/* filter, because one table holds both -- see the note on the
-                  panel. Without it every sample event would list here as a note. */}
-              <NotesPanel table="product_notes" keyCol="product_id" keyId={r.product_id}
-                insertExtra={{ kind: 'sampling' }} extraCol="kind" extraDefault="sampling"
-                filter={{ col:'kind', val:'sampling' }}
-                title="Sampling Notes" subtitle="Shared with every card for this product."
-                programId={r.id} userEmail={userEmail} onTouched={onTouched} />
-            </>
+            // GENERAL NOTES ARE THE PRODUCT'S, shared by every card for this SKU.
+            // Still product_notes of kind sampling -- the heading changed, the rows
+            // and the filter did not. The sampling log that sat above them is
+            // gone from the card; its rows are untouched in the table.
+            <NotesPanel table="product_notes" keyCol="product_id" keyId={r.product_id}
+              insertExtra={{ kind: 'sampling' }} extraCol="kind" extraDefault="sampling"
+              filter={{ col:'kind', val:'sampling' }}
+              title="General Notes"
+              programId={r.id} userEmail={userEmail} onTouched={onTouched} />
           )}
         </>
       ) : (
@@ -1953,7 +1671,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
           and undeletable by the person who wrote it. */}
       <NotesPanel table="program_notes" keyCol="program_id" keyId={r.id}
         insertExtra={{ source: 'manual' }} extraCol="source" extraDefault="manual"
-        title="Notes" programId={r.id} userEmail={userEmail} onTouched={onTouched} />
+        title="Card Notes" programId={r.id} userEmail={userEmail} onTouched={onTouched} />
       {/* ── OFF THE BOARD, NOT OUT OF EXISTENCE ─────────────────────────────
           Riley's Archive, and last in the tab, which is where CodeModal and
           RegModal put the control that disposes of a record.
@@ -2037,9 +1755,6 @@ export default function Programs({ userEmail }) {
   //
   // program_id -> how many notes, filled in bulk by load().
   const [noteCounts, setNoteCounts] = useState({});
-  // product_id -> every sample event for it, filled in bulk by load(). Reduced to
-  // the latest one per card in enriched below.
-  const [samples, setSamples] = useState({});
   // program_id -> its checklist, every stage, filled in bulk by load().
   const [tasks, setTasks] = useState({});
 
@@ -2051,7 +1766,7 @@ export default function Programs({ userEmail }) {
   const load = async () => {
     setErr('');
     try {
-      const [p, nt, se, q, poi, soi, tr, st, tk] = await Promise.all([
+      const [p, nt, q, poi, soi, tr, st, tk] = await Promise.all([
         // declared_stage and declared_stage_at are the board now -- the stage a
         // person set, and when they set it. owner_id joins staff_profiles for the
         // name on the card and the owner filter.
@@ -2068,13 +1783,6 @@ export default function Programs({ userEmail }) {
         // still fetches the notes themselves when a modal opens -- this is the
         // count only, and fetching it per card would be one query per row.
         SB.from('program_notes').select('program_id'),
-        // THE SAMPLE LOG, IN BULK. The card reports the latest sample and
-        // SystemKnows renders synchronously from the row it is given, so the
-        // events have to arrive with the board rather than when a card opens.
-        // Every event for every product, which is one query rather than one per
-        // card -- the same trade the note counts above make.
-        SB.from('product_notes').select('product_id,sample_stage,sample_date,note,created_at')
-          .eq('kind', 'sample_event'),
         SB.from('quotes').select('product_id,client_company_id,quote_date,created_at').not('product_id','is',null),
         SB.from('purchase_order_items')
           // estimated_departure joins the embed for the Shipping row, which falls
@@ -2100,20 +1808,12 @@ export default function Programs({ userEmail }) {
           .select('id,program_id,stage,task,owner_id,assigned_by,due_date,blocker,done,done_at,sort_order,created_at')
           .order('sort_order').order('created_at'),
       ]);
-      const e = [p,nt,se,q,poi,soi,tr,st,tk].find(r => r.error);
+      const e = [p,nt,q,poi,soi,tr,st,tk].find(r => r.error);
       if (e) throw new Error(e.error.message);
       setRows(p.data || []);
       setStaff(st.data || []);
       setTasks((tk.data || []).reduce((m, t) => { (m[t.program_id] = m[t.program_id] || []).push(t); return m; }, {}));
       setNoteCounts((nt.data || []).reduce((m, n) => { m[n.program_id] = (m[n.program_id] || 0) + 1; return m; }, {}));
-      // Grouped by product and reduced to the latest, by the rule latestSampleOf
-      // owns. Keyed as a string because product_id arrives as one everywhere else
-      // this file compares it.
-      setSamples((se.data || []).reduce((m, row) => {
-        const k = String(row.product_id);
-        (m[k] = m[k] || []).push(row);
-        return m;
-      }, {}));
       setEv({ quotes:q.data||[], poItems:poi.data||[], soItems:soi.data||[], reports:tr.data||[] });
     } catch (x) {
       setErr(x && x.message ? x.message : String(x));
@@ -2200,10 +1900,6 @@ export default function Programs({ userEmail }) {
                lastTouchBy: staffName(staff, r.updated_by),
                noteCount: noteCounts[r.id] || 0,
                tasks: tasks[r.id] || [],
-               // The most recent sample for this PRODUCT, so two cards for the
-               // same SKU report the same round -- which is the point of the log
-               // hanging off the product rather than the program.
-               latestSample: latestSampleOf(samples[String(r.product_id)] || []),
                // null when nothing has shipped and nothing is planned.
                shipping: departedOn ? { kind:'departed', on: departedOn }
                        : etdOn      ? { kind:'etd',      on: etdOn }
@@ -2212,7 +1908,7 @@ export default function Programs({ userEmail }) {
     // staff and noteCounts are dependencies now: without them a name stays
     // unresolved and a count stays zero until some other change happens to
     // recompute this.
-  }, [rows, buckets, staff, noteCounts, samples, tasks]);
+  }, [rows, buckets, staff, noteCounts, tasks]);
 
   // ── WRITING A STAGE, AND WRITING AN OWNER ───────────────────────────────────
   // The only two things this page changes. Both re-read from the database after
@@ -2252,6 +1948,10 @@ export default function Programs({ userEmail }) {
       return;
     }
     await seedStageTasks(r, next);
+    // The product's own stage follows, forward only -- see syncProductStage.
+    // After the move and never able to undo it.
+    const ps = await syncProductStage(r.product_id, next);
+    if (ps.error) window._toast?.('The card moved, but the product stage could not be updated — ' + (ps.error.message || String(ps.error)), 'err');
     await load();
     setSaving(null);
   };
@@ -2395,30 +2095,9 @@ export default function Programs({ userEmail }) {
     setSaving(null);
   };
 
-  // ── WRITING A PRODUCT FIELD FROM THE CARD ───────────────────────────────────
-  // Stage, compliance, catalogue status and the sample date live on products, not
-  // on the program, so these writes reach a table this page has only ever read.
-  // authenticated holds UPDATE on products, measured, so the write is permitted --
-  // the reason to be careful is what it MEANS rather than whether it lands.
-  //
-  // IT CHANGES EVERY CARD FOR THAT PRODUCT, and that is the point of the fields
-  // being on the product. The card in front of somebody is the one that must not
-  // read stale afterwards, so the program is stamped and the board re-reads --
-  // which refreshes every other card for the same product at the same time.
-  //
-  // A product edit is a touch on the card, by the same argument a note is.
-  const setProductField = async (r, patch) => {
-    if (!r.product_id) { window._toast?.('This card has no product to edit', 'err'); return; }
-    setSaving(r.id);
-    const { error } = await SB.from('products').update(patch).eq('id', r.product_id);
-    if (error) { window._toast?.('Could not save — ' + error.message, 'err'); setSaving(null); return; }
-    try {
-      await SB.from('programs')
-        .update({ updated_at: new Date().toISOString(), updated_by: userEmail || null })
-        .eq('id', r.id);
-    } catch (e) {}
-    await load(); setSaving(null);
-  };
+  // setProductField was here. The card no longer edits product stage, compliance
+  // or catalogue -- each has one home now, and product stage follows the card's
+  // own moves through syncProductStage in setStage.
 
   // dropProps was here -- the dragover, dragenter, dragleave and drop handlers a
   // section needed to be a drop target. A card changes stage from the card now.
@@ -2643,7 +2322,6 @@ export default function Programs({ userEmail }) {
     <div style={{padding:'26px 30px 60px'}}>
       {openRow && <ProgramDetail r={openRow} userEmail={userEmail} staff={staff}
                                  busy={saving === openRow.id} onStage={setStage} onOwner={setOwner}
-                                 onProduct={setProductField}
                                  onSample={setSampleFields}
                                  onArchive={setArchived}
                                  onDelete={deleteCard}

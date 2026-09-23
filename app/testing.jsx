@@ -229,6 +229,10 @@ export default function Testing({ userEmail = '' }) {
   const [prodOrders, setProdOrders] = useState([]);
   const [prodSales, setProdSales] = useState([]);
   const [prodQuotes, setProdQuotes] = useState([]);
+  // product_id -> true when a PLM card exists for it, removed or not. Those
+  // products have their Stage moved by their cards, forward only, so the Stage
+  // select says so rather than looking like the only word on the matter.
+  const [plmProducts, setPlmProducts] = useState({});
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // {type:'material'|'report'|'link', data}
   // search is ui.search, with tab and the filters in the page store above.
@@ -257,7 +261,7 @@ export default function Testing({ userEmail = '' }) {
 
   const load = async () => {
     setLoading(true);
-    const [p, m, r, rg, lb, pm, pr, ord, sold, qt] = await Promise.all([
+    const [p, m, r, rg, lb, pm, pr, ord, sold, qt, pg] = await Promise.all([
       // Every column CreateProductModal edits has to be named here. This select is not
       // `*`, so anything left off arrives undefined -- the modal renders that field blank
       // whatever the row holds, and Save writes null, or 0 for the numerics, back over it.
@@ -341,10 +345,13 @@ export default function Testing({ userEmail = '' }) {
       // page-level question below; nothing on this page renders a sales order.
       SB.from('sales_order_items').select('product_id').not('product_id','is',null),
       SB.from('quotes').select('product_id').not('product_id','is',null),
+      // Which products have a PLM card, for the caption under the Stage select.
+      SB.from('programs').select('product_id').not('product_id','is',null),
     ]);
     setProducts(p.data||[]); setMaterials(m.data||[]); setReports(r.data||[]);
     setRegs(rg.data||[]); setLabs(lb.data||[]); setProdMats(pm.data||[]); setProdRegs(pr.data||[]);
     setProdOrders(ord.data||[]); setProdSales(sold.data||[]); setProdQuotes(qt.data||[]);
+    setPlmProducts((pg.data||[]).reduce((m,row)=>{ m[row.product_id]=true; return m; },{}));
     setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
@@ -1218,7 +1225,7 @@ export default function Testing({ userEmail = '' }) {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {ui.tab==='products'  && <ProductsView products={shownProducts} orderState={orderStateOf} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onEdit={(p)=>setModal({type:'product',data:p})} onRename={(p)=>setModal({type:'rename',data:p})} onDelete={deleteProduct} searching={searching} term={ui.search.trim()} filtered={!(isAll(ui.compSel) && isAll(ui.efSel) && isAll(ui.brandSel) && isAll(ui.stageSel) && isAll(ui.dateSel) && isAll(ui.clientSel) && isDefaultCat)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(ui.dateSel)} testedByProduct={testedByProduct} />}
+          {ui.tab==='products'  && <ProductsView products={shownProducts} orderState={orderStateOf} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} plmProducts={plmProducts} onEdit={(p)=>setModal({type:'product',data:p})} onRename={(p)=>setModal({type:'rename',data:p})} onDelete={deleteProduct} searching={searching} term={ui.search.trim()} filtered={!(isAll(ui.compSel) && isAll(ui.efSel) && isAll(ui.brandSel) && isAll(ui.stageSel) && isAll(ui.dateSel) && isAll(ui.clientSel) && isDefaultCat)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(ui.dateSel)} testedByProduct={testedByProduct} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
@@ -1316,7 +1323,7 @@ export default function Testing({ userEmail = '' }) {
 // └───────────────────────────────────────────────────────────────────────────┘
 const PROD_COLS = 'minmax(200px,660px) 170px 130px 140px 340px';
 
-function ProductsView({ products, prodMats, prodRegs, productStatus, orderState = () => null, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onEdit, onRename, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false, testedByProduct = {} }) {
+function ProductsView({ products, prodMats, prodRegs, productStatus, orderState = () => null, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, plmProducts = {}, onEdit, onRename, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false, testedByProduct = {} }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
   // well exist, it just does not match.
   // The order filters get their own empty copy. "Nothing in this filter" would be read as
@@ -1515,6 +1522,13 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, orderState 
               >
                 {STAGE_OPTS.map(([v,l])=><option key={v||'none'} value={v}>{l}</option>)}
               </select>
+              {/* Still editable here -- most products have no card, and this is the
+                  only place their stage is set. A card moves it forward only (see
+                  syncProductStage in lib/programs.js), so the caption warns that a
+                  value picked here can be moved on by the next card move. */}
+              {plmProducts[p.id] && (
+                <div style={{fontSize:'10.5px',color:'#8A8A8E',marginTop:'3px',lineHeight:1.3}}>Updated by PLM cards</div>
+              )}
             </div>
             {/* Fourth track: the latest test date, or N/A. Reaches 4 of 271 products
                 today -- LLW-1544, LLW-1545, JON-106, LLW-1388 -- because only 11 of the
