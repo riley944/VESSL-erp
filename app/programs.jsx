@@ -1271,13 +1271,15 @@ const stampText = iso => {
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')
        +' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
 };
-// <SKU>-plm-card-<date>, with anything a filesystem would argue about replaced.
-// A SKU is not guaranteed to be tame -- BUC-157 has a sibling with a double
-// space in its name -- and a slash in a download name is a silent failure.
-const fileBase = r => {
+// <SKU>-plm-records-<date> or <SKU>-plm-working-<date>, with anything a
+// filesystem would argue about replaced. The kind tells the two files apart --
+// records from the Card tab, working from the first tab. A SKU is not guaranteed
+// to be tame -- BUC-157 has a sibling with a double space in its name -- and a
+// slash in a download name is a silent failure.
+const fileBase = (r, kind = 'records') => {
   const raw = (r.products || {}).sku || 'no-sku';
   const safe = raw.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
-  return (safe || 'no-sku') + '-plm-card-' + stampToday();
+  return (safe || 'no-sku') + '-plm-' + kind + '-' + stampToday();
 };
 const downloadBlob = (blob, filename) => {
   const a = document.createElement('a');
@@ -1344,78 +1346,70 @@ const fetchCardNotes = async (r, staff = []) => {
 // and letting it flow the way the browser would is the honest simple thing. What
 // that costs is the "Page n of m" stamp, which cannot be written without the
 // measuring pass it pays for.
-const buildCardDoc = ({ r, card, general, logo }) => {
-  const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+// ── THE PRINT KIT, SHARED BY BOTH FILES ─────────────────────────────────────
+// The records file and the working file are two documents on one letterhead, so
+// the pieces they share are written once here rather than twice inside each
+// builder. Moved out of buildCardDoc verbatim -- the records PDF is the same
+// markup it always was.
+const docEsc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const DOC_LBL = 'font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;';
+const docCell = (l, v) => '<div style="border-right:2px solid #6b7280;border-bottom:2px solid #6b7280;padding:11px 13px;">'
+  +'<div style="'+DOC_LBL+'">'+docEsc(l)+'</div>'
+  +'<div style="font-size:13.5px;color:#111827;margin-top:5px;line-height:1.3;">'+docEsc(v)+'</div></div>';
+const docKv = (l, v) => '<div style="display:flex;gap:14px;padding:7px 0;border-top:1px solid #e5e7eb;">'
+  +'<div style="'+DOC_LBL+'flex:0 0 164px;padding-top:2px;">'+docEsc(l)+'</div>'
+  +'<div style="font-size:13.5px;color:#111827;line-height:1.45;">'+docEsc(v)+'</div></div>';
+// pre-wrap rather than turning newlines into <br>. The note is stored with its
+// own line breaks and the screen renders it the same way, so the paper matches
+// what the person typed.
+const docNoteBlock = (heading, list, blank) => '<div style="margin-top:26px;">'
+  +'<div style="'+DOC_LBL+'margin-bottom:8px;">'+docEsc(heading)+'</div>'
+  +(list.length
+    ? list.map(n => '<div style="border-top:1px solid #e5e7eb;padding:9px 0;">'
+        +'<div style="font-size:13.5px;color:#111827;line-height:1.55;white-space:pre-wrap;">'+docEsc(n.text)+'</div>'
+        +'<div class="mono" style="font-size:10.5px;color:#6b7280;margin-top:5px;">'
+          +docEsc(n.author)+' · '+docEsc(stampText(n.date))
+          +(n.edited ? ' · edited' : '')
+          +(n.kind ? ' · ' + docEsc(n.kind) : '')
+        +'</div></div>').join('')
+    : '<div style="border-top:1px solid #e5e7eb;padding:9px 0;font-size:13px;color:#6b7280;">'+docEsc(blank)+'</div>')
+  +'</div>';
+// The logo, the kicker ("PLM card") and the SKU across the top, the rule, then
+// the product and the client -- the same head on both files.
+const docLetterhead = (logo, kicker, r) => {
   const p = r.products || {};
-  const g = cardGroups(r);
-  const LBL = 'font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;';
-
-  const cell = (l, v) => '<div style="border-right:2px solid #6b7280;border-bottom:2px solid #6b7280;padding:11px 13px;">'
-    +'<div style="'+LBL+'">'+esc(l)+'</div>'
-    +'<div style="font-size:13.5px;color:#111827;margin-top:5px;line-height:1.3;">'+esc(v)+'</div></div>';
-  const kv = (l, v) => '<div style="display:flex;gap:14px;padding:7px 0;border-top:1px solid #e5e7eb;">'
-    +'<div style="'+LBL+'flex:0 0 164px;padding-top:2px;">'+esc(l)+'</div>'
-    +'<div style="font-size:13.5px;color:#111827;line-height:1.45;">'+esc(v)+'</div></div>';
-  // pre-wrap rather than turning newlines into <br>. The note is stored with its
-  // own line breaks and the screen renders it the same way, so the paper matches
-  // what the person typed.
-  const noteBlock = (heading, list, blank) => '<div style="margin-top:26px;">'
-    +'<div style="'+LBL+'margin-bottom:8px;">'+esc(heading)+'</div>'
-    +(list.length
-      ? list.map(n => '<div style="border-top:1px solid #e5e7eb;padding:9px 0;">'
-          +'<div style="font-size:13.5px;color:#111827;line-height:1.55;white-space:pre-wrap;">'+esc(n.text)+'</div>'
-          +'<div class="mono" style="font-size:10.5px;color:#6b7280;margin-top:5px;">'
-            +esc(n.author)+' · '+esc(stampText(n.date))
-            +(n.edited ? ' · edited' : '')
-            +(n.kind ? ' · ' + esc(n.kind) : '')
-          +'</div></div>').join('')
-      : '<div style="border-top:1px solid #e5e7eb;padding:9px 0;font-size:13px;color:#6b7280;">'+esc(blank)+'</div>')
-    +'</div>';
-
-  const flow =
-     '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:28px;">'
+  return '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:28px;">'
       +'<div style="min-width:0;">'
         +(logo
           ? '<img src="'+logo+'" alt="King Universal" style="height:46px;width:auto;display:block;">'
           : '<div style="font-size:21px;font-weight:700;letter-spacing:-.015em;color:#0c1322;line-height:1.1;">King Universal Inc.</div>')
       +'</div>'
       +'<div style="text-align:right;white-space:nowrap;">'
-        +'<div style="font-size:18px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#0c1322;line-height:1.1;">PLM card</div>'
-        +'<div class="mono" style="font-size:15px;color:#374151;margin-top:8px;">'+esc(p.sku || '—')+'</div>'
+        +'<div style="font-size:18px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#0c1322;line-height:1.1;">'+docEsc(kicker)+'</div>'
+        +'<div class="mono" style="font-size:15px;color:#374151;margin-top:8px;">'+docEsc(p.sku || '—')+'</div>'
       +'</div>'
     +'</div>'
     +'<div style="height:2px;background:#0c1322;margin-top:18px;"></div>'
     +'<div style="margin-top:26px;">'
-      +'<div style="font-size:22px;font-weight:600;letter-spacing:-.015em;color:#111827;line-height:1.25;">'+esc(p.name || '—')+'</div>'
-      +'<div style="font-size:14px;color:#4b5563;margin-top:5px;">'+esc((r.client || {}).name || '—')+'</div>'
-    +'</div>'
-    // Three across, two down. Empty values already carry their own words from
-    // cardGroups -- 'Not recorded' rather than a blank, so a gap reads as a fact
-    // about the card instead of as a rendering fault.
-    +'<div style="margin-top:28px;border-top:2px solid #6b7280;border-left:2px solid #6b7280;display:grid;grid-template-columns:repeat(3,1fr);">'
-      +g.head.map(([l, v]) => cell(l, v)).join('')
-      // Padded to a full row of three, so the grid's right and bottom rules
-      // close rather than leaving a notch where a sixth cell used to be.
-      +Array.from({ length: (3 - g.head.length % 3) % 3 }, () => cell('', '')).join('')
-    +'</div>'
-    +'<div style="margin-top:30px;">'
-      +'<div style="'+LBL+'margin-bottom:2px;">What the system knows</div>'
-      +'<div style="font-size:11px;color:#6b7280;line-height:1.5;margin-bottom:6px;">'
-        +'Reported from the records. None of it moved this card.</div>'
-      +g.knows.map(([l, v]) => kv(l, v)).join('')
-    +'</div>'
-    // The sample log went with the card's log UI; the rows are still in the table.
-    +noteBlock('Card notes', card, 'No notes.')
-    +noteBlock('General notes', general,
-               r.product_id ? 'No notes.' : 'No product linked, so there are no product notes.')
-    +'<div style="margin-top:34px;padding-top:9px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;font-size:9.5px;color:#6b7280;">'
-      +'<span>King Universal Inc. · PLM card · internal</span>'
-      +'<span>Generated '+esc(stampText(new Date().toISOString()))+'</span>'
+      +'<div style="font-size:22px;font-weight:600;letter-spacing:-.015em;color:#111827;line-height:1.25;">'+docEsc(p.name || '—')+'</div>'
+      +'<div style="font-size:14px;color:#4b5563;margin-top:5px;">'+docEsc((r.client || {}).name || '—')+'</div>'
     +'</div>';
-
-  return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
+};
+// Three across. Empty values already carry their own words -- 'Not recorded'
+// rather than a blank, so a gap reads as a fact about the card instead of as a
+// rendering fault. Padded to a full row of three, so the grid's right and
+// bottom rules close rather than leaving a notch.
+const docGrid = pairs => '<div style="margin-top:28px;border-top:2px solid #6b7280;border-left:2px solid #6b7280;display:grid;grid-template-columns:repeat(3,1fr);">'
+    +pairs.map(([l, v]) => docCell(l, v)).join('')
+    +Array.from({ length: (3 - pairs.length % 3) % 3 }, () => docCell('', '')).join('')
+  +'</div>';
+const docFooter = label => '<div style="margin-top:34px;padding-top:9px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;font-size:9.5px;color:#6b7280;">'
+    +'<span>King Universal Inc. · '+docEsc(label)+' · internal</span>'
+    +'<span>Generated '+docEsc(stampText(new Date().toISOString()))+'</span>'
+  +'</div>';
+const docShell = (title, flow) => '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
 +'<meta name="viewport" content="width=device-width,initial-scale=1">'
-+'<title>PLM Card — '+esc(p.sku || p.name || 'Program')+'</title>'
++'<title>'+docEsc(title)+'</title>'
 +'<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">'
 +'<style>'
 +'*{box-sizing:border-box;margin:0;padding:0;}'
@@ -1433,7 +1427,113 @@ const buildCardDoc = ({ r, card, general, logo }) => {
 +'<script>(function(){function go(){setTimeout(function(){try{window.focus();window.print();}catch(e){}},150);}'
 +'if(document.fonts&&document.fonts.ready){document.fonts.ready.then(go).catch(go);}else{window.onload=go;}})();<\/script>'
 +'</body></html>';
+
+// ── THE RECORDS FILE, exported from the Card tab ────────────────────────────
+const buildCardDoc = ({ r, card, general, logo }) => {
+  const p = r.products || {};
+  const g = cardGroups(r);
+  const flow = docLetterhead(logo, 'PLM card', r)
+    +docGrid(g.head)
+    +'<div style="margin-top:30px;">'
+      +'<div style="'+DOC_LBL+'margin-bottom:2px;">What the system knows</div>'
+      +'<div style="font-size:11px;color:#6b7280;line-height:1.5;margin-bottom:6px;">'
+        +'Reported from the records. None of it moved this card.</div>'
+      +g.knows.map(([l, v]) => docKv(l, v)).join('')
+    +'</div>'
+    // The sample log went with the card's log UI; the rows are still in the table.
+    +docNoteBlock('Card notes', card, 'No notes.')
+    +docNoteBlock('General notes', general,
+               r.product_id ? 'No notes.' : 'No product linked, so there are no product notes.')
+    +docFooter('PLM card');
+  return docShell('PLM Card — '+(p.sku || p.name || 'Program'), flow);
 };
+
+// ── THE WORKING FILE, exported from the first (stage-named) tab ─────────────
+// What that tab holds and nothing from the records view, which has its own
+// file: who and where the card is, the sample strip, the checklist grouped by
+// stage in ladder order, and the card's own notes.
+//
+// DONE CARRIES ITS DATE when there is one. program_tasks.done_at is written when
+// a task is ticked and cleared when it is unticked, so a Yes with no date is a
+// task ticked before anything recorded when.
+const workingHead = (r, factoryName) => {
+  const p = r.products || {};
+  return [
+    ['SKU', p.sku || '—'],
+    ['Product', p.name || '—'],
+    ['Client', (r.client || {}).name || '—'],
+    ['Factory', factoryName || 'Not recorded'],
+    ['Stage', stageLabel(r.stage)],
+    ['Owner', r.ownerName || 'Unowned'],
+    ['Days in this stage', (r.days === null || r.days === undefined) ? '—'
+      : String(r.days) + (r.stale ? ' · stale past ' + STALE_DAYS : '')],
+    ['Created', [r.createdByName ? 'by ' + r.createdByName : null, r.created_at ? fmt(r.created_at) : null]
+                  .filter(Boolean).join(' · ') || 'Not recorded'],
+    ['Last edited', r.edited
+      ? [r.lastTouchBy ? 'by ' + r.lastTouchBy : null, fmt(r.updated_at)].filter(Boolean).join(' · ')
+      : 'Not edited since it was created'],
+  ];
+};
+const workingStrip = r => [
+  ['Sample round', r.sample_round ? String(r.sample_round) : 'Not set'],
+  ['Master sample', r.master_sample_included === true ? 'Included'
+                  : r.master_sample_included === false ? 'Not included' : 'Not set'],
+  ['Sent', r.sample_sent_date ? fmt(r.sample_sent_date) : 'Not set'],
+  ['Due back', r.sample_due_back ? fmt(r.sample_due_back) + (sampleOverdue(r) ? ' · overdue' : '') : 'Not set'],
+];
+// Every task, in ladder order, stages with no tasks left out. Within a stage
+// the order the board loaded them in -- sort_order, then created_at.
+const workingTasks = (r, staff) => MANUAL_STAGES.map(([k, l]) => ({
+  label: l,
+  tasks: (r.tasks || []).filter(t => t.stage === k).map(t => {
+    const who = t.owner_id ? (staff.find(s => s.id === t.owner_id) || {}) : null;
+    return {
+      task: t.task || '',
+      done: t.done ? 'Yes' : 'No',
+      doneAt: t.done && t.done_at ? t.done_at : null,
+      owner: who ? (who.full_name || who.email || 'Unknown') : 'Unassigned',
+      due: t.due_date || null,
+      blocker: t.blocker && t.blocker !== 'none' ? (BLOCKERS[t.blocker] || {}).label || t.blocker : '',
+    };
+  }),
+})).filter(g => g.tasks.length);
+
+const buildWorkingDoc = ({ r, factoryName, staff, card, logo }) => {
+  const p = r.products || {};
+  // SKU, product and client are the letterhead; the grid carries the rest.
+  const grid = workingHead(r, factoryName).filter(([l]) => !['SKU', 'Product', 'Client'].includes(l));
+  const groups = workingTasks(r, staff);
+  const th = 'text-align:left;padding:6px 8px 6px 0;'+DOC_LBL;
+  const td = 'padding:7px 8px 7px 0;border-top:1px solid #e5e7eb;font-size:12.5px;color:#111827;vertical-align:top;';
+  const table = g => '<div style="margin-top:14px;">'
+    +'<div style="font-size:13px;font-weight:600;color:#111827;margin-bottom:4px;">'+docEsc(g.label)+'</div>'
+    +'<table style="width:100%;border-collapse:collapse;">'
+      +'<tr><th style="'+th+'width:40%;">Task</th><th style="'+th+'">Done</th><th style="'+th+'">Owner</th>'
+      +'<th style="'+th+'">Due</th><th style="'+th+'">Blocker</th></tr>'
+      +g.tasks.map(t => '<tr>'
+        +'<td style="'+td+'">'+docEsc(t.task)+'</td>'
+        +'<td style="'+td+'">'+docEsc(t.done + (t.doneAt ? ' · ' + stampText(t.doneAt) : ''))+'</td>'
+        +'<td style="'+td+'">'+docEsc(t.owner)+'</td>'
+        +'<td style="'+td+'">'+docEsc(t.due ? fmt(t.due) : '')+'</td>'
+        +'<td style="'+td+'">'+docEsc(t.blocker)+'</td>'
+      +'</tr>').join('')
+    +'</table></div>';
+  const flow = docLetterhead(logo, 'PLM card · working', r)
+    +docGrid(grid)
+    +'<div style="margin-top:30px;">'
+      +'<div style="'+DOC_LBL+'margin-bottom:6px;">Sample</div>'
+      +workingStrip(r).map(([l, v]) => docKv(l, v)).join('')
+    +'</div>'
+    +'<div style="margin-top:26px;">'
+      +'<div style="'+DOC_LBL+'margin-bottom:2px;">Checklist</div>'
+      +(groups.length ? groups.map(table).join('')
+        : '<div style="border-top:1px solid #e5e7eb;padding:9px 0;font-size:13px;color:#6b7280;">No tasks.</div>')
+    +'</div>'
+    +docNoteBlock('Card notes', card, 'No notes.')
+    +docFooter('PLM card · working');
+  return docShell('PLM Working — '+(p.sku || p.name || 'Program'), flow);
+};
+
 
 // Split out so the x can read guardedClose from context. The provider lives
 // INSIDE Overlay, so a hook called in ProgramDetail would sit above it and get
@@ -1480,6 +1580,13 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
   // await hands the stack back -- so opening it after the notes fetch would get
   // the print window blocked. The same order genSO and printQuote use, for the
   // same reason.
+  // ── EXPORT FOLLOWS THE TAB ───────────────────────────────────────────────
+  // The Card tab exports the records file, as it always did. The first tab
+  // exports the working file -- the stage, the sample strip, the checklist and
+  // the card notes. One control in the header, two documents, and the file name
+  // says which (fileBase).
+  const exportKind = tab === 'card' ? 'records' : 'working';
+
   const exportPdf = async () => {
     const win = window.open('', '_blank');
     if (win) win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating PLM card…</body>');
@@ -1501,7 +1608,9 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
           });
         }
       } catch (e) {}
-      const html = buildCardDoc({ r, card: notes.card, general: notes.general, logo });
+      const html = exportKind === 'records'
+        ? buildCardDoc({ r, card: notes.card, general: notes.general, logo })
+        : buildWorkingDoc({ r, factoryName: who.factoryName, staff, card: notes.card, logo });
       // The document prints itself once its fonts have landed, so nothing here
       // has to guess at a delay.
       if (win) { win.document.open(); win.document.write(html); win.document.close(); }
@@ -1510,7 +1619,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         // file, which is the same fallback the order confirmation takes.
         const url = URL.createObjectURL(new Blob([html], { type:'text/html' }));
         const a = document.createElement('a');
-        a.href = url; a.download = fileBase(r) + '.html';
+        a.href = url; a.download = fileBase(r, exportKind) + '.html';
         a.click(); setTimeout(()=>URL.revokeObjectURL(url), 4000);
       }
     } catch (e) {
@@ -1527,6 +1636,43 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       const ExcelJS = await loadExcelJS();
       const wb = new ExcelJS.Workbook();
       wb.creator = 'VESSL'; wb.created = new Date();
+
+      // THE WORKING WORKBOOK -- three sheets: the card and its sample strip one
+      // field per row, the checklist one task per row, and the card notes.
+      if (exportKind === 'working') {
+        const ws = wb.addWorksheet('Working');
+        ws.addRow(['Field', 'Value']);
+        [...workingHead(r, who.factoryName), ...workingStrip(r)].forEach(([l, v]) => ws.addRow([l, v]));
+        ws.getRow(1).font = { bold: true };
+        ws.views = [{ state:'frozen', ySplit:1 }];
+        ws.getColumn(1).width = 24;
+        ws.getColumn(2).width = 62;
+
+        const cs = wb.addWorksheet('Checklist');
+        cs.addRow(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker']);
+        workingTasks(r, staff).forEach(g => g.tasks.forEach(t =>
+          cs.addRow([g.label, t.task, t.done, excelDate(t.doneAt), t.owner, excelDate(t.due), t.blocker])));
+        cs.getRow(1).font = { bold: true };
+        cs.views = [{ state:'frozen', ySplit:1 }];
+        cs.getColumn(4).numFmt = 'yyyy-mm-dd hh:mm';
+        cs.getColumn(6).numFmt = 'yyyy-mm-dd';
+        [13, 44, 7, 17, 22, 12, 18].forEach((w, i) => { cs.getColumn(i + 1).width = w; });
+
+        const ns = wb.addWorksheet('Card notes');
+        ns.addRow(['Kind', 'Author', 'Date', 'Edited', 'Note']);
+        notes.card.forEach(n => ns.addRow([n.kind, n.author, excelDate(n.date), n.edited ? 'Yes' : '', n.text]));
+        ns.getRow(1).font = { bold: true };
+        ns.views = [{ state:'frozen', ySplit:1 }];
+        ns.getColumn(3).numFmt = 'yyyy-mm-dd hh:mm';
+        [13, 30, 19, 9, 90].forEach((w, i) => { ns.getColumn(i + 1).width = w; });
+        ns.getColumn(5).alignment = { wrapText: true, vertical: 'top' };
+
+        const wbuf = await wb.xlsx.writeBuffer();
+        downloadBlob(new Blob([wbuf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+                     fileBase(r, 'working') + '.xlsx');
+        setExporting(false);
+        return;
+      }
 
       // SHEET 1, ONE ROW PER FIELD rather than one row per card with twenty
       // columns. A card is read down, not across, and a single-row sheet would be
@@ -1559,7 +1705,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
 
       const buf = await wb.xlsx.writeBuffer();
       downloadBlob(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
-                   fileBase(r) + '.xlsx');
+                   fileBase(r, 'records') + '.xlsx');
     } catch (e) {
       alert('Could not build the export: ' + ((e && e.message) || e));
     }
@@ -1579,6 +1725,24 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
       const p = r.products || {};
       const lines = [];
+      // THE WORKING CSV -- three tables, a blank line between them, the CSV
+      // answer to the working workbook's three sheets.
+      if (exportKind === 'working') {
+        lines.push(cell('# PLM card, working: ' + (p.sku || 'no SKU') + ' — ' + (p.name || '') + ' — ' + ((r.client || {}).name || '')));
+        lines.push([cell('Field'), cell('Value')].join(','));
+        [...workingHead(r, who.factoryName), ...workingStrip(r)].forEach(([l, v]) => lines.push([cell(l), cell(v)].join(',')));
+        lines.push('');
+        lines.push(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker'].map(cell).join(','));
+        workingTasks(r, staff).forEach(g => g.tasks.forEach(t => lines.push(
+          [g.label, t.task, t.done, t.doneAt ? stampText(t.doneAt) : '', t.owner, t.due || '', t.blocker].map(cell).join(','))));
+        lines.push('');
+        lines.push(['Kind', 'Author', 'Date', 'Edited', 'Note'].map(cell).join(','));
+        notes.card.forEach(n => lines.push([n.kind, n.author, stampText(n.date), n.edited ? 'Yes' : '', n.text].map(cell).join(',')));
+        const wcsv = '﻿' + lines.join('\r\n') + '\r\n';
+        downloadBlob(new Blob([wcsv], { type:'text/csv;charset=utf-8;' }), fileBase(r, 'working') + '.csv');
+        setExporting(false);
+        return;
+      }
       lines.push(cell('# PLM card: ' + (p.sku || 'no SKU') + ' — ' + (p.name || '') + ' — ' + ((r.client || {}).name || '')));
       lines.push([cell('Field'), cell('Value')].join(','));
       cardFields(r).forEach(([label, value]) => lines.push([cell(label), cell(value)].join(',')));
@@ -1593,7 +1757,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       // CRLF and a BOM, both for Excel: without the BOM it reads the file as ANSI
       // and an accented name arrives mangled.
       const csv = '﻿' + lines.join('\r\n') + '\r\n';
-      downloadBlob(new Blob([csv], { type:'text/csv;charset=utf-8;' }), fileBase(r) + '.csv');
+      downloadBlob(new Blob([csv], { type:'text/csv;charset=utf-8;' }), fileBase(r, 'records') + '.csv');
     } catch (e) {
       alert('Could not build the export: ' + ((e && e.message) || e));
     }
@@ -1621,16 +1785,16 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
           </div>
         </div>
         {/* EXPORT SITS BESIDE THE CLOSE, above both tabs, so it is there
-            whichever tab is open. It writes out the whole card -- the records,
-            both note sets -- not the tab in front of somebody, so it belongs to
-            the card's header rather than inside one tab.
+            whichever tab is open -- and it exports THAT tab: the records file
+            from Card, the working file from the first tab (see exportKind).
 
             count={1} is what keeps the pill live; the note under the menu says
             what is actually leaving. Disabled while a write is in flight, so a
             file cannot be built from a card that is mid-change. */}
         <div style={{display:'flex',alignItems:'center',gap:'10px',flexShrink:0}}>
           <ExportButton count={1} busy={exporting || busy} compact align="right"
-            note="This card, with its notes"
+            note={exportKind === 'records' ? 'The records view, with its notes'
+                                           : 'This tab: stage, sample, checklist and card notes'}
             onPdf={exportPdf} onXlsx={exportXlsx} onCsv={exportCsv} />
           <button onClick={guardedClose} aria-label="Close"
             style={{background:'none',border:'none',fontSize:'22px',lineHeight:1,color:'#A0A0A4',
