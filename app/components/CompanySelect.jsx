@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, X } from 'lucide-react';
 import { SB } from '@/lib/supabase';
 import { matches, normalizeTerm } from '@/lib/textFilter';
@@ -125,6 +125,24 @@ export function CompanySelect({
     onPick(company);
   };
 
+  // ── THE LIST SCROLLS ITSELF INTO VIEW WHEN IT OPENS ──────────────────────
+  // The panel opens downward inside the form's scroll area. On a laptop-height
+  // window the factory row sits near the bottom of that area, so the list
+  // opened below it and all but its first row sat under the modal footer --
+  // clicks there landed on the footer, and nothing could be picked (Loren,
+  // 2026-09-24, Safari on a MacBook; the same at 1440x790 in any engine).
+  // 'nearest' scrolls the form only as far as needed to show the filter box and
+  // the whole list, and not at all when they already fit. After the panel has
+  // rendered, hence the frame.
+  const panelRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const id = requestAnimationFrame(() => {
+      if (panelRef.current) panelRef.current.scrollIntoView({ block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [open]);
+
   return (
     <label style={{ ...fieldStyle, position: 'relative' }}>
       <span style={labelStyle}>{label}</span>
@@ -145,7 +163,7 @@ export function CompanySelect({
       {unlisted && <span style={{ fontSize: 11.5, color: '#c2683a', marginTop: 4 }}>Not in the company directory — still saved as is.</span>}
 
       {open && (
-        <div style={panelStyle}>
+        <div ref={panelRef} style={panelStyle}>
           {/* data-noguard: typing here is NAVIGATION, not input. It filters and
               commits nothing, so the modal dirty guard must not count it as an
               edit -- otherwise hunting for a company and closing the panel asks
