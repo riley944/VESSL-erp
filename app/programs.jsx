@@ -1159,8 +1159,8 @@ function SystemKnows({ r }) {
   // ── NOTHING HERE IS EDITED ON THE CARD ANY MORE ───────────────────────────
   // Product stage, compliance and catalogue used to be selects writing straight
   // to products. Each now has one home, and the card only reports it:
-  //   Product stage -- moved forward by this card's own stage (syncProductStage),
-  //                    and set by hand on the Testing page.
+  //   Product stage -- mirrors this card's stage on every move (syncProductStage),
+  //                    and can be set by hand on the Testing page until the next move.
   //   Compliance    -- the Testing page.
   //   Catalogue     -- the Products list.
   // Three places able to write one field is how a value ends up saying whatever
@@ -1174,9 +1174,9 @@ function SystemKnows({ r }) {
       <div style={{fontSize:'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',
                    color:'#86868B',marginBottom:'4px'}}>What the system knows</div>
       <div style={{fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5,marginBottom:'7px'}}>
-        Read-only. The dates come from the records. Product stage follows this card as it moves
-        forward and is otherwise set on Testing; compliance is set on Testing; catalogue status
-        on the Products list.
+        Read-only. The dates come from the records. Product stage mirrors this card&rsquo;s stage
+        &mdash; Sample in Sampling, Revision and Testing, Production in Production and Shipped, Not
+        set in Quoting; compliance is set on Testing; catalogue status on the Products list.
       </div>
       {/* THE SIX REPORTED ROWS, from the list the exports read too. One source
           and four readers, so a file and the screen cannot describe the same
@@ -2093,8 +2093,8 @@ export default function Programs({ userEmail }) {
       return;
     }
     await seedStageTasks(r, next);
-    // The product's own stage follows, forward only -- see syncProductStage.
-    // After the move and never able to undo it.
+    // The product's own stage mirrors the card, forward or back -- see
+    // syncProductStage. After the move and never able to undo it.
     const ps = await syncProductStage(r.product_id, next);
     if (ps.error) window._toast?.('The card moved, but the product stage could not be updated — ' + (ps.error.message || String(ps.error)), 'err');
     await load();
@@ -2256,10 +2256,11 @@ export default function Programs({ userEmail }) {
   // follow a pill. Backward drops are allowed, as the pills allow them. A drop
   // back onto the card's own column writes nothing -- setStage returns early.
   //
-  // PRODUCTION AND SHIPPED ASK FIRST, and only they do. They are the two drops
-  // that cannot be taken back by dragging the tile back: syncProductStage marks
-  // the product as in production, forward only. Every other drop is undone by
-  // dragging it again.
+  // PRODUCTION AND SHIPPED ASK FIRST, and only they do, because they mark the
+  // product as in production. That was irreversible under the forward-only rule;
+  // since the product stage mirrors the card, dragging the tile back undoes it
+  // too, so the confirm now guards a visible product-wide change rather than a
+  // permanent one.
   //
   // The dragleave guard is why the ring does not flicker: moving the pointer
   // from a column onto a tile INSIDE it fires dragleave on the column, so the

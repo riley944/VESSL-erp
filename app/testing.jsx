@@ -230,7 +230,7 @@ export default function Testing({ userEmail = '' }) {
   const [prodSales, setProdSales] = useState([]);
   const [prodQuotes, setProdQuotes] = useState([]);
   // product_id -> true when a PLM card exists for it, removed or not. Those
-  // products have their Stage moved by their cards, forward only, so the Stage
+  // products have their Stage set by their cards on every move, so the Stage
   // select says so rather than looking like the only word on the matter.
   const [plmProducts, setPlmProducts] = useState({});
   const [loading, setLoading] = useState(true);
@@ -1523,9 +1523,10 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, orderState 
                 {STAGE_OPTS.map(([v,l])=><option key={v||'none'} value={v}>{l}</option>)}
               </select>
               {/* Still editable here -- most products have no card, and this is the
-                  only place their stage is set. A card moves it forward only (see
-                  syncProductStage in lib/programs.js), so the caption warns that a
-                  value picked here can be moved on by the next card move. */}
+                  only place their stage is set. For a product WITH a card, the stage
+                  mirrors the card on every move (syncProductStage in lib/programs.js),
+                  so the caption warns that a value picked here lasts only until the
+                  card next moves. */}
               {plmProducts[p.id] && (
                 <div style={{fontSize:'10.5px',color:'#8A8A8E',marginTop:'3px',lineHeight:1.3}}>Updated by PLM cards</div>
               )}
