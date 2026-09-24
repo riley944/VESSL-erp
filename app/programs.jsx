@@ -1620,9 +1620,22 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
             {[(r.client||{}).name, who.factoryName].filter(Boolean).join(' · ') || '—'}
           </div>
         </div>
-        <button onClick={guardedClose} aria-label="Close"
-          style={{background:'none',border:'none',fontSize:'22px',lineHeight:1,color:'#A0A0A4',
-                  cursor:'pointer',padding:'0 2px',fontFamily:'inherit',flexShrink:0}}>×</button>
+        {/* EXPORT SITS BESIDE THE CLOSE, above both tabs, so it is there
+            whichever tab is open. It writes out the whole card -- the records,
+            both note sets -- not the tab in front of somebody, so it belongs to
+            the card's header rather than inside one tab.
+
+            count={1} is what keeps the pill live; the note under the menu says
+            what is actually leaving. Disabled while a write is in flight, so a
+            file cannot be built from a card that is mid-change. */}
+        <div style={{display:'flex',alignItems:'center',gap:'10px',flexShrink:0}}>
+          <ExportButton count={1} busy={exporting || busy} compact align="right"
+            note="This card, with its notes"
+            onPdf={exportPdf} onXlsx={exportXlsx} onCsv={exportCsv} />
+          <button onClick={guardedClose} aria-label="Close"
+            style={{background:'none',border:'none',fontSize:'22px',lineHeight:1,color:'#A0A0A4',
+                    cursor:'pointer',padding:'0 2px',fontFamily:'inherit',flexShrink:0}}>×</button>
+        </div>
       </div>
 
       {/* ── THE STAGE PILLS ─────────────────────────────────────────────────
@@ -1690,19 +1703,8 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
 
       {tab === 'card' ? (
         <>
-          {/* EXPORT HEADS THE CARD TAB. It writes out what this tab shows -- the
-              records, the log and both note sets -- so it sits with them.
-
-              count={1} is what keeps the pill live; the note under the menu says
-              what is actually leaving. Disabled while a write is in flight, so a
-              file cannot be built from a card that is mid-change. */}
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'10px',
-                       marginTop:'14px',paddingTop:'13px',borderTop:'1px solid #ECECEE'}}>
-            <span style={{fontSize:'11.5px',color:'#A0A0A4'}}>The card as a file, with its notes.</span>
-            <ExportButton count={1} busy={exporting || busy} compact align="right"
-              note="This card, with its notes"
-              onPdf={exportPdf} onXlsx={exportXlsx} onCsv={exportCsv} />
-          </div>
+          {/* Export moved to the card header, beside the close, so it is on both
+              tabs; its row and caption here went with it. */}
           <SystemKnows r={r} />
           {!r.product_id ? (
             <div style={{marginTop:'16px',paddingTop:'13px',borderTop:'1px solid #ECECEE',
