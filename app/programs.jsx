@@ -254,7 +254,11 @@ const touchProgram = async (programId, userEmail) => {
   } catch (e) {}
 };
 
-function NotesPanel({ table, keyCol, keyId, insertExtra = {}, extraCol, extraDefault,
+// staff is the board's staff_profiles list, for showing the author by NAME.
+// author itself stays the email -- the edit and delete policies compare it to
+// the email in the caller's token, so a name stored there would lock the
+// writer out of their own note. The name is looked up for display only.
+function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraCol, extraDefault,
                       filter = null, title, subtitle, programId, userEmail, onTouched }) {
   const [notes, setNotes] = useState(null);
   const [text, setText]   = useState('');
@@ -402,6 +406,35 @@ function NotesPanel({ table, keyCol, keyId, insertExtra = {}, extraCol, extraDef
             const editing = editId === n.id;
             return (
               <div key={n.id} style={{background:'#fff',border:'1px solid #ECECEE',borderRadius:'10px',padding:'9px 11px'}}>
+                {/* WHO AND WHEN, ABOVE THE WORDS. The name comes from staff_profiles
+                    by the stored email, falling back to the email itself when no
+                    profile matches -- so a colleague who has left still reads as
+                    somebody rather than as a blank. */}
+                <div style={{display:'flex',alignItems:'baseline',gap:'8px',marginBottom:'5px',flexWrap:'wrap'}}>
+                  <span style={{fontSize:'11px',color:'#A0A0A4'}}>
+                    <span style={{fontWeight:600,color:'#5A5A5E'}}>{staffName(staff, n.author) || 'unknown'}</span> · {when(n.created_at)}
+                    {/* Said once and plainly. The edit time itself is on the row if
+                        anybody needs it; what the reader needs here is to know the
+                        words changed after they were first written. */}
+                    {n.edited_at ? ' · edited' : ''}
+                    {extraCol && n[extraCol] && n[extraCol] !== extraDefault ? ' · ' + n[extraCol] : ''}
+                  </span>
+                  {/* OFFERED ONLY ON YOUR OWN NOTES, and the database agrees --
+                      the restrictive policy refuses an update to anybody else row,
+                      so this is the control matching the rule rather than guarding
+                      it. Hidden while an editor is open, because Edit and Cancel
+                      next to each other is two ways out of one state. */}
+                  {mine && !editing && (
+                    <span style={{display:'inline-flex',gap:'8px',marginLeft:'auto'}}>
+                      <button onClick={()=>{ setEditId(n.id); setDraft(n.note || ''); }} disabled={busy}
+                        style={{fontSize:'11px',background:'none',border:'none',padding:0,color:'#0A84FF',
+                                fontFamily:'inherit',cursor:busy?'default':'pointer'}}>Edit</button>
+                      <button onClick={()=>removeNote(n)} disabled={busy}
+                        style={{fontSize:'11px',background:'none',border:'none',padding:0,color:'var(--hot)',
+                                fontFamily:'inherit',cursor:busy?'default':'pointer'}}>Delete</button>
+                    </span>
+                  )}
+                </div>
                 {editing ? (
                   <>
                     <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={3}
@@ -426,31 +459,6 @@ function NotesPanel({ table, keyCol, keyId, insertExtra = {}, extraCol, extraDef
                 ) : (
                   <div style={{fontSize:'13px',color:'#1D1D1F',lineHeight:1.5,whiteSpace:'pre-wrap'}}>{n.note}</div>
                 )}
-                <div style={{display:'flex',alignItems:'baseline',gap:'8px',marginTop:'5px',flexWrap:'wrap'}}>
-                  <span style={{fontSize:'11px',color:'#A0A0A4'}}>
-                    {n.author || 'unknown'} · {when(n.created_at)}
-                    {/* Said once and plainly. The edit time itself is on the row if
-                        anybody needs it; what the reader needs here is to know the
-                        words changed after they were first written. */}
-                    {n.edited_at ? ' · edited' : ''}
-                    {extraCol && n[extraCol] && n[extraCol] !== extraDefault ? ' · ' + n[extraCol] : ''}
-                  </span>
-                  {/* OFFERED ONLY ON YOUR OWN NOTES, and the database agrees --
-                      the restrictive policy refuses an update to anybody else row,
-                      so this is the control matching the rule rather than guarding
-                      it. Hidden while an editor is open, because Edit and Cancel
-                      next to each other is two ways out of one state. */}
-                  {mine && !editing && (
-                    <span style={{display:'inline-flex',gap:'8px',marginLeft:'auto'}}>
-                      <button onClick={()=>{ setEditId(n.id); setDraft(n.note || ''); }} disabled={busy}
-                        style={{fontSize:'11px',background:'none',border:'none',padding:0,color:'#0A84FF',
-                                fontFamily:'inherit',cursor:busy?'default':'pointer'}}>Edit</button>
-                      <button onClick={()=>removeNote(n)} disabled={busy}
-                        style={{fontSize:'11px',background:'none',border:'none',padding:0,color:'var(--hot)',
-                                fontFamily:'inherit',cursor:busy?'default':'pointer'}}>Delete</button>
-                    </span>
-                  )}
-                </div>
               </div>
             );
           })}
@@ -1252,7 +1260,7 @@ const downloadBlob = (blob, filename) => {
 // the product's notes, shared by every card for the SKU, "General Notes" on the
 // Card tab. The kind value in the table is still 'sampling'; only the label
 // changed. The sample log is no longer exported; its rows stay in the table.
-const fetchCardNotes = async r => {
+const fetchCardNotes = async (r, staff = []) => {
   const own = await SB.from('program_notes')
     .select('author,note,created_at,edited_at,source')
     .eq('program_id', r.id).order('created_at', { ascending:false });
@@ -1277,7 +1285,8 @@ const fetchCardNotes = async r => {
   // kind is still 'sampling' in the table, and printing that under "General
   // notes" would contradict the heading it sits under.
   const shape = (list, kindCol, dflt) => (list || []).map(n => ({
-    kind: (n[kindCol] && n[kindCol] !== dflt) ? n[kindCol] : '', author: n.author || 'unknown',
+    // The author by name, as on screen -- staffName falls back to the email.
+    kind: (n[kindCol] && n[kindCol] !== dflt) ? n[kindCol] : '', author: staffName(staff, n.author) || 'unknown',
     date: n.created_at, edited: !!n.edited_at, text: n.note || '',
   }));
   return { card: shape(own.data, 'source', 'manual'), general: shape(prod.data, 'kind', 'sampling') };
@@ -1431,7 +1440,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
     if (win) win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating PLM card…</body>');
     setExporting(true);
     try {
-      const notes = await fetchCardNotes(r);
+      const notes = await fetchCardNotes(r, staff);
       // THE LOGO HAS TO TRAVEL AS BYTES. The document is written into an
       // about:blank window, so a relative src resolves against about:blank and
       // fetches nothing. A failed fetch degrades to the company name in type,
@@ -1469,7 +1478,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
   const exportXlsx = async () => {
     setExporting(true);
     try {
-      const notes = await fetchCardNotes(r);
+      const notes = await fetchCardNotes(r, staff);
       const ExcelJS = await loadExcelJS();
       const wb = new ExcelJS.Workbook();
       wb.creator = 'VESSL'; wb.created = new Date();
@@ -1518,7 +1527,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
   const exportCsv = async () => {
     setExporting(true);
     try {
-      const notes = await fetchCardNotes(r);
+      const notes = await fetchCardNotes(r, staff);
       // EVERY field quoted, not just the ones that need it. A conditional quote
       // has to decide what "needs" means for a note holding a comma, a quote or a
       // newline, and that decision is where CSV writers go wrong.
@@ -1667,7 +1676,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
             // Still product_notes of kind sampling -- the heading changed, the rows
             // and the filter did not. The sampling log that sat above them is
             // gone from the card; its rows are untouched in the table.
-            <NotesPanel table="product_notes" keyCol="product_id" keyId={r.product_id}
+            <NotesPanel staff={staff} table="product_notes" keyCol="product_id" keyId={r.product_id}
               insertExtra={{ kind: 'sampling' }} extraCol="kind" extraDefault="sampling"
               filter={{ col:'kind', val:'sampling' }}
               title="General Notes"
@@ -1705,7 +1714,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
           a display name, and the restrictive policies compare lower(author) to
           the email in the token -- a name would insert and then be uneditable
           and undeletable by the person who wrote it. */}
-      <NotesPanel table="program_notes" keyCol="program_id" keyId={r.id}
+      <NotesPanel staff={staff} table="program_notes" keyCol="program_id" keyId={r.id}
         insertExtra={{ source: 'manual' }} extraCol="source" extraDefault="manual"
         title="Card Notes" programId={r.id} userEmail={userEmail} onTouched={onTouched} />
       {/* ── OFF THE BOARD, NOT OUT OF EXISTENCE ─────────────────────────────
