@@ -32,9 +32,6 @@ import { ExportButton } from '@/app/components/ExportButton';
 // once carried its own copy of the loader -- see the note at the top of that
 // file, which names programs.jsx as one of the two places it was written twice.
 import { loadExcelJS, excelDate } from '@/lib/excel';
-// The quote form's reading of a company's people -- primary first -- so the
-// quick emails fall back to the same contact the quote form would have filled.
-import { contactsOf, sameName } from '@/app/components/CompanySelect';
 import { seedStageTasks as seedTasksFor, syncProductStage } from '@/lib/programs';
 // Sync from records is gone with the derived board -- nothing here creates a
 // program any more. The quote-form tick is the only door.
@@ -492,59 +489,10 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
 // recorded per card on the sample strip (script 77), and the Sampling row in
 // What the system knows reads that instead -- see sampleStripText.
 
-// ── QUICK EMAILS, THE 11 AUG TEMPLATES ON THE SIX-STAGE LADDER ──────────────
-// Riley's words, mapped onto the stages that survive. Inquiry and Delivered are
-// gone; Delivered's confirmation moves to Shipped, which is where the card ends
-// now. Pre-Production's "Confirm PO with factory" is dropped rather than moved --
-// a PO being saved is what puts a card in Production, so by the time a card is
-// there the PO it asked about already exists.
-//
-// THE "EMILY" TEMPLATES ARE FACTORY EMAILS. The 11 Aug code addressed them to
-// emily@kinguniversal.com, but no Emily is on staff -- Emily Chen is the Fuzhou
-// factory contact. So they go to the factory contact, whoever that is for the
-// card, and greet them by name.
-//
-// No mail is sent from here. The composer opens the person's own mail client
-// with the fields filled, which is what the 11 Aug version did.
-//
-// QUOTING HAS NO QUICK EMAIL, on request. Send quote to client was here; with it
-// gone Quoting has no templates, so the card hides the Quick emails section and
-// its heading altogether rather than showing an empty one.
-//
-// chips:'client' NARROWS THE RECIPIENT CHIPS to the client company's own
-// contacts that carry an email -- no staff, no factory -- and body:'' opens the
-// Message empty. Send quote to client was the only template that used them; the
-// composer still honours both for any template that sets them.
-const STAGE_EMAILS = {
-  sampling: [
-    { label:'Chase factory sample', to:'factory', subject:'Sample status — {product} ({sku})',
-      body:'Hi {factoryContact},\n\nChecking in on the sample for {product} ({sku}) for {client}. Sent {sent}, due back {due}. Where does it stand — and did the master sample go with it?\n\nThanks,' },
-    { label:'Sample to client', to:'client', subject:'Sample on the way — {product}',
-      body:'Hi {clientContact},\n\nThe {product} sample is heading your way. Let us know your thoughts and any changes.\n\nBest,' },
-    { label:'Request feedback', to:'client', subject:'Sample feedback — {product}',
-      body:'Hi {clientContact},\n\nFollowing up on the {product} sample (round {round}) — any feedback or approval?\n\nBest,' },
-  ],
-  revision: [
-    { label:'Revisions to factory', to:'factory', subject:'Revisions — {product} ({sku})',
-      body:'Hi {factoryContact},\n\nClient changes on {product} (round {round}):\n\n[changes]\n\nCan we get a revised sample and timeline?\n\nThanks,' },
-    { label:'Request sign-off', to:'client', subject:'Revised sample — {product}',
-      body:'Hi {clientContact},\n\nThe revised {product} sample (round {round}) is with you. Good to move to production, or final tweaks?\n\nBest,' },
-  ],
-  testing: [
-    { label:'Submit to lab', to:'', subject:'Test request — {product} ({sku})',
-      body:'Hello,\n\nWe would like to submit {product} ({sku}) for compliance testing. Please advise required samples and turnaround.\n\nThanks,' },
-  ],
-  production: [
-    { label:'Production status', to:'factory', subject:'Production status — {product}',
-      body:'Hi {factoryContact},\n\nCan you give us an update on {product} for {client}? Percent complete and expected finish.\n\nThanks,' },
-  ],
-  shipped: [
-    { label:'Docs to client', to:'client', subject:'Shipping docs — {product}',
-      body:'Hi {clientContact},\n\n{product} has shipped. Documents attached — we will keep you posted on arrival.\n\nBest,' },
-    { label:'Delivery confirmation', to:'client', subject:'Delivered — {product}',
-      body:'Hi {clientContact},\n\nConfirming {product} has been delivered. Anything you need on our end?\n\nBest,' },
-  ],
-};
+// ── QUICK EMAILS ARE GONE ───────────────────────────────────────────────────
+// The per-stage templates, the composer and its recipient chips were removed in
+// every stage, on request. What survived is below: shortDate, which the
+// checklist uses for due dates, and the card's factory name (useCardFactory).
 
 // "Sep 18". A plain date is read as local noon so no timezone moves it a day.
 const shortDate = s => {
@@ -553,177 +501,39 @@ const shortDate = s => {
   return isNaN(d) ? '' : d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
 };
 
-const fillTemplate = (text, r, who) => {
-  const p = r.products || {};
-  const map = {
-    product: p.name || 'the product', sku: p.sku || '', client: (r.client || {}).name || '',
-    clientContact: (who.client && who.client.name) || (r.client || {}).name || 'there',
-    factoryContact: (who.factory && who.factory.name) || who.factoryName || 'there',
-    round: String(r.sample_round || 1),
-    sent: r.sample_sent_date ? shortDate(r.sample_sent_date) : 'recently',
-    due: r.sample_due_back ? shortDate(r.sample_due_back) : 'soon',
-  };
-  let out = text;
-  Object.keys(map).forEach(k => { out = out.split('{' + k + '}').join(map[k]); });
-  return out;
-};
-
-// ── WHO THE EMAILS GO TO ────────────────────────────────────────────────────
-// programs has no contact columns -- the 11 Aug table carried client_email and
-// factory_email on the row, and this one does not. So, on decision:
+// ── THE CARD'S FACTORY ──────────────────────────────────────────────────────
+// programs has no factory column, so the factory the card names -- in its
+// header and in the working export -- is the one written on the latest quote
+// for this product and client. Read when the card opens, not in the board's
+// bulk fetch.
 //
-//   1. the latest quote for this product and client, which is where somebody
-//      last wrote down who the buyer and the factory contact were;
-//   2. failing that, the company's own contact, primary first -- the client from
-//      client_company_id, the factory by matching the quote's factory name to a
-//      factory company, the same match the quote form's select makes.
-//
-// A contact without an email is no use to a mail link, so each side takes the
-// first answer that carries one. Read when the card opens, not in the board's
-// bulk fetch -- nobody needs every card's contacts to look at the board.
-function useCardContacts(r) {
-  const [who, setWho] = useState({ loading:true, client:null, factory:null, factoryName:'', clientContacts:[] });
+// This is the factory half of what was useCardContacts. The rest of that hook
+// looked up client and factory contacts -- the latest quote first, then the
+// company directory, primary first -- for the quick emails' recipients; it went
+// with them, and this is the part that still has readers.
+function useCardFactory(r) {
+  const [factoryName, setFactoryName] = useState('');
   useEffect(() => {
     let dead = false;
+    setFactoryName('');
     (async () => {
-      // clientContacts is every contact of the card's client company that has an
-      // email, primary first -- the chip list for a template marked chips:'client'.
-      const out = { loading:false, client:null, factory:null, factoryName:'', clientContacts:[] };
-      const firstWithEmail = list => (list || []).find(c => (c.email || '').trim()) || null;
-      const fromDirectory = async companyId => {
-        const { data } = await SB.from('contacts').select('company_id,full_name,email,phone,is_primary')
-          .eq('company_id', companyId);
-        const c = firstWithEmail(contactsOf({ id: companyId }, data || []));
-        return c ? { name: c.full_name || '', email: c.email.trim(), from: 'directory' } : null;
-      };
+      let name = '';
       try {
-        let q = null;
         if (r.product_id && r.client_company_id) {
           const { data } = await SB.from('quotes')
-            .select('client_contact,client_email,factory,factory_contact,factory_email')
+            .select('factory')
             .eq('product_id', r.product_id).eq('client_company_id', r.client_company_id)
             .order('quote_date', { ascending:false, nullsFirst:false })
             .order('created_at', { ascending:false })
             .limit(1);
-          q = (data || [])[0] || null;
-        }
-        // The client's directory contacts are read whenever the card has a
-        // client, not only as a fallback, because the client chips list them all.
-        let clientDir = [];
-        if (r.client_company_id) {
-          const { data } = await SB.from('contacts').select('company_id,full_name,email,phone,is_primary')
-            .eq('company_id', r.client_company_id);
-          clientDir = contactsOf({ id: r.client_company_id }, data || []).filter(c => (c.email || '').trim());
-        }
-        out.clientContacts = clientDir.map(c => ({ name: c.full_name || '', email: c.email.trim() }));
-        if (q && (q.client_email || '').trim()) {
-          out.client = { name: q.client_contact || '', email: q.client_email.trim(), from: 'quote' };
-        } else if (clientDir.length) {
-          out.client = { name: clientDir[0].full_name || '', email: clientDir[0].email.trim(), from: 'directory' };
-        }
-        out.factoryName = (q && q.factory) || '';
-        if (q && (q.factory_email || '').trim()) {
-          out.factory = { name: q.factory_contact || '', email: q.factory_email.trim(), from: 'quote' };
-        } else if (out.factoryName) {
-          const { data } = await SB.from('companies').select('id,name').eq('type', 'factory');
-          const co = (data || []).find(c => sameName(c.name, out.factoryName));
-          if (co) out.factory = await fromDirectory(co.id);
+          name = ((data || [])[0] || {}).factory || '';
         }
       } catch (e) {}
-      if (!dead) setWho(out);
+      if (!dead) setFactoryName(name);
     })();
     return () => { dead = true; };
   }, [r.id, r.product_id, r.client_company_id]);
-  return who;
-}
-
-// ── THE COMPOSER ────────────────────────────────────────────────────────────
-// The 11 Aug composer, with the hardcoded team replaced by staff_profiles and
-// the client and factory chips filled from useCardContacts. An Overlay of its
-// own above the card, so it carries its own dirty guard -- a half-written email
-// is prose, the same as a note.
-function EmailComposer({ tpl, r, who, staff = [], onClose }) {
-  const recipient = tpl.to === 'client' ? (who.client && who.client.email)
-                  : tpl.to === 'factory' ? (who.factory && who.factory.email) : '';
-  const [to, setTo] = useState(recipient || '');
-  const [subject, setSubject] = useState(fillTemplate(tpl.subject, r, who));
-  const [body, setBody] = useState(fillTemplate(tpl.body, r, who));
-  // CLIENT CHIPS ARE THE CLIENT COMPANY'S CONTACTS AND NOTHING ELSE on a
-  // template marked chips:'client' -- a quote goes to the buyer, and a staff or
-  // factory chip one click from the To field is a quote sent to the wrong side.
-  // No client linked, or no contact with an email, is an empty list, and the
-  // note under To says why. The To prefill is unchanged: the latest quote's
-  // client email first, then the primary contact.
-  const chips = tpl.chips === 'client'
-    ? (who.clientContacts || []).map(c => ({ label: c.name || c.email, email: c.email }))
-    : [
-        who.client ? { label: (who.client.name || (r.client || {}).name || 'Client') + ' · client', email: who.client.email } : null,
-        who.factory ? { label: (who.factory.name || who.factoryName || 'Factory') + ' · factory', email: who.factory.email } : null,
-        ...staff.filter(s => s.email).map(s => ({ label: s.full_name || s.email, email: s.email })),
-      ].filter(Boolean);
-  const openMail = () => {
-    window.location.href = 'mailto:' + encodeURIComponent(to || '').replace(/%40/g, '@')
-      + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
-    onClose();
-  };
-  const inp = { width:'100%', border:'1px solid rgba(0,0,0,.1)', borderRadius:'10px', padding:'9px 12px',
-                fontSize:'13.5px', outline:'none', fontFamily:'inherit', boxSizing:'border-box', background:'#fff' };
-  const lbl = { display:'block', fontSize:'10px', fontWeight:600, textTransform:'uppercase',
-                letterSpacing:'.06em', color:'#86868B', marginBottom:'5px' };
-  const missing = (tpl.to === 'client' || tpl.to === 'factory') && !recipient;
-  return (
-    <Overlay onClose={onClose} zIndex={400} maxWidth={520}>
-      <ComposerBody tpl={tpl} missing={missing} inp={inp} lbl={lbl} chips={chips}
-        to={to} setTo={setTo} subject={subject} setSubject={setSubject}
-        body={body} setBody={setBody} openMail={openMail} />
-    </Overlay>
-  );
-}
-// Split out so the x reads guardedClose from the composer's own Overlay, the
-// same reason ProgramCard is split from ProgramDetail.
-function ComposerBody({ tpl, missing, inp, lbl, chips, to, setTo, subject, setSubject, body, setBody, openMail }) {
-  const guardedClose = useGuardedClose();
-  return (
-    <>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <div style={{fontSize:'16px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.016em'}}>{tpl.label}</div>
-        <button onClick={guardedClose} aria-label="Close"
-          style={{background:'none',border:'none',fontSize:'22px',lineHeight:1,color:'#A0A0A4',
-                  cursor:'pointer',padding:'0 2px',fontFamily:'inherit'}}>×</button>
-      </div>
-      <div style={{marginTop:'14px'}}>
-        <label style={lbl}>To</label>
-        <input style={inp} value={to} onChange={e=>setTo(e.target.value)} placeholder="recipient@email.com" />
-        {/* SAID RATHER THAN LEFT BLANK. An empty To on a client email looks like
-            the composer forgot; this says the records have nobody to offer. */}
-        {missing && (
-          <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'6px'}}>
-            No {tpl.to} email on the latest quote or in the company directory.
-          </div>
-        )}
-        <div style={{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'8px',marginBottom:'14px'}}>
-          {chips.map((c, i) => (
-            <button key={i} onClick={()=>setTo(c.email)} title={c.email}
-              style={{fontSize:'11.5px',fontWeight:500,border:'none',borderRadius:'980px',padding:'5px 12px',
-                      cursor:'pointer',fontFamily:'inherit',
-                      background:to===c.email?'#1D1D1F':'#F5F5F7',color:to===c.email?'#fff':'#5A5A5E'}}>
-              {c.label}
-            </button>
-          ))}
-        </div>
-        <label style={lbl}>Subject</label>
-        <input style={{...inp,marginBottom:'14px'}} value={subject} onChange={e=>setSubject(e.target.value)} />
-        <label style={lbl}>Message</label>
-        <textarea style={{...inp,minHeight:'150px',resize:'vertical',lineHeight:1.55}}
-          value={body} onChange={e=>setBody(e.target.value)} />
-      </div>
-      <div style={{display:'flex',justifyContent:'flex-end',marginTop:'14px'}}>
-        <button onClick={openMail}
-          style={{background:'#0A84FF',color:'#fff',border:'none',borderRadius:'980px',padding:'10px 20px',
-                  fontSize:'13.5px',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Open in Mail</button>
-      </div>
-    </>
-  );
+  return factoryName;
 }
 
 // ── A DATE THAT SAVES ITSELF, BUT ONLY ONCE IT IS A DATE ────────────────────
@@ -1543,8 +1353,8 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
   const guardedClose = useGuardedClose();
   // ── TWO TABS: WORKING THE CARD, AND WHAT IS KNOWN ABOUT IT ────────────────
   // The first tab is the 11 Aug card -- where the program is and what happens
-  // next: the stage pills, the owner, the sample strip, the quick emails, the
-  // checklist, the notes and Remove. Its label is the card's stage (below).
+  // next: the stage pills, the owner, the sample strip, the checklist, the notes
+  // and Remove. Its label is the card's stage (below).
   // Card is what the card was before stage 2 -- what the records say, the
   // product's sampling log and notes, and the exports -- which is read far more
   // than it is changed.
@@ -1565,8 +1375,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
   // stays 'sampling' and the contents are unchanged.
   const [tab, setTab] = useState('sampling');
   const CARD_TABS = [['sampling', stageLabel(r.stage)], ['card', 'Card']];
-  const who = useCardContacts(r);
-  const [emailTpl, setEmailTpl] = useState(null);
+  const factoryName = useCardFactory(r);
 
   // ── EXPORTING THE CARD ────────────────────────────────────────────────────
   // Three writers, one description of the card -- see cardGroups above. Each
@@ -1610,7 +1419,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       } catch (e) {}
       const html = exportKind === 'records'
         ? buildCardDoc({ r, card: notes.card, general: notes.general, logo })
-        : buildWorkingDoc({ r, factoryName: who.factoryName, staff, card: notes.card, logo });
+        : buildWorkingDoc({ r, factoryName, staff, card: notes.card, logo });
       // The document prints itself once its fonts have landed, so nothing here
       // has to guess at a delay.
       if (win) { win.document.open(); win.document.write(html); win.document.close(); }
@@ -1642,7 +1451,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       if (exportKind === 'working') {
         const ws = wb.addWorksheet('Working');
         ws.addRow(['Field', 'Value']);
-        [...workingHead(r, who.factoryName), ...workingStrip(r)].forEach(([l, v]) => ws.addRow([l, v]));
+        [...workingHead(r, factoryName), ...workingStrip(r)].forEach(([l, v]) => ws.addRow([l, v]));
         ws.getRow(1).font = { bold: true };
         ws.views = [{ state:'frozen', ySplit:1 }];
         ws.getColumn(1).width = 24;
@@ -1730,7 +1539,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       if (exportKind === 'working') {
         lines.push(cell('# PLM card, working: ' + (p.sku || 'no SKU') + ' — ' + (p.name || '') + ' — ' + ((r.client || {}).name || '')));
         lines.push([cell('Field'), cell('Value')].join(','));
-        [...workingHead(r, who.factoryName), ...workingStrip(r)].forEach(([l, v]) => lines.push([cell(l), cell(v)].join(',')));
+        [...workingHead(r, factoryName), ...workingStrip(r)].forEach(([l, v]) => lines.push([cell(l), cell(v)].join(',')));
         lines.push('');
         lines.push(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker'].map(cell).join(','));
         workingTasks(r, staff).forEach(g => g.tasks.forEach(t => lines.push(
@@ -1770,9 +1579,6 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
   // or back, and one control for one act is simpler than two that must agree.
   const idx = MANUAL_STAGES.findIndex(([k]) => k === r.stage);
   const inSampling = SAMPLING_STAGES.includes(r.stage);
-  const emails = STAGE_EMAILS[r.stage] || [];
-  const secHead = { fontSize:'11px', fontWeight:600, letterSpacing:'.08em', textTransform:'uppercase',
-                    color:'#86868B', marginBottom:'9px' };
 
   return (
     <>
@@ -1781,7 +1587,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
           <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:700,color:'#1D1D1F'}}>{p.sku || '—'}</div>
           <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.01em',marginTop:'2px'}}>{p.name || '—'}</div>
           <div style={{fontSize:'13px',color:'#5A5A5E',marginTop:'3px'}}>
-            {[(r.client||{}).name, who.factoryName].filter(Boolean).join(' · ') || '—'}
+            {[(r.client||{}).name, factoryName].filter(Boolean).join(' · ') || '—'}
           </div>
         </div>
         {/* EXPORT SITS BESIDE THE CLOSE, above both tabs, so it is there
@@ -1891,27 +1697,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       <>
       {inSampling && <SampleStrip r={r} busy={busy} onSample={onSample} />}
 
-      {/* ── QUICK EMAILS ────────────────────────────────────────────────────
-          The templates for the stage the card is in. Absent rather than empty
-          for a card with no stage, which has no templates. */}
-      {emails.length > 0 && (
-        <div style={{marginTop:'16px',paddingTop:'13px',borderTop:'1px solid #ECECEE'}}>
-          <div style={secHead}>Quick emails</div>
-          <div style={{display:'flex',gap:'7px',flexWrap:'wrap'}}>
-            {emails.map((tpl, i) => (
-              <button key={i} onClick={()=>setEmailTpl(tpl)} disabled={who.loading}
-                title={who.loading ? 'Reading contacts…' : undefined}
-                style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'8px 14px',
-                        fontSize:'12.5px',fontWeight:500,color:'#1D1D1F',fontFamily:'inherit',
-                        cursor:who.loading?'default':'pointer',opacity:who.loading?0.6:1}}>
-                ✉ {tpl.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Between the emails and the notes, where the 11 Aug card had it. */}
+      {/* Above the notes, where the 11 Aug card had it. */}
       <Checklist r={r} staff={staff} userEmail={userEmail} onTouched={onTouched} />
 
       {/* author is the caller's EMAIL, inside NotesPanel. The 11 Aug card wrote
@@ -1963,7 +1749,6 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       )}
       </>
       )}
-      {emailTpl && <EmailComposer tpl={emailTpl} r={r} who={who} staff={staff} onClose={()=>setEmailTpl(null)} />}
     </>
   );
 }
@@ -2672,7 +2457,7 @@ export default function Programs({ userEmail }) {
             and the date alone. Never edited since creation shows the first
             line only. Each line cuts with an ellipsis rather than wrapping.
             Dated with fmt -- Sep 23, 2026, with the year -- rather than the
-            shared shortDate, which the checklist and the emails keep. */}
+            shared shortDate, which the checklist keeps. */}
         <div style={{fontSize:'11px',marginTop:'9px',color:'#B0B0B4',lineHeight:1.45}}>
           <div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
             Created{r.createdByName ? ' by ' + r.createdByName : ''}{r.created_at ? ' · ' + fmt(r.created_at) : ''}
