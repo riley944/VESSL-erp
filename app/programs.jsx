@@ -1159,14 +1159,17 @@ function SystemKnows({ r }) {
   // ── NOTHING HERE IS EDITED ON THE CARD ANY MORE ───────────────────────────
   // Product stage, compliance and catalogue used to be selects writing straight
   // to products. Each now has one home, and the card only reports it:
-  //   Product stage -- mirrors this card's stage on every move (syncProductStage),
-  //                    and can be set by hand on the Testing page until the next move.
+  //   Product stage -- the CARD'S OWN STAGE by name, in the pills' words, so the
+  //                    row always reads the column the card sits in. The
+  //                    product's two-value Sample / Production field is not shown
+  //                    here; it mirrors this stage (syncProductStage) and is what
+  //                    the Testing page and its Stage filter read.
   //   Compliance    -- the Testing page.
   //   Catalogue     -- the Products list.
   // Three places able to write one field is how a value ends up saying whatever
   // was touched last; one writer each is the fix.
   const muted = v => !v || v === '— Not set —' || v === '—';
-  const stageV = optLabel(STAGE_OPTS, p.product_stage);
+  const stageV = r.stage ? stageLabel(r.stage) : '— Not set —';
   const compV  = optLabel(COMPLIANCE_OPTS, p.compliance_status);
   const catV   = optLabel(CATALOGUE_OPTS, catalogueKey(p));
   return (
@@ -1174,9 +1177,10 @@ function SystemKnows({ r }) {
       <div style={{fontSize:'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',
                    color:'#86868B',marginBottom:'4px'}}>What the system knows</div>
       <div style={{fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5,marginBottom:'7px'}}>
-        Read-only. The dates come from the records. Product stage mirrors this card&rsquo;s stage
-        &mdash; Sample in Sampling, Revision and Testing, Production in Production and Shipped, Not
-        set in Quoting; compliance is set on Testing; catalogue status on the Products list.
+        Read-only. The dates come from the records. Product stage is this card&rsquo;s stage; the
+        product&rsquo;s Sample / Production status on Testing follows it &mdash; Sample in Sampling,
+        Revision and Testing, Production in Production and Shipped, Not set in Quoting. Compliance
+        is set on Testing; catalogue status on the Products list.
       </div>
       {/* THE SIX REPORTED ROWS, from the list the exports read too. One source
           and four readers, so a file and the screen cannot describe the same
