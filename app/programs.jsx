@@ -2329,11 +2329,15 @@ export default function Programs({ userEmail }) {
   // and no second button, because a tile that both explained itself and carried an
   // Open button to the thing that explains it was two answers to one gesture.
   //
-  // THE EDGE IS HEALTH, NOT STAGE. The column heading already says the stage; the
-  // edge says whether the card is moving, which is what a board is scanned for.
-  // The bottom stripe that used to carry the stage colour is gone with the wrapped
-  // grid -- inside a column every tile is in the same stage, so a stripe repeating
-  // it on each one said nothing.
+  // THE EDGE IS THE STAGE, on request -- the colour of the column the tile sits
+  // in, from accentOf, the same table the pills and the column dots read. It
+  // follows the card when it moves, by pill or by drag, because it is derived
+  // from r.stage on every render. No stage set keeps accentOf's pale grey.
+  //
+  // HEALTH MOVED TO A PILL. The edge used to be health in three colours -- red
+  // Stalled, amber At risk, green On track. Stalled and At risk are now pills at
+  // the front of the pill row, in the same red and amber; On track shows
+  // nothing, since a card that is fine should not add a word to every tile.
   const Card = ({ r }) => {
     const p = r.products || {};
     const h = healthOf(r, r.tasks);
@@ -2371,10 +2375,10 @@ export default function Programs({ userEmail }) {
           if (dragMovedRef.current) { dragMovedRef.current = false; return; }
           setOpenId(r.id);
         }}
-        title={HEALTH[h].label}
+        title={stageLabel(r.stage) + ' · ' + HEALTH[h].label}
         style={{background:'#fff',borderRadius:'16px',padding:'15px 16px',border:'none',
                 boxShadow:'0 1px 3px rgba(0,0,0,.05)',cursor:'pointer',textAlign:'left',
-                display:'block',width:'100%',borderLeft:'3px solid '+HEALTH[h].color,
+                display:'block',width:'100%',borderLeft:'3px solid '+accentOf(r.stage),
                 fontFamily:'inherit',boxSizing:'border-box'}}>
         <div style={{fontFamily:'var(--mono)',fontSize:'11.5px',fontWeight:700,color:'#1A1A1C',
                      whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.sku || '—'}</div>
@@ -2392,8 +2396,21 @@ export default function Programs({ userEmail }) {
         {/* THE PILL ROW IS ABSENT RATHER THAN EMPTY when a card has nothing to
             flag, because a reserved blank strip is a row of nothing repeated down
             the whole board. */}
-        {(r.days !== null && r.days !== undefined) || late || openHere > 0 || blk || r.noteCount > 0 || notReq || r.retired ? (
+        {h !== 'on_track' || (r.days !== null && r.days !== undefined) || late || openHere > 0 || blk || r.noteCount > 0 || notReq || r.retired ? (
           <div style={{display:'flex',alignItems:'center',gap:'6px',marginTop:'11px',flexWrap:'wrap'}}>
+            {/* HEALTH, FIRST IN THE ROW -- what the edge used to say. The same
+                healthOf the Stalled tile above the board counts, so a pill and
+                that count cannot disagree. */}
+            {h !== 'on_track' && (
+              <span title={h === 'stalled'
+                  ? 'A sample is overdue, or a task is waiting on us and the card has not moved in over 7 days'
+                  : 'Over 14 days in this stage, or a task is past its due date'}
+                style={{fontSize:'11px',fontWeight:600,borderRadius:'6px',padding:'2px 8px',
+                        color:HEALTH[h].color,
+                        background:h === 'stalled' ? 'rgba(255,55,95,.08)' : 'rgba(255,159,10,.10)'}}>
+                {HEALTH[h].label}
+              </span>
+            )}
             {(r.days !== null && r.days !== undefined) && (
               <span title={'In this stage for ' + r.days + ' days'}
                 style={{fontSize:'11px',fontWeight:500,borderRadius:'6px',padding:'2px 8px',
