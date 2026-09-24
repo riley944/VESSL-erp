@@ -2,7 +2,7 @@
 // useRef went with the drag guard, and FilterSelect with the owner dropdown the
 // chips replaced. Neither would have errored if left -- an unused import resolves
 // perfectly well -- which is why they are removed by hand.
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { SB } from '@/lib/supabase';
 // Overlay, not a hand-rolled backdrop. It carries useDirtyGuard, so a typed note
 // is protected from a backdrop click by importing this and nothing else -- which
@@ -127,6 +127,10 @@ const STAGE_ACCENT = Object.fromEntries(MANUAL_STAGES.map(([k, , c]) => [k, c]))
 // absence of an answer, and a pale grey is what says that.
 const accentOf = k => STAGE_ACCENT[k] || '#C7C7CC';
 
+// Drag came back after the Advance button went -- see DRAGGING A TILE in
+// Programs. The column under the pointer is marked with an inset ring in the
+// stage's own colour rather than a tint, so no second colour table is needed.
+//
 // tintOf went with the drop targets. It existed only to tint a section while a
 // card was over it, and there is nothing to drag any more.
 
@@ -1803,6 +1807,48 @@ export default function Programs({ userEmail }) {
   // Set while a stage or an owner is being written, so the control can say so and
   // refuse a second click. Not in the page store -- it is in-flight, not a choice.
   const [saving, setSaving] = useState(null);
+  // ── DRAGGING A TILE, THE SECOND WAY TO MOVE A CARD ─────────────────────────
+  // Restored from the board Stage 1 removed (cfdadb4^), onto the six columns.
+  // The pills on the card remain the first way, and the only way on a phone.
+  //
+  // dropTarget is which column the pointer is over, for the ring. Transient,
+  // like openId -- a drag that survived navigation would be a ring on a column
+  // nobody is touching.
+  const [dropTarget, setDropTarget] = useState(null);
+  // A CLICK MUST NOT FOLLOW A DRAG, and a drag must not swallow a real click.
+  // Cleared on mousedown, which always precedes both, and set on dragstart -- so
+  // the tile click can tell the two apart without a timer. A timer would be a
+  // guess about how fast somebody let go.
+  const dragMovedRef = useRef(false);
+  // NO TOUCH DRAG. iPhone Safari does not dispatch HTML5 drag for web content
+  // and iPad does it only partly, so a tile is draggable only where the primary
+  // pointer is fine -- a mouse or a trackpad. False until mounted, so the server
+  // render and the first client render agree; phones keep the pills.
+  const [canDrag, setCanDrag] = useState(false);
+  useEffect(() => {
+    try { setCanDrag(!!(window.matchMedia && window.matchMedia('(pointer: fine)').matches)); } catch (e) {}
+  }, []);
+  // ── ENDING A DRAG IS NOT THE SAME AS dragend ────────────────────────────────
+  // dragend is dispatched to the SOURCE element. A tile dropped on another column
+  // is re-rendered under a different parent before that happens -- setStage
+  // patches rows optimistically and the columns recompute -- so a handler on the
+  // old node may never run. drop goes to the TARGET, which is still mounted, and
+  // both bubble to the document. So the document keeps its own pair of listeners
+  // that clear the ring and wipe the inline fade off every drag handle, from
+  // outside the tree, where no remount can defeat them. Esc during a drag ends it
+  // with a dragend and no drop, which lands here too -- that is the cancel.
+  useEffect(() => {
+    const clear = () => {
+      setDropTarget(null);
+      document.querySelectorAll('[data-plm-drag]').forEach(el => { el.style.opacity = ''; });
+    };
+    document.addEventListener('dragend', clear);
+    document.addEventListener('drop', clear);
+    return () => {
+      document.removeEventListener('dragend', clear);
+      document.removeEventListener('drop', clear);
+    };
+  }, []);
   // ── DRAG IS GONE, AND SO IS EVERYTHING THAT SERVED IT ───────────────────────
   // dropTarget, dragMovedRef, endDrag, the document dragend listener and the
   // expanded-tile state all existed for dragging cards between sections. The
@@ -2167,6 +2213,42 @@ export default function Programs({ userEmail }) {
   // or catalogue -- each has one home now, and product stage follows the card's
   // own moves through syncProductStage in setStage.
 
+  // ── A COLUMN AS A DROP TARGET ───────────────────────────────────────────────
+  // The six stage columns only. No stage set and Removed are places a card is
+  // found, not places it can be put -- a null stage is not a value anybody sets,
+  // and removal has its own control.
+  //
+  // THE DROP IS A PILL CLICK. It calls setStage, the one function the pills
+  // call, so the optimistic move, the Last edited stamp, the checklist seeding,
+  // the product stage and the failure toast all follow a drop exactly as they
+  // follow a pill. Backward drops are allowed, as the pills allow them. A drop
+  // back onto the card's own column writes nothing -- setStage returns early.
+  //
+  // PRODUCTION AND SHIPPED ASK FIRST, and only they do. They are the two drops
+  // that cannot be taken back by dragging the tile back: syncProductStage marks
+  // the product as in production, forward only. Every other drop is undone by
+  // dragging it again.
+  //
+  // The dragleave guard is why the ring does not flicker: moving the pointer
+  // from a column onto a tile INSIDE it fires dragleave on the column, so the
+  // target is cleared only when the pointer has actually left the subtree.
+  const DROP_CONFIRM = { production:'Production', shipped:'Shipped' };
+  const dropProps = (stageKey) => ({
+    onDragOver: e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; },
+    onDragEnter: () => setDropTarget(stageKey),
+    onDragLeave: e => { if (!e.currentTarget.contains(e.relatedTarget)) setDropTarget(t => (t === stageKey ? null : t)); },
+    onDrop: e => {
+      e.preventDefault();
+      setDropTarget(null);
+      const id = e.dataTransfer.getData('text/plain');
+      const row = enriched.find(x => x.id === id);
+      if (!row || row.stage === stageKey || saving === row.id) return;
+      if (DROP_CONFIRM[stageKey]
+          && !window.confirm('Move to ' + DROP_CONFIRM[stageKey] + '? This marks the product as in production.')) return;
+      setStage(row, stageKey);
+    },
+  });
+
   // dropProps was here -- the dragover, dragenter, dragleave and drop handlers a
   // section needed to be a drop target. A card changes stage from the card now.
 
@@ -2262,8 +2344,33 @@ export default function Programs({ userEmail }) {
     // client for something left in Sampling is still waiting.
     const openHere = openTasks(r).filter(t => t.stage === r.stage).length;
     const blk = blockerOf(r);
+    // ── THE HANDLE IS A WRAPPER, NOT THE BUTTON ─────────────────────────────
+    // draggable on a form control behaves differently across browsers, and the
+    // old board put it on a div for that reason. Off while this card is saving,
+    // for a card that is off the board, and wherever the pointer is not fine.
+    // THE FADE IS WRITTEN HERE AND WIPED HERE -- no state holds it, so a tile
+    // remounted mid-drag comes back at full opacity by definition, and
+    // data-plm-drag is what lets the document listener find any fade a lost
+    // dragend left behind.
+    const dragOn = canDrag && !r.archived && saving !== r.id;
     return (
-      <button onClick={()=>setOpenId(r.id)}
+      <div draggable={dragOn} data-plm-drag=""
+        onMouseDown={()=>{ dragMovedRef.current = false; }}
+        onDragStart={e=>{
+          if (!dragOn) { e.preventDefault(); return; }
+          e.dataTransfer.setData('text/plain', r.id);
+          e.dataTransfer.effectAllowed = 'move';
+          dragMovedRef.current = true;
+          e.currentTarget.style.opacity = '.5';
+        }}
+        onDragEnd={e=>{ e.currentTarget.style.opacity = ''; setDropTarget(null); }}
+        style={{cursor:dragOn ? 'grab' : 'default'}}>
+      <button onClick={()=>{
+          // A drag must never open the card. The flag is set on dragstart and
+          // cleared on the next mousedown, so a real click still opens it.
+          if (dragMovedRef.current) { dragMovedRef.current = false; return; }
+          setOpenId(r.id);
+        }}
         title={HEALTH[h].label}
         style={{background:'#fff',borderRadius:'16px',padding:'15px 16px',border:'none',
                 boxShadow:'0 1px 3px rgba(0,0,0,.05)',cursor:'pointer',textAlign:'left',
@@ -2357,6 +2464,7 @@ export default function Programs({ userEmail }) {
           )}
         </div>
       </button>
+      </div>
     );
   };
 
@@ -2495,8 +2603,16 @@ export default function Programs({ userEmail }) {
         </div>
       ) : (
         <div style={{display:'flex',gap:'14px',overflowX:'auto',paddingBottom:'14px'}}>
-          {columns.map(col => (
-            <div key={col.key} style={{flex:'0 0 272px',minWidth:'272px'}}>
+          {columns.map(col => {
+            // Only the six stage columns take a drop; see dropProps.
+            const droppable = STAGE_LABEL[col.key] !== undefined;
+            const over = droppable && dropTarget === col.key;
+            return (
+            <div key={col.key} {...(droppable ? dropProps(col.key) : {})}
+              style={{flex:'0 0 272px',minWidth:'272px',borderRadius:'18px',
+                      boxShadow:over ? 'inset 0 0 0 2px ' + col.color : 'none',
+                      background:over ? 'rgba(0,0,0,.025)' : 'transparent',
+                      transition:'box-shadow .1s, background .1s'}}>
               <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'2px 6px 12px'}}>
                 <span style={{width:'9px',height:'9px',borderRadius:'50%',flexShrink:0,background:col.color}} />
                 <span style={{fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',
@@ -2511,7 +2627,8 @@ export default function Programs({ userEmail }) {
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
