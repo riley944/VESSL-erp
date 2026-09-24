@@ -242,17 +242,31 @@ const authorIsMe = (author, email) => {
   return !!me && a === me;
 };
 
-// A NOTE IS A TOUCH, and so is a sample event, an edit and a delete. The card
-// reports a single last-touch line and it would be a lie if working on a card
-// left it reading from last week. Stamped after the write lands; a failure here
-// leaves the record correct and the stamp stale, which is the better way round.
+// A NOTE IS A TOUCH, and so is a task, an edit and a delete. The tile reports
+// Last edited by, and it would be a lie if working on a card left it reading
+// from last week. Stamped after the write lands; a failure here leaves the
+// record correct and the stamp stale, which is the better way round.
+//
+// IT SAYS SO WHEN IT FAILS. Returns null on success and a message otherwise,
+// and the note and checklist callers toast it -- a stale Last edited line with
+// nothing said is exactly the silent drift the tile exists to prevent. A
+// success that updated no row counts as a failure: RLS filtering the row away
+// returns no error and changes nothing.
 const touchProgram = async (programId, userEmail) => {
   try {
-    await SB.from('programs')
+    const { data, error } = await SB.from('programs')
       .update({ updated_at: new Date().toISOString(), updated_by: userEmail || null })
-      .eq('id', programId);
-  } catch (e) {}
+      .eq('id', programId)
+      .select('id');
+    if (error) return error.message;
+    if (!data || !data.length) return 'no card row was updated';
+    return null;
+  } catch (e) {
+    return (e && e.message) || String(e);
+  }
 };
+const touchFailedToast = msg =>
+  window._toast?.('Saved, but the card’s Last edited stamp could not be updated — ' + msg, 'err');
 
 // staff is the board's staff_profiles list, for showing the author by NAME.
 // author itself stays the email -- the edit and delete policies compare it to
@@ -303,7 +317,8 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
   // the notes back, and tell the board to re-read so the card behind this modal
   // matches what was just written rather than waiting for the next visit.
   const settle = async () => {
-    await stampProgram();
+    const failed = await stampProgram();
+    if (failed) touchFailedToast(failed);
     await load();
     if (onTouched) onTouched();
   };
@@ -873,7 +888,8 @@ function Checklist({ r, staff = [], userEmail, onTouched }) {
   const [err, setErr] = useState('');
 
   const settle = async () => {
-    await touchProgram(r.id, userEmail);
+    const failed = await touchProgram(r.id, userEmail);
+    if (failed) touchFailedToast(failed);
     if (onTouched) await onTouched();
   };
   const write = async (t, fn) => {
@@ -1782,7 +1798,7 @@ export default function Programs({ userEmail }) {
   // Shipped is a column now, so there is nothing to open or shut, and a card on a
   // retired product sits in its own stage column like any other -- the tile says
   // so with a pill rather than the card being filed somewhere else.
-  const [ui, setUi] = usePageState('programs', { search:'', showRemoved:false, ownerSel:[], blocker:'' });
+  const [ui, setUi] = usePageState('programs', { search:'', showRemoved:false, blocker:'' });
   const [openId, setOpenId] = useState(null);
   const [staff, setStaff] = useState([]);
   // Set while a stage or an owner is being written, so the control can say so and
@@ -1817,7 +1833,7 @@ export default function Programs({ userEmail }) {
         // name on the card and the owner filter.
         SB.from('programs')
           .select('id,product_id,client_company_id,expected_ship_date,archived,declared_stage,declared_stage_at,owner_id,'
-                + 'updated_at,updated_by,'
+                + 'created_at,created_by,updated_at,updated_by,'
                 // The sample strip, script 77. Without these on the board read the
                 // overdue flag on a tile could never fire.
                 + 'sample_round,master_sample_included,sample_sent_date,sample_due_back,'
@@ -1842,9 +1858,8 @@ export default function Programs({ userEmail }) {
         // Product-wide on purpose -- a test report has no client, and testing is
         // not repeated per client. The panel says the same thing on screen.
         SB.from('test_reports').select('product_id,test_date,issue_date,overall_result').not('product_id','is',null),
-        // The owner filter offers every colleague, not only those who happen to
-        // own a card today -- a filter that grows as work is assigned would keep
-        // changing shape under whoever is using it.
+        // Every colleague -- for the owner select on the card, the checklist
+        // owners and the names on the tile and the notes.
         SB.from('staff_profiles').select('id,email,full_name').order('full_name', { nullsFirst:false }),
         // EVERY CHECKLIST, IN BULK. The tile's blocker pill, its health edge and
         // the three waiting tiles all read tasks, so they arrive with the board
@@ -1943,6 +1958,13 @@ export default function Programs({ userEmail }) {
                // disagree usefully.
                lastTouchAt: r.updated_at || null,
                lastTouchBy: staffName(staff, r.updated_by),
+               // CREATED AND LAST EDITED, for the tile's two foot lines. A card
+               // last touched within a minute of being created has never been
+               // edited -- createProgram stamps updated_at on insert, a few
+               // milliseconds from created_at -- so it shows the Created line only.
+               createdByName: staffName(staff, r.created_by),
+               edited: !!(r.updated_at && r.created_at
+                          && (new Date(r.updated_at) - new Date(r.created_at)) > 60000),
                noteCount: noteCounts[r.id] || 0,
                tasks: tasks[r.id] || [],
                // null when nothing has shipped and nothing is planned.
@@ -2178,21 +2200,13 @@ export default function Programs({ userEmail }) {
     return c;
   }, [board]);
 
-  // ── OWNER, INCLUDING NOBODY ─────────────────────────────────────────────────
-  // Unowned is an option with a count rather than an absence, on Riley word. A
-  // card with no owner is the one state worth surfacing -- it means the creator
-  // resolved to no staff row -- and a filter that could not express it would hide
-  // exactly the thing somebody needs to find.
-  const ownerCounts = useMemo(() => {
-    const c = { none: 0 };
-    board.forEach(r => { const k = r.owner_id || 'none'; c[k] = (c[k]||0) + 1; });
-    return c;
-  }, [board]);
+  // ── THE OWNER FILTER IS GONE ────────────────────────────────────────────────
+  // The Everyone / Unowned / staff chips, ownerSel, ownerCounts and ownerMatches
+  // all went together, on request. Removing only the chips would have left a
+  // selection already held in the page store filtering the board with nothing on
+  // screen to clear it. Ownership shows inside the card now, and nowhere on the
+  // board.
 
-  // ownerOptions was the shape FilterSelect wanted. The chips read ownerCounts
-  // and staff directly, so the intermediate list had nothing left to do.
-
-  const ownerMatches = r => !ui.ownerSel.length || ui.ownerSel.includes(r.owner_id || 'none');
   // A waiting tile, pressed. Any OPEN task with that blocker qualifies, as on
   // 11 Aug -- the tile counts cards, and this shows the cards it counted.
   const blockerMatches = r => !ui.blocker || openTasks(r).some(t => t.blocker === ui.blocker);
@@ -2206,12 +2220,12 @@ export default function Programs({ userEmail }) {
   // SEARCH AND OWNER, AND NOTHING ELSE. The stage filter went with the rail --
   // every column is on screen at once, so narrowing to one stage is what scrolling
   // does. Each column takes its own slice of this list below.
-  const shownBoard   = useMemo(() => board.filter(r => matches(r) && ownerMatches(r) && blockerMatches(r)),
-    [board, ui.search, ui.ownerSel, ui.blocker]);
+  const shownBoard   = useMemo(() => board.filter(r => matches(r) && blockerMatches(r)),
+    [board, ui.search, ui.blocker]);
   // The removed column reads the same two filters, so a search narrows it too --
   // which is the point, since finding one removed card is what it is for.
-  const shownRemoved = useMemo(() => removed.filter(r => matches(r) && ownerMatches(r) && blockerMatches(r)),
-    [removed, ui.search, ui.ownerSel, ui.blocker]);
+  const shownRemoved = useMemo(() => removed.filter(r => matches(r) && blockerMatches(r)),
+    [removed, ui.search, ui.blocker]);
 
   // railStages was here. The sections carry their own headings and counts now, and
   // the tiles above carry the totals, so a second list of the same six labels had
@@ -2323,8 +2337,23 @@ export default function Programs({ userEmail }) {
           </div>
         ) : null}
 
-        <div style={{fontSize:'11px',marginTop:'9px',color:r.ownerName?'#B0B0B4':'var(--hot)'}}>
-          {r.ownerName || 'Unowned'}
+        {/* ── WHO MADE IT, AND WHO LAST TOUCHED IT ─────────────────────────
+            Replaces the owner line; ownership now shows only inside the card.
+            Names through staffName, so an address with no profile still reads
+            as somebody. A card created before created_by existed says Created
+            and the date alone. Never edited since creation shows the first
+            line only. Each line cuts with an ellipsis rather than wrapping.
+            Dated with fmt -- Sep 23, 2026, with the year -- rather than the
+            shared shortDate, which the checklist and the emails keep. */}
+        <div style={{fontSize:'11px',marginTop:'9px',color:'#B0B0B4',lineHeight:1.45}}>
+          <div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+            Created{r.createdByName ? ' by ' + r.createdByName : ''}{r.created_at ? ' · ' + fmt(r.created_at) : ''}
+          </div>
+          {r.edited && (
+            <div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+              Last edited{r.lastTouchBy ? ' by ' + r.lastTouchBy : ''} · {fmt(r.updated_at)}
+            </div>
+          )}
         </div>
       </button>
     );
@@ -2440,38 +2469,12 @@ export default function Programs({ userEmail }) {
         </label>
       </div>
 
-      {/* ── OWNER CHIPS, FROM staff_profiles ─────────────────────────────────
-          The 11 Aug row, with the hardcoded team replaced by the staff list the
-          board already fetches. Multi-select rather than Riley single-select,
-          because ownerSel is an array in the page store and narrowing to two
-          people is a question somebody actually asks.
-
-          Unowned is a chip with a count rather than an absence, on Riley word --
-          a card with no owner is the one state worth surfacing. */}
-      <div style={{display:'flex',gap:'6px',marginBottom:'18px',flexWrap:'wrap',alignItems:'center'}}>
-        {(() => {
-          const toggle = v => setUi('ownerSel', ui.ownerSel.includes(v)
-            ? ui.ownerSel.filter(x => x !== v) : ui.ownerSel.concat([v]));
-          const chip = (key, label, active, count, hot) => (
-            <button key={key} onClick={key === '' ? () => setUi('ownerSel', []) : () => toggle(key)}
-              style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',
-                      cursor:'pointer',fontFamily:'inherit',boxShadow:'0 1px 2px rgba(0,0,0,.05)',
-                      background:active ? '#1D1D1F' : '#fff',
-                      color:active ? '#fff' : (hot && !active ? 'var(--hot)' : '#5A5A5E')}}>
-              {label}{count === null ? '' : ' ' + count}
-            </button>
-          );
-          return [
-            chip('', 'Everyone', ui.ownerSel.length === 0, board.length, false),
-            chip('none', 'Unowned', ui.ownerSel.includes('none'), ownerCounts.none || 0, true),
-            ...staff.map(s => chip(s.id, s.full_name || s.email,
-                                   ui.ownerSel.includes(s.id), ownerCounts[s.id] || 0, false)),
-          ];
-        })()}
-        {(ui.ownerSel.length > 0 || ui.blocker) && (
-          <span style={{fontSize:'12px',color:'#86868B',marginLeft:'4px'}}>{shownBoard.length} shown</span>
-        )}
-      </div>
+      {/* The owner chip row was here. The one thing it carried that still has a
+          job is the N shown hint, which now follows only the Waiting tile
+          filter. */}
+      {ui.blocker && (
+        <div style={{fontSize:'12px',color:'#86868B',margin:'-4px 0 14px'}}>{shownBoard.length} shown</div>
+      )}
 
       {/* ── THE COLUMNS ARE THE BOARD ────────────────────────────────────────
           Fixed 272px columns scrolling sideways, which is the 11 Aug layout. The
