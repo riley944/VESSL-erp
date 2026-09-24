@@ -1046,7 +1046,11 @@ const cardGroups = r => {
     ],
     knows: [
       ...recordRows(r).map(([label, value]) => [label, value]),
-      ['Product stage', optLabel(STAGE_OPTS, p.product_stage)],
+      // THE PRODUCT'S OWN FIELD, labelled as such. The card's screen row called
+      // Product stage shows the card's stage by name; this line is
+      // products.product_stage, which mirrors it as Sample or Production, and
+      // the file's own Stage line above already names the card's stage.
+      ['Sample / Production', optLabel(STAGE_OPTS, p.product_stage)],
       ['Compliance', optLabel(COMPLIANCE_OPTS, p.compliance_status)],
       [sug[0], sug[1]],
       ['Catalogue', optLabel(CATALOGUE_OPTS, catalogueKey(p))],
