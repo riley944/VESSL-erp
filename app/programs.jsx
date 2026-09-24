@@ -273,9 +273,20 @@ const touchFailedToast = msg =>
 // author itself stays the email -- the edit and delete policies compare it to
 // the email in the caller's token, so a name stored there would lock the
 // writer out of their own note. The name is looked up for display only.
+// ── CARD NOTES ARE PER STAGE (script 79) ────────────────────────────────────
+// stageScoped turns it on, for program_notes only; General Notes (product_notes)
+// pass nothing and behave exactly as before. A scoped panel lists the notes
+// written in the card's current stage -- plus any with no stage, which belong
+// everywhere -- and folds the rest into a muted "N notes in other stages" line
+// that opens to them grouped by stage, the way Open elsewhere does for tasks.
+// The stage a note was written in comes from insertExtra, which the card fills
+// with its current stage; it is never edited afterwards, and the grant agrees.
 function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraCol, extraDefault,
-                      filter = null, title, subtitle, programId, userEmail, onTouched }) {
+                      filter = null, title, subtitle, programId, userEmail, onTouched,
+                      stageScoped = false, stage = null }) {
   const [notes, setNotes] = useState(null);
+  // Per card-open, not remembered -- the same rule as Open elsewhere.
+  const [showOther, setShowOther] = useState(false);
   const [text, setText]   = useState('');
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState('');
@@ -296,7 +307,7 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
   // data rather than like a bug, and is the worse kind of wrong.
   const load = async () => {
     let qy = SB.from(table)
-      .select('id,author,note,created_at,edited_at' + (extraCol ? ',' + extraCol : ''))
+      .select('id,author,note,created_at,edited_at' + (extraCol ? ',' + extraCol : '') + (stageScoped ? ',stage' : ''))
       .eq(keyCol, keyId);
     if (filter) qy = qy.eq(filter.col, filter.val);
     const { data, error } = await qy.order('created_at', { ascending:false });
@@ -388,36 +399,10 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
     catch { return String(iso); }
   };
 
-  return (
-    <div style={{marginTop:'16px',paddingTop:'14px',borderTop:'1px solid #ECECEE'}}>
-      <div style={{fontSize:'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',
-                   color:'#86868B',marginBottom:subtitle?'3px':'9px'}}>{title}</div>
-      {subtitle && (
-        <div style={{fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5,marginBottom:'9px'}}>{subtitle}</div>
-      )}
-
-      <textarea value={text} onChange={e=>setText(e.target.value)} rows={2}
-        placeholder="Add a note — you can edit or delete your own notes later"
-        style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 11px',
-                fontSize:'13px',fontFamily:'inherit',outline:'none',resize:'vertical',
-                background:'#fff',boxSizing:'border-box'}} />
-      <div style={{display:'flex',alignItems:'center',gap:'10px',marginTop:'7px'}}>
-        <button onClick={add} disabled={busy || !text.trim()}
-          style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 14px',border:'none',
-                  fontFamily:'inherit',cursor:busy||!text.trim()?'default':'pointer',
-                  background:text.trim()?'#1D1D1F':'#E5E5EA',color:text.trim()?'#fff':'#A0A0A4'}}>
-          {busy ? 'Adding…' : 'Add note'}
-        </button>
-        {err && <span style={{fontSize:'11.5px',color:'var(--hot)'}}>{err}</span>}
-      </div>
-
-      {notes === null ? (
-        <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'12px'}}>Reading notes…</div>
-      ) : notes.length === 0 ? (
-        <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'12px'}}>No notes yet.</div>
-      ) : (
-        <div style={{marginTop:'12px',display:'flex',flexDirection:'column',gap:'9px'}}>
-          {notes.map(n => {
+  // One note as a card -- who and when, Edit and Delete on your own, the text or
+  // its editor. Lifted out of the list so the current stage and the other
+  // stages render notes identically.
+  const renderNote = n => {
             const mine = isMine(n);
             const editing = editId === n.id;
             return (
@@ -477,9 +462,80 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
                 )}
               </div>
             );
-          })}
-        </div>
+  };
+
+  return (
+    <div style={{marginTop:'16px',paddingTop:'14px',borderTop:'1px solid #ECECEE'}}>
+      <div style={{fontSize:'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',
+                   color:'#86868B',marginBottom:subtitle?'3px':'9px'}}>{title}</div>
+      {subtitle && (
+        <div style={{fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5,marginBottom:'9px'}}>{subtitle}</div>
       )}
+
+      <textarea value={text} onChange={e=>setText(e.target.value)} rows={2}
+        placeholder="Add a note — you can edit or delete your own notes later"
+        style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 11px',
+                fontSize:'13px',fontFamily:'inherit',outline:'none',resize:'vertical',
+                background:'#fff',boxSizing:'border-box'}} />
+      <div style={{display:'flex',alignItems:'center',gap:'10px',marginTop:'7px'}}>
+        <button onClick={add} disabled={busy || !text.trim()}
+          style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 14px',border:'none',
+                  fontFamily:'inherit',cursor:busy||!text.trim()?'default':'pointer',
+                  background:text.trim()?'#1D1D1F':'#E5E5EA',color:text.trim()?'#fff':'#A0A0A4'}}>
+          {busy ? 'Adding…' : 'Add note'}
+        </button>
+        {err && <span style={{fontSize:'11.5px',color:'var(--hot)'}}>{err}</span>}
+      </div>
+
+      {notes === null ? (
+        <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'12px'}}>Reading notes…</div>
+      ) : (() => {
+        // This stage's notes, and notes with no stage; everything else is folded.
+        const here  = stageScoped ? notes.filter(n => !n.stage || n.stage === stage) : notes;
+        const other = stageScoped ? notes.filter(n => n.stage && n.stage !== stage) : [];
+        const link = (label, onClick) => (
+          <button onClick={onClick}
+            style={{background:'none',border:'none',padding:0,fontSize:'11px',fontWeight:500,color:'#A0A0A4',
+                    cursor:'pointer',fontFamily:'inherit',textDecoration:'underline',textUnderlineOffset:'2px'}}>{label}</button>
+        );
+        return (
+          <>
+            {here.length === 0 ? (
+              <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'12px'}}>
+                {other.length ? 'No notes in this stage.' : 'No notes yet.'}
+              </div>
+            ) : (
+              <div style={{marginTop:'12px',display:'flex',flexDirection:'column',gap:'9px'}}>
+                {here.map(renderNote)}
+              </div>
+            )}
+            {other.length > 0 && !showOther && (
+              <div style={{marginTop:'12px',fontSize:'11.5px',color:'#B0B0B4'}}>
+                {other.length} note{other.length === 1 ? '' : 's'} in other stages · {link('Show all', () => setShowOther(true))}
+              </div>
+            )}
+            {other.length > 0 && showOther && (
+              <div style={{marginTop:'14px'}}>
+                <div style={{display:'flex',alignItems:'baseline',gap:'8px'}}>
+                  <span style={{fontSize:'11px',fontWeight:600,color:'#B0B0B4',textTransform:'uppercase',letterSpacing:'.06em'}}>
+                    Other stages · {other.length}
+                  </span>
+                  {link('Show this stage only', () => setShowOther(false))}
+                </div>
+                {/* In ladder order, each stage named, the way the working file prints them. */}
+                {MANUAL_STAGES.filter(([k]) => other.some(n => n.stage === k)).map(([k, l]) => (
+                  <div key={k} style={{marginTop:'10px'}}>
+                    <div style={{fontSize:'11.5px',fontWeight:600,color:'#86868B',marginBottom:'6px'}}>{l}</div>
+                    <div style={{display:'flex',flexDirection:'column',gap:'9px'}}>
+                      {other.filter(n => n.stage === k).map(renderNote)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }
@@ -1117,7 +1173,7 @@ const downloadBlob = (blob, filename) => {
 // changed. The sample log is no longer exported; its rows stay in the table.
 const fetchCardNotes = async (r, staff = []) => {
   const own = await SB.from('program_notes')
-    .select('author,note,created_at,edited_at,source')
+    .select('author,note,created_at,edited_at,source,stage')
     .eq('program_id', r.id).order('created_at', { ascending:false });
   if (own.error) throw new Error(own.error.message);
   // A card with no product has no product notes to ask for. product_id is the
@@ -1142,7 +1198,7 @@ const fetchCardNotes = async (r, staff = []) => {
   const shape = (list, kindCol, dflt) => (list || []).map(n => ({
     // The author by name, as on screen -- staffName falls back to the email.
     kind: (n[kindCol] && n[kindCol] !== dflt) ? n[kindCol] : '', author: staffName(staff, n.author) || 'unknown',
-    date: n.created_at, edited: !!n.edited_at, text: n.note || '',
+    date: n.created_at, edited: !!n.edited_at, text: n.note || '', stage: n.stage || null,
   }));
   return { card: shape(own.data, 'source', 'manual'), general: shape(prod.data, 'kind', 'sampling') };
 };
@@ -1312,6 +1368,15 @@ const workingTasks = (r, staff) => MANUAL_STAGES.map(([k, l]) => ({
   }),
 })).filter(g => g.tasks.length);
 
+// ALL card notes, grouped by the stage they were written in, ladder order, the
+// stage named; notes with no stage last. The card shows one stage at a time;
+// the file is the whole history.
+const workingNoteGroups = card => {
+  const groups = MANUAL_STAGES.map(([k, l]) => ({ label: l, list: card.filter(n => n.stage === k) }));
+  groups.push({ label: 'No stage', list: card.filter(n => !n.stage || STAGE_LABEL[n.stage] === undefined) });
+  return groups.filter(g => g.list.length);
+};
+
 const buildWorkingDoc = ({ r, factoryName, staff, card, logo }) => {
   const p = r.products || {};
   // SKU, product and client are the letterhead; the grid carries the rest.
@@ -1343,7 +1408,9 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, logo }) => {
       +(groups.length ? groups.map(table).join('')
         : '<div style="border-top:1px solid #e5e7eb;padding:9px 0;font-size:13px;color:#6b7280;">No tasks.</div>')
     +'</div>'
-    +docNoteBlock('Card notes', card, 'No notes.')
+    +(workingNoteGroups(card).length
+      ? workingNoteGroups(card).map(g => docNoteBlock('Card notes · ' + g.label, g.list, '')).join('')
+      : docNoteBlock('Card notes', [], 'No notes.'))
     +docFooter('PLM card · working');
   return docShell('PLM Working — '+(p.sku || p.name || 'Program'), flow);
 };
@@ -1472,13 +1539,14 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         [13, 44, 7, 17, 22, 12, 18].forEach((w, i) => { cs.getColumn(i + 1).width = w; });
 
         const ns = wb.addWorksheet('Card notes');
-        ns.addRow(['Kind', 'Author', 'Date', 'Edited', 'Note']);
-        notes.card.forEach(n => ns.addRow([n.kind, n.author, excelDate(n.date), n.edited ? 'Yes' : '', n.text]));
+        ns.addRow(['Stage', 'Kind', 'Author', 'Date', 'Edited', 'Note']);
+        workingNoteGroups(notes.card).forEach(g => g.list.forEach(n =>
+          ns.addRow([g.label, n.kind, n.author, excelDate(n.date), n.edited ? 'Yes' : '', n.text])));
         ns.getRow(1).font = { bold: true };
         ns.views = [{ state:'frozen', ySplit:1 }];
-        ns.getColumn(3).numFmt = 'yyyy-mm-dd hh:mm';
-        [13, 30, 19, 9, 90].forEach((w, i) => { ns.getColumn(i + 1).width = w; });
-        ns.getColumn(5).alignment = { wrapText: true, vertical: 'top' };
+        ns.getColumn(4).numFmt = 'yyyy-mm-dd hh:mm';
+        [13, 13, 30, 19, 9, 90].forEach((w, i) => { ns.getColumn(i + 1).width = w; });
+        ns.getColumn(6).alignment = { wrapText: true, vertical: 'top' };
 
         const wbuf = await wb.xlsx.writeBuffer();
         downloadBlob(new Blob([wbuf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
@@ -1549,8 +1617,9 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         workingTasks(r, staff).forEach(g => g.tasks.forEach(t => lines.push(
           [g.label, t.task, t.done, t.doneAt ? stampText(t.doneAt) : '', t.owner, t.due || '', t.blocker].map(cell).join(','))));
         lines.push('');
-        lines.push(['Kind', 'Author', 'Date', 'Edited', 'Note'].map(cell).join(','));
-        notes.card.forEach(n => lines.push([n.kind, n.author, stampText(n.date), n.edited ? 'Yes' : '', n.text].map(cell).join(',')));
+        lines.push(['Stage', 'Kind', 'Author', 'Date', 'Edited', 'Note'].map(cell).join(','));
+        workingNoteGroups(notes.card).forEach(g => g.list.forEach(n => lines.push(
+          [g.label, n.kind, n.author, stampText(n.date), n.edited ? 'Yes' : '', n.text].map(cell).join(','))));
         const wcsv = '﻿' + lines.join('\r\n') + '\r\n';
         downloadBlob(new Blob([wcsv], { type:'text/csv;charset=utf-8;' }), fileBase(r, 'working') + '.csv');
         setExporting(false);
@@ -1709,7 +1778,8 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
           the email in the token -- a name would insert and then be uneditable
           and undeletable by the person who wrote it. */}
       <NotesPanel staff={staff} table="program_notes" keyCol="program_id" keyId={r.id}
-        insertExtra={{ source: 'manual' }} extraCol="source" extraDefault="manual"
+        insertExtra={{ source: 'manual', stage: r.stage || null }} extraCol="source" extraDefault="manual"
+        stageScoped stage={r.stage || null}
         title="Card Notes" programId={r.id} userEmail={userEmail} onTouched={onTouched} />
       {/* ── OFF THE BOARD, NOT OUT OF EXISTENCE ─────────────────────────────
           Riley's Archive, and last in the tab, which is where CodeModal and
@@ -2086,7 +2156,7 @@ export default function Programs({ userEmail }) {
     const nameOf = id => { const s = staff.find(x => x.id === id); return s ? (s.full_name || s.email) : 'nobody'; };
     try {
       await SB.from('program_notes').insert({
-        program_id: r.id, author: userEmail || null, source: 'owner-change',
+        program_id: r.id, author: userEmail || null, source: 'owner-change', stage: r.stage || null,
         note: 'Reassigned from ' + (r.ownerName || 'nobody') + ' to ' + nameOf(next) + ' by ' + (userEmail || 'unknown'),
       });
     } catch (e) {}
