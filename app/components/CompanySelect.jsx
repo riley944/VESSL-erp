@@ -38,6 +38,12 @@ const addBtnStyle = { display: 'inline-flex', alignItems: 'center', gap: 6, widt
 const clearBtnStyle = { background: 'transparent', border: 'none', color: '#6a7488', display: 'inline-flex', padding: 2 };
 const filterStyle = { border: '1px solid #e7eaf0', background: '#ffffff', borderRadius: 10, padding: '10px 12px', fontSize: 14, color: '#0f1729', width: '100%', marginBottom: 6 };
 
+// The global `label{...}` rule from app/globals.css, copied value for value. The
+// picker used to BE a <label>, so its caption and its box text inherited these;
+// as a <div> it applies them itself, before fieldStyle, so the host's layout
+// (display, gap) still wins exactly as it did over the label rule.
+const LABEL_LOOK = { display: 'block', fontFamily: 'var(--mono)', fontSize: '10px', letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '7px' };
+
 export const sameName = (a, b) =>
   String(a == null ? '' : a).trim().toLowerCase() === String(b == null ? '' : b).trim().toLowerCase();
 
@@ -144,7 +150,13 @@ export function CompanySelect({
   }, [open]);
 
   return (
-    <label style={{ ...fieldStyle, position: 'relative' }}>
+    // A <div>, NOT A <label>. As a label, a click on its text was forwarded by the
+    // browser to its first control -- in a filled picker that is the clear x --
+    // so clicking the chosen factory or client to change it wiped the value
+    // instead of opening the list (2026-09-24, both engines). LABEL_LOOK carries
+    // the global label rule the old element picked up, so the caption and the
+    // box look exactly as before; only the forwarding is gone.
+    <div style={{ ...LABEL_LOOK, ...fieldStyle, position: 'relative' }}>
       <span style={labelStyle}>{label}</span>
 
       {/* The committed value, rendered straight from `value` whether or not the
@@ -189,7 +201,7 @@ export function CompanySelect({
           </button>
         </div>
       )}
-    </label>
+    </div>
   );
 }
 
