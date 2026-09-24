@@ -1087,8 +1087,17 @@ const recordRows = r => {
   // The same test currentStage uses, imported rather than repeated -- production
   // implies sampling happened, and that rule lives in lib/lifecycle.js.
   const sampled = sampledFromStage(p);
-  const ship = r.shipping;
   const none = 'Nothing recorded';
+  // ── THE ORDER ROWS SHOW THE LATEST, NOT THE FIRST ─────────────────────────
+  // A product is reordered, so Purchase order, Sales order and Shipping name the
+  // MOST RECENT record for this product and client -- its number and date --
+  // with a count when there is more than one. They were the earliest date and
+  // nothing else, which answered when the relationship started rather than
+  // where it stands. Read live from the board fetch every time, so a reorder
+  // shows on the next load whether the card is active, moved or removed. The
+  // other rows are one-time lifecycle facts and stay as they were.
+  const ofN = n => (n > 1 ? ' · latest of ' + n : '');
+  const po = r.latestPO, so = r.latestSO, sh = r.latestShip;
   return [
     ['Quoted', ev.quoted ? fmt(ev.quoted.on) + (ev.quoted.n > 1 ? ' · ' + ev.quoted.n + ' quotes' : '') : none, !ev.quoted],
     // THE CARD'S OWN SAMPLE STRIP when anything on it is set, because it says
@@ -1103,12 +1112,18 @@ const recordRows = r => {
                : sampled === 'sample' ? 'Product marked Sample'
                : 'Not recorded', !strip && !sampled]];
     })(),
-    ['Purchase order', ev.ordered ? fmt(ev.ordered.on) : none, !ev.ordered],
-    ['Sales order', ev.sold ? fmt(ev.sold.on) : none, !ev.sold],
+    ['Purchase order', po ? po.num + (po.on ? ' · ' + fmt(po.on) : '') + ofN(po.n) : none, !po],
+    ['Sales order', so ? so.num + (so.on ? ' · ' + fmt(so.on) : '') + ofN(so.n) : none, !so],
     // AN ETD IS A PLAN AND SAYS SO. Departed is what actually happened and wins
     // whenever it exists; the estimate only speaks when nothing has moved.
-    ['Shipping', ship ? (ship.kind === 'departed' ? 'Departed ' + fmt(ship.on)
-                                                  : 'ETD ' + fmt(ship.on)) : none, !ship],
+    //
+    // NO SHIPMENT ON ITS POs, rather than Nothing recorded, when this product
+    // has purchase orders and none of them is on a shipment -- a missing link
+    // must not read as never shipped. Shipments reach a product through its
+    // PO lines, so a PO line not linked to the product is invisible here.
+    ['Shipping', sh ? sh.num + (sh.on ? ' · ' + (sh.kind === 'departed' ? 'Departed ' : 'ETD ') + fmt(sh.on) : ' · no date')
+                      + ofN(sh.n)
+               : po ? 'No shipment on its POs' : none, !sh],
     ['Test report', ev.tested ? fmt(ev.tested.on) : none, !ev.tested],
   ];
 };
@@ -1895,10 +1910,14 @@ export default function Programs({ userEmail }) {
           // back to an ETD when nothing has actually left yet. shipmentsOf returns
           // whole shipment rows, so adding the column here is the entire data
           // change -- no second derivation.
-          .select('product_id,purchase_orders(order_date,issued_at,client_company_id,client:companies!client_company_id(name),shipment_pos(shipments(actual_departure,estimated_departure,actual_arrival)))')
+          // id, number and created_at on the PO and the shipment, so the order
+          // rows can name the latest one, count distinct ones and break a tie.
+          .select('product_id,purchase_orders(id,order_number,created_at,order_date,issued_at,client_company_id,client:companies!client_company_id(name),shipment_pos(shipments(id,shipment_number,created_at,actual_departure,estimated_departure,actual_arrival)))')
           .not('product_id','is',null),
         SB.from('sales_order_items')
-          .select('product_id,sales_orders(order_date,client_company_id,client:companies!client_company_id(name))')
+          // so_number is the number the app shows for a sales order everywhere;
+          // order_number is empty on every SO.
+          .select('product_id,sales_orders(id,so_number,created_at,order_date,client_company_id,client:companies!client_company_id(name))')
           .not('product_id','is',null),
         // Product-wide on purpose -- a test report has no client, and testing is
         // not repeated per client. The panel says the same thing on screen.
@@ -1957,18 +1976,27 @@ export default function Programs({ userEmail }) {
         soItems: buckets.soItems[k] || [],
         reports: buckets.reports[String(r.product_id)] || [],
       });
-      // ── SHIPPING, WHICH deriveEvents DOES NOT ANSWER ────────────────────
-      // Its shipped event reads actual_departure only, because a lifecycle stage
-      // is a thing that happened. The card wants the next best fact when nothing
-      // has left yet, so this reads the same flattened shipments and prefers a
-      // real departure over an estimate -- an ETD is a plan and must never be
-      // shown as though the goods moved.
-      //
-      // Earliest rather than latest, matching every other date on the block.
-      const ships = shipmentsOf(buckets.poItems[k] || []);
-      const firstStamp = col => ships.map(s => s[col]).filter(Boolean).sort()[0] || null;
-      const departedOn = firstStamp('actual_departure');
-      const etdOn = departedOn ? null : firstStamp('estimated_departure');
+      // ── THE LATEST ORDER, THE LATEST PO, THE LATEST SHIPMENT ───────────────
+      // For the order rows on the card. DISTINCT RECORDS, not lines -- one SO with
+      // three sizes is three lines and one order -- so each list is folded by id
+      // before it is counted. Newest by its date, and by created_at when two share
+      // a date: four of BG03R's five SOs are dated the same day, and the tiebreak
+      // is what makes "latest" one answer rather than whichever arrived first.
+      const newest = (items, dateOf) => {
+        const byId = new Map();
+        items.forEach(x => { if (x && x.id && !byId.has(x.id)) byId.set(x.id, x); });
+        const list = [...byId.values()];
+        if (!list.length) return null;
+        const key = x => String(dateOf(x) || '') + ' ' + String(x.created_at || '');
+        list.sort((a, b) => (key(a) < key(b) ? 1 : key(a) > key(b) ? -1 : 0));
+        return { top: list[0], n: list.length };
+      };
+      const soL = newest((buckets.soItems[k] || []).map(i => i.sales_orders), o => o.order_date);
+      const poL = newest((buckets.poItems[k] || []).map(i => i.purchase_orders), o => o.issued_at || o.order_date);
+      // A real departure outranks an estimate, and either outranks a shipment with
+      // no date at all, which falls back to when it was created.
+      const shL = newest(shipmentsOf(buckets.poItems[k] || []),
+                         x => x.actual_departure || x.estimated_departure || x.created_at);
       // COMPLETION IS NOT DERIVED ANY MORE. This is where the old board worked out
       // whether an order had finished a program -- its own client, or the product
       // ordered for anyone -- and which order to name. All of it is gone, because
@@ -2012,10 +2040,14 @@ export default function Programs({ userEmail }) {
                           && (new Date(r.updated_at) - new Date(r.created_at)) > 60000),
                noteCount: noteCounts[r.id] || 0,
                tasks: tasks[r.id] || [],
-               // null when nothing has shipped and nothing is planned.
-               shipping: departedOn ? { kind:'departed', on: departedOn }
-                       : etdOn      ? { kind:'etd',      on: etdOn }
-                       : null };
+               // The order rows read these three. null when there is none.
+               latestSO: soL ? { num: soL.top.so_number || 'Sales order', on: soL.top.order_date || null, n: soL.n } : null,
+               latestPO: poL ? { num: poL.top.order_number || 'Purchase order',
+                                 on: poL.top.issued_at || poL.top.order_date || null, n: poL.n } : null,
+               latestShip: shL ? { num: shL.top.shipment_number || 'Shipment',
+                                   kind: shL.top.actual_departure ? 'departed' : 'etd',
+                                   on: shL.top.actual_departure || shL.top.estimated_departure || null,
+                                   n: shL.n } : null };
     });
     // staff and noteCounts are dependencies now: without them a name stays
     // unresolved and a count stays zero until some other change happens to
