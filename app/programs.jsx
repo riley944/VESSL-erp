@@ -503,15 +503,15 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
 // No mail is sent from here. The composer opens the person's own mail client
 // with the fields filled, which is what the 11 Aug version did.
 //
+// QUOTING HAS NO QUICK EMAIL, on request. Send quote to client was here; with it
+// gone Quoting has no templates, so the card hides the Quick emails section and
+// its heading altogether rather than showing an empty one.
+//
 // chips:'client' NARROWS THE RECIPIENT CHIPS to the client company's own
-// contacts that carry an email -- no staff, no factory. body:'' opens the
-// Message empty. Both are on Send quote to client only, on request; every other
-// template keeps the full chip list and its prefilled text.
+// contacts that carry an email -- no staff, no factory -- and body:'' opens the
+// Message empty. Send quote to client was the only template that used them; the
+// composer still honours both for any template that sets them.
 const STAGE_EMAILS = {
-  quoted: [
-    { label:'Send quote to client', to:'client', subject:'Quote — {product} ({sku})',
-      chips:'client', body:'' },
-  ],
   sampling: [
     { label:'Chase factory sample', to:'factory', subject:'Sample status — {product} ({sku})',
       body:'Hi {factoryContact},\n\nChecking in on the sample for {product} ({sku}) for {client}. Sent {sent}, due back {due}. Where does it stand — and did the master sample go with it?\n\nThanks,' },
@@ -1419,9 +1419,9 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
   const p = r.products || {};
   const guardedClose = useGuardedClose();
   // ── TWO TABS: WORKING THE CARD, AND WHAT IS KNOWN ABOUT IT ────────────────
-  // Sampling is the 11 Aug card -- where the program is and what happens next:
-  // the stage pills, Advance, the owner, the sample strip, the quick emails, the
-  // notes and Remove. Named for the work most of it serves, on Riley word.
+  // The first tab is the 11 Aug card -- where the program is and what happens
+  // next: the stage pills, the owner, the sample strip, the quick emails, the
+  // checklist, the notes and Remove. Its label is the card's stage (below).
   // Card is what the card was before stage 2 -- what the records say, the
   // product's sampling log and notes, and the exports -- which is read far more
   // than it is changed.
@@ -1434,8 +1434,14 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
   //
   // Transient, and per opening. A tab remembered across cards would land somebody
   // on Card for a card they opened to move.
+  //
+  // THE FIRST TAB IS LABELLED WITH THE CARD'S STAGE -- Quoting, Revision,
+  // Production -- in the pills' own words, because it is where the card is
+  // worked in whatever stage it is in, and a tab reading Sampling on a card in
+  // Production named the wrong thing. Only the label follows the stage; the key
+  // stays 'sampling' and the contents are unchanged.
   const [tab, setTab] = useState('sampling');
-  const CARD_TABS = [['sampling', 'Sampling'], ['card', 'Card']];
+  const CARD_TABS = [['sampling', stageLabel(r.stage)], ['card', 'Card']];
   const who = useCardContacts(r);
   const [emailTpl, setEmailTpl] = useState(null);
 
@@ -1572,11 +1578,10 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
   };
 
   // ── THE LADDER POSITION ───────────────────────────────────────────────────
-  // A card with no stage is before the first rung, so Advance offers Quoting --
-  // the same reading the PO rule takes of a null stage. Shipped is the last rung
-  // and offers nothing, because there is nowhere further to go.
+  // Where the card sits, for the pills: the ones before it read as passed. There
+  // is no Advance button any more -- the pills move a card to any stage, forward
+  // or back, and one control for one act is simpler than two that must agree.
   const idx = MANUAL_STAGES.findIndex(([k]) => k === r.stage);
-  const next = r.stage === SHIPPED ? null : (MANUAL_STAGES[idx + 1] || null);
   const inSampling = SAMPLING_STAGES.includes(r.stage);
   const emails = STAGE_EMAILS[r.stage] || [];
   const secHead = { fontSize:'11px', fontWeight:600, letterSpacing:'.08em', textTransform:'uppercase',
@@ -1599,9 +1604,10 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
 
       {/* ── THE STAGE PILLS ─────────────────────────────────────────────────
           The 11 Aug row: the current stage in its colour, the ones already
-          passed in a darker grey than the ones ahead. Every pill is a move, and
-          every move goes through setStage, so a pill and Advance cannot write a
-          stage two different ways. */}
+          passed in a darker grey than the ones ahead. Every pill is a move, to
+          any stage, forward or back, and every move goes through setStage -- so
+          the checklist seeding, the product stage and the Last edited stamp all
+          follow a pill exactly as they follow a purchase order. */}
       <div style={{display:'flex',gap:'4px',marginTop:'16px',flexWrap:'wrap'}}>
         {MANUAL_STAGES.map(([k, l, c], i) => {
           const active = k === r.stage;
@@ -1620,20 +1626,13 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         )}
       </div>
 
-      {/* ── ADVANCE, OWNER, AGE ─────────────────────────────────────────────
-          One row, as on 11 Aug. The owner select is the staff list rather than
-          a typed team, and changing it still writes its reassignment note.
-          data-noguard because it saves the moment it changes -- there is nothing
-          unsaved for the close guard to protect. */}
+      {/* ── OWNER, AGE ──────────────────────────────────────────────────────
+          The 11 Aug row without its Advance button, which went on request; the
+          pills above are the one way to move a card. The owner select is the
+          staff list rather than a typed team, and changing it still writes its
+          reassignment note. data-noguard because it saves the moment it
+          changes -- there is nothing unsaved for the close guard to protect. */}
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginTop:'14px',flexWrap:'wrap'}}>
-        {next && (
-          <button onClick={()=>onStage(r, next[0])} disabled={busy}
-            style={{background:'#0A84FF',color:'#fff',border:'none',borderRadius:'980px',padding:'8px 16px',
-                    fontSize:'13px',fontWeight:600,fontFamily:'inherit',
-                    cursor:busy?'default':'pointer',opacity:busy?0.6:1}}>
-            Advance to {next[1]} →
-          </button>
-        )}
         <select data-noguard value={r.owner_id || ''} disabled={busy} aria-label="Owner"
           onChange={e=>onOwner(r, e.target.value)}
           style={{border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'8px 12px',fontSize:'13px',
@@ -1986,8 +1985,9 @@ export default function Programs({ userEmail }) {
   // is written after the update lands; a failed note leaves a correct owner and a
   // missing line, which is the better way round.
 
-  // ONE FUNCTION, EVERY CALLER. The stage pills and the Advance-to button on the
-  // card both come through here -- declared_stage_at is stamped by the same trigger whichever it is, a failure is
+  // ONE FUNCTION, EVERY CALLER. The stage pills on the card come through here --
+  // the Advance button went, and a board drag would join them if one is built --
+  // so declared_stage_at is stamped by the same trigger whichever it is, a failure is
   // reported the same way, and there is no second write path to drift.
   //
   // STILL OPTIMISTIC, though the reason changed. It was written that way because a
@@ -2026,8 +2026,9 @@ export default function Programs({ userEmail }) {
   // ── SEEDING A STAGE'S CHECKLIST ─────────────────────────────────────────────
   // After the move lands, never before -- a refused move must not leave a
   // checklist behind for a stage the card is not in. Every stage move on the
-  // board comes through setStage, so a pill and Advance seed alike; 11 Aug seeded
-  // on Advance only, which left a card moved by a pill with an empty checklist.
+  // board comes through setStage, so any pill seeds, forward or back; 11 Aug
+  // seeded on its Advance button only, which left a card moved any other way
+  // with an empty checklist.
   //
   // The rule itself -- once per stage, ever, read from the database -- is in
   // lib/programs.js, shared with the purchase-order move. This wrapper only says
