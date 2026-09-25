@@ -632,9 +632,11 @@ function useCardFactory(r) {
 // print three Not sets. The entry on the card, the Sampling row on the Card tab
 // and the files all read this.
 //
-// withTracking adds "· tracking 1Z…" -- on the entry line only. The Sampling row
-// and the board's Latest round column leave it off, because the Sampling
-// tracking and Revision tracking rows beside them already say it.
+// withTracking adds the shipment -- "· FedEx 1Z…", carrier then number, on the
+// entry line only. A carrier alone reads "· FedEx", a number alone "· tracking
+// 1Z…" so a bare number is not left unlabelled. The Sampling row and the board's
+// Latest round column leave it off, because the Sampling tracking and Revision
+// tracking rows beside them already say it.
 const roundText = (x, withTracking = false) => {
   if (!x) return null;
   const parts = ['Round ' + x.round];
@@ -642,24 +644,29 @@ const roundText = (x, withTracking = false) => {
   if (x.master_sample === false) parts.push('no master sample');
   if (x.sent_date) parts.push('sent ' + fmt(x.sent_date));
   if (x.due_back) parts.push('due back ' + fmt(x.due_back));
-  if (withTracking && x.tracking_number) parts.push('tracking ' + x.tracking_number);
+  if (withTracking && (x.carrier || x.tracking_number)) {
+    parts.push(x.carrier && x.tracking_number ? x.carrier + ' ' + x.tracking_number
+             : x.carrier || 'tracking ' + x.tracking_number);
+  }
   return parts.join(' · ');
 };
 
 // ── TRACKING, ON THE CARD TAB ───────────────────────────────────────────────
-// Sampling tracking is round 1's number. Revision tracking is the number on the
-// HIGHEST revision round that has one, so it always names the newest shipment
-// somebody recorded -- and a round saved without a number yet does not blank
-// the one before it. A dash when there is no revision round at all.
+// Sampling tracking is round 1's shipment. Revision tracking is the shipment on
+// the HIGHEST revision round that records one -- a carrier or a number -- so it
+// always names the newest shipment somebody recorded, and a round saved with
+// neither does not blank the one before it. "FedEx · 1Z… · round 3". A dash when
+// there is no revision round at all.
+const shipLine = x => [x.carrier, x.tracking_number].filter(Boolean).join(' · ');
 const samplingTracking = r => {
   const x = (r.rounds || []).find(y => y.round === 1);
-  return (x && x.tracking_number) || 'Not recorded';
+  return (x && shipLine(x)) || 'Not recorded';
 };
 const revisionTracking = r => {
   const rev = (r.rounds || []).filter(y => y.round >= 2);
   if (!rev.length) return '—';
-  const hit = [...rev].sort((a, b) => b.round - a.round).find(y => y.tracking_number);
-  return hit ? hit.tracking_number + ' · round ' + hit.round : 'Not recorded';
+  const hit = [...rev].sort((a, b) => b.round - a.round).find(y => shipLine(y));
+  return hit ? shipLine(hit) + ' · round ' + hit.round : 'Not recorded';
 };
 
 // A date the database will take and a person meant. A date input passes
@@ -700,7 +707,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   const nextRound = inRevision ? Math.max(2, ...rounds.map(x => x.round + 1)) : 1;
   const showForm = inRevision || !round1;
 
-  const blank = { master: null, sent: '', due: '', tracking: '', comment: '' };
+  const blank = { master: null, sent: '', due: '', carrier: '', tracking: '', comment: '' };
   const [form, setForm] = useState(blank);
   const [editId, setEditId] = useState(null);
   const [edit, setEdit] = useState(blank);
@@ -715,17 +722,18 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     if (failed) touchFailedToast(failed);
     if (onTouched) await onTouched();
   };
-  const hasAny = f => f.master !== null || f.sent || f.due || f.tracking.trim() || f.comment.trim();
+  const hasAny = f => f.master !== null || f.sent || f.due || f.carrier.trim() || f.tracking.trim() || f.comment.trim();
   const datesOk = f => okDate(f.sent) && okDate(f.due);
   const values = f => ({
     master_sample: f.master, sent_date: f.sent || null, due_back: f.due || null,
-    tracking_number: f.tracking.trim() || null, comment: f.comment.trim() || null,
+    carrier: f.carrier.trim() || null, tracking_number: f.tracking.trim() || null,
+    comment: f.comment.trim() || null,
   });
   const unchanged = (x, f) => {
     const v = values(f);
     return v.master_sample === (x.master_sample ?? null) && v.sent_date === (x.sent_date || null)
         && v.due_back === (x.due_back || null) && v.comment === (x.comment || null)
-        && v.tracking_number === (x.tracking_number || null);
+        && v.tracking_number === (x.tracking_number || null) && v.carrier === (x.carrier || null);
   };
 
   // ── WHAT THE CLOSE GUARD SEES ─────────────────────────────────────────────
@@ -761,7 +769,8 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   const startEdit = x => {
     setEditId(x.id); setErr('');
     setEdit({ master: x.master_sample === undefined ? null : x.master_sample,
-              sent: x.sent_date || '', due: x.due_back || '', tracking: x.tracking_number || '',
+              sent: x.sent_date || '', due: x.due_back || '', carrier: x.carrier || '',
+              tracking: x.tracking_number || '',
               comment: x.comment || '' });
   };
 
@@ -851,11 +860,20 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         <input type="date" data-noguard value={f.due} disabled={busy} style={inp} aria-label="Due back"
           onChange={e=>set({ ...f, due: e.target.value })} />
       </div>
-      {/* Free text -- FedEx, UPS or anything else, as it is on the label. */}
-      <div style={{gridColumn:'1 / -1'}}>
-        <span style={lbl}>Tracking #</span>
-        <input data-noguard value={f.tracking} disabled={busy} style={inp} aria-label="Tracking number"
-          placeholder="Optional" onChange={e=>set({ ...f, tracking: e.target.value })} />
+      {/* Carrier and number on one row, carrier first, the way the entry line
+          reads them. Both free text -- FedEx, UPS or anything else, as it is on
+          the label. */}
+      <div style={{gridColumn:'1 / -1',display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,2fr)',gap:'14px'}}>
+        <div>
+          <span style={lbl}>Carrier</span>
+          <input data-noguard value={f.carrier} disabled={busy} style={inp} aria-label="Carrier"
+            placeholder="e.g. FedEx" onChange={e=>set({ ...f, carrier: e.target.value })} />
+        </div>
+        <div>
+          <span style={lbl}>Tracking #</span>
+          <input data-noguard value={f.tracking} disabled={busy} style={inp} aria-label="Tracking number"
+            placeholder="Optional" onChange={e=>set({ ...f, tracking: e.target.value })} />
+        </div>
       </div>
       <div style={{gridColumn:'1 / -1'}}>
         <span style={lbl}>Comment</span>
@@ -945,6 +963,47 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
       )}
       {inRevision && !later.length && (
         <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'10px'}}>No revision rounds saved yet.</div>
+      )}
+    </div>
+  );
+}
+
+// ── THE TESTING LAB ─────────────────────────────────────────────────────────
+// One free-text field, programs.testing_lab (script 83). Editable while the
+// card is in Testing; shown read-only in Production and Shipped, which is when
+// the lab's report tends to be chased. Nowhere else on the first tab -- the Card
+// tab reports it in every stage.
+//
+// SAVES ITSELF, like the owner select: on leaving the field or on Enter, and
+// only when the text changed. data-noguard for the same reason the owner select
+// carries it -- there is nothing unsaved for the close guard to protect, since
+// leaving the field is what happens first when anything else is clicked. A
+// failed save says so and puts the stored value back.
+function TestingLab({ r, busy, onLab }) {
+  const editable = r.stage === 'testing';
+  const [v, setV] = useState(r.testing_lab || '');
+  useEffect(() => { setV(r.testing_lab || ''); }, [r.id, r.testing_lab]);
+  const commit = async () => {
+    const next = v.trim();
+    if (next === (r.testing_lab || '')) { setV(r.testing_lab || ''); return; }
+    const ok = await onLab(r, next);
+    if (!ok) setV(r.testing_lab || '');
+  };
+  const lbl = { display:'block', fontSize:'10px', fontWeight:600, textTransform:'uppercase',
+                letterSpacing:'.06em', color:'#86868B', marginBottom:'5px' };
+  return (
+    <div style={{background:'#F5F5F7',borderRadius:'16px',padding:'14px 18px',marginTop:'16px'}}>
+      <div style={{fontSize:'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',
+                   color:'#86868B',marginBottom:'10px',textAlign:'center'}}>Testing</div>
+      <span style={lbl}>Testing lab</span>
+      {editable ? (
+        <input data-noguard value={v} disabled={busy} aria-label="Testing lab" placeholder="e.g. the lab's name"
+          onChange={e=>setV(e.target.value)} onBlur={commit}
+          onKeyDown={e=>{ if (e.key === 'Enter') e.currentTarget.blur(); }}
+          style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'8px 10px',
+                  fontSize:'13px',outline:'none',fontFamily:'inherit',boxSizing:'border-box',background:'#fff'}} />
+      ) : (
+        <div style={{fontSize:'13px',color:r.testing_lab?'#1D1D1F':'#A0A0A4'}}>{r.testing_lab || 'Not recorded'}</div>
       )}
     </div>
   );
@@ -1172,13 +1231,13 @@ function Checklist({ r, staff = [], userEmail, onTouched }) {
 // confirm instead of a dismissal. The notes and the sample rounds save themselves
 // and empty their boxes, so they report their own unsaved text through
 // useDirtySource instead -- otherwise a note already added would still ask.
-function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onArchive, onDelete, onClose, onTouched }) {
+function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onLab, onArchive, onDelete, onClose, onTouched }) {
   return (
     // Wider than it was, because the card carries two tabs now. Still inside the
     // range the other modals in this app use, 420 through 640.
     <Overlay onClose={onClose} maxWidth={720}>
       <ProgramCard r={r} userEmail={userEmail} staff={staff} busy={busy}
-                   onStage={onStage} onOwner={onOwner}
+                   onStage={onStage} onOwner={onOwner} onLab={onLab}
                    onArchive={onArchive} onDelete={onDelete} onTouched={onTouched} />
     </Overlay>
   );
@@ -1261,6 +1320,8 @@ const recordRows = r => {
                       + ofN(sh.n)
                : po ? 'No shipment on its POs' : none, !sh],
     ['Test report', ev.tested ? fmt(ev.tested.on) : none, !ev.tested],
+    // Typed on the first tab while the card is in Testing (script 83).
+    ['Testing lab', r.testing_lab || 'Not recorded', !r.testing_lab],
   ];
 };
 // What the OLD board would have called this card. Its own function rather than a
@@ -1635,6 +1696,7 @@ const workingRounds = (r, staff) => [...(r.rounds || [])].sort((a, b) => a.round
   master: x.master_sample === true ? 'Included' : x.master_sample === false ? 'Not included' : '',
   sent: x.sent_date || null,
   due: x.due_back || null,
+  carrier: x.carrier || '',
   tracking: x.tracking_number || '',
   comment: x.comment || '',
   savedBy: staffName(staff, x.created_by) || 'unknown',
@@ -1642,7 +1704,7 @@ const workingRounds = (r, staff) => [...(r.rounds || [])].sort((a, b) => a.round
   editedBy: x.updated_at ? (staffName(staff, x.updated_by) || 'unknown') : '',
   editedAt: x.updated_at || null,
 }));
-const ROUND_COLS = ['Round', 'Stage', 'Master sample', 'Sent', 'Due back', 'Tracking #', 'Comment', 'Saved by', 'Saved at', 'Edited by', 'Edited at'];
+const ROUND_COLS = ['Round', 'Stage', 'Master sample', 'Sent', 'Due back', 'Carrier', 'Tracking #', 'Comment', 'Saved by', 'Saved at', 'Edited by', 'Edited at'];
 // Every task, in ladder order, stages with no tasks left out. Within a stage
 // the order the board loaded them in -- sort_order, then created_at.
 const workingTasks = (r, staff) => MANUAL_STAGES.map(([k, l]) => ({
@@ -1705,7 +1767,7 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes) => {
   const board = {
     name: 'Board',
     cols: [['SKU'], ['Product'], ['Client'], ['Factory'], ['Stage'], ['Days in stage', 'num'], ['Owner'],
-           ['Health'], ['Blocker'], ['Sample overdue'], ['Open tasks', 'num'], ['Latest round'],
+           ['Health'], ['Blocker'], ['Sample overdue'], ['Open tasks', 'num'], ['Latest round'], ['Testing lab'],
            ['Created by'], ['Created at', 'stamp'], ['Last edited by'], ['Last edited at', 'stamp'], ['Removed']],
     rows: list.map(r => {
       const blk = blockerOf(r);
@@ -1716,7 +1778,7 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes) => {
         blk ? BLOCKERS[blk].label : '', sampleOverdue(r) ? 'Yes' : 'No',
         // The tile count -- open tasks in the stage the card is in.
         openTasks(r).filter(t => t.stage === r.stage).length,
-        sampleStripText(r) || '',
+        sampleStripText(r) || '', r.testing_lab || '',
         r.createdByName || '', r.created_at || null,
         r.edited ? (r.lastTouchBy || '') : '', r.edited ? (r.updated_at || null) : null,
         r.archived ? 'Yes' : 'No',
@@ -1727,9 +1789,9 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes) => {
   const rounds = {
     name: 'Rounds',
     cols: [['SKU'], ['Client'], ['Round', 'num'], ['Stage'], ['Master sample'], ['Sent', 'date'], ['Due back', 'date'],
-           ['Tracking #'], ['Comment'], ['Saved by'], ['Saved at', 'stamp'], ['Edited by'], ['Edited at', 'stamp']],
+           ['Carrier'], ['Tracking #'], ['Comment'], ['Saved by'], ['Saved at', 'stamp'], ['Edited by'], ['Edited at', 'stamp']],
     rows: list.flatMap(r => workingRounds(r, staff).map(x => [
-      ...key(r), Number(x.round), x.stage, x.master, x.sent, x.due, x.tracking, x.comment,
+      ...key(r), Number(x.round), x.stage, x.master, x.sent, x.due, x.carrier, x.tracking, x.comment,
       x.savedBy, x.savedAt, x.editedBy, x.editedAt,
     ])),
   };
@@ -1814,12 +1876,13 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, logo }) => {
       +(rounds.length
         ? '<table style="width:100%;border-collapse:collapse;">'
           +'<tr><th style="'+th+'">Round</th><th style="'+th+'">Master sample</th><th style="'+th+'">Sent</th>'
-          +'<th style="'+th+'">Due back</th><th style="'+th+'">Tracking #</th><th style="'+th+'width:26%;">Comment</th><th style="'+th+'">Saved</th></tr>'
+          +'<th style="'+th+'">Due back</th><th style="'+th+'">Carrier</th><th style="'+th+'">Tracking #</th><th style="'+th+'width:22%;">Comment</th><th style="'+th+'">Saved</th></tr>'
           +rounds.map(x => '<tr>'
             +'<td style="'+td+'">'+docEsc(x.round + ' · ' + x.stage)+'</td>'
             +'<td style="'+td+'">'+docEsc(x.master)+'</td>'
             +'<td style="'+td+'">'+docEsc(x.sent ? fmt(x.sent) : '')+'</td>'
             +'<td style="'+td+'">'+docEsc(x.due ? fmt(x.due) : '')+'</td>'
+            +'<td style="'+td+'">'+docEsc(x.carrier)+'</td>'
             +'<td style="'+td+'">'+docEsc(x.tracking)+'</td>'
             +'<td style="'+td+'white-space:pre-wrap;">'+docEsc(x.comment)+'</td>'
             +'<td style="'+td+'">'+docEsc(x.savedBy + ' · ' + stampText(x.savedAt))
@@ -1844,7 +1907,7 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, logo }) => {
 // Split out so the x can read guardedClose from context. The provider lives
 // INSIDE Overlay, so a hook called in ProgramDetail would sit above it and get
 // the default -- the close button has to be a child to be guarded.
-function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner, onArchive, onDelete, onTouched }) {
+function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner, onLab, onArchive, onDelete, onTouched }) {
   const p = r.products || {};
   const guardedClose = useGuardedClose();
   // ── TWO TABS: WORKING THE CARD, AND WHAT IS KNOWN ABOUT IT ────────────────
@@ -1956,13 +2019,13 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         const rs = wb.addWorksheet('Sample rounds');
         rs.addRow(ROUND_COLS);
         workingRounds(r, staff).forEach(x => rs.addRow([Number(x.round), x.stage, x.master, excelDate(x.sent), excelDate(x.due),
-          x.tracking, x.comment, x.savedBy, excelDate(x.savedAt), x.editedBy, excelDate(x.editedAt)]));
+          x.carrier, x.tracking, x.comment, x.savedBy, excelDate(x.savedAt), x.editedBy, excelDate(x.editedAt)]));
         rs.getRow(1).font = { bold: true };
         rs.views = [{ state:'frozen', ySplit:1 }];
         [4, 5].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd'; });
-        [9, 11].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd hh:mm'; });
-        [8, 12, 14, 12, 12, 24, 44, 22, 17, 22, 17].forEach((w, i) => { rs.getColumn(i + 1).width = w; });
-        rs.getColumn(7).alignment = { wrapText: true, vertical: 'top' };
+        [10, 12].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd hh:mm'; });
+        [8, 12, 14, 12, 12, 14, 24, 44, 22, 17, 22, 17].forEach((w, i) => { rs.getColumn(i + 1).width = w; });
+        rs.getColumn(8).alignment = { wrapText: true, vertical: 'top' };
 
         const cs = wb.addWorksheet('Checklist');
         cs.addRow(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker']);
@@ -2051,7 +2114,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         lines.push('');
         lines.push(ROUND_COLS.map(cell).join(','));
         workingRounds(r, staff).forEach(x => lines.push(
-          [x.round, x.stage, x.master, x.sent || '', x.due || '', x.tracking, x.comment, x.savedBy, stampText(x.savedAt),
+          [x.round, x.stage, x.master, x.sent || '', x.due || '', x.carrier, x.tracking, x.comment, x.savedBy, stampText(x.savedAt),
            x.editedBy, x.editedAt ? stampText(x.editedAt) : ''].map(cell).join(',')));
         lines.push('');
         lines.push(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker'].map(cell).join(','));
@@ -2212,6 +2275,8 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       {inSampling && <SampleRounds r={r} staff={staff} userEmail={userEmail} onTouched={onTouched} />}
 
       {/* Above the notes, where the 11 Aug card had it. */}
+      {['testing', 'production', 'shipped'].includes(r.stage) && <TestingLab r={r} busy={busy} onLab={onLab} />}
+
       <Checklist r={r} staff={staff} userEmail={userEmail} onTouched={onTouched} />
 
       {/* author is the caller's EMAIL, inside NotesPanel. The 11 Aug card wrote
@@ -2364,7 +2429,7 @@ export default function Programs({ userEmail }) {
         // name on the card and the owner filter.
         SB.from('programs')
           .select('id,product_id,client_company_id,expected_ship_date,archived,declared_stage,declared_stage_at,owner_id,'
-                + 'created_at,created_by,updated_at,updated_by,'
+                + 'created_at,created_by,updated_at,updated_by,testing_lab,'
                 + 'products(id,sku,name,active,product_stage,compliance_status),client:companies!client_company_id(id,name),'
                 + 'owner:staff_profiles!owner_id(id,email,full_name)')
           .order('created_at', { ascending:true }),
@@ -2404,7 +2469,7 @@ export default function Programs({ userEmail }) {
         // pill and the Stalled and Overdue samples tiles read the latest one's
         // due back, so they have to arrive with the board.
         SB.from('program_sample_rounds')
-          .select('id,program_id,stage,round,master_sample,sent_date,due_back,tracking_number,comment,created_by,created_at,updated_by,updated_at')
+          .select('id,program_id,stage,round,master_sample,sent_date,due_back,carrier,tracking_number,comment,created_by,created_at,updated_by,updated_at')
           .order('round', { ascending:false }),
       ]);
       const e = [p,nt,q,poi,soi,tr,st,tk,sr].find(r => r.error);
@@ -2610,6 +2675,22 @@ export default function Programs({ userEmail }) {
       });
     } catch (e) {}
     await load(); setSaving(null);
+  };
+
+  // ── THE TESTING LAB ─────────────────────────────────────────────────────────
+  // One column, trimmed, blank written as NULL, stamping Last edited like every
+  // other write to the card. Returns whether it saved, so the field can put the
+  // stored value back when it did not.
+  const setTestingLab = async (r, value) => {
+    const next = (value || '').trim() || null;
+    if (next === (r.testing_lab || null)) return true;
+    setSaving(r.id);
+    const { error } = await SB.from('programs')
+      .update({ testing_lab: next, updated_at: new Date().toISOString(), updated_by: userEmail || null })
+      .eq('id', r.id);
+    if (error) { window._toast?.('Could not save the testing lab — ' + error.message, 'err'); setSaving(null); return false; }
+    await load(); setSaving(null);
+    return true;
   };
 
   // ── TAKING A CARD OFF THE BOARD, AND PUTTING IT BACK ────────────────────────
@@ -3089,7 +3170,7 @@ export default function Programs({ userEmail }) {
   return (
     <div style={{padding:'26px 30px 60px'}}>
       {openRow && <ProgramDetail r={openRow} userEmail={userEmail} staff={staff}
-                                 busy={saving === openRow.id} onStage={setStage} onOwner={setOwner}
+                                 busy={saving === openRow.id} onStage={setStage} onOwner={setOwner} onLab={setTestingLab}
                                  onArchive={setArchived}
                                  onDelete={deleteCard}
                                  onTouched={load}
