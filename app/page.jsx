@@ -749,7 +749,18 @@ function ToastProvider({ children }) {
 const useToast = () => React.useContext(ToastCtx);
 
 // ── Task Panel ────────────────────────────────────────────────────────────────
-function TaskPanel({ open, onClose }) {
+// ── THE SAME TASKS AS THE QUOTES PAGE, IN ITS WORDS ─────────────────────────
+// This slide-over and the Quotes page's Tasks panel read one table, vessl.tasks,
+// whose columns are task, assigned_to, assigned_by, quote_label, done and
+// done_at. This one was written in June against title and assignee, which the
+// table has never had -- so every row rendered as a bare checkbox, and Add sent
+// an insert naming a column that does not exist, which failed with nothing said.
+// It now reads and writes the real columns, the way quotes.jsx does: the task,
+// who it is for and who asked, and the quote it belongs to. A tick stamps
+// done_at as the Quotes panel does. A task added here is the signed-in person's
+// own, with no quote -- the Quotes page is where a task is assigned to somebody
+// on a quote. Names come from nameFromEmail, as the top bar's do.
+function TaskPanel({ open, onClose, userEmail = '' }) {
   // A slide-over rather than a modal -- there is no backdrop to click -- so the x
   // is the only way out, and the half-typed task in the box below is the work it
   // would take with it.
@@ -762,15 +773,29 @@ function TaskPanel({ open, onClose }) {
     if (!open) return;
     SB.from('tasks').select('*').order('created_at').then(({ data }) => { setTasks(data||[]); setLoading(false); });
   }, [open]);
+  // The quote card's Assign pattern: "Adding…" while the insert runs, the box
+  // cleared only once it is saved, a toast either way.
+  const [adding, setAdding] = useState(false);
   const addTask = async () => {
-    if (!input.trim()) return;
-    const { data } = await SB.from('tasks').insert({ title: input.trim(), done: false }).select().single();
-    if (data) { setTasks(p => [...p, data]); setInput(''); }
+    if (!input.trim() || adding) return;
+    setAdding(true);
+    const { data, error } = await SB.from('tasks')
+      .insert({ task: input.trim(), assigned_to: userEmail || null, assigned_by: userEmail || null, done: false })
+      .select().single();
+    setAdding(false);
+    if (error) { toast('Could not add the task — ' + error.message, 'err'); return; }
+    if (data) {
+      setTasks(p => [...p, data]); setInput('');
+      toast('Task assigned to ' + (nameFromEmail(userEmail) || 'you'), 'ok');
+    }
   };
   const toggleTask = async (t) => {
     const done = !t.done;
-    setTasks(p => p.map(x => x.id===t.id?{...x,done}:x));
-    await SB.from('tasks').update({ done }).eq('id', t.id);
+    const done_at = done ? new Date().toISOString() : null;
+    setTasks(p => p.map(x => x.id===t.id?{...x,done,done_at}:x));
+    const { error } = await SB.from('tasks').update({ done, done_at }).eq('id', t.id);
+    // Put it back and say so, rather than show a tick the database refused.
+    if (error) { setTasks(p => p.map(x => x.id===t.id?t:x)); toast('Could not update the task — ' + error.message, 'err'); return; }
     if (done) toast('Task completed', 'ok');
   };
   const open_ = tasks.filter(t=>!t.done).length;
@@ -787,15 +812,19 @@ function TaskPanel({ open, onClose }) {
           <div key={t.id} className="task-item" onClick={()=>toggleTask(t)}>
             <input type="checkbox" className="task-cb" checked={t.done} readOnly />
             <div className="task-body">
-              <div className={'task-title'+(t.done?' done':'')}>  {t.title}</div>
-              {t.assignee && <div className="task-meta">{t.assignee}</div>}
+              <div className={'task-title'+(t.done?' done':'')}>{t.task}</div>
+              <div className="task-meta">
+                {[t.quote_label, t.assigned_to ? 'For ' + nameFromEmail(t.assigned_to) : null,
+                  t.assigned_by ? 'by ' + nameFromEmail(t.assigned_by) : null].filter(Boolean).join(' · ')}
+              </div>
             </div>
           </div>
         ))}
       </div>
       <div className="task-add">
-        <input placeholder="Add a task…" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addTask()} />
-        <button className="btn btn-dark btn-sm" onClick={addTask}>Add</button>
+        <input placeholder="Add a task…" value={input} disabled={adding} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addTask()} />
+        <button className="btn btn-dark btn-sm press-feedback" onClick={addTask} disabled={adding || !input.trim()}
+          style={adding || !input.trim() ? { opacity:.45, cursor:'default' } : undefined}>{adding ? 'Adding…' : 'Add'}</button>
       </div>
     </div>
   );
@@ -10152,7 +10181,7 @@ export default function App() {
       <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} allowedPages={allowedPages} role={role}
                collapsed={railCollapsed} onToggleRail={toggleRail} />
       <TopBar user={user} displayName={displayName} title="" taskOpen={taskPanelOpen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
-      <TaskPanel open={taskPanelOpen} onClose={()=>setTaskPanelOpen(false)} />
+      <TaskPanel open={taskPanelOpen} onClose={()=>setTaskPanelOpen(false)} userEmail={user?.email || ''} />
       {page==='quotes' ? (
         <div className="main-area">
           <div className="quotes-root" style={{height:'100%',overflowY:'auto'}}>

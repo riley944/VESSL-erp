@@ -383,6 +383,11 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   background:var(--card);color:var(--ink);border:1px solid var(--line);
   border-radius:9px;box-shadow:var(--shadow-md);cursor:pointer;-webkit-tap-highlight-color:transparent;}
 .mobile-menu-btn:active{transform:scale(.95);}
+/* A button that visibly gives when pressed -- the quote card's Assign and the
+   task slide-over's Add, where a click with nothing else to show for it read as
+   a click that did nothing. Not while disabled, so a greyed button stays still. */
+.press-feedback{transition:transform .08s ease,filter .08s ease;}
+.press-feedback:active:not(:disabled){transform:translateY(1px) scale(.97);filter:brightness(.9);}
 .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(11,21,48,.45);
   backdrop-filter:blur(2px);z-index:90;opacity:0;transition:opacity .2s;}
 
