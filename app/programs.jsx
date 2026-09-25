@@ -105,10 +105,8 @@ const MANUAL_STAGES = [
 // meant something a sales order had done. It is a stage somebody sets now.
 const SHIPPED = 'shipped';
 // The two stages a sample can be out during. Both the overdue flag and the card
-// sample strip ask this, so it is stated once.
+// sample rounds ask this, so it is stated once.
 const SAMPLING_STAGES = ['sampling', 'revision'];
-// The program columns the card's sample strip may write, and nothing else.
-const SAMPLE_FIELDS = ['sample_round', 'master_sample_included', 'sample_sent_date', 'sample_due_back'];
 // THE ONE COLOUR TABLE, derived rather than typed a second time. Five of the six
 // are globals.css tokens -- warn, hot, info, ok and a grey -- so the board wears
 // the palette the rest of the app carries. Revision is the one invented colour,
@@ -173,8 +171,18 @@ const blockerOf = r => {
   const open = openTasks(r);
   return ['us', 'client', 'factory'].find(b => open.some(t => t.blocker === b)) || null;
 };
-const sampleOverdue = r =>
-  !!r.sample_due_back && daysSince(r.sample_due_back) > 0 && SAMPLING_STAGES.includes(r.stage);
+// ── THE LATEST SAMPLE ROUND ─────────────────────────────────────────────────
+// Rounds are saved entries on program_sample_rounds, script 80, and the board
+// reads them in bulk, highest round first. The latest round is the highest
+// number -- not the newest saved -- because a round 1 corrected after round 3
+// is still round 1. Its due back is the one the overdue flag, the tile pill and
+// the Stalled and Overdue samples tiles read. The four programs columns script
+// 77 added are still in the table and nothing reads or writes them.
+const latestRound = r => (r.rounds || [])[0] || null;
+const sampleOverdue = r => {
+  const due = (latestRound(r) || {}).due_back;
+  return !!due && daysSince(due) > 0 && SAMPLING_STAGES.includes(r.stage);
+};
 const healthOf = (r, tasks = []) => {
   const open = (tasks || []).filter(t => !t.done);
   const days = r.days || 0;
@@ -542,8 +550,8 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
 // ── THE SAMPLE LOG IS GONE FROM THE CARD ────────────────────────────────────
 // Script 67's product_notes rows of kind sample_event are still in the table,
 // untouched; nothing on this page reads or writes them any more. Sampling is
-// recorded per card on the sample strip (script 77), and the Sampling row in
-// What the system knows reads that instead -- see sampleStripText.
+// recorded per card as saved sample rounds (script 80), and the Sampling row in
+// What the system knows reads the latest one -- see SampleRounds and roundText.
 
 // ── QUICK EMAILS ARE GONE ───────────────────────────────────────────────────
 // The per-stage templates, the composer and its recipient chips were removed in
@@ -592,87 +600,265 @@ function useCardFactory(r) {
   return factoryName;
 }
 
-// ── A DATE THAT SAVES ITSELF, BUT ONLY ONCE IT IS A DATE ────────────────────
-// The sample strip writes on change, as the 11 Aug one did. A date input fires
-// change on every keystroke once each segment is filled, so typing 2026 into
-// the year passes through 0002, 0020 and 0202 -- four writes, three of them
-// nonsense. So the input keeps its own draft and commits only a full date from
-// 2000 on, or a clear. data-noguard because it is saved the moment it commits
-// and there is nothing for the close guard to protect.
-function SampleDate({ value, onCommit, disabled, style }) {
-  const [v, setV] = useState(value || '');
-  useEffect(() => { setV(value || ''); }, [value]);
-  return (
-    <input type="date" data-noguard value={v} disabled={disabled} style={style}
-      onChange={e => {
-        const x = e.target.value;
-        setV(x);
-        if (x === '') { if (value) onCommit(null); return; }
-        if (/^\d{4}-\d{2}-\d{2}$/.test(x) && Number(x.slice(0, 4)) >= 2000 && x !== value) onCommit(x);
-      }} />
-  );
-}
+// ── ONE ROUND IN ONE LINE ───────────────────────────────────────────────────
+// "Round 2 · master sample included · sent Jan 1, 2026 · due back Oct 1, 2026".
+// Only the parts somebody set, so a round saved with a due date alone does not
+// print three Not sets. The entry on the card, the Sampling row on the Card tab
+// and the files all read this.
+const roundText = x => {
+  if (!x) return null;
+  const parts = ['Round ' + x.round];
+  if (x.master_sample === true) parts.push('master sample included');
+  if (x.master_sample === false) parts.push('no master sample');
+  if (x.sent_date) parts.push('sent ' + fmt(x.sent_date));
+  if (x.due_back) parts.push('due back ' + fmt(x.due_back));
+  return parts.join(' · ');
+};
 
-// ── THE SAMPLE STRIP ────────────────────────────────────────────────────────
-// Round, master sample, sent and due back -- on the PROGRAM, by script 77,
-// because two clients sampling one SKU are on different rounds. The sampling
-// log on the Card tab is the product's history; this is where this card's current
-// sample stands. Shown in Sampling and Revision only, as it was on 11 Aug.
-function SampleStrip({ r, busy, onSample }) {
+// A date the database will take and a person meant. A date input passes
+// through 0002 and 0020 while the year is typed, and one saved mid-typing is a
+// sample due back two thousand years ago.
+const okDate = s => !s || (/^\d{4}-\d{2}-\d{2}$/.test(s) && Number(s.slice(0, 4)) >= 2000);
+
+// ── SAMPLE ROUNDS ───────────────────────────────────────────────────────────
+// SAVED ENTRIES, NOT LIVE FIELDS, on program_sample_rounds (script 80). The
+// strip that wrote four programs columns on every change is gone; a round is
+// filled in and saved, and then it is a record with who saved it and when.
+//
+// SAMPLING RECORDS ROUND 1 ONLY. The form is fixed at round 1, and once round 1
+// is saved the form goes and the entry stays -- one round 1 per card, which the
+// unique (program_id, round) constraint holds as well.
+//
+// REVISION RECORDS 2 AND UP. The form offers the next round -- one past the
+// highest saved, and never below 2 -- and every Save is a new entry, newest
+// first. Round 1 sits at the bottom, muted and labelled Sampling, because it is
+// where the revision started. The CHECK ties round 1 to sampling and 2 and up to
+// revision, so the stage written is the one the round belongs to, not merely
+// the card stage of the moment.
+//
+// ANYBODY ON STAFF CAN EDIT ANY ROUND, as with the checklist -- a round is shared
+// logistics, not somebody own words -- and the entry says who saved it and who
+// last edited it. NO DELETE; script 80 grants none. A wrong round is corrected.
+//
+// Two people saving the same round number at once is refused by the unique
+// constraint; the second is told so and the list reloads with the first one.
+function SampleRounds({ r, staff, userEmail, onTouched }) {
+  const rounds = r.rounds || [];
+  const inRevision = r.stage === 'revision';
+  const round1 = rounds.find(x => x.round === 1) || null;
+  const later = rounds.filter(x => x.round >= 2);
+  const nextRound = inRevision ? Math.max(2, ...rounds.map(x => x.round + 1)) : 1;
+  const showForm = inRevision || !round1;
+
+  const blank = { master: null, sent: '', due: '', comment: '' };
+  const [form, setForm] = useState(blank);
+  const [editId, setEditId] = useState(null);
+  const [edit, setEdit] = useState(blank);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  // A new form for a card that moved stage, so a half-filled round 1 does not
+  // turn up as round 2.
+  useEffect(() => { setForm(blank); setEditId(null); setErr(''); }, [r.id, r.stage]);
+
+  const settle = async () => {
+    const failed = await touchProgram(r.id, userEmail);
+    if (failed) touchFailedToast(failed);
+    if (onTouched) await onTouched();
+  };
+  const hasAny = f => f.master !== null || f.sent || f.due || f.comment.trim();
+  const datesOk = f => okDate(f.sent) && okDate(f.due);
+  const values = f => ({
+    master_sample: f.master, sent_date: f.sent || null, due_back: f.due || null,
+    comment: f.comment.trim() || null,
+  });
+
+  const save = async () => {
+    if (!hasAny(form)) return;
+    if (!datesOk(form)) { setErr('Check the dates — each needs a full year from 2000 on.'); return; }
+    setBusy(true); setErr('');
+    const { error } = await SB.from('program_sample_rounds').insert({
+      program_id: r.id, stage: inRevision ? 'revision' : 'sampling', round: nextRound,
+      ...values(form), created_by: userEmail || null,
+    });
+    if (error) {
+      setBusy(false);
+      if (error.code === '23505') {
+        setErr('Round ' + nextRound + ' was just saved by somebody else. The list has been refreshed — check it before saving again.');
+        if (onTouched) await onTouched();
+      } else setErr(error.message);
+      return;
+    }
+    setForm(blank);
+    await settle();
+    setBusy(false);
+  };
+
+  const startEdit = x => {
+    setEditId(x.id); setErr('');
+    setEdit({ master: x.master_sample === undefined ? null : x.master_sample,
+              sent: x.sent_date || '', due: x.due_back || '', comment: x.comment || '' });
+  };
+  const saveEdit = async x => {
+    if (!datesOk(edit)) { setErr('Check the dates — each needs a full year from 2000 on.'); return; }
+    const v = values(edit);
+    // Nothing changed is a cancel, not a write -- an edited stamp for an edit
+    // that changed nothing would be a false record.
+    const same = v.master_sample === (x.master_sample ?? null) && v.sent_date === (x.sent_date || null)
+              && v.due_back === (x.due_back || null) && v.comment === (x.comment || null);
+    if (same) { setEditId(null); return; }
+    setBusy(true); setErr('');
+    const { error } = await SB.from('program_sample_rounds')
+      .update({ ...v, updated_by: userEmail || null, updated_at: new Date().toISOString() })
+      .eq('id', x.id);
+    if (error) { setBusy(false); setErr(error.message); return; }
+    setEditId(null);
+    await settle();
+    setBusy(false);
+  };
+
   const inp = { width:'100%', border:'1px solid rgba(0,0,0,.1)', borderRadius:'10px', padding:'8px 10px',
                 fontSize:'13px', outline:'none', fontFamily:'inherit', boxSizing:'border-box', background:'#fff' };
   const lbl = { display:'block', fontSize:'10px', fontWeight:600, textTransform:'uppercase',
                 letterSpacing:'.06em', color:'#86868B', marginBottom:'5px' };
-  const round = Number(r.sample_round) || 1;
+  // The height of the Yes and No buttons, measured at 32px, which the round
+  // number is centred against so the two sit on one line.
+  const ROW_H = '32px';
+  const lblMid = { ...lbl, textAlign:'center' };
+  const pillBtn = (on, disabled) => ({ fontSize:'11.5px', fontWeight:600, borderRadius:'980px', padding:'5px 13px',
+                border:'none', fontFamily:'inherit', cursor:disabled?'default':'pointer',
+                background:on?'#1D1D1F':'#E5E5EA', color:on?'#fff':'#A0A0A4' });
+  const when = iso => {
+    if (!iso) return '';
+    try { return new Date(iso).toLocaleString('en-US',
+      { year:'numeric', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }); }
+    catch { return String(iso); }
+  };
+  const latest = latestRound(r);
   const late = sampleOverdue(r);
-  const btn = { ...inp, width:'32px', padding:'6px 0', textAlign:'center', cursor:busy?'default':'pointer' };
-  return (
-    <div style={{background:'#F5F5F7',borderRadius:'16px',padding:'16px 18px',marginTop:'16px'}}>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'14px'}}>
-        <div>
-          <span style={lbl}>Sample round</span>
-          <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
-            <button onClick={()=>onSample(r, { sample_round: Math.max(1, round - 1) })}
-              disabled={busy || round <= 1} style={btn} aria-label="Previous round">−</button>
-            {/* A null round shows 1 and is not written until somebody moves it,
-                so no card claims a round nobody recorded. */}
-            <span style={{fontSize:'16px',fontWeight:600,color:'#1D1D1F',minWidth:'22px',textAlign:'center',
-                          fontVariantNumeric:'tabular-nums'}}>{round}</span>
-            <button onClick={()=>onSample(r, { sample_round: round + 1 })}
-              disabled={busy} style={btn} aria-label="Next round">+</button>
-          </div>
-        </div>
-        <div>
-          <span style={lbl}>Master sample</span>
-          <div style={{display:'flex',gap:'6px'}}>
-            {[['Yes', true], ['No', false]].map(([l, v]) => {
-              const on = r.master_sample_included === v;
-              return (
-                <button key={l} disabled={busy}
-                  onClick={()=>onSample(r, { master_sample_included: v })}
-                  style={{...inp,flex:1,padding:'7px 0',textAlign:'center',cursor:busy?'default':'pointer',fontWeight:600,
-                          background:on?'#1D1D1F':'#fff',color:on?'#fff':'#86868B',
-                          border:'1px solid '+(on?'#1D1D1F':'rgba(0,0,0,.1)')}}>{l}</button>
-              );
-            })}
-          </div>
-        </div>
-        <div>
-          <span style={lbl}>Sent</span>
-          <SampleDate value={r.sample_sent_date} disabled={busy} style={inp}
-            onCommit={v=>onSample(r, { sample_sent_date: v })} />
-        </div>
-        <div>
-          <span style={lbl}>Due back</span>
-          <SampleDate value={r.sample_due_back} disabled={busy}
-            style={{...inp,borderColor:late?'#FF375F':'rgba(0,0,0,.1)'}}
-            onCommit={v=>onSample(r, { sample_due_back: v })} />
+
+  // The four fields, for a new round and for an edit alike.
+  const fields = (f, set, roundNo) => (
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'14px'}}>
+      <div style={{textAlign:'center'}}>
+        <span style={lblMid}>Sample round</span>
+        {/* Fixed. Sampling is round 1; Revision counts on from the last saved.
+            The caption and the number are both centred in the column, and the
+            number sits in a box as tall as the Yes and No buttons, so it is on
+            their line rather than at the top. */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:ROW_H,
+                     fontSize:'16px',fontWeight:600,color:'#1D1D1F',
+                     fontVariantNumeric:'tabular-nums'}}>{roundNo}</div>
+      </div>
+      <div>
+        {/* Centred over the Yes and No pair, which fills the column. */}
+        <span style={lblMid}>Master sample</span>
+        <div style={{display:'flex',gap:'6px'}}>
+          {[['Yes', true], ['No', false]].map(([l, v]) => {
+            const on = f.master === v;
+            return (
+              // A second click on the chosen one clears it -- null is not said,
+              // and it has to be reachable again after a mis-click.
+              <button key={l} disabled={busy} onClick={()=>set({ ...f, master: on ? null : v })}
+                style={{...inp,flex:1,padding:'7px 0',textAlign:'center',cursor:busy?'default':'pointer',fontWeight:600,
+                        background:on?'#1D1D1F':'#fff',color:on?'#fff':'#86868B',
+                        border:'1px solid '+(on?'#1D1D1F':'rgba(0,0,0,.1)')}}>{l}</button>
+            );
+          })}
         </div>
       </div>
-      {late && (
-        <div style={{fontSize:'12.5px',color:'#FF375F',marginTop:'11px',fontWeight:500}}>
-          Sample is {daysSince(r.sample_due_back)} day{daysSince(r.sample_due_back) === 1 ? '' : 's'} overdue.
+      <div>
+        <span style={lbl}>Sent</span>
+        <input type="date" value={f.sent} disabled={busy} style={inp} aria-label="Sent"
+          onChange={e=>set({ ...f, sent: e.target.value })} />
+      </div>
+      <div>
+        <span style={lbl}>Due back</span>
+        <input type="date" value={f.due} disabled={busy} style={inp} aria-label="Due back"
+          onChange={e=>set({ ...f, due: e.target.value })} />
+      </div>
+      <div style={{gridColumn:'1 / -1'}}>
+        <span style={lbl}>Comment</span>
+        <textarea value={f.comment} disabled={busy} rows={2} placeholder="Optional"
+          onChange={e=>set({ ...f, comment: e.target.value })}
+          style={{...inp,resize:'vertical'}} />
+      </div>
+    </div>
+  );
+
+  const entry = (x, muted) => {
+    const editing = editId === x.id;
+    const isLatestLate = late && latest && latest.id === x.id;
+    return (
+      <div key={x.id} style={{background:'#fff',border:'1px solid #ECECEE',borderRadius:'10px',padding:'9px 11px',
+                              opacity: muted && !editing ? 0.6 : 1}}>
+        <div style={{display:'flex',alignItems:'baseline',gap:'8px',flexWrap:'wrap'}}>
+          {muted && (
+            <span style={{fontSize:'10px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',
+                          color:'#86868B'}}>Sampling</span>
+          )}
+          {!editing && (
+            <span style={{fontSize:'13px',fontWeight:500,color:'#1D1D1F'}}>
+              {roundText(x)}
+              {isLatestLate && <span style={{color:'#FF375F'}}> · overdue {daysSince(x.due_back)} day{daysSince(x.due_back) === 1 ? '' : 's'}</span>}
+            </span>
+          )}
+          {!editing && (
+            <button onClick={()=>startEdit(x)} disabled={busy || editId !== null}
+              style={{fontSize:'11px',background:'none',border:'none',padding:0,color:'#0A84FF',marginLeft:'auto',
+                      fontFamily:'inherit',cursor:busy||editId!==null?'default':'pointer'}}>Edit</button>
+          )}
         </div>
+        {editing ? (
+          <div style={{marginTop:'6px'}}>
+            {fields(edit, setEdit, x.round)}
+            <div style={{display:'flex',gap:'7px',marginTop:'10px'}}>
+              <button onClick={()=>saveEdit(x)} disabled={busy} style={pillBtn(true, busy)}>
+                {busy ? 'Saving…' : 'Save'}
+              </button>
+              <button onClick={()=>{ setEditId(null); setErr(''); }} disabled={busy}
+                style={{...pillBtn(false, busy),background:'#fff',border:'1px solid #E5E5EA',color:'#5A5A5E'}}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {x.comment && (
+              <div style={{fontSize:'13px',color:'#1D1D1F',lineHeight:1.5,whiteSpace:'pre-wrap',marginTop:'4px'}}>{x.comment}</div>
+            )}
+            <div style={{fontSize:'11px',color:'#A0A0A4',marginTop:'5px'}}>
+              Saved by <span style={{fontWeight:600,color:'#5A5A5E'}}>{staffName(staff, x.created_by) || 'unknown'}</span> · {when(x.created_at)}
+              {x.updated_at && <> · edited by <span style={{fontWeight:600,color:'#5A5A5E'}}>{staffName(staff, x.updated_by) || 'unknown'}</span> · {when(x.updated_at)}</>}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const list = inRevision ? later : (round1 ? [round1] : []);
+  return (
+    <div style={{background:'#F5F5F7',borderRadius:'16px',padding:'16px 18px',marginTop:'16px'}}>
+      <div style={{fontSize:'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',
+                   color:'#86868B',marginBottom:'10px',textAlign:'center'}}>Sample rounds</div>
+      {showForm && (
+        <>
+          {fields(form, setForm, nextRound)}
+          <div style={{display:'flex',alignItems:'center',gap:'10px',marginTop:'10px'}}>
+            <button onClick={save} disabled={busy || !hasAny(form) || editId !== null}
+              style={pillBtn(hasAny(form) && editId === null, busy || !hasAny(form) || editId !== null)}>
+              {busy && editId === null ? 'Saving…' : 'Save round ' + nextRound}
+            </button>
+          </div>
+        </>
+      )}
+      {err && <div style={{fontSize:'11.5px',color:'var(--hot)',marginTop:'8px'}}>{err}</div>}
+      {(list.length > 0 || (inRevision && round1)) && (
+        <div style={{marginTop:showForm?'14px':0,display:'flex',flexDirection:'column',gap:'8px'}}>
+          {list.map(x => entry(x, false))}
+          {inRevision && round1 && entry(round1, true)}
+        </div>
+      )}
+      {inRevision && !later.length && (
+        <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'10px'}}>No revision rounds saved yet.</div>
       )}
     </div>
   );
@@ -899,13 +1085,13 @@ function Checklist({ r, staff = [], userEmail, onTouched }) {
 // inside the card, so typed-but-unsaved text turns the backdrop click into a
 // confirm instead of a dismissal. Nothing here has to arrange that beyond using
 // Overlay.
-function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onSample, onArchive, onDelete, onClose, onTouched }) {
+function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onArchive, onDelete, onClose, onTouched }) {
   return (
     // Wider than it was, because the card carries two tabs now. Still inside the
     // range the other modals in this app use, 420 through 640.
     <Overlay onClose={onClose} maxWidth={720}>
       <ProgramCard r={r} userEmail={userEmail} staff={staff} busy={busy}
-                   onStage={onStage} onOwner={onOwner} onSample={onSample}
+                   onStage={onStage} onOwner={onOwner}
                    onArchive={onArchive} onDelete={onDelete} onTouched={onTouched} />
     </Overlay>
   );
@@ -931,20 +1117,14 @@ const stageLabel = s => s ? (STAGE_LABEL[s] || s) : 'No stage set';
 // words for one value. That is the whole reason lib/products.js holds the lists.
 const optLabel = (opts, v) => (opts.find(o => o[0] === (v || '')) || [null, '—'])[1];
 
-// ── THE SAMPLE STRIP IN ONE LINE ────────────────────────────────────────────
-// "Round 2 · master sample included · sent Sep 18 · due back Sep 30". Only the
-// parts somebody has set, and null when none of the four is -- so the Sampling
-// row can fall back to the product's own stage rather than print an empty line.
-// A null round is left out rather than shown as 1: the strip SHOWS 1 for null,
-// but a file saying "Round 1" would claim a round nobody recorded.
+// ── THE LATEST ROUND IN ONE LINE ────────────────────────────────────────────
+// The Sampling row on the Card tab, and so the records file: the highest saved
+// round, in roundText's words, flagged when it is overdue. null when no round is
+// saved, so the row can fall back to the product's own stage rather than print
+// an empty line.
 const sampleStripText = r => {
-  const parts = [];
-  if (r.sample_round) parts.push('Round ' + r.sample_round);
-  if (r.master_sample_included === true) parts.push('master sample included');
-  if (r.master_sample_included === false) parts.push('no master sample');
-  if (r.sample_sent_date) parts.push('sent ' + fmt(r.sample_sent_date));
-  if (r.sample_due_back) parts.push('due back ' + fmt(r.sample_due_back) + (sampleOverdue(r) ? ' · overdue' : ''));
-  return parts.length ? parts.join(' · ') : null;
+  const x = latestRound(r);
+  return x ? roundText(x) + (sampleOverdue(r) ? ' · overdue' : '') : null;
 };
 
 const recordRows = r => {
@@ -966,7 +1146,7 @@ const recordRows = r => {
   const po = r.latestPO, so = r.latestSO, sh = r.latestShip;
   return [
     ['Quoted', ev.quoted ? fmt(ev.quoted.on) + (ev.quoted.n > 1 ? ' · ' + ev.quoted.n + ' quotes' : '') : none, !ev.quoted],
-    // THE CARD'S OWN SAMPLE STRIP when anything on it is set, because it says
+    // THE CARD'S LATEST SAVED SAMPLE ROUND when there is one, because it says
     // which round and when, for this client. The product-stage flag is the
     // fallback and says only that sampling happened -- product_stage records
     // what a product IS, not when it became that. Production counts, because
@@ -1320,7 +1500,7 @@ const buildCardDoc = ({ r, card, general, logo }) => {
 
 // ── THE WORKING FILE, exported from the first (stage-named) tab ─────────────
 // What that tab holds and nothing from the records view, which has its own
-// file: who and where the card is, the sample strip, the checklist grouped by
+// file: who and where the card is, the sample rounds, the checklist grouped by
 // stage in ladder order, and the card's own notes.
 //
 // DONE CARRIES ITS DATE when there is one. program_tasks.done_at is written when
@@ -1344,13 +1524,26 @@ const workingHead = (r, factoryName) => {
       : 'Not edited since it was created'],
   ];
 };
+// The latest round in one line, for the grid and the Working sheet; every
+// round follows in its own table (workingRounds).
 const workingStrip = r => [
-  ['Sample round', r.sample_round ? String(r.sample_round) : 'Not set'],
-  ['Master sample', r.master_sample_included === true ? 'Included'
-                  : r.master_sample_included === false ? 'Not included' : 'Not set'],
-  ['Sent', r.sample_sent_date ? fmt(r.sample_sent_date) : 'Not set'],
-  ['Due back', r.sample_due_back ? fmt(r.sample_due_back) + (sampleOverdue(r) ? ' · overdue' : '') : 'Not set'],
+  ['Latest sample round', sampleStripText(r) || 'None saved'],
 ];
+// EVERY SAVED ROUND, round 1 first, so the file reads as the history it is --
+// the card lists newest first because that is what somebody working it needs.
+const workingRounds = (r, staff) => [...(r.rounds || [])].sort((a, b) => a.round - b.round).map(x => ({
+  round: String(x.round),
+  stage: stageLabel(x.stage),
+  master: x.master_sample === true ? 'Included' : x.master_sample === false ? 'Not included' : '',
+  sent: x.sent_date || null,
+  due: x.due_back || null,
+  comment: x.comment || '',
+  savedBy: staffName(staff, x.created_by) || 'unknown',
+  savedAt: x.created_at || null,
+  editedBy: x.updated_at ? (staffName(staff, x.updated_by) || 'unknown') : '',
+  editedAt: x.updated_at || null,
+}));
+const ROUND_COLS = ['Round', 'Stage', 'Master sample', 'Sent', 'Due back', 'Comment', 'Saved by', 'Saved at', 'Edited by', 'Edited at'];
 // Every task, in ladder order, stages with no tasks left out. Within a stage
 // the order the board loaded them in -- sort_order, then created_at.
 const workingTasks = (r, staff) => MANUAL_STAGES.map(([k, l]) => ({
@@ -1397,11 +1590,26 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, logo }) => {
         +'<td style="'+td+'">'+docEsc(t.blocker)+'</td>'
       +'</tr>').join('')
     +'</table></div>';
+  const rounds = workingRounds(r, staff);
   const flow = docLetterhead(logo, 'PLM card · working', r)
     +docGrid(grid)
     +'<div style="margin-top:30px;">'
-      +'<div style="'+DOC_LBL+'margin-bottom:6px;">Sample</div>'
-      +workingStrip(r).map(([l, v]) => docKv(l, v)).join('')
+      +'<div style="'+DOC_LBL+'margin-bottom:6px;">Sample rounds</div>'
+      +(rounds.length
+        ? '<table style="width:100%;border-collapse:collapse;">'
+          +'<tr><th style="'+th+'">Round</th><th style="'+th+'">Master sample</th><th style="'+th+'">Sent</th>'
+          +'<th style="'+th+'">Due back</th><th style="'+th+'width:30%;">Comment</th><th style="'+th+'">Saved</th></tr>'
+          +rounds.map(x => '<tr>'
+            +'<td style="'+td+'">'+docEsc(x.round + ' · ' + x.stage)+'</td>'
+            +'<td style="'+td+'">'+docEsc(x.master)+'</td>'
+            +'<td style="'+td+'">'+docEsc(x.sent ? fmt(x.sent) : '')+'</td>'
+            +'<td style="'+td+'">'+docEsc(x.due ? fmt(x.due) : '')+'</td>'
+            +'<td style="'+td+'white-space:pre-wrap;">'+docEsc(x.comment)+'</td>'
+            +'<td style="'+td+'">'+docEsc(x.savedBy + ' · ' + stampText(x.savedAt))
+              +(x.editedAt ? '<br>'+docEsc('edited ' + x.editedBy + ' · ' + stampText(x.editedAt)) : '')+'</td>'
+          +'</tr>').join('')
+          +'</table>'
+        : '<div style="border-top:1px solid #e5e7eb;padding:9px 0;font-size:13px;color:#6b7280;">No rounds saved.</div>')
     +'</div>'
     +'<div style="margin-top:26px;">'
       +'<div style="'+DOC_LBL+'margin-bottom:2px;">Checklist</div>'
@@ -1419,12 +1627,12 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, logo }) => {
 // Split out so the x can read guardedClose from context. The provider lives
 // INSIDE Overlay, so a hook called in ProgramDetail would sit above it and get
 // the default -- the close button has to be a child to be guarded.
-function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner, onSample, onArchive, onDelete, onTouched }) {
+function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner, onArchive, onDelete, onTouched }) {
   const p = r.products || {};
   const guardedClose = useGuardedClose();
   // ── TWO TABS: WORKING THE CARD, AND WHAT IS KNOWN ABOUT IT ────────────────
   // The first tab is the 11 Aug card -- where the program is and what happens
-  // next: the stage pills, the owner, the sample strip, the checklist, the notes
+  // next: the stage pills, the owner, the sample rounds, the checklist, the notes
   // and Remove. Its label is the card's stage (below).
   // Card is what the card was before stage 2 -- what the records say, the
   // product's sampling log and notes, and the exports -- which is read far more
@@ -1462,7 +1670,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
   // same reason.
   // ── EXPORT FOLLOWS THE TAB ───────────────────────────────────────────────
   // The Card tab exports the records file, as it always did. The first tab
-  // exports the working file -- the stage, the sample strip, the checklist and
+  // exports the working file -- the stage, the sample rounds, the checklist and
   // the card notes. One control in the header, two documents, and the file name
   // says which (fileBase).
   const exportKind = tab === 'card' ? 'records' : 'working';
@@ -1517,8 +1725,8 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       const wb = new ExcelJS.Workbook();
       wb.creator = 'VESSL'; wb.created = new Date();
 
-      // THE WORKING WORKBOOK -- three sheets: the card and its sample strip one
-      // field per row, the checklist one task per row, and the card notes.
+      // THE WORKING WORKBOOK -- four sheets: the card and its latest round one
+      // field per row, every sample round, the checklist one task per row, and the card notes.
       if (exportKind === 'working') {
         const ws = wb.addWorksheet('Working');
         ws.addRow(['Field', 'Value']);
@@ -1527,6 +1735,17 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         ws.views = [{ state:'frozen', ySplit:1 }];
         ws.getColumn(1).width = 24;
         ws.getColumn(2).width = 62;
+
+        const rs = wb.addWorksheet('Sample rounds');
+        rs.addRow(ROUND_COLS);
+        workingRounds(r, staff).forEach(x => rs.addRow([Number(x.round), x.stage, x.master, excelDate(x.sent), excelDate(x.due),
+          x.comment, x.savedBy, excelDate(x.savedAt), x.editedBy, excelDate(x.editedAt)]));
+        rs.getRow(1).font = { bold: true };
+        rs.views = [{ state:'frozen', ySplit:1 }];
+        [4, 5].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd'; });
+        [8, 10].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd hh:mm'; });
+        [8, 12, 14, 12, 12, 44, 22, 17, 22, 17].forEach((w, i) => { rs.getColumn(i + 1).width = w; });
+        rs.getColumn(6).alignment = { wrapText: true, vertical: 'top' };
 
         const cs = wb.addWorksheet('Checklist');
         cs.addRow(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker']);
@@ -1606,12 +1825,17 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
       const p = r.products || {};
       const lines = [];
-      // THE WORKING CSV -- three tables, a blank line between them, the CSV
-      // answer to the working workbook's three sheets.
+      // THE WORKING CSV -- four tables, a blank line between them, the CSV
+      // answer to the working workbook's four sheets.
       if (exportKind === 'working') {
         lines.push(cell('# PLM card, working: ' + (p.sku || 'no SKU') + ' — ' + (p.name || '') + ' — ' + ((r.client || {}).name || '')));
         lines.push([cell('Field'), cell('Value')].join(','));
         [...workingHead(r, factoryName), ...workingStrip(r)].forEach(([l, v]) => lines.push([cell(l), cell(v)].join(',')));
+        lines.push('');
+        lines.push(ROUND_COLS.map(cell).join(','));
+        workingRounds(r, staff).forEach(x => lines.push(
+          [x.round, x.stage, x.master, x.sent || '', x.due || '', x.comment, x.savedBy, stampText(x.savedAt),
+           x.editedBy, x.editedAt ? stampText(x.editedAt) : ''].map(cell).join(',')));
         lines.push('');
         lines.push(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker'].map(cell).join(','));
         workingTasks(r, staff).forEach(g => g.tasks.forEach(t => lines.push(
@@ -1768,7 +1992,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         </>
       ) : (
       <>
-      {inSampling && <SampleStrip r={r} busy={busy} onSample={onSample} />}
+      {inSampling && <SampleRounds r={r} staff={staff} userEmail={userEmail} onTouched={onTouched} />}
 
       {/* Above the notes, where the 11 Aug card had it. */}
       <Checklist r={r} staff={staff} userEmail={userEmail} onTouched={onTouched} />
@@ -1907,6 +2131,7 @@ export default function Programs({ userEmail }) {
   const [noteCounts, setNoteCounts] = useState({});
   // program_id -> its checklist, every stage, filled in bulk by load().
   const [tasks, setTasks] = useState({});
+  const [rounds, setRounds] = useState({});
 
   // QUIET AFTER THE FIRST READ. loading starts true and only the first load
   // shows the placeholder; every later one -- after a stage move, a note, a
@@ -1916,16 +2141,13 @@ export default function Programs({ userEmail }) {
   const load = async () => {
     setErr('');
     try {
-      const [p, nt, q, poi, soi, tr, st, tk] = await Promise.all([
+      const [p, nt, q, poi, soi, tr, st, tk, sr] = await Promise.all([
         // declared_stage and declared_stage_at are the board now -- the stage a
         // person set, and when they set it. owner_id joins staff_profiles for the
         // name on the card and the owner filter.
         SB.from('programs')
           .select('id,product_id,client_company_id,expected_ship_date,archived,declared_stage,declared_stage_at,owner_id,'
                 + 'created_at,created_by,updated_at,updated_by,'
-                // The sample strip, script 77. Without these on the board read the
-                // overdue flag on a tile could never fire.
-                + 'sample_round,master_sample_included,sample_sent_date,sample_due_back,'
                 + 'products(id,sku,name,active,product_stage,compliance_status),client:companies!client_company_id(id,name),'
                 + 'owner:staff_profiles!owner_id(id,email,full_name)')
           .order('created_at', { ascending:true }),
@@ -1960,12 +2182,19 @@ export default function Programs({ userEmail }) {
         SB.from('program_tasks')
           .select('id,program_id,stage,task,owner_id,assigned_by,due_date,blocker,done,done_at,sort_order,created_at')
           .order('sort_order').order('created_at'),
+        // EVERY SAMPLE ROUND, IN BULK, highest round first per card -- the tile
+        // pill and the Stalled and Overdue samples tiles read the latest one's
+        // due back, so they have to arrive with the board.
+        SB.from('program_sample_rounds')
+          .select('id,program_id,stage,round,master_sample,sent_date,due_back,comment,created_by,created_at,updated_by,updated_at')
+          .order('round', { ascending:false }),
       ]);
-      const e = [p,nt,q,poi,soi,tr,st,tk].find(r => r.error);
+      const e = [p,nt,q,poi,soi,tr,st,tk,sr].find(r => r.error);
       if (e) throw new Error(e.error.message);
       setRows(p.data || []);
       setStaff(st.data || []);
       setTasks((tk.data || []).reduce((m, t) => { (m[t.program_id] = m[t.program_id] || []).push(t); return m; }, {}));
+      setRounds((sr.data || []).reduce((m, x) => { (m[x.program_id] = m[x.program_id] || []).push(x); return m; }, {}));
       setNoteCounts((nt.data || []).reduce((m, n) => { m[n.program_id] = (m[n.program_id] || 0) + 1; return m; }, {}));
       setEv({ quotes:q.data||[], poItems:poi.data||[], soItems:soi.data||[], reports:tr.data||[] });
     } catch (x) {
@@ -2069,6 +2298,7 @@ export default function Programs({ userEmail }) {
                           && (new Date(r.updated_at) - new Date(r.created_at)) > 60000),
                noteCount: noteCounts[r.id] || 0,
                tasks: tasks[r.id] || [],
+               rounds: rounds[r.id] || [],
                // The order rows read these three. null when there is none.
                latestSO: soL ? { num: soL.top.so_number || 'Sales order', on: soL.top.order_date || null, n: soL.n } : null,
                latestPO: poL ? { num: poL.top.order_number || 'Purchase order',
@@ -2081,7 +2311,7 @@ export default function Programs({ userEmail }) {
     // staff and noteCounts are dependencies now: without them a name stays
     // unresolved and a count stays zero until some other change happens to
     // recompute this.
-  }, [rows, buckets, staff, noteCounts, tasks]);
+  }, [rows, buckets, staff, noteCounts, tasks, rounds]);
 
   // ── WRITING A STAGE, AND WRITING AN OWNER ───────────────────────────────────
   // The only two things this page changes. Both re-read from the database after
@@ -2161,32 +2391,6 @@ export default function Programs({ userEmail }) {
       });
     } catch (e) {}
     await load(); setSaving(null);
-  };
-
-  // ── THE SAMPLE STRIP ────────────────────────────────────────────────────────
-  // THE FOUR COLUMNS SCRIPT 77 ADDED, AND ONLY THOSE. The 11 Aug saveField
-  // forwarded whatever patch it was handed to programs; this drops anything not
-  // on the list, so a caller cannot reach the stage, the owner or archived by a
-  // side door that skips their own rules and notes.
-  //
-  // Optimistic, for the reason setStage gives: a round counter that waits a round
-  // trip before changing reads as a click that did not register.
-  const setSampleFields = async (r, patch) => {
-    const clean = Object.fromEntries(Object.entries(patch || {}).filter(([k]) => SAMPLE_FIELDS.includes(k)));
-    if (!Object.keys(clean).length) return;
-    const before = rows.find(x => x.id === r.id) || null;
-    const stamp = { updated_at: new Date().toISOString(), updated_by: userEmail || null };
-    setSaving(r.id);
-    setRows(prev => prev.map(x => x.id === r.id ? { ...x, ...clean, ...stamp } : x));
-    const { error } = await SB.from('programs').update({ ...clean, ...stamp }).eq('id', r.id);
-    if (error) {
-      if (before) setRows(prev => prev.map(x => x.id === r.id ? before : x));
-      window._toast?.('Could not save the sample — ' + error.message, 'err');
-      setSaving(null);
-      return;
-    }
-    await load();
-    setSaving(null);
   };
 
   // ── TAKING A CARD OFF THE BOARD, AND PUTTING IT BACK ────────────────────────
@@ -2584,7 +2788,6 @@ export default function Programs({ userEmail }) {
     <div style={{padding:'26px 30px 60px'}}>
       {openRow && <ProgramDetail r={openRow} userEmail={userEmail} staff={staff}
                                  busy={saving === openRow.id} onStage={setStage} onOwner={setOwner}
-                                 onSample={setSampleFields}
                                  onArchive={setArchived}
                                  onDelete={deleteCard}
                                  onTouched={load}
