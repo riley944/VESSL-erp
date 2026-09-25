@@ -707,7 +707,11 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   const nextRound = inRevision ? Math.max(2, ...rounds.map(x => x.round + 1)) : 1;
   const showForm = inRevision || !round1;
 
-  const blank = { master: null, sent: '', due: '', carrier: '', tracking: '', comment: '' };
+  // lab is the CARD'S testing lab, programs.testing_lab -- one per card, not per
+  // round. It rides in the round form so it can be set while the card is being
+  // worked in Sampling or Revision, prefilled with the card's value, and it is
+  // written only when it changed. Every round form shows the same card value.
+  const blank = { master: null, sent: '', due: '', carrier: '', tracking: '', comment: '', lab: r.testing_lab || '' };
   const [form, setForm] = useState(blank);
   const [editId, setEditId] = useState(null);
   const [edit, setEdit] = useState(blank);
@@ -716,6 +720,12 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   // A new form for a card that moved stage, so a half-filled round 1 does not
   // turn up as round 2.
   useEffect(() => { setForm(blank); setEditId(null); setErr(''); }, [r.id, r.stage]);
+  // The card's lab changed -- saved from here, from the Testing section, or by
+  // somebody else -- so every form shows the stored value again.
+  useEffect(() => {
+    setForm(f => ({ ...f, lab: r.testing_lab || '' }));
+    setEdit(f => ({ ...f, lab: r.testing_lab || '' }));
+  }, [r.testing_lab]);
 
   const settle = async () => {
     const failed = await touchProgram(r.id, userEmail);
@@ -735,6 +745,15 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         && v.due_back === (x.due_back || null) && v.comment === (x.comment || null)
         && v.tracking_number === (x.tracking_number || null) && v.carrier === (x.carrier || null);
   };
+  // The lab is compared trimmed, as it is stored.
+  const labChanged = f => f.lab.trim() !== (r.testing_lab || '');
+  // Written on its own row, the card's, and only when it changed. The card's
+  // Last edited stamp follows from settle, as for every other write here.
+  const saveLab = async f => {
+    const { error } = await SB.from('programs')
+      .update({ testing_lab: f.lab.trim() || null }).eq('id', r.id);
+    return error ? error.message : null;
+  };
 
   // ── WHAT THE CLOSE GUARD SEES ─────────────────────────────────────────────
   // The fields below are data-noguard, and this is what the guard asks instead:
@@ -743,25 +762,40 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   // card closes without asking; input left unsaved still asks. Master sample is
   // a pair of buttons the guard could never see, and is covered here too.
   const editing = editId ? rounds.find(x => x.id === editId) : null;
-  useDirtySource((showForm && !!hasAny(form)) || (!!editing && !unchanged(editing, edit)));
+  useDirtySource((showForm && (!!hasAny(form) || labChanged(form)))
+              || (!!editing && (!unchanged(editing, edit) || labChanged(edit))));
 
+  // THE NEW-ROUND FORM SAVES A ROUND, THE LAB, OR BOTH. A round needs one of its
+  // own fields; the lab alone does not make a round, so a form holding only a
+  // changed lab saves just the lab and says so on its button (Save testing lab).
+  // The round goes first, and the lab only once the round has landed.
   const save = async () => {
-    if (!hasAny(form)) return;
-    if (!datesOk(form)) { setErr('Check the dates — each needs a full year from 2000 on.'); return; }
+    const withRound = !!hasAny(form), withLab = labChanged(form);
+    if (!withRound && !withLab) return;
+    if (withRound && !datesOk(form)) { setErr('Check the dates — each needs a full year from 2000 on.'); return; }
     setBusy(true); setErr('');
-    const { error } = await SB.from('program_sample_rounds').insert({
-      program_id: r.id, stage: inRevision ? 'revision' : 'sampling', round: nextRound,
-      ...values(form), created_by: userEmail || null,
-    });
-    if (error) {
-      setBusy(false);
-      if (error.code === '23505') {
-        setErr('Round ' + nextRound + ' was just saved by somebody else. The list has been refreshed — check it before saving again.');
-        if (onTouched) await onTouched();
-      } else setErr(error.message);
-      return;
+    if (withRound) {
+      const { error } = await SB.from('program_sample_rounds').insert({
+        program_id: r.id, stage: inRevision ? 'revision' : 'sampling', round: nextRound,
+        ...values(form), created_by: userEmail || null,
+      });
+      if (error) {
+        setBusy(false);
+        if (error.code === '23505') {
+          setErr('Round ' + nextRound + ' was just saved by somebody else. The list has been refreshed — check it before saving again.');
+          if (onTouched) await onTouched();
+        } else setErr(error.message);
+        return;
+      }
     }
-    setForm(blank);
+    if (withLab) {
+      const labErr = await saveLab(form);
+      if (labErr) {
+        setErr((withRound ? 'Round ' + nextRound + ' was saved, but the testing lab was not — ' : 'Could not save the testing lab — ') + labErr);
+        await settle(); setBusy(false); return;
+      }
+    }
+    setForm({ ...blank, lab: form.lab.trim() });
     await settle();
     setBusy(false);
   };
@@ -771,7 +805,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     setEdit({ master: x.master_sample === undefined ? null : x.master_sample,
               sent: x.sent_date || '', due: x.due_back || '', carrier: x.carrier || '',
               tracking: x.tracking_number || '',
-              comment: x.comment || '' });
+              comment: x.comment || '', lab: r.testing_lab || '' });
   };
 
   // Asked once, in the words agreed, and there is no undo -- the row is gone.
@@ -788,13 +822,24 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     if (!datesOk(edit)) { setErr('Check the dates — each needs a full year from 2000 on.'); return; }
     const v = values(edit);
     // Nothing changed is a cancel, not a write -- an edited stamp for an edit
-    // that changed nothing would be a false record.
-    if (unchanged(x, edit)) { setEditId(null); return; }
+    // that changed nothing would be a false record. A changed lab alone writes
+    // the card and leaves the round, and its edited stamp, untouched.
+    const roundChanged = !unchanged(x, edit), withLab = labChanged(edit);
+    if (!roundChanged && !withLab) { setEditId(null); return; }
     setBusy(true); setErr('');
-    const { error } = await SB.from('program_sample_rounds')
-      .update({ ...v, updated_by: userEmail || null, updated_at: new Date().toISOString() })
-      .eq('id', x.id);
-    if (error) { setBusy(false); setErr(error.message); return; }
+    if (roundChanged) {
+      const { error } = await SB.from('program_sample_rounds')
+        .update({ ...v, updated_by: userEmail || null, updated_at: new Date().toISOString() })
+        .eq('id', x.id);
+      if (error) { setBusy(false); setErr(error.message); return; }
+    }
+    if (withLab) {
+      const labErr = await saveLab(edit);
+      if (labErr) {
+        setErr((roundChanged ? 'Round ' + x.round + ' was saved, but the testing lab was not — ' : 'Could not save the testing lab — ') + labErr);
+        await settle(); setBusy(false); return;
+      }
+    }
     setEditId(null);
     await settle();
     setBusy(false);
@@ -875,6 +920,13 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
             placeholder="Optional" onChange={e=>set({ ...f, tracking: e.target.value })} />
         </div>
       </div>
+      {/* The CARD'S lab, not this round's -- the caption says so, because a field
+          inside a round form reads as part of the round otherwise. */}
+      <div style={{gridColumn:'1 / -1'}}>
+        <span style={lbl}>Testing lab <span style={{textTransform:'none',letterSpacing:0,fontWeight:500,color:'#A0A0A4'}}>· for this card</span></span>
+        <input data-noguard value={f.lab} disabled={busy} style={inp} aria-label="Testing lab"
+          placeholder="Optional" onChange={e=>set({ ...f, lab: e.target.value })} />
+      </div>
       <div style={{gridColumn:'1 / -1'}}>
         <span style={lbl}>Comment</span>
         <textarea data-noguard value={f.comment} disabled={busy} rows={2} placeholder="Optional"
@@ -947,9 +999,11 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         <>
           {fields(form, setForm, nextRound)}
           <div style={{display:'flex',alignItems:'center',gap:'10px',marginTop:'10px'}}>
-            <button onClick={save} disabled={busy || !hasAny(form) || editId !== null}
-              style={pillBtn(hasAny(form) && editId === null, busy || !hasAny(form) || editId !== null)}>
-              {busy && editId === null ? 'Saving…' : 'Save round ' + nextRound}
+            <button onClick={save} disabled={busy || !(hasAny(form) || labChanged(form)) || editId !== null}
+              style={pillBtn((hasAny(form) || labChanged(form)) && editId === null,
+                             busy || !(hasAny(form) || labChanged(form)) || editId !== null)}>
+              {busy && editId === null ? 'Saving…'
+                : !hasAny(form) && labChanged(form) ? 'Save testing lab' : 'Save round ' + nextRound}
             </button>
           </div>
         </>
@@ -969,10 +1023,11 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
 }
 
 // ── THE TESTING LAB ─────────────────────────────────────────────────────────
-// One free-text field, programs.testing_lab (script 83). Editable while the
-// card is in Testing; shown read-only in Production and Shipped, which is when
-// the lab's report tends to be chased. Nowhere else on the first tab -- the Card
-// tab reports it in every stage.
+// One free-text field, programs.testing_lab (script 83). In Sampling and
+// Revision it is set from the round form (SampleRounds). Testing has no round
+// form, so this section is where it is set in Testing; it is shown read-only in
+// Production and Shipped, which is when the lab's report tends to be chased.
+// The Card tab reports it in every stage.
 //
 // SAVES ITSELF, like the owner select: on leaving the field or on Enter, and
 // only when the text changed. data-noguard for the same reason the owner select
