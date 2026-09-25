@@ -569,6 +569,22 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
 // checklist uses for due dates, and the card's factory name (useCardFactory).
 
 // "Sep 18". A plain date is read as local noon so no timezone moves it a day.
+// ── THE CARD'S FACTORY, FROM QUOTES ALREADY IN HAND ─────────────────────────
+// useCardFactory's rule, applied to the board's bulk quote fetch for the board
+// export: the latest quote for this product and client by quote date, newest
+// first with undated quotes last, then by created_at -- and that quote's factory,
+// blank if it names none. The card reads its own copy when it opens; this is the
+// same answer without a query per card.
+const factoryOfQuotes = quotes => {
+  const sorted = [...(quotes || [])].sort((a, b) => {
+    const ad = a.quote_date || '', bd = b.quote_date || '';
+    if (ad !== bd) { if (!ad) return 1; if (!bd) return -1; return ad < bd ? 1 : -1; }
+    const ac = a.created_at || '', bc = b.created_at || '';
+    return ac < bc ? 1 : ac > bc ? -1 : 0;
+  });
+  return (sorted[0] || {}).factory || '';
+};
+
 const shortDate = s => {
   if (!s) return '';
   const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? s + 'T12:00:00' : s);
@@ -1374,6 +1390,24 @@ const downloadBlob = (blob, filename) => {
 // the product's notes, shared by every card for the SKU, "General Notes" on the
 // Card tab. The kind value in the table is still 'sampling'; only the label
 // changed. The sample log is no longer exported; its rows stay in the table.
+// ── ONE NOTE, AS EVERY FILE WRITES IT ───────────────────────────────────────
+// Shared by the card files (fetchCardNotes) and the board file, so a note reads
+// the same in both.
+//
+// kind on a product note, source on a program note. Both answer the same
+// question in the file -- what sort of note is this -- so both land in one
+// column and the two tables' column names stop mattering past this line.
+// The default kind is left blank, as the screen hides it: a product note's
+// kind is still 'sampling' in the table, and printing that under "General
+// notes" would contradict the heading it sits under. program_id and product_id
+// ride along for the board file, which has to say which card a note is on.
+const shapeNotes = (list, kindCol, dflt, staff = []) => (list || []).map(n => ({
+  // The author by name, as on screen -- staffName falls back to the email.
+  kind: (n[kindCol] && n[kindCol] !== dflt) ? n[kindCol] : '', author: staffName(staff, n.author) || 'unknown',
+  date: n.created_at, edited: !!n.edited_at, text: n.note || '', stage: n.stage || null,
+  programId: n.program_id || null, productId: n.product_id || null,
+}));
+
 const fetchCardNotes = async (r, staff = []) => {
   const own = await SB.from('program_notes')
     .select('author,note,created_at,edited_at,source,stage')
@@ -1392,18 +1426,8 @@ const fetchCardNotes = async (r, staff = []) => {
       .order('created_at', { ascending:false });
     if (prod.error) throw new Error(prod.error.message);
   }
-  // kind on a product note, source on a program note. Both answer the same
-  // question in the file -- what sort of note is this -- so both land in one
-  // column and the two tables' column names stop mattering past this line.
-  // The default kind is left blank, as the screen hides it: a product note's
-  // kind is still 'sampling' in the table, and printing that under "General
-  // notes" would contradict the heading it sits under.
-  const shape = (list, kindCol, dflt) => (list || []).map(n => ({
-    // The author by name, as on screen -- staffName falls back to the email.
-    kind: (n[kindCol] && n[kindCol] !== dflt) ? n[kindCol] : '', author: staffName(staff, n.author) || 'unknown',
-    date: n.created_at, edited: !!n.edited_at, text: n.note || '', stage: n.stage || null,
-  }));
-  return { card: shape(own.data, 'source', 'manual'), general: shape(prod.data, 'kind', 'sampling') };
+  return { card: shapeNotes(own.data, 'source', 'manual', staff),
+           general: shapeNotes(prod.data, 'kind', 'sampling', staff) };
 };
 
 // ── THE PRINTED CARD ────────────────────────────────────────────────────────
@@ -1592,6 +1616,123 @@ const workingNoteGroups = card => {
   groups.push({ label: 'No stage', list: card.filter(n => !n.stage || STAGE_LABEL[n.stage] === undefined) });
   return groups.filter(g => g.list.length);
 };
+
+// ── THE BOARD AS A FILE ─────────────────────────────────────────────────────
+// Every card on the board in one workbook or one CSV, built from the SAME
+// pieces the card files use -- workingRounds, workingTasks, workingNoteGroups,
+// cardGroups, sampleStripText, healthOf, blockerOf -- so a card reads the same
+// in the board file as in its own. Six tables, each keyed by SKU and client so
+// any row says which card it belongs to:
+//   Board          one row per card, the tile and its header facts
+//   Rounds         one row per saved sample round
+//   Checklist      one row per task
+//   Card notes     one row per card note
+//   Records        one row per card, a column per What the system knows line
+//   General notes  one row per product note, with the clients whose cards show it
+// Separate sheets rather than tables stacked on one, because Excel sorts,
+// filters and freezes a header per sheet, and a stacked sheet can only do that
+// for the first table on it.
+//
+// Each column is [header, kind]. kind decides how a value is written: 'date'
+// is a plain yyyy-mm-dd, 'stamp' a timestamp, 'num' a number, anything else
+// text. The workbook turns dates into real dates; the CSV writes them as text,
+// the same split the card files make.
+const BOARD_STAGE_ORDER = Object.fromEntries(MANUAL_STAGES.map(([k], i) => [k, i]));
+const buildBoardTables = (cards, staff, cardNotes, generalNotes) => {
+  // Ladder order, then SKU, so the file reads down the board left to right.
+  const list = [...cards].sort((a, b) => {
+    const sa = a.stage in BOARD_STAGE_ORDER ? BOARD_STAGE_ORDER[a.stage] : 99;
+    const sb = b.stage in BOARD_STAGE_ORDER ? BOARD_STAGE_ORDER[b.stage] : 99;
+    if (sa !== sb) return sa - sb;
+    return String((a.products || {}).sku || '').localeCompare(String((b.products || {}).sku || ''));
+  });
+  const skuOf = r => (r.products || {}).sku || '';
+  const clientOf = r => (r.client || {}).name || '';
+  const key = r => [skuOf(r), clientOf(r)];
+
+  const board = {
+    name: 'Board',
+    cols: [['SKU'], ['Product'], ['Client'], ['Factory'], ['Stage'], ['Days in stage', 'num'], ['Owner'],
+           ['Health'], ['Blocker'], ['Sample overdue'], ['Open tasks', 'num'], ['Latest round'],
+           ['Created by'], ['Created at', 'stamp'], ['Last edited by'], ['Last edited at', 'stamp'], ['Removed']],
+    rows: list.map(r => {
+      const blk = blockerOf(r);
+      return [
+        skuOf(r), (r.products || {}).name || '', clientOf(r), r.factoryName || '',
+        stageLabel(r.stage), (r.days === null || r.days === undefined) ? null : r.days,
+        r.ownerName || 'Unowned', HEALTH[healthOf(r, r.tasks)].label,
+        blk ? BLOCKERS[blk].label : '', sampleOverdue(r) ? 'Yes' : 'No',
+        // The tile count -- open tasks in the stage the card is in.
+        openTasks(r).filter(t => t.stage === r.stage).length,
+        sampleStripText(r) || '',
+        r.createdByName || '', r.created_at || null,
+        r.edited ? (r.lastTouchBy || '') : '', r.edited ? (r.updated_at || null) : null,
+        r.archived ? 'Yes' : 'No',
+      ];
+    }),
+  };
+
+  const rounds = {
+    name: 'Rounds',
+    cols: [['SKU'], ['Client'], ['Round', 'num'], ['Stage'], ['Master sample'], ['Sent', 'date'], ['Due back', 'date'],
+           ['Comment'], ['Saved by'], ['Saved at', 'stamp'], ['Edited by'], ['Edited at', 'stamp']],
+    rows: list.flatMap(r => workingRounds(r, staff).map(x => [
+      ...key(r), Number(x.round), x.stage, x.master, x.sent, x.due, x.comment,
+      x.savedBy, x.savedAt, x.editedBy, x.editedAt,
+    ])),
+  };
+
+  const checklist = {
+    name: 'Checklist',
+    cols: [['SKU'], ['Client'], ['Stage'], ['Task'], ['Done'], ['Done at', 'stamp'], ['Owner'], ['Due', 'date'], ['Blocker']],
+    rows: list.flatMap(r => workingTasks(r, staff).flatMap(g => g.tasks.map(t => [
+      ...key(r), g.label, t.task, t.done, t.doneAt, t.owner, t.due, t.blocker,
+    ]))),
+  };
+
+  const notesOn = r => cardNotes.filter(n => n.programId === r.id);
+  const cardNoteTable = {
+    name: 'Card notes',
+    cols: [['SKU'], ['Client'], ['Stage'], ['Kind'], ['Author'], ['Date', 'stamp'], ['Edited'], ['Note']],
+    rows: list.flatMap(r => workingNoteGroups(notesOn(r)).flatMap(g => g.list.map(n => [
+      ...key(r), g.label, n.kind, n.author, n.date, n.edited ? 'Yes' : '', n.text,
+    ]))),
+  };
+
+  // The labels come from cardGroups itself, so a line added to the card's
+  // records reaches this sheet as a new column without anybody editing it.
+  const knowsLabels = list.length ? cardGroups(list[0]).knows.map(([l]) => l) : [];
+  const records = {
+    name: 'Records',
+    cols: [['SKU'], ['Product'], ['Client'], ...knowsLabels.map(l => [l])],
+    rows: list.map(r => {
+      const byLabel = new Map(cardGroups(r).knows);
+      return [skuOf(r), (r.products || {}).name || '', clientOf(r), ...knowsLabels.map(l => byLabel.get(l) || '')];
+    }),
+  };
+
+  // A product note belongs to the PRODUCT, shared by every card for that SKU,
+  // so it is listed once with the clients whose cards show it rather than once
+  // per card.
+  const productRow = new Map();
+  list.forEach(r => {
+    if (!r.product_id) return;
+    const cur = productRow.get(r.product_id) || { sku: skuOf(r), name: (r.products || {}).name || '', clients: [] };
+    if (clientOf(r) && !cur.clients.includes(clientOf(r))) cur.clients.push(clientOf(r));
+    productRow.set(r.product_id, cur);
+  });
+  const general = {
+    name: 'General notes',
+    cols: [['SKU'], ['Product'], ['Clients'], ['Kind'], ['Author'], ['Date', 'stamp'], ['Edited'], ['Note']],
+    rows: generalNotes.filter(n => productRow.has(n.productId)).map(n => {
+      const pr = productRow.get(n.productId);
+      return [pr.sku, pr.name, pr.clients.join(', '), n.kind, n.author, n.date, n.edited ? 'Yes' : '', n.text];
+    }),
+  };
+
+  return [board, rounds, checklist, cardNoteTable, records, general];
+};
+const boardFileBase = withRemoved => 'plm-board-' + (withRemoved ? 'with-removed-' : '') + stampToday();
 
 const buildWorkingDoc = ({ r, factoryName, staff, card, logo }) => {
   const p = r.products || {};
@@ -2178,7 +2319,8 @@ export default function Programs({ userEmail }) {
         // still fetches the notes themselves when a modal opens -- this is the
         // count only, and fetching it per card would be one query per row.
         SB.from('program_notes').select('program_id'),
-        SB.from('quotes').select('product_id,client_company_id,quote_date,created_at').not('product_id','is',null),
+        // factory for the board export, picked below by useCardFactory's own rule.
+        SB.from('quotes').select('product_id,client_company_id,quote_date,created_at,factory').not('product_id','is',null),
         SB.from('purchase_order_items')
           // estimated_departure joins the embed for the Shipping row, which falls
           // back to an ETD when nothing has actually left yet. shipmentsOf returns
@@ -2322,6 +2464,7 @@ export default function Programs({ userEmail }) {
                noteCount: noteCounts[r.id] || 0,
                tasks: tasks[r.id] || [],
                rounds: rounds[r.id] || [],
+               factoryName: factoryOfQuotes(buckets.quotes[k] || []),
                // The order rows read these three. null when there is none.
                latestSO: soL ? { num: soL.top.so_number || 'Sales order', on: soL.top.order_date || null, n: soL.n } : null,
                latestPO: poL ? { num: poL.top.order_number || 'Purchase order',
@@ -2599,6 +2742,89 @@ export default function Programs({ userEmail }) {
   const shownRemoved = useMemo(() => removed.filter(r => matches(r) && blockerMatches(r)),
     [removed, ui.search, ui.blocker]);
 
+  // ── EXPORTING THE BOARD ─────────────────────────────────────────────────────
+  // Every card on the board, and the removed ones only while Show removed is
+  // ticked. The search box and the Waiting tiles are NOT applied, on purpose: a
+  // board file quietly narrowed by a search left in the box is the worse mistake,
+  // and the menu note says so.
+  //
+  // THE NOTES ARE READ AT EXPORT TIME, like the card files -- the board holds
+  // counts only. Both note tables are read whole and matched here rather than
+  // asked for by a list of ids, because an id list long enough for a full board
+  // would not fit in a request URL. Card notes exist only on cards, and the
+  // product notes of kind sampling are the General Notes, so neither read is
+  // large.
+  const [boardExporting, setBoardExporting] = useState(false);
+  const exportCards = ui.showRemoved ? [...board, ...removed] : board;
+  const boardTables = async () => {
+    const [cn, gn] = await Promise.all([
+      SB.from('program_notes').select('program_id,author,note,created_at,edited_at,source,stage')
+        .order('created_at', { ascending:false }),
+      SB.from('product_notes').select('product_id,author,note,created_at,edited_at,kind')
+        .eq('kind', 'sampling').order('created_at', { ascending:false }),
+    ]);
+    if (cn.error) throw new Error(cn.error.message);
+    if (gn.error) throw new Error(gn.error.message);
+    return buildBoardTables(exportCards, staff,
+      shapeNotes(cn.data, 'source', 'manual', staff), shapeNotes(gn.data, 'kind', 'sampling', staff));
+  };
+  const exportBoardXlsx = async () => {
+    setBoardExporting(true);
+    try {
+      const tables = await boardTables();
+      const ExcelJS = await loadExcelJS();
+      const wb = new ExcelJS.Workbook();
+      wb.creator = 'VESSL'; wb.created = new Date();
+      tables.forEach(t => {
+        const ws = wb.addWorksheet(t.name);
+        ws.addRow(t.cols.map(([h]) => h));
+        t.rows.forEach(row => ws.addRow(row.map((v, i) => {
+          const kind = t.cols[i][1];
+          return (kind === 'date' || kind === 'stamp') ? excelDate(v) : v;
+        })));
+        ws.getRow(1).font = { bold: true };
+        ws.views = [{ state:'frozen', ySplit:1 }];
+        ws.autoFilter = { from: { row:1, column:1 }, to: { row:1, column:t.cols.length } };
+        t.cols.forEach(([h, kind], i) => {
+          const col = ws.getColumn(i + 1);
+          if (kind === 'date') col.numFmt = 'yyyy-mm-dd';
+          if (kind === 'stamp') col.numFmt = 'yyyy-mm-dd hh:mm';
+          const long = ['Note', 'Comment', 'Task', 'Latest round'].includes(h);
+          col.width = long ? 60 : kind === 'stamp' ? 17 : Math.max(12, Math.min(34, h.length + 6));
+          if (long) col.alignment = { wrapText: true, vertical: 'top' };
+        });
+      });
+      const buf = await wb.xlsx.writeBuffer();
+      downloadBlob(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+                   boardFileBase(ui.showRemoved) + '.xlsx');
+    } catch (e) {
+      alert('Could not build the board export: ' + ((e && e.message) || e));
+    }
+    setBoardExporting(false);
+  };
+  // One file, the six tables in the workbook's order, each under a # title line
+  // with a blank line between -- the per-card CSV's shape.
+  const exportBoardCsv = async () => {
+    setBoardExporting(true);
+    try {
+      const tables = await boardTables();
+      const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+      const lines = [];
+      tables.forEach((t, ti) => {
+        if (ti) lines.push('');
+        lines.push(cell('# ' + t.name));
+        lines.push(t.cols.map(([h]) => cell(h)).join(','));
+        t.rows.forEach(row => lines.push(row.map((v, i) =>
+          cell(t.cols[i][1] === 'stamp' ? stampText(v) : v)).join(',')));
+      });
+      const csv = '﻿' + lines.join('\r\n') + '\r\n';
+      downloadBlob(new Blob([csv], { type:'text/csv;charset=utf-8;' }), boardFileBase(ui.showRemoved) + '.csv');
+    } catch (e) {
+      alert('Could not build the board export: ' + ((e && e.message) || e));
+    }
+    setBoardExporting(false);
+  };
+
   // railStages was here. The sections carry their own headings and counts now, and
   // the tiles above carry the totals, so a second list of the same six labels had
   // nothing left to say.
@@ -2816,10 +3042,24 @@ export default function Programs({ userEmail }) {
                                  onTouched={load}
                                  onClose={()=>setOpenId(null)} />}
 
-      <div style={{textAlign:'center',marginBottom:'18px'}}>
-        <h1 style={{fontSize:'26px',fontWeight:700,letterSpacing:'-.02em',color:'#1D1D1F',margin:0}}>Product Life Management</h1>
-        <div style={{fontSize:'13px',color:'#86868B',marginTop:'5px'}}>
-          {board.length} on the board
+      {/* THE TITLE ROW, THREE COLUMNS. The heading sits in the middle one, so it
+          stays centred on the page; the board export sits at the right end of the
+          row, where the page action sits on the pages that use the shared header
+          (+ New on Companies). The empty left column balances the right one, and
+          a grid rather than absolute positioning keeps the two from overlapping
+          on a narrow screen. */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',alignItems:'start',columnGap:'12px',marginBottom:'18px'}}>
+        <div />
+        <div style={{textAlign:'center'}}>
+          <h1 style={{fontSize:'26px',fontWeight:700,letterSpacing:'-.02em',color:'#1D1D1F',margin:0}}>Product Life Management</h1>
+          <div style={{fontSize:'13px',color:'#86868B',marginTop:'5px'}}>
+            {board.length} on the board
+          </div>
+        </div>
+        <div style={{justifySelf:'end'}}>
+          <ExportButton count={exportCards.length} busy={boardExporting} align="right"
+            note={'Every card on the board (' + exportCards.length + '), filters not applied'}
+            onXlsx={exportBoardXlsx} onCsv={exportBoardCsv} />
         </div>
       </div>
 
