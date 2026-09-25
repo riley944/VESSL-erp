@@ -305,6 +305,16 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
   const [editId, setEditId] = useState(null);
   const [draft, setDraft]   = useState('');
 
+  // ── WHAT THE CLOSE GUARD SEES ─────────────────────────────────────────────
+  // The same arrangement as the sample rounds. Both boxes below are
+  // data-noguard, and the panel reports for itself: a new note with words in it,
+  // or an open edit whose text differs from the saved note. Add note empties the
+  // box and Save closes the editor, so the card then closes without asking; words
+  // typed and not added still ask. Trimmed, because the panel saves trimmed text
+  // and treats a whitespace-only change as no change.
+  const editingNote = editId && notes ? notes.find(n => n.id === editId) : null;
+  useDirtySource(!!text.trim() || (!!editingNote && draft.trim() !== (editingNote.note || '').trim()));
+
   // No deleted_at filter any more, and no deleted_at in the select -- 64 drops the
   // column. A deleted note is gone from the table, so there is nothing to exclude.
   //
@@ -446,7 +456,7 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
                 </div>
                 {editing ? (
                   <>
-                    <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={3}
+                    <textarea data-noguard value={draft} onChange={e=>setDraft(e.target.value)} rows={3}
                       style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'8px',padding:'8px 10px',
                               fontSize:'13px',fontFamily:'inherit',outline:'none',resize:'vertical',
                               background:'#fff',boxSizing:'border-box'}} />
@@ -480,7 +490,7 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
         <div style={{fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5,marginBottom:'9px'}}>{subtitle}</div>
       )}
 
-      <textarea value={text} onChange={e=>setText(e.target.value)} rows={2}
+      <textarea data-noguard value={text} onChange={e=>setText(e.target.value)} rows={2}
         placeholder="Add a note — you can edit or delete your own notes later"
         style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 11px',
                 fontSize:'13px',fontFamily:'inherit',outline:'none',resize:'vertical',
@@ -1095,8 +1105,9 @@ function Checklist({ r, staff = [], userEmail, onTouched }) {
 // that because a half-filled form is recoverable. A note is not -- it is prose
 // somebody just wrote and cannot get back. useDirtyGuard watches input events
 // inside the card, so typed-but-unsaved text turns the backdrop click into a
-// confirm instead of a dismissal. Nothing here has to arrange that beyond using
-// Overlay.
+// confirm instead of a dismissal. The notes and the sample rounds save themselves
+// and empty their boxes, so they report their own unsaved text through
+// useDirtySource instead -- otherwise a note already added would still ask.
 function ProgramDetail({ r, userEmail, staff, busy, onStage, onOwner, onArchive, onDelete, onClose, onTouched }) {
   return (
     // Wider than it was, because the card carries two tabs now. Still inside the
