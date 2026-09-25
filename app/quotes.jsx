@@ -3555,6 +3555,20 @@ function QuoteForm({ initial, onClose, onSave, userEmail }) {
                 The three styles are Field's own -- S.field, S.fieldLabel,
                 S.input -- so the row sits on the FormSection grid exactly as it
                 did before. */}
+            {/* ── PRODUCT, HTS CODE AND QUOTE DATE, ONE ROW ─────────────────────
+                Their own three-column row, spanning the section, in proportions
+                rather than pixels -- Product 1.5, HTS code 2, Quote Date 1 -- so
+                the row holds together on a laptop and the HTS box has room for
+                its placeholder and a code with its description. In the section's
+                auto-fit grid they were three equal ~150px cells, and the HTS box
+                cut its placeholder to "SELECT A TA…". minmax(0, …) lets a column
+                shrink below its content rather than push the row wider.
+
+                The duty notice sits UNDER the row now, not inside it: as a
+                spanning grid item placed between HTS and Quote Date it used to
+                push Quote Date down a row whenever a code carried a notice. */}
+            <div style={{ gridColumn: "1 / -1", display: "grid", gap: 12,
+                          gridTemplateColumns: "minmax(0, 1.5fr) minmax(0, 2fr) minmax(0, 1fr)" }}>
             <label style={S.field}>
               <span style={S.fieldLabel}>Product</span>
               <input
@@ -3592,23 +3606,19 @@ function QuoteForm({ initial, onClose, onSave, userEmail }) {
               )}
             </label>
             {/* The three style props reproduce exactly what this file used to apply
-                inline, so the row renders the same as before the extraction. */}
+                inline, so the row renders the same as before the extraction. Its
+                list opens as wide as the field, which is the middle column. */}
             <HtsField value={f.hts} onChange={pickHts} codes={htsCodes}
               onAdd={(seed) => setAddingCode({ code: seed || "" })}
               fieldStyle={S.field} labelStyle={S.fieldLabel} inputStyle={S.input} />
-            {/* Non-blocking, and it occupies no row of its own when silent. */}
-            {dutyNotice && <div style={{ gridColumn: "1 / -1", marginTop: -4, fontSize: 11.5, color: "#3461e0" }}>{dutyNotice}</div>}
-            {/* BEFORE the two spanning blocks below, and that position is the whole
-                point of it being here rather than at the end of the section.
-
-                Auto-placement fills the row with ordinary cells until something
-                spanning 1/-1 needs a fresh row. Rendered after those blocks, Quote
-                Date sat on the top row only while both of them returned null, and
-                dropped to a row of its own the moment a tariff code was picked --
-                so the field moved under you as a side effect of a block appearing
-                somewhere else entirely. Ahead of them it shares the row with
-                Product and the HTS field and stays there whatever they do. */}
+            {/* The third column of the Product / HTS / Quote Date row. It lives in
+                that row's own grid, so no block appearing elsewhere in the section
+                -- the duty notice, the rule hints -- can move it off the row. */}
             <Field label="Quote Date" k="quoteDate" type="date" f={f} set={set} />
+            </div>
+            {/* Non-blocking, and it occupies no row of its own when silent. Under
+                the Product / HTS / Quote Date row, full width. */}
+            {dutyNotice && <div style={{ gridColumn: "1 / -1", marginTop: -4, fontSize: 11.5, color: "#3461e0" }}>{dutyNotice}</div>}
             {/* ABOVE HtsRuleHints, and full-width for the same reason it is -- see the
                 comment on it below. Order is the argument: this block is what someone
                 LINKED to the product, the one below is what a tariff code SUGGESTS, and
@@ -3656,19 +3666,35 @@ function QuoteForm({ initial, onClose, onSave, userEmail }) {
                 The stored value renders directly, so the two quotes naming a
                 client with no company row still show exactly what they have
                 always said until somebody changes them. */}
+            {/* ── TWO ROWS, IN PROPORTIONS ──────────────────────────────────
+                Client, Contact, Email on the first; Phone, Address on the second.
+                Each row is its own grid spanning the section, in fifths of its
+                width: Contact, Email, Phone and Address take 1.15 each, Client
+                2.7 -- it gave up a tenth of its old three fifths so the four
+                could be 1.15 times as wide. The second row ends in an empty
+                column so Phone and Address line up under the first row's start.
+                minmax(0, …) lets a column shrink below its content rather than
+                push the row wider. The auto-fit section grid used to place these
+                and needed a hidden row-break item to keep the split; each row
+                being its own grid does that now. */}
+            <div style={{ gridColumn: "1 / -1", display: "grid", gap: 12,
+                          gridTemplateColumns: "minmax(0, 2.7fr) minmax(0, 1.15fr) minmax(0, 1.15fr)" }}>
             <CompanySelect value={f.client} companies={clientCompanies}
               onPick={onPickClient}
               onAddNew={(seed) => setAddingClient({ name: seed || "" })}
               label="Client" placeholder="Select a client"
               emptyNoun="clients" addLabel="Add new client"
-              fieldStyle={{ ...S.field, gridColumn: "span 3" }}
+              fieldStyle={S.field}
               labelStyle={S.fieldLabel} inputStyle={S.input} />
             {/* All four stay editable after a fill, and none is required. */}
             <Field label="Contact" k="clientContact" placeholder="Buyer name" f={f} set={set} />
             <Field label="Email" k="clientEmail" placeholder="email@client.com" f={f} set={set} />
-            <div aria-hidden="true" style={{ gridColumn: "1 / -1", height: 0, marginBottom: -12 }} />
+            </div>
+            <div style={{ gridColumn: "1 / -1", display: "grid", gap: 12,
+                          gridTemplateColumns: "minmax(0, 1.15fr) minmax(0, 1.15fr) minmax(0, 2.7fr)" }}>
             <Field label="Phone" k="clientPhone" placeholder="Phone" f={f} set={set} />
             <Field label="Address" k="clientAddress" placeholder="Address" f={f} set={set} />
+            </div>
           </FormSection>
 
           <FormSection icon={<Factory size={15} />} title="Factory / Facility Info">
@@ -3682,39 +3708,33 @@ function QuoteForm({ initial, onClose, onSave, userEmail }) {
                 no company shows exactly what it has always said, with a caption,
                 until somebody changes it. Script 71 re-points the 52 rows in that
                 state; this rule is what keeps the next one visible. */}
-            {/* THREE TRACKS WIDE, because a factory name is the longest value in
-                this section and one track of a minmax(150px, 1fr) grid truncates
-                most of them. span rather than a fixed width: the grid is
-                auto-fit, so the track COUNT changes with the modal width, and a
-                span degrades with it instead of overflowing. */}
+            {/* THE WIDEST BOX ON ITS ROW, because a factory name is the longest
+                value in this section. The same two-row proportions as the client
+                side: Factory 2.7, Contact and Email 1.15 each; then Phone 1.15,
+                Country and Lead Time 1 each as before, and an empty column. */}
+            <div style={{ gridColumn: "1 / -1", display: "grid", gap: 12,
+                          gridTemplateColumns: "minmax(0, 2.7fr) minmax(0, 1.15fr) minmax(0, 1.15fr)" }}>
             <FactorySelect value={f.factory} companies={factoryCompanies}
               onPick={onPickFactory}
               onAddNew={(seed) => setAddingFactory({ name: seed || "" })}
-              fieldStyle={{ ...S.field, gridColumn: "span 3" }}
+              fieldStyle={S.field}
               labelStyle={S.fieldLabel} inputStyle={S.input} />
             {/* All five stay editable after a fill. The fill is a starting point
                 from the directory, not a claim that this quote must match it --
                 a factory contact changes more often than a company record does. */}
             <Field label="Contact" k="factoryContact" placeholder="Name" f={f} set={set} />
             <Field label="Email" k="factoryEmail" placeholder="email@factory.com" f={f} set={set} />
-            {/* ── THE ROW BREAK ──────────────────────────────────────────────
-                S.formGrid is repeat(auto-fit, minmax(150px, 1fr)), so the number
-                of tracks depends on how wide the modal is -- six at about
-                1000px, fewer below that. Without this, Phone would join row 1 at
-                seven tracks and Email would fall to row 2 at five, and the
-                arrangement would only be the intended one at one width.
-
-                A full-width item ends the row wherever it lands, so the split
-                holds at every size while the tracks stay fluid.
-
-                THE NEGATIVE MARGIN IS NOT A FUDGE. A zero-height row still sits
-                between two 12px gaps, so this break would otherwise be 24px
-                where every other row change in this form is 12px. Remove it if
-                a wider break is wanted here. */}
-            <div aria-hidden="true" style={{ gridColumn: "1 / -1", height: 0, marginBottom: -12 }} />
+            </div>
+            {/* The second row. Each row being its own grid is what holds the
+                split at every modal width -- the job the hidden row-break item
+                did when these sat in the section's auto-fit grid. The row gap
+                between the two is the section's 12px, like every other. */}
+            <div style={{ gridColumn: "1 / -1", display: "grid", gap: 12,
+                          gridTemplateColumns: "minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.85fr)" }}>
             <Field label="Phone" k="factoryPhone" placeholder="Phone" f={f} set={set} />
             <Field label="Country" k="country" placeholder="e.g. China" f={f} set={set} />
             <Field label="Lead Time" k="leadTime" placeholder="e.g. 45 days" f={f} set={set} />
+            </div>
           </FormSection>
 
           <FormSection icon={<Package size={15} />} title="Carton Info">

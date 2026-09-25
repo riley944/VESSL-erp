@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Plus, X } from "lucide-react";
 import { SB } from "@/lib/supabase";
 import { matches, normalizeTerm } from "@/lib/textFilter";
@@ -41,14 +41,29 @@ import { matches, normalizeTerm } from "@/lib/textFilter";
 // options, add button) is owned here; neither host has an equivalent and neither
 // wants a different one.
 //
-// The markup is deliberately unchanged from the quotes.jsx original -- <label>
-// wrapper, <span> caption, <div> trigger. globals.css:241 styles bare `label`
-// app-wide (mono, uppercase, .14em tracking), so the wrapper element decides what
-// everything inside it inherits. Swapping it for a <div> silently restyles the
-// quote form's HTS row. Keep it a label; hosts that need the trigger to opt out
-// of that inheritance say so in inputStyle.
+// THE WRAPPER IS A <div> NOW, NOT A <label>, for the reason CompanySelect's is
+// (2026-09-24). A label forwards a click on its text to its first control, and
+// once a code is set that control is the clear x -- so clicking a filled field
+// to change the code wiped it instead of opening the list. globals.css styles
+// bare `label` app-wide (mono, uppercase, .14em tracking, 7px below), and the
+// caption and trigger inherited that from the old wrapper, so LABEL_LOOK
+// carries the same rule inline and the row looks exactly as it did. The one
+// exception is the bottom margin when a host passes fieldClassName: there the
+// class (form-row, 18px) used to win over the bare label rule, and an inline
+// 7px would beat the class, so the margin is left to the class. Hosts that
+// need the trigger to opt out of the inherited type still say so in inputStyle.
 
-const panelStyle = { position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30, marginTop: 4, background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 12, boxShadow: "0 10px 30px rgba(15,23,41,0.16)", padding: 8 };
+// The global `label` rule, carried inline now that the wrapper is a <div> --
+// the same object CompanySelect uses.
+const LABEL_LOOK = { display: "block", fontFamily: "var(--mono)", fontSize: "10px", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--muted)", marginBottom: "7px" };
+// ── THE BOX AND THE LIST SET THEIR OWN TYPE ────────────────────────────────
+// The wrapper carries the caption's look -- mono, uppercase, .14em -- and a
+// <div> trigger inherits all of it, which is how the placeholder rendered as
+// "SELECT A TA…" in a 150px grid cell. The trigger and the panel reset to the
+// body face, upright and unspaced, before any host inputStyle, so a host that
+// sets its own still wins.
+const PLAIN_TYPE = { fontFamily: "var(--sans)", textTransform: "none", letterSpacing: "normal" };
+const panelStyle = { ...PLAIN_TYPE, position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30, marginTop: 4, background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 12, boxShadow: "0 10px 30px rgba(15,23,41,0.16)", padding: 8 };
 const optionStyle = { display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "8px 9px", borderRadius: 8, fontSize: 13.5, color: "#0f1729", cursor: "pointer" };
 const addBtnStyle = { display: "inline-flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "center", marginTop: 6, background: "#eef1f6", color: "#3461e0", border: "none", borderRadius: 9, padding: "9px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
 const clearBtnStyle = { background: "transparent", border: "none", color: "#6a7488", display: "inline-flex", padding: 2 };
@@ -131,15 +146,35 @@ export function HtsField({
   const unlisted = !!value && forValue.length === 0;
   const commit = (code) => { onChange(code); setTyped(""); setOpen(false); };
 
+  // The panel opens downward inside the host's scroll area. On a laptop-height
+  // window the quote form's HTS row sits near the bottom of that area once it
+  // has been scrolled to, so the list opened below it, under the modal footer --
+  // clicks there landed on the footer and no code could be picked (Loren,
+  // 2026-09-25; the factory picker had the same fault a day earlier). 'nearest'
+  // scrolls the host only as far as needed to show the filter box, the list
+  // and + Add code, and not at all when they already fit. After the panel has
+  // rendered, hence the frame. The same fix as CompanySelect.
+  const panelRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const id = requestAnimationFrame(() => {
+      if (panelRef.current) panelRef.current.scrollIntoView({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [open]);
+
+  const look = fieldClassName ? { ...LABEL_LOOK, marginBottom: undefined } : LABEL_LOOK;
   return (
-    <label className={fieldClassName} style={{ ...fieldStyle, position: "relative" }}>
+    <div className={fieldClassName} style={{ ...look, ...fieldStyle, position: "relative" }}>
       <span style={labelStyle}>{label}</span>
 
       {/* The committed value, rendered straight from `value` whether or not the
           library knows it. Clicking opens the picker; it never rewrites itself. */}
+      {/* The chosen code and its description WRAP rather than cut off, so a
+          long description is read in full; the box grows a line to hold it. */}
       <div onClick={() => setOpen((v) => !v)} className={inputClassName}
-        style={{ ...inputStyle, display: "flex", alignItems: "center", gap: 8, cursor: "pointer", minHeight: 40 }}>
-        <span style={{ flex: 1, minWidth: 0, color: value ? "#0f1729" : "#9aa3b5", fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        style={{ ...PLAIN_TYPE, ...inputStyle, display: "flex", alignItems: "center", gap: 8, cursor: "pointer", minHeight: 40 }}>
+        <span style={{ flex: 1, minWidth: 0, color: value ? "#0f1729" : "#9aa3b5", fontVariantNumeric: "tabular-nums", whiteSpace: "normal", overflowWrap: "anywhere", lineHeight: 1.4 }}>
           {value ? value : "Select a tariff code"}
           {known?.description && <span style={{ color: "#6a7488" }}> · {known.description}</span>}
         </span>
@@ -152,7 +187,7 @@ export function HtsField({
       {unlisted && <span style={{ fontSize: 11.5, color: "#c2683a", marginTop: 4 }}>Not in the code library — still saved as is.</span>}
 
       {open && (
-        <div style={panelStyle}>
+        <div ref={panelRef} style={panelStyle}>
           {/* data-noguard: typing here is NAVIGATION, not input. It filters the
               list and commits nothing -- only choosing a row sets the field, per
               the structural rule above. Without the tag the modal dirty guard
@@ -176,6 +211,6 @@ export function HtsField({
           </button>
         </div>
       )}
-    </label>
+    </div>
   );
 }
