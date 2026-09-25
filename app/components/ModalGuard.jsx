@@ -51,6 +51,28 @@ const MESSAGE = 'You have unsaved changes in this form.\n\nDiscard them and clos
 const MarkDirtyContext = createContext(() => {});
 export const useMarkDirty = () => useContext(MarkDirtyContext);
 
+// ── A PART OF THE CARD THAT KNOWS ITS OWN STATE ─────────────────────────────
+// The three detectors above only ever turn dirty ON. That is right for a form
+// that is saved by closing, and wrong for a panel inside a card that saves
+// itself and empties its fields -- the PLM card's sample rounds. Its keystrokes
+// set the flag, the save clears the fields, and closing still asked about
+// changes that were already saved.
+//
+// Clearing the flag after such a save is not the fix: the flag is one bit for
+// the whole card, and clearing it would also forget a half-typed note beside
+// the panel. So a panel like that opts its controls out with data-noguard and
+// reports for itself instead -- useDirtySource(isDirty), where isDirty is true
+// while it holds input that is not saved. guardedClose asks every source that is
+// mounted, alongside the three detectors, and the rest of the card is guarded
+// exactly as before.
+const DirtySourceContext = createContext(null);
+export function useDirtySource(isDirty) {
+  const register = useContext(DirtySourceContext);
+  const flag = useRef(isDirty);
+  flag.current = isDirty;
+  useEffect(() => (register ? register(flag) : undefined), [register]);
+}
+
 // The close button has the same problem the backdrop has, reached by a different
 // button: it discards whatever is typed, silently. Overlay held guardedClose to
 // itself and handed children only onClose, so every card's own close control
@@ -98,6 +120,12 @@ export function useDirtyGuard(onClose) {
   const dirty = useRef(false);
   const touched = useRef(false);
   const baseline = useRef(null);
+  const sources = useRef(new Set());
+
+  const registerSource = useCallback((flag) => {
+    sources.current.add(flag);
+    return () => { sources.current.delete(flag); };
+  }, []);
 
   useEffect(() => {
     const node = ref.current;
@@ -144,7 +172,8 @@ export function useDirtyGuard(onClose) {
 
   const guardedClose = useCallback(() => {
     const changed = dirty.current
-      || (baseline.current !== null && snapshot(ref.current) !== baseline.current);
+      || (baseline.current !== null && snapshot(ref.current) !== baseline.current)
+      || [...sources.current].some(f => f.current);
     // A modal holding no controls at all -- a viewer, a picker, a confirm --
     // snapshots to "0" on both sides, so it can never be dirty and closes
     // silently. No special-casing at any call site.
@@ -152,7 +181,7 @@ export function useDirtyGuard(onClose) {
     if (window.confirm(MESSAGE)) onClose();
   }, [onClose]);
 
-  return { ref, guardedClose, markDirty };
+  return { ref, guardedClose, markDirty, registerSource };
 }
 
 // The one Overlay. Replaces five near-identical local copies that differed only
@@ -173,7 +202,7 @@ export function Overlay({
   maxWidth = 560,
   cardStyle,
 }) {
-  const { ref, guardedClose, markDirty } = useDirtyGuard(onClose);
+  const { ref, guardedClose, markDirty, registerSource } = useDirtyGuard(onClose);
   return (
     <div
       onClick={guardedClose}
@@ -194,7 +223,9 @@ export function Overlay({
         }}
       >
         <GuardedCloseContext.Provider value={guardedClose}>
-          <MarkDirtyContext.Provider value={markDirty}>{children}</MarkDirtyContext.Provider>
+          <MarkDirtyContext.Provider value={markDirty}>
+            <DirtySourceContext.Provider value={registerSource}>{children}</DirtySourceContext.Provider>
+          </MarkDirtyContext.Provider>
         </GuardedCloseContext.Provider>
       </div>
     </div>

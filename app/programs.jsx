@@ -7,7 +7,7 @@ import { SB } from '@/lib/supabase';
 // Overlay, not a hand-rolled backdrop. It carries useDirtyGuard, so a typed note
 // is protected from a backdrop click by importing this and nothing else -- which
 // is precisely why the guard was put there rather than in each modal.
-import { Overlay, useGuardedClose } from '@/app/components/ModalGuard';
+import { Overlay, useGuardedClose, useDirtySource } from '@/app/components/ModalGuard';
 // ONE DERIVATION, shared with the panel. This page fetches differently -- in bulk,
 // for every program at once -- but it must not DECIDE differently, which is how
 // the awarded tile and the awarded filter ended up disagreeing about who won a
@@ -671,6 +671,20 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     master_sample: f.master, sent_date: f.sent || null, due_back: f.due || null,
     comment: f.comment.trim() || null,
   });
+  const unchanged = (x, f) => {
+    const v = values(f);
+    return v.master_sample === (x.master_sample ?? null) && v.sent_date === (x.sent_date || null)
+        && v.due_back === (x.due_back || null) && v.comment === (x.comment || null);
+  };
+
+  // ── WHAT THE CLOSE GUARD SEES ─────────────────────────────────────────────
+  // The fields below are data-noguard, and this is what the guard asks instead:
+  // a new round with anything filled in, or an open edit that differs from the
+  // saved round. A successful save empties the form or closes the edit, so the
+  // card closes without asking; input left unsaved still asks. Master sample is
+  // a pair of buttons the guard could never see, and is covered here too.
+  const editing = editId ? rounds.find(x => x.id === editId) : null;
+  useDirtySource((showForm && !!hasAny(form)) || (!!editing && !unchanged(editing, edit)));
 
   const save = async () => {
     if (!hasAny(form)) return;
@@ -703,9 +717,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     const v = values(edit);
     // Nothing changed is a cancel, not a write -- an edited stamp for an edit
     // that changed nothing would be a false record.
-    const same = v.master_sample === (x.master_sample ?? null) && v.sent_date === (x.sent_date || null)
-              && v.due_back === (x.due_back || null) && v.comment === (x.comment || null);
-    if (same) { setEditId(null); return; }
+    if (unchanged(x, edit)) { setEditId(null); return; }
     setBusy(true); setErr('');
     const { error } = await SB.from('program_sample_rounds')
       .update({ ...v, updated_by: userEmail || null, updated_at: new Date().toISOString() })
@@ -768,17 +780,17 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
       </div>
       <div>
         <span style={lbl}>Sent</span>
-        <input type="date" value={f.sent} disabled={busy} style={inp} aria-label="Sent"
+        <input type="date" data-noguard value={f.sent} disabled={busy} style={inp} aria-label="Sent"
           onChange={e=>set({ ...f, sent: e.target.value })} />
       </div>
       <div>
         <span style={lbl}>Due back</span>
-        <input type="date" value={f.due} disabled={busy} style={inp} aria-label="Due back"
+        <input type="date" data-noguard value={f.due} disabled={busy} style={inp} aria-label="Due back"
           onChange={e=>set({ ...f, due: e.target.value })} />
       </div>
       <div style={{gridColumn:'1 / -1'}}>
         <span style={lbl}>Comment</span>
-        <textarea value={f.comment} disabled={busy} rows={2} placeholder="Optional"
+        <textarea data-noguard value={f.comment} disabled={busy} rows={2} placeholder="Optional"
           onChange={e=>set({ ...f, comment: e.target.value })}
           style={{...inp,resize:'vertical'}} />
       </div>
