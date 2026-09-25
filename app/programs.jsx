@@ -32,6 +32,7 @@ import { ExportButton } from '@/app/components/ExportButton';
 // once carried its own copy of the loader -- see the note at the top of that
 // file, which names programs.jsx as one of the two places it was written twice.
 import { loadExcelJS, excelDate } from '@/lib/excel';
+import { trackingUrl } from '@/lib/tracking';
 import { seedStageTasks as seedTasksFor, syncProductStage } from '@/lib/programs';
 // Sync from records is gone with the derived board -- nothing here creates a
 // program any more. The quote-form tick is the only door.
@@ -658,6 +659,33 @@ const roundText = (x, withTracking = false) => {
 // neither does not blank the one before it. "FedEx · 1Z… · round 3". A dash when
 // there is no revision round at all.
 const shipLine = x => [x.carrier, x.tracking_number].filter(Boolean).join(' · ');
+// The shipment a Card row names, with its link -- null when the row names none.
+// url is null too when trackingUrl cannot tell whose number it is, and then the
+// number is plain text everywhere.
+const shipOf = (x, withRound) => (x && shipLine(x)) ? {
+  carrier: x.carrier || '', number: x.tracking_number || '', round: withRound ? x.round : null,
+  url: trackingUrl(x.carrier, x.tracking_number),
+} : null;
+
+// ── A TRACKING NUMBER, LINKED WHEN IT CAN BE ────────────────────────────────
+// A new tab, noopener, and the click stops here so it never opens or closes
+// the card behind it. Plain text when there is no url.
+function TrackingLink({ number, url }) {
+  if (!url) return <>{number}</>;
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+      title="Open the carrier's tracking page"
+      style={{color:'#0A84FF',textDecoration:'underline',textUnderlineOffset:'2px'}}>{number}</a>
+  );
+}
+// "FedEx · 1Z… · round 3" with the number linked -- the Card rows' words.
+const ShipValue = ({ ship }) => (
+  <>
+    {ship.carrier}{ship.carrier && ship.number ? ' · ' : ''}
+    {ship.number ? <TrackingLink number={ship.number} url={ship.url} /> : null}
+    {ship.round ? ' · round ' + ship.round : ''}
+  </>
+);
 const samplingTracking = r => {
   const x = (r.rounds || []).find(y => y.round === 1);
   return (x && shipLine(x)) || 'Not recorded';
@@ -949,7 +977,14 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
           )}
           {!editing && (
             <span style={{fontSize:'13px',fontWeight:500,color:'#1D1D1F'}}>
-              {roundText(x, true)}
+              {/* The round in words, then its shipment with the number linked --
+                  the same order roundText(x, true) writes in text. */}
+              {roundText(x)}
+              {(x.carrier || x.tracking_number) && (
+                <> · {x.carrier ? x.carrier + (x.tracking_number ? ' ' : '') : 'tracking '}
+                  {x.tracking_number ? <TrackingLink number={x.tracking_number}
+                                         url={trackingUrl(x.carrier, x.tracking_number)} /> : null}</>
+              )}
               {isLatestLate && <span style={{color:'#FF375F'}}> · overdue {daysSince(x.due_back)} day{daysSince(x.due_back) === 1 ? '' : 's'}</span>}
             </span>
           )}
@@ -1360,8 +1395,13 @@ const recordRows = r => {
                : 'Not recorded', !strip && !sampled]];
     })(),
     // Round 1's tracking number, and the newest revision round's that has one.
-    ['Sampling tracking', samplingTracking(r), samplingTracking(r) === 'Not recorded'],
-    ['Revision tracking', revisionTracking(r), ['—', 'Not recorded'].includes(revisionTracking(r))],
+    // The 4th element is the shipment the row names, so the screen can link its
+    // number and the workbooks can make the cell a hyperlink. Text readers take
+    // the first two and never see it.
+    ['Sampling tracking', samplingTracking(r), samplingTracking(r) === 'Not recorded',
+      shipOf((r.rounds || []).find(y => y.round === 1), false)],
+    ['Revision tracking', revisionTracking(r), ['—', 'Not recorded'].includes(revisionTracking(r)),
+      shipOf([...(r.rounds || [])].filter(y => y.round >= 2).sort((a, b) => b.round - a.round).find(y => shipLine(y)), true)],
     ['Purchase order', po ? po.num + (po.on ? ' · ' + fmt(po.on) : '') + ofN(po.n) : none, !po],
     ['Sales order', so ? so.num + (so.on ? ' · ' + fmt(so.on) : '') + ofN(so.n) : none, !so],
     // AN ETD IS A PLAN AND SAYS SO. Departed is what actually happened and wins
@@ -1402,10 +1442,12 @@ function SystemKnows({ r }) {
   // recordRows, which this block and all three exports now read from.
   //
   // The key is on the row itself because these arrive as an array now.
-  const row = (label, value, muted) => (
+  const row = (label, value, muted, ship) => (
     <div key={label} style={{display:'flex',gap:'10px',padding:'6px 0',borderTop:'1px solid #F2F2F4'}}>
       <span style={{fontSize:'11.5px',color:'#86868B',minWidth:'118px',flexShrink:0}}>{label}</span>
-      <span style={{fontSize:'12.5px',color:muted?'#A0A0A4':'#1D1D1F',lineHeight:1.45}}>{value}</span>
+      <span style={{fontSize:'12.5px',color:muted?'#A0A0A4':'#1D1D1F',lineHeight:1.45}}>
+        {ship ? <ShipValue ship={ship} /> : value}
+      </span>
     </div>
   );
   // ── NOTHING HERE IS EDITED ON THE CARD ANY MORE ───────────────────────────
@@ -1437,7 +1479,7 @@ function SystemKnows({ r }) {
       {/* THE SIX REPORTED ROWS, from the list the exports read too. One source
           and four readers, so a file and the screen cannot describe the same
           record differently. */}
-      {recordRows(r).map(([label, value, m]) => row(label, value, m))}
+      {recordRows(r).map(([label, value, m, ship]) => row(label, value, m, ship))}
       {row('Product stage', stageV, muted(stageV))}
       {row('Compliance', compV, muted(compV))}
       {/* What the OLD board would have called this card, kept because it is a
@@ -1487,7 +1529,10 @@ const cardGroups = r => {
       // strip is reported on the Sampling row under What the system knows.
     ],
     knows: [
-      ...recordRows(r).map(([label, value]) => [label, value]),
+      // The third element is the tracking link on the two tracking rows, and
+      // undefined everywhere else. The PDF and the workbook use it; the CSV and
+      // every other reader take the first two.
+      ...recordRows(r).map(([label, value, , ship]) => [label, value, ship ? ship.url : null]),
       // THE PRODUCT'S OWN FIELD, labelled as such. The card's screen row called
       // Product stage shows the card's stage by name; this line is
       // products.product_stage, which mirrors it as Sample or Production, and
@@ -1620,9 +1665,11 @@ const DOC_LBL = 'font-size:10px;font-weight:600;letter-spacing:.12em;text-transf
 const docCell = (l, v) => '<div style="border-right:2px solid #6b7280;border-bottom:2px solid #6b7280;padding:11px 13px;">'
   +'<div style="'+DOC_LBL+'">'+docEsc(l)+'</div>'
   +'<div style="font-size:13.5px;color:#111827;margin-top:5px;line-height:1.3;">'+docEsc(v)+'</div></div>';
-const docKv = (l, v) => '<div style="display:flex;gap:14px;padding:7px 0;border-top:1px solid #e5e7eb;">'
+// link, when given, makes the whole value a link -- the tracking rows.
+const docKv = (l, v, link) => '<div style="display:flex;gap:14px;padding:7px 0;border-top:1px solid #e5e7eb;">'
   +'<div style="'+DOC_LBL+'flex:0 0 164px;padding-top:2px;">'+docEsc(l)+'</div>'
-  +'<div style="font-size:13.5px;color:#111827;line-height:1.45;">'+docEsc(v)+'</div></div>';
+  +'<div style="font-size:13.5px;color:#111827;line-height:1.45;">'
+    +(link ? '<a href="'+docEsc(link)+'" style="color:#0563c1;">'+docEsc(v)+'</a>' : docEsc(v))+'</div></div>';
 // pre-wrap rather than turning newlines into <br>. The note is stored with its
 // own line breaks and the screen renders it the same way, so the paper matches
 // what the person typed.
@@ -1702,7 +1749,7 @@ const buildCardDoc = ({ r, card, general, logo }) => {
       +'<div style="'+DOC_LBL+'margin-bottom:2px;">What the system knows</div>'
       +'<div style="font-size:11px;color:#6b7280;line-height:1.5;margin-bottom:6px;">'
         +'Reported from the records. None of it moved this card.</div>'
-      +g.knows.map(([l, v]) => docKv(l, v)).join('')
+      +g.knows.map(([l, v, link]) => docKv(l, v, link)).join('')
     +'</div>'
     // The sample log went with the card's log UI; the rows are still in the table.
     +docNoteBlock('Card notes', card, 'No notes.')
@@ -1753,11 +1800,23 @@ const workingRounds = (r, staff) => [...(r.rounds || [])].sort((a, b) => a.round
   due: x.due_back || null,
   carrier: x.carrier || '',
   tracking: x.tracking_number || '',
+  trackingUrl: trackingUrl(x.carrier, x.tracking_number),
   comment: x.comment || '',
   savedBy: staffName(staff, x.created_by) || 'unknown',
   savedAt: x.created_at || null,
   editedBy: x.updated_at ? (staffName(staff, x.updated_by) || 'unknown') : '',
   editedAt: x.updated_at || null,
+}));
+// ── A LINK IN A WORKBOOK ────────────────────────────────────────────────────
+// ExcelJS writes { text, hyperlink } as a real hyperlink cell. linkCell makes
+// one only when there is a url, so a number nobody can place stays a plain
+// string. styleLinks colours every hyperlink cell on a sheet the way Excel does,
+// since ExcelJS leaves them unstyled. cellText is the CSV side -- the text.
+const LINK_FONT = { color: { argb: 'FF0563C1' }, underline: true };
+const linkCell = (text, url) => (url && text ? { text, hyperlink: url } : text);
+const cellText = v => (v && typeof v === 'object' && 'text' in v ? v.text : v);
+const styleLinks = ws => ws.eachRow(row => row.eachCell(c => {
+  if (c.value && typeof c.value === 'object' && c.value.hyperlink) c.font = LINK_FONT;
 }));
 const ROUND_COLS = ['Round', 'Stage', 'Master sample', 'Sent', 'Due back', 'Carrier', 'Tracking #', 'Comment', 'Saved by', 'Saved at', 'Edited by', 'Edited at'];
 // Every task, in ladder order, stages with no tasks left out. Within a stage
@@ -1846,7 +1905,7 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes) => {
     cols: [['SKU'], ['Client'], ['Round', 'num'], ['Stage'], ['Master sample'], ['Sent', 'date'], ['Due back', 'date'],
            ['Carrier'], ['Tracking #'], ['Comment'], ['Saved by'], ['Saved at', 'stamp'], ['Edited by'], ['Edited at', 'stamp']],
     rows: list.flatMap(r => workingRounds(r, staff).map(x => [
-      ...key(r), Number(x.round), x.stage, x.master, x.sent, x.due, x.carrier, x.tracking, x.comment,
+      ...key(r), Number(x.round), x.stage, x.master, x.sent, x.due, x.carrier, linkCell(x.tracking, x.trackingUrl), x.comment,
       x.savedBy, x.savedAt, x.editedBy, x.editedAt,
     ])),
   };
@@ -1875,7 +1934,7 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes) => {
     name: 'Records',
     cols: [['SKU'], ['Product'], ['Client'], ...knowsLabels.map(l => [l])],
     rows: list.map(r => {
-      const byLabel = new Map(cardGroups(r).knows);
+      const byLabel = new Map(cardGroups(r).knows.map(([l, v, link]) => [l, linkCell(v, link)]));
       return [skuOf(r), (r.products || {}).name || '', clientOf(r), ...knowsLabels.map(l => byLabel.get(l) || '')];
     }),
   };
@@ -1938,7 +1997,9 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, logo }) => {
             +'<td style="'+td+'">'+docEsc(x.sent ? fmt(x.sent) : '')+'</td>'
             +'<td style="'+td+'">'+docEsc(x.due ? fmt(x.due) : '')+'</td>'
             +'<td style="'+td+'">'+docEsc(x.carrier)+'</td>'
-            +'<td style="'+td+'">'+docEsc(x.tracking)+'</td>'
+            +'<td style="'+td+'">'+(x.trackingUrl
+              ? '<a href="'+docEsc(x.trackingUrl)+'" style="color:#0563c1;">'+docEsc(x.tracking)+'</a>'
+              : docEsc(x.tracking))+'</td>'
             +'<td style="'+td+'white-space:pre-wrap;">'+docEsc(x.comment)+'</td>'
             +'<td style="'+td+'">'+docEsc(x.savedBy + ' · ' + stampText(x.savedAt))
               +(x.editedAt ? '<br>'+docEsc('edited ' + x.editedBy + ' · ' + stampText(x.editedAt)) : '')+'</td>'
@@ -2074,7 +2135,9 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         const rs = wb.addWorksheet('Sample rounds');
         rs.addRow(ROUND_COLS);
         workingRounds(r, staff).forEach(x => rs.addRow([Number(x.round), x.stage, x.master, excelDate(x.sent), excelDate(x.due),
-          x.carrier, x.tracking, x.comment, x.savedBy, excelDate(x.savedAt), x.editedBy, excelDate(x.editedAt)]));
+          x.carrier, linkCell(x.tracking, x.trackingUrl), x.comment, x.savedBy, excelDate(x.savedAt), x.editedBy,
+          excelDate(x.editedAt)]));
+        styleLinks(rs);
         rs.getRow(1).font = { bold: true };
         rs.views = [{ state:'frozen', ySplit:1 }];
         [4, 5].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd'; });
@@ -2114,7 +2177,10 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       // a spreadsheet nobody can look at without scrolling sideways.
       const ws = wb.addWorksheet('Card');
       ws.addRow(['Field', 'Value']);
-      cardFields(r).forEach(([label, value]) => ws.addRow([label, value]));
+      cardFields(r).forEach(([label, value, link]) => {
+        const row = ws.addRow([label, link ? { text: value, hyperlink: link } : value]);
+        if (link) row.getCell(2).font = LINK_FONT;
+      });
       ws.getRow(1).font = { bold: true };
       ws.views = [{ state:'frozen', ySplit:1 }];
       ws.getColumn(1).width = 24;
@@ -2971,6 +3037,7 @@ export default function Programs({ userEmail }) {
           const kind = t.cols[i][1];
           return (kind === 'date' || kind === 'stamp') ? excelDate(v) : v;
         })));
+        styleLinks(ws);
         ws.getRow(1).font = { bold: true };
         ws.views = [{ state:'frozen', ySplit:1 }];
         ws.autoFilter = { from: { row:1, column:1 }, to: { row:1, column:t.cols.length } };
@@ -3004,7 +3071,7 @@ export default function Programs({ userEmail }) {
         lines.push(cell('# ' + t.name));
         lines.push(t.cols.map(([h]) => cell(h)).join(','));
         t.rows.forEach(row => lines.push(row.map((v, i) =>
-          cell(t.cols[i][1] === 'stamp' ? stampText(v) : v)).join(',')));
+          cell(t.cols[i][1] === 'stamp' ? stampText(v) : cellText(v))).join(',')));
       });
       const csv = '﻿' + lines.join('\r\n') + '\r\n';
       downloadBlob(new Blob([csv], { type:'text/csv;charset=utf-8;' }), boardFileBase(ui.showRemoved) + '.csv');
