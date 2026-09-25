@@ -631,14 +631,35 @@ function useCardFactory(r) {
 // Only the parts somebody set, so a round saved with a due date alone does not
 // print three Not sets. The entry on the card, the Sampling row on the Card tab
 // and the files all read this.
-const roundText = x => {
+//
+// withTracking adds "· tracking 1Z…" -- on the entry line only. The Sampling row
+// and the board's Latest round column leave it off, because the Sampling
+// tracking and Revision tracking rows beside them already say it.
+const roundText = (x, withTracking = false) => {
   if (!x) return null;
   const parts = ['Round ' + x.round];
   if (x.master_sample === true) parts.push('master sample included');
   if (x.master_sample === false) parts.push('no master sample');
   if (x.sent_date) parts.push('sent ' + fmt(x.sent_date));
   if (x.due_back) parts.push('due back ' + fmt(x.due_back));
+  if (withTracking && x.tracking_number) parts.push('tracking ' + x.tracking_number);
   return parts.join(' · ');
+};
+
+// ── TRACKING, ON THE CARD TAB ───────────────────────────────────────────────
+// Sampling tracking is round 1's number. Revision tracking is the number on the
+// HIGHEST revision round that has one, so it always names the newest shipment
+// somebody recorded -- and a round saved without a number yet does not blank
+// the one before it. A dash when there is no revision round at all.
+const samplingTracking = r => {
+  const x = (r.rounds || []).find(y => y.round === 1);
+  return (x && x.tracking_number) || 'Not recorded';
+};
+const revisionTracking = r => {
+  const rev = (r.rounds || []).filter(y => y.round >= 2);
+  if (!rev.length) return '—';
+  const hit = [...rev].sort((a, b) => b.round - a.round).find(y => y.tracking_number);
+  return hit ? hit.tracking_number + ' · round ' + hit.round : 'Not recorded';
 };
 
 // A date the database will take and a person meant. A date input passes
@@ -664,7 +685,10 @@ const okDate = s => !s || (/^\d{4}-\d{2}-\d{2}$/.test(s) && Number(s.slice(0, 4)
 //
 // ANYBODY ON STAFF CAN EDIT ANY ROUND, as with the checklist -- a round is shared
 // logistics, not somebody own words -- and the entry says who saved it and who
-// last edited it. NO DELETE; script 80 grants none. A wrong round is corrected.
+// last edited it. DELETE is in the Edit form, behind a confirm, for any staff
+// too (script 82 granted it). Numbers do not close up -- deleting round 3 of 4
+// leaves 1, 2 and 4, and the next round is still one past the highest. Deleting
+// round 1 brings the Sampling form back.
 //
 // Two people saving the same round number at once is refused by the unique
 // constraint; the second is told so and the list reloads with the first one.
@@ -676,7 +700,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   const nextRound = inRevision ? Math.max(2, ...rounds.map(x => x.round + 1)) : 1;
   const showForm = inRevision || !round1;
 
-  const blank = { master: null, sent: '', due: '', comment: '' };
+  const blank = { master: null, sent: '', due: '', tracking: '', comment: '' };
   const [form, setForm] = useState(blank);
   const [editId, setEditId] = useState(null);
   const [edit, setEdit] = useState(blank);
@@ -691,16 +715,17 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     if (failed) touchFailedToast(failed);
     if (onTouched) await onTouched();
   };
-  const hasAny = f => f.master !== null || f.sent || f.due || f.comment.trim();
+  const hasAny = f => f.master !== null || f.sent || f.due || f.tracking.trim() || f.comment.trim();
   const datesOk = f => okDate(f.sent) && okDate(f.due);
   const values = f => ({
     master_sample: f.master, sent_date: f.sent || null, due_back: f.due || null,
-    comment: f.comment.trim() || null,
+    tracking_number: f.tracking.trim() || null, comment: f.comment.trim() || null,
   });
   const unchanged = (x, f) => {
     const v = values(f);
     return v.master_sample === (x.master_sample ?? null) && v.sent_date === (x.sent_date || null)
-        && v.due_back === (x.due_back || null) && v.comment === (x.comment || null);
+        && v.due_back === (x.due_back || null) && v.comment === (x.comment || null)
+        && v.tracking_number === (x.tracking_number || null);
   };
 
   // ── WHAT THE CLOSE GUARD SEES ─────────────────────────────────────────────
@@ -736,7 +761,19 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   const startEdit = x => {
     setEditId(x.id); setErr('');
     setEdit({ master: x.master_sample === undefined ? null : x.master_sample,
-              sent: x.sent_date || '', due: x.due_back || '', comment: x.comment || '' });
+              sent: x.sent_date || '', due: x.due_back || '', tracking: x.tracking_number || '',
+              comment: x.comment || '' });
+  };
+
+  // Asked once, in the words agreed, and there is no undo -- the row is gone.
+  const removeRound = async x => {
+    if (!window.confirm("Delete round " + x.round + "? This can't be undone.")) return;
+    setBusy(true); setErr('');
+    const { error } = await SB.from('program_sample_rounds').delete().eq('id', x.id);
+    if (error) { setBusy(false); setErr(error.message); return; }
+    setEditId(null);
+    await settle();
+    setBusy(false);
   };
   const saveEdit = async x => {
     if (!datesOk(edit)) { setErr('Check the dates — each needs a full year from 2000 on.'); return; }
@@ -814,6 +851,12 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         <input type="date" data-noguard value={f.due} disabled={busy} style={inp} aria-label="Due back"
           onChange={e=>set({ ...f, due: e.target.value })} />
       </div>
+      {/* Free text -- FedEx, UPS or anything else, as it is on the label. */}
+      <div style={{gridColumn:'1 / -1'}}>
+        <span style={lbl}>Tracking #</span>
+        <input data-noguard value={f.tracking} disabled={busy} style={inp} aria-label="Tracking number"
+          placeholder="Optional" onChange={e=>set({ ...f, tracking: e.target.value })} />
+      </div>
       <div style={{gridColumn:'1 / -1'}}>
         <span style={lbl}>Comment</span>
         <textarea data-noguard value={f.comment} disabled={busy} rows={2} placeholder="Optional"
@@ -836,7 +879,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
           )}
           {!editing && (
             <span style={{fontSize:'13px',fontWeight:500,color:'#1D1D1F'}}>
-              {roundText(x)}
+              {roundText(x, true)}
               {isLatestLate && <span style={{color:'#FF375F'}}> · overdue {daysSince(x.due_back)} day{daysSince(x.due_back) === 1 ? '' : 's'}</span>}
             </span>
           )}
@@ -855,6 +898,11 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
               </button>
               <button onClick={()=>{ setEditId(null); setErr(''); }} disabled={busy}
                 style={{...pillBtn(false, busy),background:'#fff',border:'1px solid #E5E5EA',color:'#5A5A5E'}}>Cancel</button>
+              {/* The quiet red link the card uses for Delete card, at the far end
+                  so it is not the button a hand lands on after Save. */}
+              <button onClick={()=>removeRound(x)} disabled={busy}
+                style={{marginLeft:'auto',fontSize:'11.5px',background:'none',border:'none',padding:0,
+                        color:'var(--hot)',fontFamily:'inherit',cursor:busy?'default':'pointer'}}>Delete</button>
             </div>
           </div>
         ) : (
@@ -1197,6 +1245,9 @@ const recordRows = r => {
                : sampled === 'sample' ? 'Product marked Sample'
                : 'Not recorded', !strip && !sampled]];
     })(),
+    // Round 1's tracking number, and the newest revision round's that has one.
+    ['Sampling tracking', samplingTracking(r), samplingTracking(r) === 'Not recorded'],
+    ['Revision tracking', revisionTracking(r), ['—', 'Not recorded'].includes(revisionTracking(r))],
     ['Purchase order', po ? po.num + (po.on ? ' · ' + fmt(po.on) : '') + ofN(po.n) : none, !po],
     ['Sales order', so ? so.num + (so.on ? ' · ' + fmt(so.on) : '') + ofN(so.n) : none, !so],
     // AN ETD IS A PLAN AND SAYS SO. Departed is what actually happened and wins
@@ -1584,13 +1635,14 @@ const workingRounds = (r, staff) => [...(r.rounds || [])].sort((a, b) => a.round
   master: x.master_sample === true ? 'Included' : x.master_sample === false ? 'Not included' : '',
   sent: x.sent_date || null,
   due: x.due_back || null,
+  tracking: x.tracking_number || '',
   comment: x.comment || '',
   savedBy: staffName(staff, x.created_by) || 'unknown',
   savedAt: x.created_at || null,
   editedBy: x.updated_at ? (staffName(staff, x.updated_by) || 'unknown') : '',
   editedAt: x.updated_at || null,
 }));
-const ROUND_COLS = ['Round', 'Stage', 'Master sample', 'Sent', 'Due back', 'Comment', 'Saved by', 'Saved at', 'Edited by', 'Edited at'];
+const ROUND_COLS = ['Round', 'Stage', 'Master sample', 'Sent', 'Due back', 'Tracking #', 'Comment', 'Saved by', 'Saved at', 'Edited by', 'Edited at'];
 // Every task, in ladder order, stages with no tasks left out. Within a stage
 // the order the board loaded them in -- sort_order, then created_at.
 const workingTasks = (r, staff) => MANUAL_STAGES.map(([k, l]) => ({
@@ -1675,9 +1727,9 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes) => {
   const rounds = {
     name: 'Rounds',
     cols: [['SKU'], ['Client'], ['Round', 'num'], ['Stage'], ['Master sample'], ['Sent', 'date'], ['Due back', 'date'],
-           ['Comment'], ['Saved by'], ['Saved at', 'stamp'], ['Edited by'], ['Edited at', 'stamp']],
+           ['Tracking #'], ['Comment'], ['Saved by'], ['Saved at', 'stamp'], ['Edited by'], ['Edited at', 'stamp']],
     rows: list.flatMap(r => workingRounds(r, staff).map(x => [
-      ...key(r), Number(x.round), x.stage, x.master, x.sent, x.due, x.comment,
+      ...key(r), Number(x.round), x.stage, x.master, x.sent, x.due, x.tracking, x.comment,
       x.savedBy, x.savedAt, x.editedBy, x.editedAt,
     ])),
   };
@@ -1762,12 +1814,13 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, logo }) => {
       +(rounds.length
         ? '<table style="width:100%;border-collapse:collapse;">'
           +'<tr><th style="'+th+'">Round</th><th style="'+th+'">Master sample</th><th style="'+th+'">Sent</th>'
-          +'<th style="'+th+'">Due back</th><th style="'+th+'width:30%;">Comment</th><th style="'+th+'">Saved</th></tr>'
+          +'<th style="'+th+'">Due back</th><th style="'+th+'">Tracking #</th><th style="'+th+'width:26%;">Comment</th><th style="'+th+'">Saved</th></tr>'
           +rounds.map(x => '<tr>'
             +'<td style="'+td+'">'+docEsc(x.round + ' · ' + x.stage)+'</td>'
             +'<td style="'+td+'">'+docEsc(x.master)+'</td>'
             +'<td style="'+td+'">'+docEsc(x.sent ? fmt(x.sent) : '')+'</td>'
             +'<td style="'+td+'">'+docEsc(x.due ? fmt(x.due) : '')+'</td>'
+            +'<td style="'+td+'">'+docEsc(x.tracking)+'</td>'
             +'<td style="'+td+'white-space:pre-wrap;">'+docEsc(x.comment)+'</td>'
             +'<td style="'+td+'">'+docEsc(x.savedBy + ' · ' + stampText(x.savedAt))
               +(x.editedAt ? '<br>'+docEsc('edited ' + x.editedBy + ' · ' + stampText(x.editedAt)) : '')+'</td>'
@@ -1903,13 +1956,13 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         const rs = wb.addWorksheet('Sample rounds');
         rs.addRow(ROUND_COLS);
         workingRounds(r, staff).forEach(x => rs.addRow([Number(x.round), x.stage, x.master, excelDate(x.sent), excelDate(x.due),
-          x.comment, x.savedBy, excelDate(x.savedAt), x.editedBy, excelDate(x.editedAt)]));
+          x.tracking, x.comment, x.savedBy, excelDate(x.savedAt), x.editedBy, excelDate(x.editedAt)]));
         rs.getRow(1).font = { bold: true };
         rs.views = [{ state:'frozen', ySplit:1 }];
         [4, 5].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd'; });
-        [8, 10].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd hh:mm'; });
-        [8, 12, 14, 12, 12, 44, 22, 17, 22, 17].forEach((w, i) => { rs.getColumn(i + 1).width = w; });
-        rs.getColumn(6).alignment = { wrapText: true, vertical: 'top' };
+        [9, 11].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd hh:mm'; });
+        [8, 12, 14, 12, 12, 24, 44, 22, 17, 22, 17].forEach((w, i) => { rs.getColumn(i + 1).width = w; });
+        rs.getColumn(7).alignment = { wrapText: true, vertical: 'top' };
 
         const cs = wb.addWorksheet('Checklist');
         cs.addRow(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker']);
@@ -1998,7 +2051,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         lines.push('');
         lines.push(ROUND_COLS.map(cell).join(','));
         workingRounds(r, staff).forEach(x => lines.push(
-          [x.round, x.stage, x.master, x.sent || '', x.due || '', x.comment, x.savedBy, stampText(x.savedAt),
+          [x.round, x.stage, x.master, x.sent || '', x.due || '', x.tracking, x.comment, x.savedBy, stampText(x.savedAt),
            x.editedBy, x.editedAt ? stampText(x.editedAt) : ''].map(cell).join(',')));
         lines.push('');
         lines.push(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker'].map(cell).join(','));
@@ -2351,7 +2404,7 @@ export default function Programs({ userEmail }) {
         // pill and the Stalled and Overdue samples tiles read the latest one's
         // due back, so they have to arrive with the board.
         SB.from('program_sample_rounds')
-          .select('id,program_id,stage,round,master_sample,sent_date,due_back,comment,created_by,created_at,updated_by,updated_at')
+          .select('id,program_id,stage,round,master_sample,sent_date,due_back,tracking_number,comment,created_by,created_at,updated_by,updated_at')
           .order('round', { ascending:false }),
       ]);
       const e = [p,nt,q,poi,soi,tr,st,tk,sr].find(r => r.error);
