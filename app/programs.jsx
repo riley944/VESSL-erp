@@ -32,7 +32,8 @@ import { ExportButton } from '@/app/components/ExportButton';
 // once carried its own copy of the loader -- see the note at the top of that
 // file, which names programs.jsx as one of the two places it was written twice.
 import { loadExcelJS, excelDate } from '@/lib/excel';
-import { trackingUrl } from '@/lib/tracking';
+import { trackingUrl, findCarrier } from '@/lib/tracking';
+import { CreateCompanyModal } from '@/app/components/CreateCompanyModal';
 import { seedStageTasks as seedTasksFor, syncProductStage } from '@/lib/programs';
 // Sync from records is gone with the derived board -- nothing here creates a
 // program any more. The quote-form tick is the only door.
@@ -662,9 +663,9 @@ const shipLine = x => [x.carrier, x.tracking_number].filter(Boolean).join(' · '
 // The shipment a Card row names, with its link -- null when the row names none.
 // url is null too when trackingUrl cannot tell whose number it is, and then the
 // number is plain text everywhere.
-const shipOf = (x, withRound) => (x && shipLine(x)) ? {
+const shipOf = (x, withRound, carriers) => (x && shipLine(x)) ? {
   carrier: x.carrier || '', number: x.tracking_number || '', round: withRound ? x.round : null,
-  url: trackingUrl(x.carrier, x.tracking_number),
+  url: trackingUrl(x.carrier, x.tracking_number, carriers),
 } : null;
 
 // ── A TRACKING NUMBER, LINKED WHEN IT CAN BE ────────────────────────────────
@@ -771,7 +772,8 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     const v = values(f);
     return v.master_sample === (x.master_sample ?? null) && v.sent_date === (x.sent_date || null)
         && v.due_back === (x.due_back || null) && v.comment === (x.comment || null)
-        && v.tracking_number === (x.tracking_number || null) && v.carrier === (x.carrier || null);
+        && v.tracking_number === (x.tracking_number || null)
+        && (v.carrier || '').toLowerCase() === (x.carrier || '').toLowerCase();
   };
   // The lab is compared trimmed, as it is stored.
   const labChanged = f => f.lab.trim() !== (r.testing_lab || '');
@@ -894,7 +896,56 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   const late = sampleOverdue(r);
 
   // The four fields, for a new round and for an edit alike.
-  const fields = (f, set, roundNo) => (
+  // ── THE CARRIER DROPDOWN ─────────────────────────────────────────────────
+  // Every carrier company by name, a dash for none, and + Add new carrier… at
+  // the foot, which opens the New Company form set to Carrier -- the quote
+  // form's + Add new factory pattern. A stored carrier that is not on the list
+  // -- typed before carriers were companies -- stays selected as an extra option
+  // marked not in list, so opening a round never blanks it. A stored name
+  // matching a carrier in another case (Fedex) selects that carrier and is not
+  // counted as a change.
+  const activeCarriers = [...(r.carriers || [])].sort((a, b) => a.name.localeCompare(b.name));
+  const [addFor, setAddFor] = useState(null);   // 'form' | 'edit' | null
+  const pick = (which, name) => (which === 'form' ? setForm : setEdit)(f => ({ ...f, carrier: name }));
+  // The company form reports the row it saved, always a carrier -- it opens
+  // with the type fixed to Carrier -- and that carrier is selected.
+  const onCarrierCreated = async (type, co) => {
+    const which = addFor;
+    setAddFor(null);
+    if (!co) return;
+    pick(which, co.name);
+    if (onTouched) await onTouched();
+  };
+  const carrierSelect = (f, which) => {
+    const hit = findCarrier(activeCarriers, f.carrier);
+    const unlisted = f.carrier.trim() && !hit;
+    return (
+      <>
+        <select data-noguard value={hit ? hit.name : f.carrier} disabled={busy} aria-label="Carrier"
+          onChange={e => {
+            if (e.target.value === '__add__') { setAddFor(which); return; }
+            pick(which, e.target.value);
+          }}
+          style={{...inp,cursor:busy?'default':'pointer'}}>
+          <option value="">—</option>
+          {activeCarriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+          {unlisted && <option value={f.carrier}>{f.carrier} (not in list)</option>}
+          <option value="__add__">+ Add new carrier…</option>
+        </select>
+        {/* THE NEW COMPANY FORM, set to Carrier. It is a modal of its own and
+            marks its own card, so this card's close guard leaves its fields
+            alone; the wrapper stops its clicks reaching the card behind. */}
+        {addFor === which && (
+          <div onClick={e => e.stopPropagation()}>
+            <CreateCompanyModal initialType="carrier"
+              onClose={() => setAddFor(null)} onCreated={onCarrierCreated} />
+          </div>
+        )}
+      </>
+    );
+  };
+
+  const fields = (f, set, roundNo, which) => (
     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'14px'}}>
       <div style={{textAlign:'center'}}>
         <span style={lblMid}>Sample round</span>
@@ -934,13 +985,12 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
           onChange={e=>set({ ...f, due: e.target.value })} />
       </div>
       {/* Carrier and number on one row, carrier first, the way the entry line
-          reads them. Both free text -- FedEx, UPS or anything else, as it is on
-          the label. */}
+          reads them. The carrier is picked from the list; the number is free
+          text, as it is on the label. */}
       <div style={{gridColumn:'1 / -1',display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,2fr)',gap:'14px'}}>
         <div>
           <span style={lbl}>Carrier</span>
-          <input data-noguard value={f.carrier} disabled={busy} style={inp} aria-label="Carrier"
-            placeholder="e.g. FedEx" onChange={e=>set({ ...f, carrier: e.target.value })} />
+          {carrierSelect(f, which)}
         </div>
         <div>
           <span style={lbl}>Tracking #</span>
@@ -983,7 +1033,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
               {(x.carrier || x.tracking_number) && (
                 <> · {x.carrier ? x.carrier + (x.tracking_number ? ' ' : '') : 'tracking '}
                   {x.tracking_number ? <TrackingLink number={x.tracking_number}
-                                         url={trackingUrl(x.carrier, x.tracking_number)} /> : null}</>
+                                         url={trackingUrl(x.carrier, x.tracking_number, r.carriers)} /> : null}</>
               )}
               {isLatestLate && <span style={{color:'#FF375F'}}> · overdue {daysSince(x.due_back)} day{daysSince(x.due_back) === 1 ? '' : 's'}</span>}
             </span>
@@ -996,7 +1046,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         </div>
         {editing ? (
           <div style={{marginTop:'6px'}}>
-            {fields(edit, setEdit, x.round)}
+            {fields(edit, setEdit, x.round, 'edit')}
             <div style={{display:'flex',gap:'7px',marginTop:'10px'}}>
               <button onClick={()=>saveEdit(x)} disabled={busy} style={pillBtn(true, busy)}>
                 {busy ? 'Saving…' : 'Save'}
@@ -1032,7 +1082,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
                    color:'#86868B',marginBottom:'10px',textAlign:'center'}}>Sample rounds</div>
       {showForm && (
         <>
-          {fields(form, setForm, nextRound)}
+          {fields(form, setForm, nextRound, 'form')}
           <div style={{display:'flex',alignItems:'center',gap:'10px',marginTop:'10px'}}>
             <button onClick={save} disabled={busy || !(hasAny(form) || labChanged(form)) || editId !== null}
               style={pillBtn((hasAny(form) || labChanged(form)) && editId === null,
@@ -1399,9 +1449,9 @@ const recordRows = r => {
     // number and the workbooks can make the cell a hyperlink. Text readers take
     // the first two and never see it.
     ['Sampling tracking', samplingTracking(r), samplingTracking(r) === 'Not recorded',
-      shipOf((r.rounds || []).find(y => y.round === 1), false)],
+      shipOf((r.rounds || []).find(y => y.round === 1), false, r.carriers)],
     ['Revision tracking', revisionTracking(r), ['—', 'Not recorded'].includes(revisionTracking(r)),
-      shipOf([...(r.rounds || [])].filter(y => y.round >= 2).sort((a, b) => b.round - a.round).find(y => shipLine(y)), true)],
+      shipOf([...(r.rounds || [])].filter(y => y.round >= 2).sort((a, b) => b.round - a.round).find(y => shipLine(y)), true, r.carriers)],
     ['Purchase order', po ? po.num + (po.on ? ' · ' + fmt(po.on) : '') + ofN(po.n) : none, !po],
     ['Sales order', so ? so.num + (so.on ? ' · ' + fmt(so.on) : '') + ofN(so.n) : none, !so],
     // AN ETD IS A PLAN AND SAYS SO. Departed is what actually happened and wins
@@ -1800,7 +1850,7 @@ const workingRounds = (r, staff) => [...(r.rounds || [])].sort((a, b) => a.round
   due: x.due_back || null,
   carrier: x.carrier || '',
   tracking: x.tracking_number || '',
-  trackingUrl: trackingUrl(x.carrier, x.tracking_number),
+  trackingUrl: trackingUrl(x.carrier, x.tracking_number, r.carriers),
   comment: x.comment || '',
   savedBy: staffName(staff, x.created_by) || 'unknown',
   savedAt: x.created_at || null,
@@ -2535,6 +2585,7 @@ export default function Programs({ userEmail }) {
   // program_id -> its checklist, every stage, filled in bulk by load().
   const [tasks, setTasks] = useState({});
   const [rounds, setRounds] = useState({});
+  const [carriers, setCarriers] = useState([]);
 
   // QUIET AFTER THE FIRST READ. loading starts true and only the first load
   // shows the placeholder; every later one -- after a stage move, a note, a
@@ -2544,7 +2595,7 @@ export default function Programs({ userEmail }) {
   const load = async () => {
     setErr('');
     try {
-      const [p, nt, q, poi, soi, tr, st, tk, sr] = await Promise.all([
+      const [p, nt, q, poi, soi, tr, st, tk, sr, pc] = await Promise.all([
         // declared_stage and declared_stage_at are the board now -- the stage a
         // person set, and when they set it. owner_id joins staff_profiles for the
         // name on the card and the owner filter.
@@ -2592,13 +2643,18 @@ export default function Programs({ userEmail }) {
         SB.from('program_sample_rounds')
           .select('id,program_id,stage,round,master_sample,sent_date,due_back,carrier,tracking_number,comment,created_by,created_at,updated_by,updated_at')
           .order('round', { ascending:false }),
+        // THE CARRIERS ARE COMPANIES of type carrier (script 85), with the tracking
+        // page pattern on companies.tracking_url. They are managed on Companies ->
+        // Carriers; the round form lists every one, there being no retire column.
+        SB.from('companies').select('id,name,tracking_url').eq('type', 'carrier').order('name'),
       ]);
-      const e = [p,nt,q,poi,soi,tr,st,tk,sr].find(r => r.error);
+      const e = [p,nt,q,poi,soi,tr,st,tk,sr,pc].find(r => r.error);
       if (e) throw new Error(e.error.message);
       setRows(p.data || []);
       setStaff(st.data || []);
       setTasks((tk.data || []).reduce((m, t) => { (m[t.program_id] = m[t.program_id] || []).push(t); return m; }, {}));
       setRounds((sr.data || []).reduce((m, x) => { (m[x.program_id] = m[x.program_id] || []).push(x); return m; }, {}));
+      setCarriers(pc.data || []);
       setNoteCounts((nt.data || []).reduce((m, n) => { m[n.program_id] = (m[n.program_id] || 0) + 1; return m; }, {}));
       setEv({ quotes:q.data||[], poItems:poi.data||[], soItems:soi.data||[], reports:tr.data||[] });
     } catch (x) {
@@ -2703,6 +2759,8 @@ export default function Programs({ userEmail }) {
                noteCount: noteCounts[r.id] || 0,
                tasks: tasks[r.id] || [],
                rounds: rounds[r.id] || [],
+               // The same array on every card -- the links and the dropdown read it.
+               carriers,
                factoryName: factoryOfQuotes(buckets.quotes[k] || []),
                // The order rows read these three. null when there is none.
                latestSO: soL ? { num: soL.top.so_number || 'Sales order', on: soL.top.order_date || null, n: soL.n } : null,
@@ -2716,7 +2774,7 @@ export default function Programs({ userEmail }) {
     // staff and noteCounts are dependencies now: without them a name stays
     // unresolved and a count stays zero until some other change happens to
     // recompute this.
-  }, [rows, buckets, staff, noteCounts, tasks, rounds]);
+  }, [rows, buckets, staff, noteCounts, tasks, rounds, carriers]);
 
   // ── WRITING A STAGE, AND WRITING AN OWNER ───────────────────────────────────
   // The only two things this page changes. Both re-read from the database after

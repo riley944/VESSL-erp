@@ -4727,7 +4727,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
       const { data:c } = await SB.from('companies').select('*').eq('id',id).single();
       const { data:cc } = await SB.from('contacts').select('*').eq('company_id',id).order('is_primary',{ascending:false});
       setCo(c); setContacts(cc||[]);
-      setForm({ name:c?.name||'', type:c?.type||'client', email:c?.email||'', phone:c?.phone||'', website:c?.website||'', vendor_number:c?.vendor_number||'', pallet_info:c?.pallet_info||'', po_notes:c?.po_notes||'', billing_address:c?.billing_address||'', shipping_address:c?.shipping_address||'' });
+      setForm({ tracking_url:c?.tracking_url||'', name:c?.name||'', type:c?.type||'client', email:c?.email||'', phone:c?.phone||'', website:c?.website||'', vendor_number:c?.vendor_number||'', pallet_info:c?.pallet_info||'', po_notes:c?.po_notes||'', billing_address:c?.billing_address||'', shipping_address:c?.shipping_address||'' });
     })();
   },[id]);
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -4792,7 +4792,12 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
 
   const save = async () => {
     if(!form.name){alert('Name required');return;}
-    await SB.from('companies').update({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,po_notes:form.po_notes||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null}).eq('id',id);
+    // A carrier's tracking page, checked with the rule script 85 put on the
+    // column. Any other type writes null, so a company moved off Carrier does
+    // not keep a pattern nothing reads.
+    const trackUrl = form.type==='carrier' ? (form.tracking_url||'').trim() : '';
+    if(trackUrl && !(trackUrl.startsWith('https') && trackUrl.includes('{number}'))){alert('The tracking URL must start with https and contain {number} where the tracking number goes.');return;}
+    await SB.from('companies').update({tracking_url:trackUrl||null,name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,po_notes:form.po_notes||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null}).eq('id',id);
     // DELETES FIRST. A row being removed must not be counted when the primary is
     // settled below, and doing them last would mean writing is_primary onto a
     // row that is about to disappear.
@@ -4843,7 +4848,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
             <>
               <div style={{display:'flex',gap:'8px',marginBottom:'18px'}}><Badge status={co.type} /></div>
               <div className="detail-grid" style={{gridTemplateColumns:'1fr',gap:'0'}}>
-                {[['Email',co.email],['Phone',co.phone],['Website',co.website],['Billing Address',co.billing_address],['Shipping Address',co.shipping_address],...(co.type==='client'?[['Vendor #',co.vendor_number],['Pallet info',co.pallet_info]]:[])].map(([l,v])=>(
+                {[['Email',co.email],['Phone',co.phone],['Website',co.website],['Billing Address',co.billing_address],['Shipping Address',co.shipping_address],...(co.type==='client'?[['Vendor #',co.vendor_number],['Pallet info',co.pallet_info]]:[]),...(co.type==='carrier'?[['Tracking URL',co.tracking_url]]:[])].map(([l,v])=>(
                   <div key={l} style={{display:'flex',justifyContent:'space-between',gap:'16px',padding:'11px 0',borderBottom:'1px solid var(--line-2)'}}>
                     <span style={{color:'var(--muted)',fontSize:'12px',whiteSpace:'nowrap'}}>{l}</span><span style={{fontSize:'13px',textAlign:'right',whiteSpace:'pre-wrap'}}>{v||'—'}</span>
                   </div>
@@ -4868,6 +4873,9 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
                 <div><label>Phone</label><input className="form-input" value={form.phone} onChange={e=>f('phone')(e.target.value)} /></div>
               </div>
               <div className="form-row"><label>Website</label><input className="form-input" value={form.website} onChange={e=>f('website')(e.target.value)} placeholder="https://" /></div>
+              {form.type==='carrier' && (
+                <div className="form-row"><label>Tracking URL <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(optional -- put {'{number}'} where the tracking number goes)</span></label><input className="form-input" value={form.tracking_url} onChange={e=>f('tracking_url')(e.target.value)} placeholder="https://www.example.com/track?n={number}" /></div>
+              )}
               <div className="form-row"><label>Billing Address</label><textarea className="form-input" rows={3} value={form.billing_address} onChange={e=>f('billing_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
               <div className="form-row"><label>Shipping Address <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(prefills the ship-to on new orders)</span></label><textarea className="form-input" rows={3} value={form.shipping_address} onChange={e=>f('shipping_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
               {form.type==='client' && (

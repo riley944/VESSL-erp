@@ -37,22 +37,50 @@ export const COMPANY_TYPES = [
   ['freight_forwarder', 'Freight Forwarder'],
 ];
 
-export function CreateCompanyModal({ onClose, onCreated, initialType = 'client' }) {
+export function CreateCompanyModal({ onClose, onCreated, initialType }) {
   // Plain form, every field an input or select. No click-driven setters at all.
   const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   // initialType lets a host open this already set to what it is asking for -- the
   // quote form only ever wants a factory, and making somebody pick it from a list
   // of four when the button said "add new factory" is a step that can go wrong.
-  const [form, setForm] = useState({name:'',type:initialType,email:'',phone:'',website:'',vendor_number:'',pallet_info:'',billing_address:'',shipping_address:'',cname:'',cemail:'',cphone:''});
+  //
+  // AND WHEN IT IS GIVEN, THE TYPE IS FIXED. Every host passes one -- the four
+  // Companies tabs, the quote form's client and factory, the PLM round form's
+  // carrier -- and each asked for exactly that type, so the form shows it as a
+  // value rather than a select somebody could change on the way to Save. The
+  // select is kept for an opening with no initialType, which nothing does today;
+  // that opening starts as Client, as the old default did.
+  const typeFixed = !!initialType;
+  const [form, setForm] = useState({name:'',type:initialType || 'client',email:'',phone:'',website:'',vendor_number:'',pallet_info:'',billing_address:'',shipping_address:'',tracking_url:'',cname:'',cemail:'',cphone:''});
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
-  // THE WORD FOLLOWS THE TYPE SELECT, so the title, the name label, the save
+  // THE WORD FOLLOWS THE TYPE, fixed or selected, so the title, the name label, the save
   // button and the required-name alert all say Factory once somebody picks
   // Factory -- read from form.type on every render rather than from initialType,
   // which only seeds it. An empty or unknown type says Company, as it always did.
   const typeLabel = (COMPANY_TYPES.find(([v]) => v === form.type) || [null, 'Company'])[1];
   const submit = async () => {
     if (!form.name) { alert(typeLabel + ' name required'); return; }
-    const { data: co, error } = await SB.from('companies').upsert({name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
+    // ── A CARRIER'S TRACKING PAGE, AND ITS NAME IN ANY CASE ─────────────────
+    // companies.tracking_url (script 85) is the carrier tracking page with
+    // {number} where the number goes, and the database refuses any other shape,
+    // so it is checked here first with the same rule and a readable message.
+    // Blank is allowed and sends nothing -- adopting an existing carrier with
+    // the field left empty keeps the pattern it already has.
+    //
+    // (name, type) is unique but case-sensitive, so "fedex" would make a
+    // second FedEx. For a carrier, a name matching one in another case adopts
+    // that carrier, spelled as it already is.
+    const url = form.type === 'carrier' ? (form.tracking_url || '').trim() : '';
+    if (url && !(url.startsWith('https') && url.includes('{number}'))) {
+      alert('The tracking URL must start with https and contain {number} where the tracking number goes.'); return;
+    }
+    let name = form.name;
+    if (form.type === 'carrier') {
+      const { data: same } = await SB.from('companies').select('name').eq('type', 'carrier');
+      const hit = (same || []).find(c => (c.name || '').trim().toLowerCase() === name.trim().toLowerCase());
+      if (hit) name = hit.name;
+    }
+    const { data: co, error } = await SB.from('companies').upsert({name,type:form.type,...(url ? { tracking_url: url } : {}),email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
     if (error) { alert('Error: '+error.message); return; }
     // PRIMARY ONLY IF THIS COMPANY HAS NOBODY YET. This modal is an UPSERT on
     // (name, type), so "create" can adopt a company that already exists and
@@ -90,13 +118,18 @@ export function CreateCompanyModal({ onClose, onCreated, initialType = 'client' 
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>{typeLabel} Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
-            <div><label>Type</label><select className="form-select" value={form.type} onChange={e=>f('type')(e.target.value)}>{COMPANY_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></div>
+            <div><label>Type</label>{typeFixed
+              ? <input className="form-input" value={typeLabel} readOnly tabIndex={-1} data-noguard aria-label="Type" style={{background:'var(--bg)',color:'var(--muted)',cursor:'default'}} />
+              : <select className="form-select" value={form.type} onChange={e=>f('type')(e.target.value)}>{COMPANY_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>}</div>
           </div>
           <div className="form-row-2">
             <div><label>Email</label><input type="email" className="form-input" value={form.email} onChange={e=>f('email')(e.target.value)} /></div>
             <div><label>Phone</label><input className="form-input" value={form.phone} onChange={e=>f('phone')(e.target.value)} /></div>
           </div>
           <div className="form-row"><label>Website</label><input className="form-input" value={form.website} onChange={e=>f('website')(e.target.value)} placeholder="https://" /></div>
+          {form.type==='carrier' && (
+            <div className="form-row"><label>Tracking URL <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(optional -- put {'{number}'} where the tracking number goes)</span></label><input className="form-input" value={form.tracking_url} onChange={e=>f('tracking_url')(e.target.value)} placeholder="https://www.example.com/track?n={number}" /></div>
+          )}
           <div className="form-row"><label>Billing Address</label><textarea className="form-input" rows={3} value={form.billing_address} onChange={e=>f('billing_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
           <div className="form-row"><label>Shipping Address <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(prefills the ship-to on new orders)</span></label><textarea className="form-input" rows={3} value={form.shipping_address} onChange={e=>f('shipping_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
           {form.type==='client' && (
