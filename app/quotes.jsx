@@ -1258,8 +1258,17 @@ function Platform({ session, newQuote = null }) {
             {!isMobile && <div style={{ width: 112 }} />}
           </div>
 
-          {loading && <div style={S.empty}><div style={{ color: "#6a7488" }}>Loading…</div></div>}
-          {!loading && shownQuotes.length === 0 && (
+          {/* ── LOADING BLANKS THE LIST ONLY THE FIRST TIME ───────────────────
+              load() runs again on every quote saved anywhere (the live feed
+              above) and every time this page opens. It used to swap the whole
+              list for "Loading…" each time, which unmounted the open quote
+              card and threw away whatever was typed in it -- a task half
+              written in the Tasks box was gone, the card came back looking the
+              same, and Assign on the emptied box did nothing. Now "Loading…"
+              shows only while there is nothing to show yet; a reload swaps the
+              rows in place and the open card keeps its state. */}
+          {loading && quotes.length === 0 && <div style={S.empty}><div style={{ color: "#6a7488" }}>Loading…</div></div>}
+          {!(loading && quotes.length === 0) && shownQuotes.length === 0 && (
             <div style={S.empty}>
               <Box size={40} color="#e7eaf0" strokeWidth={1.2} />
               <div style={{ marginTop: 12, color: "#6a7488" }}>
@@ -1268,7 +1277,7 @@ function Platform({ session, newQuote = null }) {
             </div>
           )}
 
-          {!loading && shownQuotes.map((q) => {
+          {!(loading && quotes.length === 0) && shownQuotes.map((q) => {
             const sum = quoteSummary(q);
             const open = expanded === q.id;
             const priceRange = sum.minClient == null ? "—"
@@ -1911,9 +1920,20 @@ function ContainerPackout({ q, cbmPerCarton }) {
 function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, userEmail, staff = [], isMobile = false, onEdit, onDuplicate, onDelete }) {
   const [taskText, setTaskText] = useState("");
   const [taskWho, setTaskWho] = useState(TEAM[0].email);
-  const submitTask = () => {
-    if (!taskText.trim()) return;
-    onAddTask({
+  const [assigning, setAssigning] = useState(false);
+  // Said, not silent, when Enter is pressed on an empty box. Cleared by typing.
+  const [taskHint, setTaskHint] = useState("");
+  // THE BOX CLEARS ONLY ONCE THE TASK IS SAVED. It used to clear on the click,
+  // before the insert had answered, so a failed insert lost the words as well.
+  // "Assigning…" while it runs, and onAddTask (addTask) flashes "Task assigned
+  // to Kristy" or the error. Assign is disabled on an empty box rather than
+  // silently doing nothing.
+  const submitTask = async () => {
+    if (assigning) return;
+    if (!taskText.trim()) { setTaskHint("Type a task first"); return; }
+    setTaskHint("");
+    setAssigning(true);
+    const ok = await onAddTask({
       quote_id: q.id,
       quote_label: `${q.product || "Quote"}${q.sku ? " · " + q.sku : ""}`,
       assigned_to: taskWho,
@@ -1921,7 +1941,8 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
       task: taskText.trim(),
       done: false,
     });
-    setTaskText("");
+    setAssigning(false);
+    if (ok) setTaskText("");
   };
   const Section = ({ icon, title, children }) => (
     <div style={S.detailSection}><div style={S.detailHead}>{icon} {title}</div><div style={S.detailGrid}>{children}</div></div>
@@ -2031,9 +2052,13 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
           <select style={{ ...S.input, flex: "0 0 130px" }} value={taskWho} onChange={(e) => setTaskWho(e.target.value)}>
             {TEAM.map((m) => <option key={m.email} value={m.email}>{m.name}</option>)}
           </select>
-          <input style={{ ...S.input, flex: 1 }} value={taskText} onChange={(e) => setTaskText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitTask()} placeholder="e.g. Get freight quotes" />
-          <button style={S.primaryBtnSm} onClick={submitTask}>Assign</button>
+          <input style={{ ...S.input, flex: 1 }} value={taskText} disabled={assigning} onChange={(e) => { setTaskText(e.target.value); if (taskHint) setTaskHint(""); }} onKeyDown={(e) => e.key === "Enter" && submitTask()} placeholder="e.g. Get freight quotes" />
+          <button className="press-feedback" onClick={submitTask} disabled={assigning || !taskText.trim()}
+            style={{ ...S.primaryBtnSm, ...(assigning || !taskText.trim() ? { opacity: 0.45, cursor: "default" } : { cursor: "pointer" }) }}>
+            {assigning ? "Assigning…" : "Assign"}
+          </button>
         </div>
+        {taskHint && <div style={{ fontSize: 11.5, color: "#c2683a", marginTop: 6 }}>{taskHint}</div>}
       </div>
 
       <div style={{ gridColumn: "1 / -1", display: "flex", justifyContent: isMobile ? "space-between" : "flex-end", marginTop: 4, flexWrap: "wrap", gap: 8 }}>
