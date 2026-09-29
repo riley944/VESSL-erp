@@ -934,7 +934,9 @@ function Platform({ session, newQuote = null }) {
     return () => { supabase.removeChannel(ch); };
   }, [load]);
 
-  const saveQuote = async (f) => {
+  // queuedTasks: tasks added on the form before saving, as { assigned_to, task }.
+  // Returns { savedId, failed } so the form can keep any task that did not land.
+  const saveQuote = async (f, queuedTasks = []) => {
     lastSaveRef.current = Date.now();
     // The pre-edit row, read from state rather than re-fetched. The rename keys
     // on the OLD sku and name: that is what vessl.products still holds, because
@@ -993,9 +995,36 @@ function Platform({ session, newQuote = null }) {
       }
     }
 
-    setEditing(null);
+    // ── TASKS QUEUED ON THE FORM, ONCE THE QUOTE EXISTS ─────────────────────
+    // Each is inserted with the saved quote's id, in exactly the shape the
+    // card's Assign writes (addTask), and its assignee gets the same email. One
+    // at a time, so a failure is pinned to the task it belongs to.
+    //
+    // THE QUOTE STAYS SAVED WHEN A TASK DOES NOT. The form stays open with only
+    // the failed tasks still queued, now pointing at the saved quote, so Save
+    // again retries those tasks and updates the quote rather than inserting a
+    // second one; the toast names what did not land.
+    let failedTasks = [];
+    let assignedCount = 0;
+    if (savedRow && queuedTasks.length) {
+      const label = `${savedRow.product || "Quote"}${savedRow.sku ? " · " + savedRow.sku : ""}`;
+      for (const t of queuedTasks) {
+        const task = { quote_id: savedRow.id, quote_label: label, assigned_to: t.assigned_to,
+                       assigned_by: userEmail, task: t.task, done: false };
+        const { error } = await supabase.from("tasks").insert(task);
+        if (error) failedTasks.push({ ...t, error: error.message });
+        else { assignedCount += 1; notifyTaskAssigned(task); }
+      }
+      await loadTasks();
+    }
+
+    if (!failedTasks.length) setEditing(null);
     if (!savedRow) await load();
-    else flash("Quote saved");
+    else if (failedTasks.length) {
+      flash("Quote saved, but " + failedTasks.length + " task" + (failedTasks.length === 1 ? "" : "s")
+        + " did not: " + failedTasks.map((t) => "“" + t.task + "”").join(", ") + " — Save again to retry");
+    }
+    else flash("Quote saved" + (assignedCount ? " · " + assignedCount + " task" + (assignedCount === 1 ? "" : "s") + " assigned" : ""));
 
     // ── SKU PROPAGATION ──────────────────────────────────────────────────────
     // Runs after the save is confirmed, never before: offering to propagate a
@@ -1068,6 +1097,7 @@ function Platform({ session, newQuote = null }) {
         if (target) setSkuChoice({ product: target, quote: savedRow });
       }
     }
+    return savedRow ? { savedId: savedRow.id, failed: failedTasks } : null;
   };
 
   const removeQuote = async (id) => {
@@ -1336,7 +1366,8 @@ function Platform({ session, newQuote = null }) {
         </div>
       )}
 
-      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} userEmail={userEmail} />}
+      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} userEmail={userEmail}
+        existingTasks={editing.id ? tasks.filter((t) => t.quote_id === editing.id) : []} />}
       {/* Opens after a SKU change is saved. onDone reloads so the list shows the
           result; the modal stays up because the report IS the result. */}
       {skuChoice && <QuoteSkuChoiceModal product={skuChoice.product} quote={skuChoice.quote} updatedBy={userEmail} onClose={() => setSkuChoice(null)} onDone={() => load()} />}
@@ -2713,7 +2744,7 @@ function SelectField({ label, k, placeholder, options, hint, f, set }) {
 // staff went with the PLM tick. It fed the owner picker that appeared when the
 // box was ticked, and nothing else in this form ever read it -- the quote CARD
 // still passes its own staff to MarkWonButton, which is a different binding.
-function QuoteForm({ initial, onClose, onSave, userEmail }) {
+function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) {
   // The form this guard exists for. About eleven of its edits are click-driven --
   // the saved-factory chips, the client suggestions, picking an HTS code, Add
   // tier, Preset qtys, auto, the Air/Ocean toggles -- and not one of them fires
@@ -3347,13 +3378,42 @@ function QuoteForm({ initial, onClose, onSave, userEmail }) {
   const isNewWork = !initial.id || skuChanged;
   const skuBlocked = skuRetired && isNewWork;
 
-  const handleSave = () => {
+  // ── TASKS, QUEUED BEFORE THE QUOTE IS SAVED ─────────────────────────────
+  // Picked and typed here, held in the form, and inserted by saveQuote once the
+  // quote has an id -- a new quote has none until then. A queued task is
+  // unsaved work, so adding or removing one marks the form dirty and closing it
+  // asks first. Text typed in the box but not yet added is sent too: somebody
+  // who typed a task and pressed Save meant it.
+  const [queued, setQueued] = useState([]);
+  const [qWho, setQWho] = useState(TEAM[0].email);
+  const [qText, setQText] = useState("");
+  const queueTask = () => {
+    if (!qText.trim()) return;
+    setQueued((prev) => [...prev, { key: Date.now() + "-" + prev.length, assigned_to: qWho, task: qText.trim() }]);
+    setQText("");
+    markDirty();
+  };
+  const unqueueTask = (key) => { setQueued((prev) => prev.filter((t) => t.key !== key)); markDirty(); };
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
     // Belt and braces over the disabled button: a keyboard submit or a stale
     // render must not slip past the same rule.
-    if (skuBlocked) return;
+    if (skuBlocked || saving) return;
     const out = { ...f };
     out.freightDutyUpdatedAt = stamp();
-    onSave(out);
+    const toSend = [...queued, ...(qText.trim() ? [{ key: "typed", assigned_to: qWho, task: qText.trim() }] : [])];
+    setSaving(true);
+    const res = await onSave(out, toSend.map(({ assigned_to, task, key }) => ({ assigned_to, task, key })));
+    setSaving(false);
+    // Only reached with the form still open when a task did not land. Keep
+    // exactly those, and point the form at the saved quote so the next Save
+    // updates it rather than inserting it again.
+    if (res && res.failed && res.failed.length) {
+      setQueued(res.failed.map(({ key, assigned_to, task }) => ({ key, assigned_to, task })));
+      setQText("");
+      if (res.savedId) setF((prev) => ({ ...prev, id: res.savedId }));
+    }
   };
 
   return (
@@ -4138,6 +4198,51 @@ function QuoteForm({ initial, onClose, onSave, userEmail }) {
             <span style={S.fieldLabel}>Notes</span>
             <textarea style={{ ...S.input, minHeight: 64, resize: "vertical" }} value={f.notes} onChange={set("notes")} placeholder="MOQ notes, tooling, pricing assumptions, etc." />
           </label>
+
+          {/* ── TASKS ──────────────────────────────────────────────────────
+              The quote's existing tasks first, read-only (tick and delete them
+              on the quote card or in the Tasks panel), then the ones queued
+              here. The queue is sent when the quote is saved -- see
+              queueTask and saveQuote. Same people, same shape as the card's
+              Assign. */}
+          <div style={{ ...S.field, marginTop: 12 }}>
+            <div style={S.detailHead}><ListChecks size={14} /> Tasks</div>
+            {existingTasks.length > 0 && (
+              <div style={{ marginBottom: 4 }}>
+                {existingTasks.map((t) => (
+                  <div key={t.id} style={{ ...S.taskItem, padding: "7px 0" }}>
+                    <span style={{ display: "inline-flex", marginTop: 1 }}>
+                      {t.done ? <CheckCircle2 size={16} color="#3f7d5a" /> : <Circle size={16} color="#bba" />}
+                    </span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13.5, color: t.done ? "#9aa3b5" : "#0f1729", textDecoration: t.done ? "line-through" : "none", fontWeight: 500 }}>{t.task}</div>
+                      <div style={S.taskMeta}>For {nameForEmail(t.assigned_to)} · by {nameForEmail(t.assigned_by)} · {fmtStamp(t.created_at)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {queued.map((t) => (
+              <div key={t.key} style={{ ...S.taskItem, padding: "7px 0" }}>
+                <span style={{ display: "inline-flex", marginTop: 1 }}><Clock size={15} color="#9aa3b5" /></span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13.5, color: "#0f1729", fontWeight: 500 }}>{t.task}</div>
+                  <div style={S.taskMeta}>For {nameForEmail(t.assigned_to)} · assigned when the quote is saved</div>
+                </div>
+                <button type="button" style={S.tierDel} title="Remove" onClick={() => unqueueTask(t.key)}><X size={14} /></button>
+              </div>
+            ))}
+            <div style={S.taskAddRow}>
+              <select style={{ ...S.input, flex: "0 0 130px" }} value={qWho} onChange={(e) => setQWho(e.target.value)} aria-label="Assign to">
+                {TEAM.map((m) => <option key={m.email} value={m.email}>{m.name}</option>)}
+              </select>
+              <input style={{ ...S.input, flex: 1 }} value={qText} onChange={(e) => setQText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); queueTask(); } }}
+                placeholder="e.g. Get freight quotes" aria-label="Task" />
+              <button type="button" className="press-feedback" onClick={queueTask} disabled={!qText.trim()}
+                style={{ ...S.primaryBtnSm, ...(qText.trim() ? { cursor: "pointer" } : { opacity: 0.45, cursor: "default" }) }}>Assign</button>
+            </div>
+          </div>
         </div>
         <div style={S.modalFoot}>
           <button style={S.ghostBtn} onClick={onClose}>Cancel</button>
@@ -4145,10 +4250,10 @@ function QuoteForm({ initial, onClose, onSave, userEmail }) {
               vanishes leaves somebody hunting for it; one that is visibly refused,
               with the reason sitting under the SKU field, explains itself. */}
           <button
-            style={skuBlocked ? { ...S.primaryBtn, opacity: 0.45, cursor: "not-allowed" } : S.primaryBtn}
-            disabled={skuBlocked}
+            style={skuBlocked || saving ? { ...S.primaryBtn, opacity: 0.45, cursor: skuBlocked ? "not-allowed" : "default" } : S.primaryBtn}
+            disabled={skuBlocked || saving}
             title={skuBlocked ? "This SKU is inactive — use an Active or Not Set SKU" : undefined}
-            onClick={handleSave}><Check size={16} /> Save Quote</button>
+            onClick={handleSave}><Check size={16} /> {saving ? "Saving…" : "Save Quote"}</button>
         </div>
       </div>
     </div>
