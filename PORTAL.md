@@ -152,6 +152,12 @@ a join missed. Had it been hidden, the first real request would have vanished.
 `shipment_number`. Do NOT simply switch — the portal is unreachable code and may
 write either, and a resolver that only understands one is how this happened.
 
+**Refined 29 Sep, from the portal source:** it writes `client_po_number` when the
+order has one and `so_number` only when it does not (`poLabel =
+order.client_po_number || order.so_number`). ZZTEST-SO-001 had no client PO;
+the ZZDELIV test order did, and its requests carry `ZZDELIV-PO-001`. A resolver
+therefore needs `sales_orders.client_po_number` too, not just `so_number`.
+
 ### The portal does not reflect our response
 
 After staff Confirm, the portal's summary card still reads **"Requested"**. The
@@ -181,9 +187,11 @@ length 48, `matches_target` true, `updated_at` advanced. Addressing by id rather
 than by name is deliberate — it cannot land on a similarly-named secret. Omitting
 the third and fourth arguments leaves `name` and `description` untouched.
 
-Add the delivery coordinator to that same string when Riley names them — that is
-the whole reason the recipients moved to the vault rather than staying in the
-function body.
+~~Add the delivery coordinator to that same string when Riley names them.~~
+**Superseded 29 Sep:** the vault string stays riley + kristy for every client.
+Anyone who should hear about ONE client's requests goes on that company's
+`delivery_request_recipients` instead — see "Delivery-request emails and client
+edits" below.
 
 **The value cannot be checked from our read-only connection.** `vault.secrets` is
 readable, but `_crypto_aead_det_decrypt` is not granted, so selecting
@@ -210,6 +218,93 @@ the code shipped and sat unreachable. BucketGolf has 21 such orders, meaning
 This is the lead item for the portal-repo access request, ahead of the badge bug.
 It is entirely in code we cannot read or fix, and unlike the badge — which shows
 a wrong number — this one takes the page down.
+
+## Delivery-request emails and client edits (29–30 Sep, scripts 86–92)
+
+### Who is emailed
+
+`portal.notify_delivery_request` sends ONE email to the vault list
+(`delivery_request_recipients`, riley + kristy — the baseline for every client)
+**plus** that client's `vessl.companies.delivery_request_recipients` (script 86),
+lower-cased, duplicates removed. Null means no extras. A CHECK keeps the array
+non-empty, lower case and one `x@y` per entry. BucketGolf's three extras
+(killian, justin, mendezjosue@live.com) are script 87. There is no ERP screen
+for this column yet — the proposal is a client-only field in the Companies edit
+modal.
+
+The function reads `companies` from inside a trigger fired by a client, so it
+relies on SECURITY DEFINER **and** an owner that bypasses RLS — otherwise
+`kui_staff_only` hides the row and the extras vanish silently. 86 and 92 both
+assert it.
+
+### When an email is sent
+
+| Trigger | Fires on | Email |
+| --- | --- | --- |
+| `trg_notify_delivery_request` | INSERT, or UPDATE OF `requested_date` | "Delivery date requested" / "Delivery request changed" |
+| `trg_notify_delivery_request_cancelled` | UPDATE OF `status`, WHEN it moves to `cancelled` | "Delivery request cancelled", By = the cancelling login |
+
+Before 86 the trigger was **insert only**, so every client change to a request
+had emailed nobody. Staff Confirm / Adjust / Decline write `status` but never
+`requested_date` or `cancelled`, so they send nothing. The only writer of
+`cancelled` is `portal.cancel_delivery_request(req_id)`.
+
+Subjects end with the requested date (`… — ZZDELIV-PO-001 · Oct 17`), and every
+email carries a fresh `X-Entity-Ref-ID` header, which is Resend's documented way
+to stop Gmail threading. `Message-ID` is deliberately NOT set: Resend already
+makes it unique and documents no override. Every colon in the function body is
+written `chr(58)` because the SQL editor eats single colons — a slip there is in
+the Resend URL and stops all mail.
+
+### What a client may change
+
+Until script 90 there was **no client UPDATE policy** on `delivery_requests`.
+The portal's "Change delivery request" path could only succeed for a login that
+passes `is_kui_staff()`; for a real client it updated zero rows and still showed
+success.
+
+- `dr_client_update` (90): own company, from requested / confirmed / adjusted /
+  declined, and the row must end `requested`. A cancelled request is history —
+  asking again inserts a new row.
+- `trg_dr_client_update_guard` (90, widened in 92): a client may change only
+  `requested_date`, `note`, `status` (to `requested`) and `requested_by` — and
+  `requested_by` only to their own login email. It must stay SECURITY INVOKER:
+  `current_user` is how it tells a portal client from staff, postgres and
+  SECURITY DEFINER functions such as the cancel RPC, all of which it lets through.
+- `cancel_delivery_request(req_id)`: own company, only while `requested`; one
+  vague error for every refusal. The portal offers Cancel only in that state and
+  tells the client to message KUI once a request has been answered.
+
+When a client re-asks, KUI's earlier answer (`proposed_date`,
+`kui_response_note`, `responded_*`) stays on the row. The portal hides it once
+the status is back to `requested`; the ERP panel may not. Clearing it would lose
+who answered what, so it is a separate decision.
+
+### `is_kui_staff()` is the email domain, nothing else
+
+    select coalesce(auth.jwt()->>'email','') ilike '%@kinguniversal.com'
+
+Any `@kinguniversal.com` login — plus-addressed ones included — is **staff** to
+RLS: it can update any delivery request through `dr_staff_update` and read every
+company's through `dr_staff_read`, whatever its portal company. A portal test run
+from such a login tests the staff path and proves nothing about clients.
+
+**Client-side tests use a non-KUI login.** ZZDELIV (client, extras
+`mattdillon+zzextra@` and `mattdillon@`) has two portal logins:
+`mattdillon+zzdeliv@kinguniversal.com` (staff path, script 88) and
+`mattdillon1197+zzclient@gmail.com` (the real client path, script 91). Its order
+ZZDELIV-SO-001 → PO → shipment ZZDELIV-SH-001 keeps the request button live.
+
+### Testing without emailing Riley and Kristy
+
+The vault list applies to every client, so a ZZ request emails Riley and Kristy
+unless the secret is pointed away first. The procedure is 88a (record the value)
+→ 88b (point it at mattdillon, guarded on the exact baseline) → test → 88c
+(restore verbatim, guarded, with read-back) → 88d (list non-ZZ requests filed in
+the window). While the window is open **every** client's requests reach
+mattdillon alone — keep it to minutes, and run 88c even if the test failed.
+`delivery_requests` has no `updated_at`, so 88d can see new requests in the
+window but not changes to older ones.
 
 ## Deploying KUI-portal, and how to actually verify it
 
