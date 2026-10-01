@@ -34,7 +34,10 @@ import { ExportButton } from '@/app/components/ExportButton';
 import { loadExcelJS, excelDate } from '@/lib/excel';
 import { trackingUrl, findCarrier } from '@/lib/tracking';
 import { CreateCompanyModal } from '@/app/components/CreateCompanyModal';
-import { seedStageTasks as seedTasksFor, syncProductStage } from '@/lib/programs';
+import { seedStageTasks as seedTasksFor, syncProductStage, createProgram } from '@/lib/programs';
+import { parseQuoteCode, findQuoteByCode, resolveQuoteLinks, existingCardFor, missingWords } from '@/lib/quoteCard';
+import { CardOwnerPopup } from '@/app/components/CardOwnerPopup';
+import { ownerIdForEmail } from '@/app/components/OwnerSelect';
 // Sync from records is gone with the derived board -- nothing here creates a
 // program any more. The quote-form tick is the only door.
 // Tab, search, stage filter and the retired toggle survive going into a program and
@@ -2978,6 +2981,126 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
   );
 }
 
+// ── CREATE A CARD FROM A QUOTE ID ───────────────────────────────────────────
+// Loren types a Quote ID and gets the card for that quote. The steps are
+// Create PLM Card's (lib/quoteCard.js, CardOwnerPopup): read the quote, resolve
+// its product and client the same way, refuse if either is still missing, and
+// otherwise ask who owns it -- defaulting to the quote's creator -- before
+// anything is written. It never makes a second card for a product and client:
+// programs is unique on the pair, so an existing card is opened instead, and the
+// line under the box says which card it is and what state it is in.
+//
+// onOpen(id) opens a card on the board -- removed ones included, since the
+// board's open card is found among every card, not only the visible ones.
+function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);      // { tone: 'ok' | 'info' | 'err', text, quote? }
+  const [ask, setAsk] = useState(null);      // { quote, productId, clientId, ownerId, code }
+
+  const quoteUrl = id => (typeof window !== 'undefined' ? window.location.origin : '') + '/?quote=' + id + '#quotes';
+  const labelOf = q => (q.sku || 'No SKU') + ' · ' + (q.client || 'no client');
+
+  const go = async () => {
+    setMsg(null);
+    const code = parseQuoteCode(text);
+    if (!code) { setMsg({ tone: 'err', text: 'Type a quote ID, for example Q-0356.' }); return; }
+    setBusy(true);
+    try {
+      const f = await findQuoteByCode(code);
+      if (f.error) { setMsg({ tone: 'err', text: 'Could not look up ' + code + ' — ' + f.error.message }); return; }
+      if (!f.quote) { setMsg({ tone: 'err', text: 'No quote ' + code + ' — check the number.' }); return; }
+      const q = f.quote;
+      const res = await resolveQuoteLinks(q.id);
+      if (res.error) { setMsg({ tone: 'err', text: 'Could not read ' + code + ' — ' + res.error.message }); return; }
+      if (res.needsProduct || res.needsClient) {
+        setMsg({ tone: 'err', quote: { code, url: quoteUrl(q.id) },
+                 text: ' needs ' + missingWords(res.needsProduct, res.needsClient)
+                       + ' before it can have a card — open the quote, set '
+                       + (res.needsProduct && res.needsClient ? 'them' : 'it') + ', and save.' });
+        return;
+      }
+      const ex = await existingCardFor(res.productId, res.clientId);
+      if (ex.error) { setMsg({ tone: 'err', text: 'Could not check for a card — ' + ex.error.message }); return; }
+      if (ex.card) {
+        const c = ex.card;
+        onOpen(c.id);
+        const from = c.source_quote && c.source_quote.quote_code
+          ? 'from ' + c.source_quote.quote_code : 'no source quote recorded';
+        setMsg({ tone: 'info', text:
+          c.archived
+            ? 'A card already exists for ' + labelOf(q) + ' but was removed from the board. Use “Put back on the board” on the card to bring it back.'
+          : c.declared_stage === ARCHIVED
+            ? 'A card already exists for ' + labelOf(q) + ' and is Archived. Drag it back to Sampling to work on it.'
+          : 'A card already exists for ' + labelOf(q) + ' (in ' + stageLabel(c.declared_stage) + ', ' + from + '). Opened it.' });
+        return;
+      }
+      setAsk({ quote: q, productId: res.productId, clientId: res.clientId, code,
+               ownerId: ownerIdForEmail(staff, q.updated_by) });
+    } catch (e) {
+      setMsg({ tone: 'err', text: 'Something went wrong — ' + ((e && e.message) || e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const start = async () => {
+    if (!ask) return;
+    setBusy(true);
+    try {
+      const { error } = await createProgram(ask.productId, ask.clientId,
+        { stage: 'quoted', ownerId: ask.ownerId, createdBy: userEmail, sourceQuoteId: ask.quote.id });
+      if (error) { setMsg({ tone: 'err', text: 'Could not create the card — ' + error.message }); return; }
+      // Read back by the pair: createProgram never says whether it inserted or
+      // found a card a colleague had just made, and the card to open is the one
+      // that is there either way.
+      const ex = await existingCardFor(ask.productId, ask.clientId);
+      if (onReload) await onReload();
+      if (ex.card) onOpen(ex.card.id);
+      const ours = ex.card && ex.card.source_quote && ex.card.source_quote.quote_code === ask.code;
+      setMsg(ours
+        ? { tone: 'ok', text: 'PLM card created from ' + ask.code + ' — ' + labelOf(ask.quote) + '.' }
+        : { tone: 'info', text: 'A card for ' + labelOf(ask.quote) + ' was created by somebody else a moment ago. Opened it.' });
+      setText('');
+      setAsk(null);
+    } catch (e) {
+      setMsg({ tone: 'err', text: 'Something went wrong — ' + ((e && e.message) || e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toneColor = { ok: '#1a7f4b', info: '#5A5A5E', err: 'var(--hot)' };
+  return (
+    <>
+      <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+        <input value={text} disabled={busy} onChange={e => { setText(e.target.value); if (msg) setMsg(null); }}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); go(); } }}
+          placeholder="Quote ID, e.g. Q-0356" aria-label="Create a card from a Quote ID"
+          style={{width:'170px',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 12px',
+                  fontSize:'13.5px',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'}} />
+        <button onClick={go} disabled={busy || !text.trim()}
+          style={{border:'none',borderRadius:'10px',padding:'9px 14px',fontSize:'13px',fontWeight:600,fontFamily:'inherit',
+                  background:text.trim() ? '#1D1D1F' : '#E5E5EA',color:text.trim() ? '#fff' : '#A0A0A4',
+                  cursor:busy || !text.trim() ? 'default' : 'pointer',whiteSpace:'nowrap'}}>
+          {busy && !ask ? 'Checking…' : 'Create card'}
+        </button>
+      </div>
+      {msg && (
+        <div style={{flexBasis:'100%',fontSize:'12.5px',color:toneColor[msg.tone] || '#5A5A5E',lineHeight:1.5}}>
+          {msg.quote && <QuoteLinkValue link={msg.quote} />}{msg.text}
+        </div>
+      )}
+      {ask && (
+        <CardOwnerPopup title={'Create PLM card for ' + (ask.quote.sku || ask.code) + ' · ' + ask.code}
+          staff={staff} ownerId={ask.ownerId} busy={busy}
+          onOwner={v => setAsk(a => ({ ...a, ownerId: v }))}
+          onStart={start} onCancel={() => setAsk(null)} />
+      )}
+    </>
+  );
+}
+
 export default function Programs({ userEmail }) {
   const [rows, setRows]   = useState([]);
   const [ev, setEv]       = useState(null);
@@ -3955,6 +4078,9 @@ export default function Programs({ userEmail }) {
             onChange={e=>setUi('showRemoved', e.target.checked)} style={{cursor:'pointer'}} />
           Show {removed.length} removed
         </label>
+        {/* A card from a Quote ID, last in the row so its message line -- flex
+            basis 100% -- falls under everything rather than splitting the row. */}
+        <CardFromQuoteBox staff={staff} userEmail={userEmail} onOpen={id => setOpenId(id)} onReload={load} />
       </div>
 
       {/* The owner chip row was here. The one thing it carried that still has a

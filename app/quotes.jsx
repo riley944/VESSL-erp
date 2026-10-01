@@ -14,6 +14,8 @@ import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
 import { productByKey, ensureProductForQuote, skuActivity } from "@/lib/products";
 // The one door into the programs table. See the note at the top of lib/programs.js.
 import { createProgram } from "@/lib/programs";
+import { resolveQuoteLinks } from "@/lib/quoteCard";
+import { CardOwnerPopup } from "@/app/components/CardOwnerPopup";
 // The house modal, and the owner picker the Create PLM Card popup uses. Overlay
 // rather than a hand-rolled backdrop or a window.prompt: this file already has
 // one modal pattern and a second would be a second set of behaviours to keep in
@@ -1561,54 +1563,15 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
     // is worse than one that waits to be dismissed by the next attempt.
     setState('idle'); setMissing(null);
     try {
-      const { data: row, error } = await SB.from('quotes')
-        .select('product_id,client_company_id,client,sku,product,updated_by').eq('id', q.id).single();
-      if (error) { setBusy(false); alert('Could not read the quote: ' + error.message); return; }
-
-      // ── RESOLVE BEFORE REFUSING ───────────────────────────────────────────
-      // A null link is not the same as an unlinkable quote. Both columns are
-      // maintained on save, so a quote saved before that existed -- or one whose
-      // company was added to Companies afterwards -- can be perfectly resolvable
-      // and still read null here. Refusing it sent somebody to re-save a quote
-      // they had no edit to make, which is the kind of errand that teaches people
-      // the button is broken.
-      //
-      // THE SAME RULES SAVEQUOTE USES, deliberately, so the two cannot disagree
-      // about what a match is: trimmed, case-insensitive, and EXACTLY ONE hit.
-      // Zero and several are both "cannot be trusted" and stay null.
-      let productId = (row && row.product_id) || null;
-      let clientId  = (row && row.client_company_id) || null;
-
-      if (!clientId) {
-        const name = ((row && row.client) || '').trim();
-        if (name) {
-          const { data: hits } = await SB.from('companies').select('id').ilike('name', name);
-          if (hits && hits.length === 1) {
-            clientId = hits[0].id;
-            // is(null) so a link somebody made while this was resolving wins over
-            // the one inferred here -- the same guard the product write has used
-            // since quotes started linking themselves.
-            try { await SB.from('quotes').update({ client_company_id: clientId }).eq('id', q.id).is('client_company_id', null); } catch (e) {}
-          }
-        }
-      }
-
-      // productByKey RATHER THAN ensureProductForQuote. The two differ on the
-      // one thing that matters here: ensureProductForQuote CREATES the product
-      // when none matches, and a card button must not mint catalogue rows -- the
-      // quote save is the only thing that does that, on purpose. This looks, and
-      // links what it finds.
-      //
-      // A retired row is not a match, by the same rule ensureProductForQuote
-      // applies: active false means taken out of service, and adopting one here
-      // would quietly put a card on it. NULL stays orderable.
-      if (!productId) {
-        const p = await productByKey((row && row.sku) || '', (row && row.product) || '');
-        if (p && p.active !== false) {
-          productId = p.id;
-          try { await SB.from('quotes').update({ product_id: productId }).eq('id', q.id).is('product_id', null); } catch (e) {}
-        }
-      }
+      // RESOLVE BEFORE REFUSING -- now lib/quoteCard.js, shared with the PLM
+      // page's Quote ID box so both look a quote's links up the same way:
+      // client by exact name, product by SKU and name, never creating one, and
+      // what they find written back to the quote.
+      const res = await resolveQuoteLinks(q.id);
+      if (res.error) { setBusy(false); alert('Could not read the quote: ' + res.error.message); return; }
+      const row = res.row;
+      const productId = res.productId;
+      const clientId  = res.clientId;
 
       setBusy(false);
       // BOTH ANSWERS, NOT THE FIRST ONE. Asked after the resolve, so what it
@@ -1715,32 +1678,10 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
       )}
 
       {ask && (
-        <Overlay onClose={()=>setAsk(null)} maxWidth={420}>
-          <div style={{ fontSize:17, fontWeight:600, color:'#0f1729', letterSpacing:'-.01em' }}>
-            Create PLM card for {q.sku || 'this quote'}
-          </div>
-          <div style={{ fontSize:12.5, color:'#6a7488', marginTop:6, lineHeight:1.5 }}>
-            Opens a card at Quoted. Nothing is written until you press Start.
-          </div>
-          <label style={{ display:'flex', flexDirection:'column', gap:5, marginTop:16,
-                          fontSize:11, fontWeight:600, letterSpacing:'.08em',
-                          textTransform:'uppercase', color:'#86868B', fontFamily:'inherit' }}>
-            Owner
-            <OwnerSelect value={ask.ownerId} staff={staff} disabled={busy}
-              onChange={v => setAsk(a => ({ ...a, ownerId: v }))}
-              style={{ minWidth:0, width:'100%' }} />
-          </label>
-          <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:20 }}>
-            <button onClick={()=>setAsk(null)} disabled={busy}
-              style={{ background:'#F2F2F4', border:'none', borderRadius:10, padding:'9px 16px',
-                       fontSize:13, fontWeight:600, color:'#5A5A5E', fontFamily:'inherit',
-                       cursor: busy ? 'default' : 'pointer' }}>Cancel</button>
-            <button onClick={start} disabled={busy}
-              style={{ background:'#0f7d43', border:'none', borderRadius:10, padding:'9px 18px',
-                       fontSize:13, fontWeight:600, color:'#fff', fontFamily:'inherit',
-                       cursor: busy ? 'default' : 'pointer' }}>{busy ? 'Starting…' : 'Start'}</button>
-          </div>
-        </Overlay>
+        <CardOwnerPopup title={'Create PLM card for ' + (q.sku || 'this quote')}
+          staff={staff} ownerId={ask.ownerId} busy={busy}
+          onOwner={v => setAsk(a => ({ ...a, ownerId: v }))}
+          onStart={start} onCancel={() => setAsk(null)} />
       )}
     </>
   );
