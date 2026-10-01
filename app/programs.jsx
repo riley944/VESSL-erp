@@ -1220,15 +1220,22 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
               Saved by <span style={{fontWeight:600,color:'#5A5A5E'}}>{staffName(staff, x.created_by) || 'unknown'}</span> · {when(x.created_at)}
               {x.updated_at && <> · edited by <span style={{fontWeight:600,color:'#5A5A5E'}}>{staffName(staff, x.updated_by) || 'unknown'}</span> · {when(x.updated_at)}</>}
             </div>
-            {/* THE ROUND'S OWN NOTES (script 98) -- Card Notes in shape, keyed
-                on the round. Each carries the card, the stage and the round
-                number, so it still reads as this round if the round is deleted. */}
-            <NotesPanel staff={staff} table="program_notes" keyCol="round_id" keyId={x.id}
-              insertExtra={{ program_id: r.id, source: 'round', stage: 'sampling', round_no: x.round }}
-              extraCol="source" extraDefault="round" compact
-              title={'Round ' + x.round + ' notes'} programId={r.id} userEmail={userEmail} onTouched={onTouched} />
           </>
         )}
+        {/* THE ROUND'S OWN NOTES (script 98) -- Card Notes in shape, keyed on the
+            round. Each carries the card, the stage and the round number, so it
+            still reads as this round if the round is deleted.
+
+            OUTSIDE THE EDIT SWITCH, so it stays mounted and on screen while the
+            round's Edit form is open: adding a note there neither closes the
+            form nor loses what is typed in it. The edit state lives in
+            SampleRounds and survives the board reload a note triggers. The
+            number is the SAVED one -- an unsaved renumber is not the round's
+            number yet, and script 100 moves the note if the renumber is saved. */}
+        <NotesPanel staff={staff} table="program_notes" keyCol="round_id" keyId={x.id}
+          insertExtra={{ program_id: r.id, source: 'round', stage: 'sampling', round_no: x.round }}
+          extraCol="source" extraDefault="round" compact
+          title={'Round ' + x.round + ' notes'} programId={r.id} userEmail={userEmail} onTouched={onTouched} />
       </div>
     );
   };
