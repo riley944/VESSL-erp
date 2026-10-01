@@ -9,6 +9,7 @@ import {
 // lib/supabaseQuotes still exists; page.jsx and pricing.jsx both import it.
 import { SB } from "@/lib/supabase";
 import { FilterSelect } from "@/app/components/FilterSelect";
+import { QuoteList } from "@/app/components/QuoteList";
 import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
 import { productByKey, ensureProductForQuote, skuActivity } from "@/lib/products";
 // The one door into the programs table. See the note at the top of lib/programs.js.
@@ -702,7 +703,9 @@ function Platform({ session, newQuote = null }) {
   // The search term and which client is open survive going to another page and back.
   // expanded stays plain below -- an open row is the same class of thing as openId
   // elsewhere, and restoring one would scroll somebody to a quote they had left.
-  const [ui, setUi] = usePageState('quotes', { search:'', activeClient:null });
+  // section is the pill switcher: 'quotes', the default view, or 'list', the
+  // flat Quote List (app/components/QuoteList.jsx).
+  const [ui, setUi] = usePageState('quotes', { search:'', activeClient:null, section:'quotes' });
   const [expanded, setExpanded] = useState(null);
   const [toast, setToast] = useState("");
   const [loadErr, setLoadErr] = useState("");
@@ -1212,6 +1215,49 @@ function Platform({ session, newQuote = null }) {
         <SendToClientModal clients={clients} onClose={() => setShowSend(false)} />
       )}
 
+      {/* ── THE SECTION SWITCHER ── the Codes page's pill control, with a count
+          on each. Quotes is the default and is unchanged; Quote List is the flat,
+          filterable list of every quote. */}
+      <div style={{ maxWidth: 1280, margin: "0 auto 16px" }}>
+        <div style={{ display: "inline-flex", background: "#ECECF0", borderRadius: 12, padding: 4 }}>
+          {[["quotes", "Quotes"], ["list", "Quote List"]].map(([v, l]) => {
+            const on = (ui.section || "quotes") === v;
+            return (
+              <button key={v} onClick={() => setUi('section', v)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 15px", borderRadius: 9, border: "none", cursor: "pointer",
+                         fontSize: 13, fontWeight: 600, letterSpacing: "-.01em", fontFamily: "inherit",
+                         background: on ? "#1A1A1C" : "transparent", color: on ? "#fff" : "#5A5A5E",
+                         boxShadow: on ? "0 1px 3px rgba(0,0,0,.18)" : "none", transition: ".14s" }}>
+                {l}
+                <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 20, padding: "1px 7px",
+                               background: on ? "rgba(255,255,255,.22)" : "#DCDCE0", color: on ? "#fff" : "#6A6A6E" }}>{quotes.length}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {ui.section === "list" ? (
+        <QuoteList
+          reloadKey={quotes.length + "|" + quotes.reduce((a, q) => (q.updatedAt > a ? q.updatedAt : a), "")}
+          onOpen={(qid) => {
+            // The same opening the Tasks panel and a deep link use: the quote's
+            // client group, the row expanded, scrolled into view.
+            const qq = quotes.find((x) => x.id === qid);
+            setUi('section', 'quotes');
+            setUi('search', "");
+            if (qq) {
+              setUi('activeClient', (qq.client || "Unassigned").trim() || "Unassigned");
+              setExpanded(qid);
+              setTimeout(() => {
+                const el = document.getElementById(`quote-row-${qid}`);
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+              }, 200);
+            } else {
+              flash("That quote couldn't be found — it may have been deleted.");
+            }
+          }} />
+      ) : (<>
       <div style={S.controls}>
         <div style={S.searchWrap}>
           <Search size={16} color="#6a7488" />
@@ -1365,6 +1411,8 @@ function Platform({ session, newQuote = null }) {
           })}
         </div>
       )}
+
+      </>)}
 
       {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} userEmail={userEmail}
         existingTasks={editing.id ? tasks.filter((t) => t.quote_id === editing.id) : []} />}
