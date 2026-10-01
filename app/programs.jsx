@@ -89,14 +89,26 @@ const norm = t => (t || '').toLowerCase();
 // gets added to one and forgotten in the other -- the fault the hardcoded
 // six-column grid already cost this page once. Everything that destructures
 // [k,l] is untouched by a third item, so no reader below had to move.
+//
+// THE FOURTH ELEMENT IS WHETHER THE STAGE IS ON THE BOARD, on Loren and Matt's
+// 1 Oct simplification. Revision folds into Sampling, and Testing, Production and
+// Shipped come off the board FOR NOW. They stay on this list -- and in the
+// CHECKs -- so their labels, colours, checklist templates and every old row still
+// resolve, and bringing one back is flipping its flag. Only the two things a
+// person picks a stage from, the board columns and the card pills, read
+// VISIBLE_STAGES; everything that has to name a stored value keeps reading this.
 const MANUAL_STAGES = [
-  ['quoted',     'Quoting',    '#8E8E93'],
-  ['sampling',   'Sampling',   '#c2790b'],
-  ['revision',   'Revision',   '#7d5bd6'],
-  ['testing',    'Testing',    '#d6492f'],
-  ['production', 'Production', '#3461e0'],
-  ['shipped',    'Shipped',    '#0f9d6e'],
+  ['quoted',     'Quoting',    '#8E8E93', true],
+  ['sampling',   'Sampling',   '#c2790b', true],
+  ['revision',   'Revision',   '#7d5bd6', false],
+  ['testing',    'Testing',    '#d6492f', false],
+  ['production', 'Production', '#3461e0', false],
+  ['shipped',    'Shipped',    '#0f9d6e', false],
 ];
+const VISIBLE_STAGES = MANUAL_STAGES.filter(s => s[3]);
+// A card still holding a hidden stage is shown, never dropped from the board --
+// see the Hidden stage column in Programs.
+const isHiddenStage = k => !!k && MANUAL_STAGES.some(s => s[0] === k && !s[3]);
 // THE STORED VALUE STAYS quoted AND ONLY THE WORD CHANGES, which is the trade
 // COMPLETE_LABEL used to make for In Production. Renaming the value would mean a
 // script, a CHECK change and a migration for a relabelling.
@@ -2325,7 +2337,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
   // Where the card sits, for the pills: the ones before it read as passed. There
   // is no Advance button any more -- the pills move a card to any stage, forward
   // or back, and one control for one act is simpler than two that must agree.
-  const idx = MANUAL_STAGES.findIndex(([k]) => k === r.stage);
+  const idx = VISIBLE_STAGES.findIndex(([k]) => k === r.stage);
   const inSampling = SAMPLING_STAGES.includes(r.stage);
 
   return (
@@ -2363,7 +2375,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
           the checklist seeding, the product stage and the Last edited stamp all
           follow a pill exactly as they follow a purchase order. */}
       <div style={{display:'flex',gap:'4px',marginTop:'16px',flexWrap:'wrap'}}>
-        {MANUAL_STAGES.map(([k, l, c], i) => {
+        {VISIBLE_STAGES.map(([k, l, c], i) => {
           const active = k === r.stage;
           const passed = idx >= 0 && i < idx;
           return (
@@ -2377,6 +2389,13 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         })}
         {!r.stage && (
           <span style={{fontSize:'11px',color:'#A0A0A4',alignSelf:'center',marginLeft:'4px'}}>No stage set</span>
+        )}
+        {/* A stage that is off the board has no pill, so the card says where it
+            is in words. Any pill moves it onto the board. */}
+        {isHiddenStage(r.stage) && (
+          <span style={{fontSize:'11px',color:'#A0A0A4',alignSelf:'center',marginLeft:'4px'}}>
+            In {stageLabel(r.stage)}, which is off the board
+          </span>
         )}
       </div>
 
@@ -3326,10 +3345,19 @@ export default function Programs({ userEmail }) {
   // in -- none is a display key for a null stage, not a value the CHECK accepts.
   // Nothing drags any more, so that is no longer something the board has to
   // defend against; it is why the column has no heading dot in a stage colour.
+  //
+  // HIDDEN STAGE IS THE SAME KIND OF COLUMN, for a card whose stage is off the
+  // board (VISIBLE_STAGES). It appears only when such a card exists, takes no
+  // drop, and its tiles keep their own stage accent, so the column says the
+  // stage is hidden and the edge says which one.
+  const hiddenList = shownBoard.filter(r => isHiddenStage(r.stage));
   const columns = [
-    ...MANUAL_STAGES.map(([k, l]) => ({
+    ...VISIBLE_STAGES.map(([k, l]) => ({
       key: k, label: l, color: accentOf(k), list: shownBoard.filter(r => r.stage === k),
     })),
+    ...(board.some(r => isHiddenStage(r.stage))
+      ? [{ key:'hidden', label:'Hidden stage', color: accentOf('none'), list: hiddenList }]
+      : []),
     ...((counts.none || 0) > 0
       ? [{ key:'none', label:'No stage set', color: accentOf('none'),
            list: shownBoard.filter(r => !r.stage) }]
