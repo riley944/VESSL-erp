@@ -8,14 +8,15 @@ import Codes from '@/app/codes';
 import Testing from '@/app/testing';
 import Pricing from '@/app/pricing';
 import Programs from '@/app/programs';
-import { advanceToProductionForPO } from '@/lib/programs';
+import { noteCardsForPO } from '@/lib/programs';
 import { FilterSelect } from '@/app/components/FilterSelect';
 // A sales order or purchase order line for a client IS a program starting.
 // See lib/programs.js -- idempotent by the unique constraint, never updates.
 // ensurePrograms is gone from this file. Saving an order never OPENS a PLM card
 // -- Create PLM Card on a quote is the only way in. What a purchase order does
-// do, since PLM stage 4, is MOVE an existing card into Production; see
-// advanceToProductionForPO in lib/programs.js and its two call sites below.
+// do, since 1 Oct, is NOTE it on any existing card and mark the product
+// Production -- the card stays where it is; see noteCardsForPO in
+// lib/programs.js and its two call sites below.
 import { SizeGrid, sizesForSelection, toScaleList, skuToken, storedQtyToMap } from '@/app/components/SizeGrid';
 // The SAME cost model the quote editor uses. This page carried a hand-written copy
 // that had drifted on both the mold divisor and the duty term; see lib/tierCost.js.
@@ -4056,9 +4057,9 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
         if(!e1 && base.product_id) newProducts.push(base.product_id);
       }
     }
-    // A new line on an existing PO moves its card into Production exactly as a
-    // new PO does -- same function, same rule, same note.
-    await movePlmCardsForPO(form.clientId||null, newProducts, form.num);
+    // A new line on an existing PO is noted on its card, and its product marked
+    // Production, exactly as a new PO is -- same function, same rule, same note.
+    await notePlmCardsForPO(form.clientId||null, newProducts, form.num);
     // delete only rows the user explicitly removed
     const keepIds=valid.filter(it=>it.id).map(it=>it.id);
     const removed=(initialItems||[]).map(it=>it.id).filter(Boolean).filter(oid=>!keepIds.includes(oid));
@@ -7388,15 +7389,21 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
 
 
 // ── Create PO Modal ───────────────────────────────────────────────────────────
-// ── THE PLM MOVE, AS BOTH PO MODALS CALL IT ─────────────────────────────────
-// The rule is advanceToProductionForPO's; this only reports it. A failure is a
-// toast, never an alert and never a throw -- the PO is saved by the time this
-// runs, and a card that did not move is one somebody can move by hand.
-async function movePlmCardsForPO(clientCompanyId, productIds, poNumber) {
-  if (!clientCompanyId || !(productIds || []).length) return;
-  const { moved, error } = await advanceToProductionForPO({ clientCompanyId, productIds, poNumber });
-  if (error) window._toast?.('PO saved, but a PLM card could not be moved to Production — '+(error.message||String(error)),'err');
-  else if (moved.length) window._toast?.(moved.length+' PLM card'+(moved.length===1?'':'s')+' moved to Production','ok');
+// ── THE PLM NOTE, AS BOTH PO MODALS CALL IT ─────────────────────────────────
+// The rule is noteCardsForPO's; this only reports it. A failure is a toast,
+// never an alert and never a throw -- the PO is saved by the time this runs,
+// and a note or a product stage that did not land is one somebody can fix by
+// hand. No card moves (1 Oct).
+async function notePlmCardsForPO(clientCompanyId, productIds, poNumber) {
+  if (!(productIds || []).length) return;
+  const { noted, productsChanged, error } = await noteCardsForPO({ clientCompanyId, productIds, poNumber });
+  if (error) window._toast?.('PO saved, but the PLM note or the product stage did not all land — '+(error.message||String(error)),'err');
+  else if (noted.length || productsChanged) {
+    const parts = [];
+    if (noted.length) parts.push(noted.length+' PLM card'+(noted.length===1?'':'s')+' noted');
+    if (productsChanged) parts.push(productsChanged+' product'+(productsChanged===1?'':'s')+' marked Production');
+    window._toast?.(parts.join(' · '),'ok');
+  }
 }
 
 function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
@@ -7779,7 +7786,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     // THE ONE AUTOMATIC PLM MOVE. A card for this client and any product on the
     // PO, sitting before Production, moves there with a note. No card is created.
     // After the lines, and never able to fail the PO -- it is already saved.
-    await movePlmCardsForPO(po.client_company_id, savedProducts, po.order_number || orderNumber);
+    await notePlmCardsForPO(po.client_company_id, savedProducts, po.order_number || orderNumber);
     onCreated(po.id);
   };
 
