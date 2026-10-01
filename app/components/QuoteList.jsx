@@ -229,31 +229,44 @@ export function QuoteList({ reloadKey, onOpen }) {
 
   return (
     <div>
-      {/* ── FILTERS ── */}
-      <div style={{ maxWidth: 1280, margin: '0 auto 16px', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+      {/* ── FILTERS ──
+          Bottom-aligned, because the date pair carries a heading above it and the
+          dropdowns do not. Everything else on the row sits in a 40px band -- the
+          height of a FilterSelect button -- so the dropdowns, the date inputs and
+          the controls after them share one line, and each piece wraps whole. */}
+      <div style={{ maxWidth: 1280, margin: '0 auto 16px', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
         <div className="fs-row">
           <FilterSelect multiple label="All Companies" value={ui.company} onChange={v => setFilter('company', v)} options={companyOptions} />
           <FilterSelect multiple label="All Product Names" value={ui.product} onChange={v => setFilter('product', v)} options={productOptions} />
           <FilterSelect multiple label="All SKUs" value={ui.sku} onChange={v => setFilter('sku', v)} options={skuOptions} />
         </div>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <span style={lbl}>From</span>
-          <input type="date" value={ui.from} max={ui.to || undefined} onChange={e => setFilter('from', e.target.value)} style={dateInp} aria-label="Created from" />
-        </label>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <span style={lbl}>To</span>
-          <input type="date" value={ui.to} min={ui.from || undefined} onChange={e => setFilter('to', e.target.value)} style={dateInp} aria-label="Created to" />
-        </label>
+        {/* The heading names the pair, in the FROM / TO label style, so the two
+            inputs read as one range filter. */}
+        <div role="group" aria-label="Quote Creation Date Range" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={lbl}>Quote Creation Date Range</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, minHeight: 40 }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span style={lbl}>From</span>
+              <input type="date" value={ui.from} max={ui.to || undefined} onChange={e => setFilter('from', e.target.value)} style={dateInp} aria-label="Created from" />
+            </label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span style={lbl}>To</span>
+              <input type="date" value={ui.to} min={ui.from || undefined} onChange={e => setFilter('to', e.target.value)} style={dateInp} aria-label="Created to" />
+            </label>
+          </div>
+        </div>
         {anyFilter ? (
-          <button onClick={clear} style={{ background: 'none', border: 'none', padding: 0, fontSize: 13, color: '#3461e0',
-                                            cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2 }}>
-            Clear filters
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', height: 40 }}>
+            <button onClick={clear} style={{ background: 'none', border: 'none', padding: 0, fontSize: 13, color: '#3461e0',
+                                              cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2 }}>
+              Clear filters
+            </button>
+          </div>
         ) : null}
-        <span style={{ fontSize: 12, color: '#6a7488', fontVariantNumeric: 'tabular-nums' }}>
+        <span style={{ display: 'flex', alignItems: 'center', height: 40, fontSize: 12, color: '#6a7488', fontVariantNumeric: 'tabular-nums' }}>
           {rows === null ? '' : sorted.length + ' shown' + (anyFilter ? ' of ' + all.length : '')}
         </span>
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', height: 40 }}>
           <ExportButton count={sorted.length} busy={exporting} align="right"
             note={sorted.length + ' quote' + (sorted.length === 1 ? '' : 's') + ', every page, as filtered'}
             onXlsx={exportXlsx} onCsv={exportCsv} onPdf={exportPdf} />
