@@ -654,8 +654,22 @@ function useCardFactory(r) {
   return factoryName;
 }
 
+// ── THE SAMPLE TYPE, ON EVERY ROUND ─────────────────────────────────────────
+// program_sample_rounds.sample_type (script 97), replacing the Master sample
+// Yes or No, on the 1 Oct simplification. The keys are the CHECK; the labels are
+// what the dropdown, the saved line and the files say. master_sample is still in
+// the table and nothing reads or writes it.
+const SAMPLE_TYPES = [
+  ['first',              'First Sample'],
+  ['pre_production',     'Pre-Production Sample'],
+  ['production',         'Production Sample'],
+  ['testing_production', 'Testing Production Sample'],
+  ['testing',            'Testing'],
+];
+const sampleTypeLabel = k => (SAMPLE_TYPES.find(([v]) => v === k) || [null, k || ''])[1];
+
 // ── ONE ROUND IN ONE LINE ───────────────────────────────────────────────────
-// "Round 2 · master sample included · sent Jan 1, 2026 · due back Oct 1, 2026".
+// "Round 2 · Pre-Production Sample · sent Jan 1, 2026 · due back Oct 1, 2026".
 // Only the parts somebody set, so a round saved with a due date alone does not
 // print three Not sets. The entry on the card, the Sampling row on the Card tab
 // and the files all read this.
@@ -668,8 +682,7 @@ function useCardFactory(r) {
 const roundText = (x, withTracking = false) => {
   if (!x) return null;
   const parts = ['Round ' + x.round];
-  if (x.master_sample === true) parts.push('master sample included');
-  if (x.master_sample === false) parts.push('no master sample');
+  if (x.sample_type) parts.push(sampleTypeLabel(x.sample_type));
   if (x.sent_date) parts.push('sent ' + fmt(x.sent_date));
   if (x.due_back) parts.push('due back ' + fmt(x.due_back));
   if (withTracking && (x.carrier || x.tracking_number)) {
@@ -734,16 +747,16 @@ const okDate = s => !s || (/^\d{4}-\d{2}-\d{2}$/.test(s) && Number(s.slice(0, 4)
 // strip that wrote four programs columns on every change is gone; a round is
 // filled in and saved, and then it is a record with who saved it and when.
 //
-// SAMPLING RECORDS ROUND 1 ONLY. The form is fixed at round 1, and once round 1
-// is saved the form goes and the entry stays -- one round 1 per card, which the
-// unique (program_id, round) constraint holds as well.
+// EVERY ROUND IS A SAMPLING ROUND (1 Oct, script 97). Revision folded into
+// Sampling, so the one tab holds them all, newest first, and the form always
+// offers the next round -- one past the highest saved, round 1 on a card with
+// none. Every round is written with stage sampling; the CHECK still allows
+// revision, which old rows were and the reverse script puts back.
 //
-// REVISION RECORDS 2 AND UP. The form offers the next round -- one past the
-// highest saved, and never below 2 -- and every Save is a new entry, newest
-// first. Round 1 sits at the bottom, muted and labelled Sampling, because it is
-// where the revision started. The CHECK ties round 1 to sampling and 2 and up to
-// revision, so the stage written is the one the round belongs to, not merely
-// the card stage of the moment.
+// EACH ROUND IS ITS OWN SAVED ENTRY with its own Edit. An Archived card shows
+// its rounds and lets them be corrected, but offers no new round -- sampling is
+// over. Comment and Master sample came off the form; the columns stay in the
+// table, unread. A round says what was sent with its sample type instead.
 //
 // ANYBODY ON STAFF CAN EDIT ANY ROUND, as with the checklist -- a round is shared
 // logistics, not somebody own words -- and the entry says who saved it and who
@@ -756,24 +769,21 @@ const okDate = s => !s || (/^\d{4}-\d{2}-\d{2}$/.test(s) && Number(s.slice(0, 4)
 // constraint; the second is told so and the list reloads with the first one.
 function SampleRounds({ r, staff, userEmail, onTouched }) {
   const rounds = r.rounds || [];
-  const inRevision = r.stage === 'revision';
-  const round1 = rounds.find(x => x.round === 1) || null;
-  const later = rounds.filter(x => x.round >= 2);
-  const nextRound = inRevision ? Math.max(2, ...rounds.map(x => x.round + 1)) : 1;
-  const showForm = inRevision || !round1;
+  const nextRound = Math.max(1, ...rounds.map(x => x.round + 1));
+  const showForm = r.stage !== ARCHIVED;
 
   // lab is the CARD'S testing lab, programs.testing_lab -- one per card, not per
   // round. It rides in the round form so it can be set while the card is being
   // worked in Sampling or Revision, prefilled with the card's value, and it is
   // written only when it changed. Every round form shows the same card value.
-  const blank = { master: null, sent: '', due: '', carrier: '', tracking: '', comment: '', lab: r.testing_lab || '' };
+  const blank = { type: '', sent: '', due: '', carrier: '', tracking: '', lab: r.testing_lab || '' };
   const [form, setForm] = useState(blank);
   const [editId, setEditId] = useState(null);
   const [edit, setEdit] = useState(blank);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  // A new form for a card that moved stage, so a half-filled round 1 does not
-  // turn up as round 2.
+  // A new form for a card that moved stage, so a round half filled in before an
+  // archive does not reappear when the card comes back.
   useEffect(() => { setForm(blank); setEditId(null); setErr(''); }, [r.id, r.stage]);
   // The card's lab changed -- saved from here, from the Testing section, or by
   // somebody else -- so every form shows the stored value again.
@@ -787,17 +797,18 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     if (failed) touchFailedToast(failed);
     if (onTouched) await onTouched();
   };
-  const hasAny = f => f.master !== null || f.sent || f.due || f.carrier.trim() || f.tracking.trim() || f.comment.trim();
+  const hasAny = f => f.type || f.sent || f.due || f.carrier.trim() || f.tracking.trim();
   const datesOk = f => okDate(f.sent) && okDate(f.due);
+  // master_sample and comment are not written -- an edit leaves whatever an old
+  // round held in them exactly as it was.
   const values = f => ({
-    master_sample: f.master, sent_date: f.sent || null, due_back: f.due || null,
+    sample_type: f.type || null, sent_date: f.sent || null, due_back: f.due || null,
     carrier: f.carrier.trim() || null, tracking_number: f.tracking.trim() || null,
-    comment: f.comment.trim() || null,
   });
   const unchanged = (x, f) => {
     const v = values(f);
-    return v.master_sample === (x.master_sample ?? null) && v.sent_date === (x.sent_date || null)
-        && v.due_back === (x.due_back || null) && v.comment === (x.comment || null)
+    return v.sample_type === (x.sample_type || null) && v.sent_date === (x.sent_date || null)
+        && v.due_back === (x.due_back || null)
         && v.tracking_number === (x.tracking_number || null)
         && (v.carrier || '').toLowerCase() === (x.carrier || '').toLowerCase();
   };
@@ -815,8 +826,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   // The fields below are data-noguard, and this is what the guard asks instead:
   // a new round with anything filled in, or an open edit that differs from the
   // saved round. A successful save empties the form or closes the edit, so the
-  // card closes without asking; input left unsaved still asks. Master sample is
-  // a pair of buttons the guard could never see, and is covered here too.
+  // card closes without asking; input left unsaved still asks.
   const editing = editId ? rounds.find(x => x.id === editId) : null;
   useDirtySource((showForm && (!!hasAny(form) || labChanged(form)))
               || (!!editing && (!unchanged(editing, edit) || labChanged(edit))));
@@ -832,7 +842,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     setBusy(true); setErr('');
     if (withRound) {
       const { error } = await SB.from('program_sample_rounds').insert({
-        program_id: r.id, stage: inRevision ? 'revision' : 'sampling', round: nextRound,
+        program_id: r.id, stage: 'sampling', round: nextRound,
         ...values(form), created_by: userEmail || null,
       });
       if (error) {
@@ -858,10 +868,9 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
 
   const startEdit = x => {
     setEditId(x.id); setErr('');
-    setEdit({ master: x.master_sample === undefined ? null : x.master_sample,
+    setEdit({ type: x.sample_type || '',
               sent: x.sent_date || '', due: x.due_back || '', carrier: x.carrier || '',
-              tracking: x.tracking_number || '',
-              comment: x.comment || '', lab: r.testing_lab || '' });
+              tracking: x.tracking_number || '', lab: r.testing_lab || '' });
   };
 
   // Asked once, in the words agreed, and there is no undo -- the row is gone.
@@ -905,9 +914,9 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
                 fontSize:'13px', outline:'none', fontFamily:'inherit', boxSizing:'border-box', background:'#fff' };
   const lbl = { display:'block', fontSize:'10px', fontWeight:600, textTransform:'uppercase',
                 letterSpacing:'.06em', color:'#86868B', marginBottom:'5px' };
-  // The height of the Yes and No buttons, measured at 32px, which the round
-  // number is centred against so the two sit on one line.
-  const ROW_H = '32px';
+  // The height of the Sample type select, which the round number is centred
+  // against so the two sit on one line.
+  const ROW_H = '34px';
   const lblMid = { ...lbl, textAlign:'center' };
   const pillBtn = (on, disabled) => ({ fontSize:'11.5px', fontWeight:600, borderRadius:'980px', padding:'5px 13px',
                 border:'none', fontFamily:'inherit', cursor:disabled?'default':'pointer',
@@ -975,30 +984,23 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'14px'}}>
       <div style={{textAlign:'center'}}>
         <span style={lblMid}>Sample round</span>
-        {/* Fixed. Sampling is round 1; Revision counts on from the last saved.
-            The caption and the number are both centred in the column, and the
-            number sits in a box as tall as the Yes and No buttons, so it is on
-            their line rather than at the top. */}
+        {/* Fixed -- one past the highest saved, or the round being edited. The
+            number sits in a box as tall as the Sample type select, so it is on
+            that line rather than at the top. */}
         <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:ROW_H,
                      fontSize:'16px',fontWeight:600,color:'#1D1D1F',
                      fontVariantNumeric:'tabular-nums'}}>{roundNo}</div>
       </div>
-      <div>
-        {/* Centred over the Yes and No pair, which fills the column. */}
-        <span style={lblMid}>Master sample</span>
-        <div style={{display:'flex',gap:'6px'}}>
-          {[['Yes', true], ['No', false]].map(([l, v]) => {
-            const on = f.master === v;
-            return (
-              // A second click on the chosen one clears it -- null is not said,
-              // and it has to be reachable again after a mis-click.
-              <button key={l} disabled={busy} onClick={()=>set({ ...f, master: on ? null : v })}
-                style={{...inp,flex:1,padding:'7px 0',textAlign:'center',cursor:busy?'default':'pointer',fontWeight:600,
-                        background:on?'#1D1D1F':'#fff',color:on?'#fff':'#86868B',
-                        border:'1px solid '+(on?'#1D1D1F':'rgba(0,0,0,.1)')}}>{l}</button>
-            );
-          })}
-        </div>
+      <div style={{gridColumn:'span 2'}}>
+        {/* A dash is Not set, which is what every round saved before script 97
+            reads, and choosing it again clears a type picked by mistake. */}
+        <span style={lbl}>Sample type</span>
+        <select data-noguard value={f.type} disabled={busy} aria-label="Sample type"
+          onChange={e=>set({ ...f, type: e.target.value })}
+          style={{...inp,height:ROW_H,cursor:busy?'default':'pointer',color:f.type?'#1D1D1F':'#86868B'}}>
+          <option value="">—</option>
+          {SAMPLE_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
       </div>
       <div>
         <span style={lbl}>Sent</span>
@@ -1031,26 +1033,15 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         <input data-noguard value={f.lab} disabled={busy} style={inp} aria-label="Testing lab"
           placeholder="Optional" onChange={e=>set({ ...f, lab: e.target.value })} />
       </div>
-      <div style={{gridColumn:'1 / -1'}}>
-        <span style={lbl}>Comment</span>
-        <textarea data-noguard value={f.comment} disabled={busy} rows={2} placeholder="Optional"
-          onChange={e=>set({ ...f, comment: e.target.value })}
-          style={{...inp,resize:'vertical'}} />
-      </div>
     </div>
   );
 
-  const entry = (x, muted) => {
+  const entry = x => {
     const editing = editId === x.id;
     const isLatestLate = late && latest && latest.id === x.id;
     return (
-      <div key={x.id} style={{background:'#fff',border:'1px solid #ECECEE',borderRadius:'10px',padding:'9px 11px',
-                              opacity: muted && !editing ? 0.6 : 1}}>
+      <div key={x.id} style={{background:'#fff',border:'1px solid #ECECEE',borderRadius:'10px',padding:'9px 11px'}}>
         <div style={{display:'flex',alignItems:'baseline',gap:'8px',flexWrap:'wrap'}}>
-          {muted && (
-            <span style={{fontSize:'10px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',
-                          color:'#86868B'}}>Sampling</span>
-          )}
           {!editing && (
             <span style={{fontSize:'13px',fontWeight:500,color:'#1D1D1F'}}>
               {/* The round in words, then its shipment with the number linked --
@@ -1088,9 +1079,6 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
           </div>
         ) : (
           <>
-            {x.comment && (
-              <div style={{fontSize:'13px',color:'#1D1D1F',lineHeight:1.5,whiteSpace:'pre-wrap',marginTop:'4px'}}>{x.comment}</div>
-            )}
             <div style={{fontSize:'11px',color:'#A0A0A4',marginTop:'5px'}}>
               Saved by <span style={{fontWeight:600,color:'#5A5A5E'}}>{staffName(staff, x.created_by) || 'unknown'}</span> · {when(x.created_at)}
               {x.updated_at && <> · edited by <span style={{fontWeight:600,color:'#5A5A5E'}}>{staffName(staff, x.updated_by) || 'unknown'}</span> · {when(x.updated_at)}</>}
@@ -1101,7 +1089,9 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     );
   };
 
-  const list = inRevision ? later : (round1 ? [round1] : []);
+  // Newest first. The board reads rounds highest round first, and the order is
+  // stated again here so the list does not depend on how it was fetched.
+  const list = [...rounds].sort((a, b) => b.round - a.round);
   return (
     <div style={{background:'#F5F5F7',borderRadius:'16px',padding:'16px 18px',marginTop:'16px'}}>
       <div style={{fontSize:'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',
@@ -1120,14 +1110,13 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         </>
       )}
       {err && <div style={{fontSize:'11.5px',color:'var(--hot)',marginTop:'8px'}}>{err}</div>}
-      {(list.length > 0 || (inRevision && round1)) && (
+      {list.length > 0 && (
         <div style={{marginTop:showForm?'14px':0,display:'flex',flexDirection:'column',gap:'8px'}}>
-          {list.map(x => entry(x, false))}
-          {inRevision && round1 && entry(round1, true)}
+          {list.map(entry)}
         </div>
       )}
-      {inRevision && !later.length && (
-        <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'10px'}}>No revision rounds saved yet.</div>
+      {!list.length && !showForm && (
+        <div style={{fontSize:'12px',color:'#A0A0A4'}}>No sample rounds were saved.</div>
       )}
     </div>
   );
@@ -2352,7 +2341,9 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
   // is no Advance button any more -- the pills move a card to any stage, forward
   // or back, and one control for one act is simpler than two that must agree.
   const idx = VISIBLE_STAGES.findIndex(([k]) => k === r.stage);
-  const inSampling = SAMPLING_STAGES.includes(r.stage);
+  // Rounds show while sampling and after it -- an Archived card keeps its record
+  // of what was sent, and SampleRounds drops the new-round form there.
+  const inSampling = SAMPLING_STAGES.includes(r.stage) || r.stage === ARCHIVED;
 
   return (
     <>
@@ -2674,7 +2665,7 @@ export default function Programs({ userEmail }) {
         // pill and the Stalled and Overdue samples tiles read the latest one's
         // due back, so they have to arrive with the board.
         SB.from('program_sample_rounds')
-          .select('id,program_id,stage,round,master_sample,sent_date,due_back,carrier,tracking_number,comment,created_by,created_at,updated_by,updated_at')
+          .select('id,program_id,stage,round,sample_type,master_sample,sent_date,due_back,carrier,tracking_number,comment,created_by,created_at,updated_by,updated_at')
           .order('round', { ascending:false }),
         // THE CARRIERS ARE COMPANIES of type carrier (script 85), with the tracking
         // page pattern on companies.tracking_url. They are managed on Companies ->
