@@ -805,12 +805,27 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   const rounds = r.rounds || [];
   const nextRound = Math.max(1, ...rounds.map(x => x.round + 1));
   const showForm = r.stage !== ARCHIVED;
+  // ── THE ROUND NUMBER IS PICKED, NOT FIXED ─────────────────────────────────
+  // The stepper starts at the next number and moves either way -- down to 1, up
+  // with no ceiling -- stepping over any number a saved round on this card
+  // already holds, so a missed round can be back-filled. roundPick is null until
+  // somebody touches the arrows, and then the form uses it. The saved list
+  // sorts by round number, so a back-filled round lands in its place.
+  //
+  // NOT ON THE EDIT FORM. A saved round keeps its number: its notes were written
+  // under it and carry it as round_no (script 98).
+  const used = new Set(rounds.map(x => x.round));
+  const [roundPick, setRoundPick] = useState(null);
+  const chosen = roundPick ?? nextRound;
+  const stepDown = () => { for (let n = chosen - 1; n >= 1; n--) if (!used.has(n)) return n; return null; };
+  const stepUp = () => { let n = chosen + 1; while (used.has(n)) n++; return n; };
 
   // lab is the CARD'S testing lab, programs.testing_lab -- one per card, not per
   // round. It rides in the round form so it can be set while the card is being
   // worked in Sampling or Revision, prefilled with the card's value, and it is
   // written only when it changed. Every round form shows the same card value.
-  const blank = { type: '', sent: '', due: '', carrier: '', tracking: '', lab: r.testing_lab || '' };
+  // note is the new-round form only -- saved as the round's first round note.
+  const blank = { type: '', sent: '', due: '', carrier: '', tracking: '', lab: r.testing_lab || '', note: '' };
   const [form, setForm] = useState(blank);
   const [editId, setEditId] = useState(null);
   const [edit, setEdit] = useState(blank);
@@ -818,7 +833,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   const [err, setErr] = useState('');
   // A new form for a card that moved stage, so a round half filled in before an
   // archive does not reappear when the card comes back.
-  useEffect(() => { setForm(blank); setEditId(null); setErr(''); }, [r.id, r.stage]);
+  useEffect(() => { setForm(blank); setRoundPick(null); setEditId(null); setErr(''); }, [r.id, r.stage]);
   // The card's lab changed -- saved from here, from the Testing section, or by
   // somebody else -- so every form shows the stored value again.
   useEffect(() => {
@@ -831,7 +846,9 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     if (failed) touchFailedToast(failed);
     if (onTouched) await onTouched();
   };
-  const hasAny = f => f.type || f.sent || f.due || f.carrier.trim() || f.tracking.trim();
+  // A note alone makes a round too -- somebody who wrote what was sent meant it
+  // to be saved. The edit form has no note field, so it reads as empty there.
+  const hasAny = f => f.type || f.sent || f.due || f.carrier.trim() || f.tracking.trim() || (f.note || '').trim();
   const datesOk = f => okDate(f.sent) && okDate(f.due);
   // master_sample and comment are not written -- an edit leaves whatever an old
   // round held in them exactly as it was.
@@ -860,42 +877,70 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   // The fields below are data-noguard, and this is what the guard asks instead:
   // a new round with anything filled in, or an open edit that differs from the
   // saved round. A successful save empties the form or closes the edit, so the
-  // card closes without asking; input left unsaved still asks.
+  // card closes without asking; input left unsaved still asks. The note counts
+  // through hasAny, and a round number moved off its default counts too.
   const editing = editId ? rounds.find(x => x.id === editId) : null;
-  useDirtySource((showForm && (!!hasAny(form) || labChanged(form)))
+  useDirtySource((showForm && (!!hasAny(form) || labChanged(form) || (roundPick !== null && roundPick !== nextRound)))
               || (!!editing && (!unchanged(editing, edit) || labChanged(edit))));
 
   // THE NEW-ROUND FORM SAVES A ROUND, THE LAB, OR BOTH. A round needs one of its
   // own fields; the lab alone does not make a round, so a form holding only a
   // changed lab saves just the lab and says so on its button (Save testing lab).
-  // The round goes first, and the lab only once the round has landed.
+  // The round goes first, then its note, then the lab, each only once the one
+  // before has landed.
+  //
+  // THE NOTE IS THE ROUND'S FIRST ROUND NOTE, written exactly as the round's own
+  // notes panel writes one -- round_id and round_no of the round just saved,
+  // stage sampling, source round, the caller as author. If the round lands and
+  // the note does not, the round stands, the toast says so, and the note text
+  // stays in the box rather than being lost with the rest of the form.
   const save = async () => {
     const withRound = !!hasAny(form), withLab = labChanged(form);
     if (!withRound && !withLab) return;
     if (withRound && !datesOk(form)) { setErr('Check the dates — each needs a full year from 2000 on.'); return; }
+    // Said plainly here rather than left to the unique constraint's error.
+    if (withRound && used.has(chosen)) {
+      setErr('Round ' + chosen + ' is already saved on this card. Pick another number with the arrows.');
+      return;
+    }
+    const roundNo = chosen;
+    const noteText = (form.note || '').trim();
     setBusy(true); setErr('');
+    let noteKept = '';
     if (withRound) {
-      const { error } = await SB.from('program_sample_rounds').insert({
-        program_id: r.id, stage: 'sampling', round: nextRound,
+      const { data: made, error } = await SB.from('program_sample_rounds').insert({
+        program_id: r.id, stage: 'sampling', round: roundNo,
         ...values(form), created_by: userEmail || null,
-      });
+      }).select('id').single();
       if (error) {
         setBusy(false);
         if (error.code === '23505') {
-          setErr('Round ' + nextRound + ' was just saved by somebody else. The list has been refreshed — check it before saving again.');
+          setErr('Round ' + roundNo + ' was just saved by somebody else. The list has been refreshed — check it before saving again.');
           if (onTouched) await onTouched();
         } else setErr(error.message);
         return;
+      }
+      if (noteText) {
+        const { error: ne } = await SB.from('program_notes').insert({
+          program_id: r.id, author: userEmail || null, source: 'round', stage: 'sampling',
+          round_id: made.id, round_no: roundNo, note: noteText,
+        });
+        if (ne) {
+          noteKept = noteText;
+          window._toast?.('Round ' + roundNo + ' was saved, but its note was not — ' + ne.message, 'err');
+          setErr('Round ' + roundNo + ' was saved, but its note was not. The note is still in the box — add it under round ' + roundNo + '.');
+        }
       }
     }
     if (withLab) {
       const labErr = await saveLab(form);
       if (labErr) {
-        setErr((withRound ? 'Round ' + nextRound + ' was saved, but the testing lab was not — ' : 'Could not save the testing lab — ') + labErr);
+        setErr((withRound ? 'Round ' + roundNo + ' was saved, but the testing lab was not — ' : 'Could not save the testing lab — ') + labErr);
         await settle(); setBusy(false); return;
       }
     }
-    setForm({ ...blank, lab: form.lab.trim() });
+    setForm({ ...blank, lab: form.lab.trim(), note: noteKept });
+    if (withRound) setRoundPick(null);
     await settle();
     setBusy(false);
   };
@@ -1026,12 +1071,29 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'14px'}}>
       <div style={{textAlign:'center'}}>
         <span style={lblMid}>Sample round</span>
-        {/* Fixed -- one past the highest saved, or the round being edited. The
+        {/* A stepper on the new-round form, fixed on an edit. Either way the
             number sits in a box as tall as the Sample type select, so it is on
             that line rather than at the top. */}
-        <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:ROW_H,
-                     fontSize:'16px',fontWeight:600,color:'#1D1D1F',
-                     fontVariantNumeric:'tabular-nums'}}>{roundNo}</div>
+        {which === 'form' ? (() => {
+          const down = stepDown();
+          const arrow = on => ({ background:'none', border:'none', padding:'0 8px', fontSize:'16px',
+                                 lineHeight:1, fontFamily:'inherit', color:on ? '#1D1D1F' : '#D1D1D6',
+                                 cursor:on && !busy ? 'pointer' : 'default' });
+          return (
+            <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:ROW_H}}>
+              <button type="button" aria-label="Lower round number" disabled={busy || down === null}
+                onClick={()=>{ if (down !== null) setRoundPick(down); }} style={arrow(down !== null)}>‹</button>
+              <span style={{fontSize:'16px',fontWeight:600,color:'#1D1D1F',fontVariantNumeric:'tabular-nums',
+                            minWidth:'22px',textAlign:'center'}}>{roundNo}</span>
+              <button type="button" aria-label="Higher round number" disabled={busy}
+                onClick={()=>setRoundPick(stepUp())} style={arrow(true)}>›</button>
+            </div>
+          );
+        })() : (
+          <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:ROW_H,
+                       fontSize:'16px',fontWeight:600,color:'#1D1D1F',
+                       fontVariantNumeric:'tabular-nums'}}>{roundNo}</div>
+        )}
       </div>
       <div style={{gridColumn:'span 2'}}>
         {/* A dash is Not set, which is what every round saved before script 97
@@ -1075,6 +1137,19 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         <input data-noguard value={f.lab} disabled={busy} style={inp} aria-label="Testing lab"
           placeholder="Optional" onChange={e=>set({ ...f, lab: e.target.value })} />
       </div>
+      {/* Saved as this round's first round note. The box the round notes panel
+          uses, so the note looks the same before and after it is saved. */}
+      {which === 'form' && (
+        <div style={{gridColumn:'1 / -1'}}>
+          <span style={lbl}>Note</span>
+          <textarea data-noguard value={f.note} disabled={busy} rows={1} aria-label="Note"
+            placeholder="Optional — saved as this round's first note"
+            onChange={e=>set({ ...f, note: e.target.value })}
+            style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 11px',
+                    fontSize:'13px',fontFamily:'inherit',outline:'none',resize:'vertical',
+                    background:'#fff',boxSizing:'border-box'}} />
+        </div>
+      )}
     </div>
   );
 
@@ -1147,13 +1222,13 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
                    color:'#86868B',marginBottom:'10px',textAlign:'center'}}>Sample rounds</div>
       {showForm && (
         <>
-          {fields(form, setForm, nextRound, 'form')}
+          {fields(form, setForm, chosen, 'form')}
           <div style={{display:'flex',alignItems:'center',gap:'10px',marginTop:'10px'}}>
             <button onClick={save} disabled={busy || !(hasAny(form) || labChanged(form)) || editId !== null}
               style={pillBtn((hasAny(form) || labChanged(form)) && editId === null,
                              busy || !(hasAny(form) || labChanged(form)) || editId !== null)}>
               {busy && editId === null ? 'Saving…'
-                : !hasAny(form) && labChanged(form) ? 'Save testing lab' : 'Save round ' + nextRound}
+                : !hasAny(form) && labChanged(form) ? 'Save testing lab' : 'Save round ' + chosen}
             </button>
           </div>
         </>
