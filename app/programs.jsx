@@ -190,6 +190,20 @@ const HEALTH = {
 // cannot come back out of step with each other.
 const CHECKLIST_ON = false;
 
+// ── DUE BACK IS OFF, BEHIND ONE FLAG ────────────────────────────────────────
+// Same arrangement as the checklist. program_sample_rounds.due_back stays in the
+// table with whatever it holds, unread and unwritten -- a round saved or edited
+// now neither sets it nor clears it. With it off: no Due back field on either
+// round form, no "due back" on any printed round, no Due back or Sample overdue
+// column in the files, and nothing that existed only because of due dates -- the
+// overdue rule in health, the overdue marks on a round and a tile, and the
+// Overdue samples tile. true brings all of it back together.
+const DUE_BACK_ON = false;
+// Whether anything can still make a card Stalled. Both of its rules need one of
+// the two flags (an overdue sample; a task waiting on us), so with both off the
+// Stalled tile would sit at zero for ever, and it is not drawn.
+const STALLED_POSSIBLE = CHECKLIST_ON || DUE_BACK_ON;
+
 // STAGE_TASKS and seedStageTasks live in lib/programs.js since stage 4. A saved
 // purchase order moves a card into Production from page.jsx, and it has to leave
 // the same checklist a person moving the card here would -- one list, one rule.
@@ -223,6 +237,7 @@ const blockerOf = r => {
 // 77 added are still in the table and nothing reads or writes them.
 const latestRound = r => (r.rounds || [])[0] || null;
 const sampleOverdue = r => {
+  if (!DUE_BACK_ON) return false;
   const due = (latestRound(r) || {}).due_back;
   return !!due && daysSince(due) > 0 && SAMPLING_STAGES.includes(r.stage);
 };
@@ -774,7 +789,7 @@ const roundText = (x, withTracking = false) => {
   const parts = ['Round ' + x.round];
   if (x.sample_type) parts.push(sampleTypeLabel(x.sample_type));
   if (x.sent_date) parts.push('sent ' + fmt(x.sent_date));
-  if (x.due_back) parts.push('due back ' + fmt(x.due_back));
+  if (DUE_BACK_ON && x.due_back) parts.push('due back ' + fmt(x.due_back));
   if (withTracking && (x.carrier || x.tracking_number)) {
     parts.push(x.carrier && x.tracking_number ? x.carrier + ' ' + x.tracking_number
              : x.carrier || 'tracking ' + x.tracking_number);
@@ -916,19 +931,22 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   };
   // A note alone makes a round too -- somebody who wrote what was sent meant it
   // to be saved. The edit form has no note field, so it reads as empty there.
-  const hasAny = f => f.type || f.sent || f.due || f.carrier.trim() || f.tracking.trim() || (f.note || '').trim();
+  const hasAny = f => f.type || f.sent || (DUE_BACK_ON && f.due) || f.carrier.trim() || f.tracking.trim() || (f.note || '').trim();
   const datesOk = f => okDate(f.sent) && okDate(f.due);
   // master_sample and comment are not written -- an edit leaves whatever an old
   // round held in them exactly as it was.
+  // due_back is written only while it is on. Off, it is left out of the payload
+  // altogether, so an edit keeps whatever an old round held there.
   const values = f => ({
-    sample_type: f.type || null, sent_date: f.sent || null, due_back: f.due || null,
+    sample_type: f.type || null, sent_date: f.sent || null,
+    ...(DUE_BACK_ON ? { due_back: f.due || null } : {}),
     carrier: f.carrier.trim() || null, tracking_number: f.tracking.trim() || null,
   });
   const unchanged = (x, f) => {
     const v = values(f);
     return (f.round === undefined || f.round === x.round)
         && v.sample_type === (x.sample_type || null) && v.sent_date === (x.sent_date || null)
-        && v.due_back === (x.due_back || null)
+        && (!DUE_BACK_ON || v.due_back === (x.due_back || null))
         && v.tracking_number === (x.tracking_number || null)
         && (v.carrier || '').toLowerCase() === (x.carrier || '').toLowerCase();
   };
@@ -1298,11 +1316,15 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         <input type="date" data-noguard value={f.sent} disabled={busy} style={inp} aria-label="Sent"
           onChange={e=>set({ ...f, sent: e.target.value })} />
       </div>
-      <div>
-        <span style={lbl}>Due back</span>
-        <input type="date" data-noguard value={f.due} disabled={busy} style={inp} aria-label="Due back"
-          onChange={e=>set({ ...f, due: e.target.value })} />
-      </div>
+      {/* Off with DUE_BACK_ON; the grid is auto-fit, so the fields after it
+          close up with no gap. */}
+      {DUE_BACK_ON && (
+        <div>
+          <span style={lbl}>Due back</span>
+          <input type="date" data-noguard value={f.due} disabled={busy} style={inp} aria-label="Due back"
+            onChange={e=>set({ ...f, due: e.target.value })} />
+        </div>
+      )}
       {/* Carrier and number on one row, carrier first, the way the entry line
           reads them. The carrier is picked from the list; the number is free
           text, as it is on the label. */}
@@ -2217,7 +2239,8 @@ const cellText = v => (v && typeof v === 'object' && 'text' in v ? v.text : v);
 const styleLinks = ws => ws.eachRow(row => row.eachCell(c => {
   if (c.value && typeof c.value === 'object' && c.value.hyperlink) c.font = LINK_FONT;
 }));
-const ROUND_COLS = ['Round', 'Sample type', 'Sent', 'Due back', 'Carrier', 'Tracking #', 'Saved by', 'Saved at', 'Edited by', 'Edited at'];
+const ROUND_COLS = ['Round', 'Sample type', 'Sent', 'Due back', 'Carrier', 'Tracking #', 'Saved by', 'Saved at', 'Edited by', 'Edited at']
+  .filter(h => DUE_BACK_ON || h !== 'Due back');
 const ROUND_NOTE_COLS = ['Round', 'Author', 'Date', 'Edited', 'Note'];
 // Every task on a stage that is on the board, in ladder order, stages with no
 // tasks left out. Tasks left on a hidden stage are not in the files, as they
@@ -2300,14 +2323,16 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes, roundNotes = []
     cols: [['SKU'], ['Product'], ['Client'], ['Factory'], ['Stage'], ['Days in stage', 'num'], ['Owner'],
            ['Health'], ['Blocker'], ['Sample overdue'], ['Open tasks', 'num'], ['Latest round'], ['Testing lab'],
            ['Created by'], ['Created at', 'stamp'], ['Last edited by'], ['Last edited at', 'stamp'], ['Removed']]
-      .filter(([h]) => CHECKLIST_ON || (h !== 'Blocker' && h !== 'Open tasks')),
+      .filter(([h]) => (CHECKLIST_ON || (h !== 'Blocker' && h !== 'Open tasks'))
+                    && (DUE_BACK_ON || h !== 'Sample overdue')),
     rows: list.map(r => {
       const blk = blockerOf(r);
       return [
         skuOf(r), (r.products || {}).name || '', clientOf(r), r.factoryName || '',
         stageLabel(r.stage), (r.days === null || r.days === undefined) ? null : r.days,
         r.ownerName || 'Unowned', HEALTH[healthOf(r, r.tasks)].label,
-        ...(CHECKLIST_ON ? [blk ? BLOCKERS[blk].label : ''] : []), sampleOverdue(r) ? 'Yes' : 'No',
+        ...(CHECKLIST_ON ? [blk ? BLOCKERS[blk].label : ''] : []),
+        ...(DUE_BACK_ON ? [sampleOverdue(r) ? 'Yes' : 'No'] : []),
         // The tile count -- open tasks in the stage the card is in.
         ...(CHECKLIST_ON ? [openTasks(r).filter(t => t.stage === r.stage).length] : []),
         sampleStripText(r) || '', r.testing_lab || '',
@@ -2321,9 +2346,10 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes, roundNotes = []
   const rounds = {
     name: 'Rounds',
     cols: [['SKU'], ['Client'], ['Round', 'num'], ['Sample type'], ['Sent', 'date'], ['Due back', 'date'],
-           ['Carrier'], ['Tracking #'], ['Saved by'], ['Saved at', 'stamp'], ['Edited by'], ['Edited at', 'stamp']],
+           ['Carrier'], ['Tracking #'], ['Saved by'], ['Saved at', 'stamp'], ['Edited by'], ['Edited at', 'stamp']]
+      .filter(([h]) => DUE_BACK_ON || h !== 'Due back'),
     rows: list.flatMap(r => workingRounds(r, staff).map(x => [
-      ...key(r), Number(x.round), x.type, x.sent, x.due, x.carrier, linkCell(x.tracking, x.trackingUrl),
+      ...key(r), Number(x.round), x.type, x.sent, ...(DUE_BACK_ON ? [x.due] : []), x.carrier, linkCell(x.tracking, x.trackingUrl),
       x.savedBy, x.savedAt, x.editedBy, x.editedAt,
     ])),
   };
@@ -2416,12 +2442,13 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, roundNotes = [], logo })
       +(rounds.length
         ? '<table style="width:100%;border-collapse:collapse;">'
           +'<tr><th style="'+th+'">Round</th><th style="'+th+'">Sample type</th><th style="'+th+'">Sent</th>'
-          +'<th style="'+th+'">Due back</th><th style="'+th+'">Carrier</th><th style="'+th+'">Tracking #</th><th style="'+th+'">Saved</th></tr>'
+          +(DUE_BACK_ON ? '<th style="'+th+'">Due back</th>' : '')
+          +'<th style="'+th+'">Carrier</th><th style="'+th+'">Tracking #</th><th style="'+th+'">Saved</th></tr>'
           +rounds.map(x => '<tr>'
             +'<td style="'+td+'">'+docEsc(x.round)+'</td>'
             +'<td style="'+td+'">'+docEsc(x.type)+'</td>'
             +'<td style="'+td+'">'+docEsc(x.sent ? fmt(x.sent) : '')+'</td>'
-            +'<td style="'+td+'">'+docEsc(x.due ? fmt(x.due) : '')+'</td>'
+            +(DUE_BACK_ON ? '<td style="'+td+'">'+docEsc(x.due ? fmt(x.due) : '')+'</td>' : '')
             +'<td style="'+td+'">'+docEsc(x.carrier)+'</td>'
             +'<td style="'+td+'">'+(x.trackingUrl
               ? '<a href="'+docEsc(x.trackingUrl)+'" style="color:#0563c1;">'+docEsc(x.tracking)+'</a>'
@@ -2564,15 +2591,20 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
 
         const rs = wb.addWorksheet('Sample rounds');
         rs.addRow(ROUND_COLS);
-        workingRounds(r, staff).forEach(x => rs.addRow([Number(x.round), x.type, excelDate(x.sent), excelDate(x.due),
+        workingRounds(r, staff).forEach(x => rs.addRow([Number(x.round), x.type, excelDate(x.sent),
+          ...(DUE_BACK_ON ? [excelDate(x.due)] : []),
           x.carrier, linkCell(x.tracking, x.trackingUrl), x.savedBy, excelDate(x.savedAt), x.editedBy,
           excelDate(x.editedAt)]));
         styleLinks(rs);
         rs.getRow(1).font = { bold: true };
         rs.views = [{ state:'frozen', ySplit:1 }];
-        [3, 4].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd'; });
-        [8, 10].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd hh:mm'; });
-        [8, 26, 12, 12, 14, 24, 22, 17, 22, 17].forEach((w, i) => { rs.getColumn(i + 1).width = w; });
+        // Column positions read from the header list, so they hold with Due back
+        // in or out.
+        ['Sent', 'Due back'].forEach(h => { const c = ROUND_COLS.indexOf(h) + 1; if (c) rs.getColumn(c).numFmt = 'yyyy-mm-dd'; });
+        ['Saved at', 'Edited at'].forEach(h => { const c = ROUND_COLS.indexOf(h) + 1; if (c) rs.getColumn(c).numFmt = 'yyyy-mm-dd hh:mm'; });
+        const RW = { 'Round': 8, 'Sample type': 26, 'Sent': 12, 'Due back': 12, 'Carrier': 14, 'Tracking #': 24,
+                     'Saved by': 22, 'Saved at': 17, 'Edited by': 22, 'Edited at': 17 };
+        ROUND_COLS.forEach((h, i) => { rs.getColumn(i + 1).width = RW[h] || 14; });
 
         // Every live round's notes, one row per note, the round named.
         const rn = wb.addWorksheet('Round notes');
@@ -2677,7 +2709,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         lines.push('');
         lines.push(ROUND_COLS.map(cell).join(','));
         workingRounds(r, staff).forEach(x => lines.push(
-          [x.round, x.type, x.sent || '', x.due || '', x.carrier, x.tracking, x.savedBy, stampText(x.savedAt),
+          [x.round, x.type, x.sent || '', ...(DUE_BACK_ON ? [x.due || ''] : []), x.carrier, x.tracking, x.savedBy, stampText(x.savedAt),
            x.editedBy, x.editedAt ? stampText(x.editedAt) : ''].map(cell).join(',')));
         lines.push('');
         lines.push(ROUND_NOTE_COLS.map(cell).join(','));
@@ -3836,13 +3868,18 @@ export default function Programs({ userEmail }) {
 
           These read the whole board rather than the filtered view, so narrowing
           never makes a total lie. */}
+      {/* The strip draws only the tiles that can be non-zero: Stalled while
+          either of its rules can fire (STALLED_POSSIBLE), Overdue samples while
+          due back is on, the Waiting tiles while the checklist is. With all
+          three off there is nothing left to count and no strip at all. */}
+      {(STALLED_POSSIBLE || DUE_BACK_ON || CHECKLIST_ON) && (
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',
                    gap:'12px',marginBottom:'18px'}}>
         {[
-          { k:'Stalled',         v:stalledCards.length, c:HEALTH.stalled.color,
+          { k:'Stalled',         v:stalledCards.length, c:HEALTH.stalled.color, on:STALLED_POSSIBLE,
             t:CHECKLIST_ON ? 'A sample is overdue, or the card has not moved and somebody is waiting on us'
                            : 'A sample is overdue' },
-          { k:'Overdue samples', v:overdueCards.length, c:HEALTH.stalled.color,
+          { k:'Overdue samples', v:overdueCards.length, c:HEALTH.stalled.color, on:DUE_BACK_ON,
             t:'Due back date has passed while the card is in Sampling or Revision' },
           { k:'Waiting on us',        v:waitingOn('us').length,      c:BLOCKERS.us.dot,      f:'us',
             t:'Cards with an open task waiting on us. Click to show only those' },
@@ -3850,7 +3887,7 @@ export default function Programs({ userEmail }) {
             t:'Cards with an open task waiting on the client. Click to show only those' },
           { k:'Waiting on factories', v:waitingOn('factory').length, c:BLOCKERS.factory.dot, f:'factory',
             t:'Cards with an open task waiting on the factory. Click to show only those' },
-        ].filter(m => CHECKLIST_ON || !m.f).map(m => {
+        ].filter(m => (CHECKLIST_ON || !m.f) && m.on !== false).map(m => {
           // THE THREE WAITING TILES ARE FILTERS, as on 11 Aug; a second press
           // clears. Stalled and Overdue stay display-only -- the tile edges and
           // the overdue pill already mark those cards where they sit.
@@ -3870,6 +3907,7 @@ export default function Programs({ userEmail }) {
           );
         })}
       </div>
+      )}
 
       <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',marginBottom:'14px'}}>
         <div style={{position:'relative',flex:'1 1 240px',maxWidth:'320px'}}>
