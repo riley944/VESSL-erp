@@ -1180,6 +1180,13 @@ function Platform({ session, newQuote = null }) {
   if (searching) view = "search";
   else if (ui.activeClient) view = "clientQuotes";
   const shownQuotes = view === "search" ? searchResults : view === "clientQuotes" ? clientQuotes : [];
+  // THE DESKTOP ROW GRID, read by the header and every row. Chevron, Quote ID,
+  // SKU, Product Name, [Client in search], Factory, Tiers, Method, Client Price
+  // Range, Avg Margin, Updated, the three icons. Fixed widths for the short
+  // columns; the text columns share what is left and truncate.
+  const qGrid = "22px 78px minmax(0,130px) minmax(0,1.6fr) "
+    + (view === "search" ? "minmax(0,1fr) " : "")
+    + "minmax(0,1.1fr) 56px 76px 140px 88px 138px 108px";
 
   const myOpenTaskCount = tasks.filter((t) => !t.done && (t.assigned_to || "").toLowerCase() === userEmail.toLowerCase()).length;
 
@@ -1326,17 +1333,40 @@ function Platform({ session, newQuote = null }) {
 
       {(view === "clientQuotes" || view === "search") && (
         <div style={S.tableWrap}>
+          {/* ── DESKTOP IS ONE GRID, header and rows alike ─────────────────────
+              qGrid is the single column list both read, so a header cannot sit
+              off its values. Quote ID, SKU and Product Name are columns of their
+              own; search adds a Client column after Product Name, where the
+              client used to be appended to the product line. Text cells truncate
+              with an ellipsis and carry the full text as a tooltip, so a long
+              SKU or name never wraps or shoves a neighbour.
+
+              MOBILE KEEPS ITS FLEX ROW, unchanged in what it shows -- chevron,
+              the Quote ID pill and SKU with the product name beneath, price,
+              margin -- because a grid of eleven columns has no phone layout. */}
+          {isMobile ? (
           <div style={S.theadRow}>
-            <div style={{ width: isMobile ? 20 : 26 }} />
-            <div style={{ flex: isMobile ? 1.8 : 2.4 }}>Product{view === "search" ? " / Client" : ""}</div>
-            {!isMobile && <div style={{ flex: 1.5 }}>Factory</div>}
-            {!isMobile && <div style={{ flex: 0.8, textAlign: "center" }}>Tiers</div>}
-            {!isMobile && <div style={{ flex: 0.8 }}>Method</div>}
-            <div style={{ flex: isMobile ? 1.3 : 1.5, textAlign: "right", whiteSpace: "nowrap" }}>{isMobile ? "Price" : "Client Price Range"}</div>
-            <div style={{ ...(isMobile ? { width: 52 } : { flex: 0.9 }), textAlign: "right", whiteSpace: "nowrap" }}>{isMobile ? "Marg" : "Avg Margin"}</div>
-            {!isMobile && <div style={{ flex: 1.1 }}>Updated</div>}
-            {!isMobile && <div style={{ width: 112 }} />}
+            <div style={{ width: 20 }} />
+            <div style={{ flex: 1.8 }}>Product{view === "search" ? " / Client" : ""}</div>
+            <div style={{ flex: 1.3, textAlign: "right", whiteSpace: "nowrap" }}>Price</div>
+            <div style={{ width: 52, textAlign: "right", whiteSpace: "nowrap" }}>Marg</div>
           </div>
+          ) : (
+          <div style={{ ...S.theadRow, display: "grid", gridTemplateColumns: qGrid, columnGap: Q_GAP }}>
+            <div />
+            <div>Quote ID</div>
+            <div>SKU</div>
+            <div>Product Name</div>
+            {view === "search" && <div>Client</div>}
+            <div>Factory</div>
+            <div style={{ textAlign: "center" }}>Tiers</div>
+            <div style={{ textAlign: "center" }}>Method</div>
+            <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>Client Price Range</div>
+            <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>Avg Margin</div>
+            <div style={{ paddingLeft: 10 }}>Updated</div>
+            <div />
+          </div>
+          )}
 
           {/* ── LOADING BLANKS THE LIST ONLY THE FIRST TIME ───────────────────
               load() runs again on every quote saved anywhere (the live feed
@@ -1365,8 +1395,52 @@ function Platform({ session, newQuote = null }) {
               // has to read the same as the tier rows and the printed quote.
               : sum.minClient === sum.maxClient ? `$${fmtUnit(sum.minClient)}`
               : `$${fmtUnit(sum.maxClient)} – $${fmtUnit(sum.minClient)}`;
+            const marginCell = (
+              <span style={{ color: sum.avgMargin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>
+                {sum.avgMargin ? sum.avgMargin.toFixed(0) + "%" : "—"}
+              </span>
+            );
             return (
               <div key={q.id} style={S.rowGroup}>
+                {!isMobile ? (
+                <div id={`quote-row-${q.id}`}
+                  style={{ ...S.row, display: "grid", gridTemplateColumns: qGrid, columnGap: Q_GAP, ...(open ? S.rowOpen : {}) }}
+                  onClick={() => setExpanded(open ? null : q.id)}>
+                  <div style={{ display: "flex", alignItems: "center" }}>
+                    {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    {q.quoteCode ? <span style={{ ...S.quoteCode, marginRight: 0 }}>{q.quoteCode}</span> : <span style={S.cellSub}>—</span>}
+                  </div>
+                  <div style={{ ...S.cellPrimary, ...ELL }} title={q.sku || ""}>{q.sku || "No SKU"}</div>
+                  <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.product || ""}>{q.product || "Untitled product"}</div>
+                  {view === "search" && <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.client || ""}>{q.client || "—"}</div>}
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ ...S.cellPrimary, ...ELL }} title={q.factory || ""}>{q.factory || "—"}</div>
+                    <div style={{ ...S.cellSub, ...ELL }}>{q.country || ""}</div>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <span style={S.tierBadge}><Layers size={11} /> {sum.count}</span>
+                  </div>
+                  {/* Air and Ocean are not good and bad, so no colour coding --
+                      plain muted text, centred in a column wide enough to stand
+                      clear of Tiers. */}
+                  <div style={{ textAlign: "center", fontSize: 13, color: "#6a7488" }}>{sum.method || "—"}</div>
+                  <div style={{ textAlign: "right", whiteSpace: "nowrap", ...S.num, fontWeight: 600, color: "#0f1729" }}>{priceRange}</div>
+                  <div style={{ textAlign: "right", whiteSpace: "nowrap", ...S.num }}>{marginCell}</div>
+                  {/* paddingLeft on top of the column gap, so the margin figure
+                      and the date read as two things, not one. */}
+                  <div style={{ minWidth: 0, paddingLeft: 10 }}>
+                    <div style={{ ...S.cellSub2, ...ELL }}>{fmtStamp(q.updatedAt)}</div>
+                    <div style={{ ...S.cellSub, ...ELL }} title={q.updatedBy || ""}>{q.updatedBy || ""}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", paddingLeft: 8 }} onClick={(e) => e.stopPropagation()}>
+                    <button style={S.iconBtn} title="Edit" onClick={() => setEditing(q)}><Edit3 size={15} /></button>
+                    <button style={S.iconBtn} title="Duplicate" onClick={() => duplicateQuote(q)}><Copy size={15} /></button>
+                    <button style={S.iconBtn} title="Delete" onClick={() => { if (confirm("Delete this quote?")) removeQuote(q.id); }}><Trash2 size={15} /></button>
+                  </div>
+                </div>
+                ) : (
                 <div id={`quote-row-${q.id}`} style={{ ...S.row, ...(open ? S.rowOpen : {}) }} onClick={() => setExpanded(open ? null : q.id)}>
                   <div style={{ width: isMobile ? 20 : 26, display: "flex", alignItems: "center" }}>
                     {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
@@ -1412,6 +1486,7 @@ function Platform({ session, newQuote = null }) {
                     </div>
                   )}
                 </div>
+                )}
                 {open && <ExpandedDetail q={q} tasks={tasks.filter((t) => t.quote_id === q.id)} onAddTask={addTask} onToggleTask={toggleTask} onDeleteTask={deleteTask} userEmail={userEmail} staff={staff} isMobile={isMobile} onEdit={() => setEditing(q)} onDuplicate={() => duplicateQuote(q)} onDelete={() => { if (confirm("Delete this quote?")) removeQuote(q.id); }} />}
               </div>
             );
@@ -1430,6 +1505,11 @@ function Platform({ session, newQuote = null }) {
     </div>
   );
 }
+
+// The gap between the columns of the desktop quote row, header and rows alike.
+const Q_GAP = 14;
+// One line, cut with an ellipsis -- the full text rides on the cell's title.
+const ELL = { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 
 // ---------- expanded detail ----------
 // ── MARK WON, BACK ON THE NEW HELPER ────────────────────────────────────────
