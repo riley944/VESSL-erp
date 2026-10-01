@@ -2829,12 +2829,17 @@ export default function Programs({ userEmail }) {
       ? { ...x, declared_stage: next, declared_stage_at: new Date().toISOString(),
           updated_at: new Date().toISOString(), updated_by: userEmail || null }
       : x));
-    const { error } = await SB.from('programs')
+    // .select returns the rows the update actually changed. No error and no row
+    // is a write that went nowhere -- a policy refusing it, or a card deleted
+    // meanwhile -- and the optimistic move must not stand as if it had landed.
+    const { data: hit, error } = await SB.from('programs')
       .update({ declared_stage: next, updated_at: new Date().toISOString(), updated_by: userEmail || null })
-      .eq('id', r.id);
-    if (error) {
+      .eq('id', r.id)
+      .select('id');
+    if (error || !hit || !hit.length) {
       if (before) setRows(prev => prev.map(x => x.id === r.id ? before : x));
-      window._toast?.('Could not move the card — ' + error.message, 'err');
+      window._toast?.(error ? 'Could not move the card — ' + error.message
+                            : 'Could not move the card — the change was not saved. Refresh and try again.', 'err');
       setSaving(null);
       return;
     }
