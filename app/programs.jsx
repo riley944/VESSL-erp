@@ -358,11 +358,17 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
                       filter = null, title, subtitle, programId, userEmail, onTouched,
                       stageScoped = false, stage = null,
                       nullCol = null, selectExtra = '', labelOf = null, reloadKey = '',
-                      quietExtras = null, compact = false }) {
+                      quietExtras = null, compact = false, newDraft, onNewDraft }) {
   const [notes, setNotes] = useState(null);
   // Per card-open, not remembered -- the same rule as Open elsewhere.
   const [showOther, setShowOther] = useState(false);
-  const [text, setText]   = useState('');
+  // THE NEW-NOTE TEXT CAN BE HELD BY THE CALLER (newDraft, onNewDraft), so a round's
+  // Save can add what is typed here and its Cancel can ask before dropping it.
+  // Without them the panel keeps its own, as every other panel does.
+  const [ownText, setOwnText] = useState('');
+  const held = typeof onNewDraft === 'function';
+  const text = held ? (newDraft || '') : ownText;
+  const setText = held ? onNewDraft : setOwnText;
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState('');
 
@@ -880,7 +886,13 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   const [form, setForm] = useState(blank);
   const [editId, setEditId] = useState(null);
   const [edit, setEdit] = useState(blank);
-  // The + Add new sample type form -- which round form opened it, and its text.
+  // The note typed under each round and not yet added, by round id, and a
+  // counter per round that makes its notes panel re-read after Save adds one.
+  const [noteDrafts, setNoteDrafts] = useState({});
+  const [noteReads, setNoteReads] = useState({});
+  const draftOf = id => noteDrafts[id] || '';
+  const setDraftOf = (id, v) => setNoteDrafts(d => ({ ...d, [id]: v }));
+  // The + Add New Sample Type form -- which round form opened it, and its text.
   const [typeFor, setTypeFor] = useState(null);     // 'form' | 'edit' | null
   const [typeName, setTypeName] = useState('');
   const [typeMsg, setTypeMsg] = useState('');
@@ -1028,6 +1040,37 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     await settle();
     setBusy(false);
   };
+  // ── SAVE ADDS THE NOTE TOO ────────────────────────────────────────────────
+  // Text left in the round's note box when Save is pressed is meant to be kept,
+  // so it is added as a round note in the same action, under the round's number
+  // as saved -- the new one if this Save renumbers it. The round goes first; if
+  // it lands and the note does not, the round stands, the toast says so and the
+  // text stays in the box. Add note on its own is unchanged.
+  const addDraftNote = async (x, roundNo) => {
+    const body = draftOf(x.id).trim();
+    if (!body) return true;
+    const { error } = await SB.from('program_notes').insert({
+      program_id: r.id, author: userEmail || null, source: 'round', stage: 'sampling',
+      round_id: x.id, round_no: roundNo, note: body,
+    });
+    if (error) {
+      window._toast?.('Round ' + roundNo + ' was saved, but its note was not — ' + error.message, 'err');
+      return false;
+    }
+    setDraftOf(x.id, '');
+    setNoteReads(m => ({ ...m, [x.id]: (m[x.id] || 0) + 1 }));
+    return true;
+  };
+
+  // CANCEL ASKS when the note box still holds text, in the words the close
+  // guard uses, and clears it if told to go ahead.
+  const cancelEdit = x => {
+    if (draftOf(x.id).trim()
+        && !window.confirm('You have unsaved changes in this form.\n\nDiscard them and close?')) return;
+    setDraftOf(x.id, '');
+    setEditId(null); setErr('');
+  };
+
   const saveEdit = async x => {
     if (!datesOk(edit)) { setErr('Check the dates — each needs a full year from 2000 on.'); return; }
     const renumbered = edit.round !== x.round;
@@ -1042,7 +1085,8 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     // that changed nothing would be a false record. A changed lab alone writes
     // the card and leaves the round, and its edited stamp, untouched.
     const roundChanged = !unchanged(x, edit), withLab = labChanged(edit);
-    if (!roundChanged && !withLab) { setEditId(null); return; }
+    const withNote = !!draftOf(x.id).trim();
+    if (!roundChanged && !withLab && !withNote) { setEditId(null); return; }
     setBusy(true); setErr('');
     if (roundChanged) {
       const { error } = await SB.from('program_sample_rounds')
@@ -1064,6 +1108,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         await settle(); setBusy(false); return;
       }
     }
+    await addDraftNote(x, renumbered ? edit.round : x.round);
     setEditId(null);
     await settle();
     setBusy(false);
@@ -1140,6 +1185,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   };
 
   // ── + ADD NEW SAMPLE TYPE ─────────────────────────────────────────────────
+  // (Shown as "+ Add New Sample Type…", title case, on both round forms.)
   // The last option in the dropdown opens a one-field form under it. The name is
   // cleaned (cleanTypeLabel) and checked against the list ignoring case first:
   // a name already there is simply selected, and says so. Otherwise it is
@@ -1182,7 +1228,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     pickType(which, data.key);
     setTypeFor(null);
     setTypeBusy(false);
-    window._toast?.('Sample type “' + data.label + '” added', 'ok');
+    window._toast?.('Sample Type “' + data.label + '” added', 'ok');
     if (onTouched) await onTouched();
   };
 
@@ -1225,20 +1271,21 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
           style={{...inp,height:ROW_H,cursor:busy?'default':'pointer',color:f.type?'#1D1D1F':'#86868B'}}>
           <option value="">—</option>
           {sampleTypeOptions(r.sampleTypes, f.type).map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-          <option value="__add_type__">+ Add new sample type…</option>
+          <option value="__add_type__">+ Add New Sample Type…</option>
         </select>
         {typeFor === which && (
           <div style={{marginTop:'6px'}}>
+            <span style={lbl}>Add New Sample Type</span>
             <div style={{display:'flex',gap:'6px'}}>
-              <input data-noguard autoFocus value={typeName} disabled={typeBusy} aria-label="New sample type name"
-                placeholder="New sample type" maxLength={80}
+              <input data-noguard autoFocus value={typeName} disabled={typeBusy} aria-label="New Sample Type name"
+                placeholder="New Sample Type" maxLength={80}
                 onChange={e=>{ setTypeName(e.target.value); if (typeMsg) setTypeMsg(''); }}
                 onKeyDown={e=>{ if (e.key === 'Enter') { e.preventDefault(); addType(); }
                                 if (e.key === 'Escape') { e.preventDefault(); setTypeFor(null); } }}
                 style={{...inp,flex:1}} />
               <button type="button" onClick={addType} disabled={typeBusy || !cleanTypeLabel(typeName)}
                 style={pillBtn(!!cleanTypeLabel(typeName), typeBusy || !cleanTypeLabel(typeName))}>
-                {typeBusy ? 'Adding…' : 'Add'}</button>
+                {typeBusy ? 'Adding…' : 'Add Sample Type'}</button>
               <button type="button" onClick={()=>setTypeFor(null)} disabled={typeBusy}
                 style={{...pillBtn(false, typeBusy),background:'#fff',border:'1px solid #E5E5EA',color:'#5A5A5E'}}>Cancel</button>
             </div>
@@ -1321,18 +1368,6 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         {editing ? (
           <div style={{marginTop:'6px'}}>
             {fields(edit, setEdit, edit.round ?? x.round, 'edit')}
-            <div style={{display:'flex',gap:'7px',marginTop:'10px'}}>
-              <button onClick={()=>saveEdit(x)} disabled={busy} style={pillBtn(true, busy)}>
-                {busy ? 'Saving…' : 'Save'}
-              </button>
-              <button onClick={()=>{ setEditId(null); setErr(''); }} disabled={busy}
-                style={{...pillBtn(false, busy),background:'#fff',border:'1px solid #E5E5EA',color:'#5A5A5E'}}>Cancel</button>
-              {/* The quiet red link the card uses for Delete card, at the far end
-                  so it is not the button a hand lands on after Save. */}
-              <button onClick={()=>removeRound(x)} disabled={busy}
-                style={{marginLeft:'auto',fontSize:'11.5px',background:'none',border:'none',padding:0,
-                        color:'var(--hot)',fontFamily:'inherit',cursor:busy?'default':'pointer'}}>Delete</button>
-            </div>
           </div>
         ) : (
           <>
@@ -1355,7 +1390,26 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         <NotesPanel staff={staff} table="program_notes" keyCol="round_id" keyId={x.id}
           insertExtra={{ program_id: r.id, source: 'round', stage: 'sampling', round_no: x.round }}
           extraCol="source" extraDefault="round" compact
+          newDraft={draftOf(x.id)} onNewDraft={v => setDraftOf(x.id, v)}
+          reloadKey={noteReads[x.id] ? x.id + '-' + noteReads[x.id] : ''}
           title={'Round ' + x.round + ' notes'} programId={r.id} userEmail={userEmail} onTouched={onTouched} />
+        {/* SAVE, CANCEL AND DELETE CLOSE THE ROUND'S BOX while it is being
+            edited -- under the fields and under its notes, so Save is the last
+            thing and takes a typed note with it (saveEdit). */}
+        {editing && (
+          <div style={{display:'flex',gap:'7px',marginTop:'12px'}}>
+            <button onClick={()=>saveEdit(x)} disabled={busy} style={pillBtn(true, busy)}>
+              {busy ? 'Saving…' : 'Save'}
+            </button>
+            <button onClick={()=>cancelEdit(x)} disabled={busy}
+              style={{...pillBtn(false, busy),background:'#fff',border:'1px solid #E5E5EA',color:'#5A5A5E'}}>Cancel</button>
+            {/* The quiet red link the card uses for Delete card, at the far end
+                so it is not the button a hand lands on after Save. */}
+            <button onClick={()=>removeRound(x)} disabled={busy}
+              style={{marginLeft:'auto',fontSize:'11.5px',background:'none',border:'none',padding:0,
+                      color:'var(--hot)',fontFamily:'inherit',cursor:busy?'default':'pointer'}}>Delete</button>
+          </div>
+        )}
       </div>
     );
   };
