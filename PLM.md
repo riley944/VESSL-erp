@@ -1,6 +1,41 @@
 # Product Lifecycle Management — design brief
 
-> ## THE BOARD WAS REBUILT ON 2026-09-23. READ THIS FIRST.
+> ## THE BOARD WAS SIMPLIFIED ON 2026-10-01. READ THIS FIRST.
+>
+> **Quoting → Sampling → Archived**, after Matt's talk with Loren. Revision folded
+> into Sampling; Testing, Production and Shipped are off the board **for now** and
+> can come back without a schema change. Scripts 96 to 100 changed the database;
+> the build, the scripts and the rollback caveats are recorded in CATALOGUE.md
+> under *The PLM simplification, as built — 2026-10-01*. Deployed in `fddc80b`.
+>
+> ### What is true now
+>
+> | | |
+> |---|---|
+> | **Stages on the board** | `quoted` (labelled **Quoting**) → `sampling` → `archived`. **Archived is a real stage** (script 96), the third column, set by pill or drag like any other — it means sampling is finished. |
+> | **Hidden stages** | `revision`, `testing`, `production`, `shipped` stay on `MANUAL_STAGES` in `app/programs.jsx` with a fourth element of `false`. Their labels, colours, checklist templates and every CHECK value are kept. Only the board columns and the card pills read `VISIBLE_STAGES`. A card still holding a hidden stage shows in a **Hidden stage** column and its card names the stage in words — nothing disappears. |
+> | **Bringing a stage back** | Flip its fourth element to `true` in `MANUAL_STAGES`. No script: the CHECKs still allow all six old values. For Production, also switch the two PO modals in `app/page.jsx` from `notePlmCardsForPO` back to the move (`advanceToProductionForPO` is kept, unused, in `lib/programs.js`) and decide whether `DROP_CONFIRM` should ask again. Revision's checklist template is still in `STAGE_TASKS`. Tasks left on hidden stages are still in `program_tasks` (BUC-158 has 3 testing; ZZTESTPLM has testing, production and shipped) and reappear when their stage does. |
+> | **Archived vs removed** | Two different things. **Archived** is a stage: finished sampling, still on the board. **Remove from board** (`programs.archived = true`) is unchanged — off the board for any reason, behind *Show removed*. |
+> | **Health on Archived** | Outside it. Health reads *Not tracked*; no blocker pill, no stale flag, not counted in the Waiting tiles or Stalled. Arriving seeds no checklist and writes no product stage. |
+> | **Sample rounds** | All rounds on the card's first tab, **newest first by round number**, each its own saved entry with Edit and Delete. Every round is stage `sampling` (script 97). Fields: round number, **Sample type**, sent, due back, carrier, tracking #, the card's testing lab. **Comment and Master sample are off the form**; both columns stay in the table, unread. An Archived card shows its rounds, editable, with no new-round form. |
+> | **Sample type** | `program_sample_rounds.sample_type`: `first`, `pre_production`, `production`, `testing_production`, `testing` — First Sample, Pre-Production Sample, Production Sample, Testing Production Sample, Testing. NULL is Not set. On the saved line, the Card tab's Sampling row and every rounds export. |
+> | **Round number** | A `‹ N ›` stepper on the new-round form (defaults to highest + 1, or 1) **and on a saved round's Edit form**. Down to 1, no ceiling, stepping over numbers the card's other rounds hold; a taken number gets a plain message, not a database error. A renumbered round's notes follow (script 100's trigger). |
+> | **Round notes** | Several per round, author and date, edit and delete your own — `program_notes` rows with `round_id` and `round_no` (script 98). The new-round form has a **Note** box saved as the round's first note; a note alone saves a round. **Deleting a round keeps its notes**: `round_id` goes NULL, `round_no` stays, and they show in Card Notes labelled *Round N*. |
+> | **Card Notes** | **No longer scoped by stage.** Every note without a live round, each labelled with its stage, or *Round N* if it came from a deleted round. Live round notes sit under their round. |
+> | **Checklist** | One Sampling list, **below the sample rounds**, above Card Notes. Script 99 moved each card's 4 revision tasks under its 4 sampling ones. **A new card arriving in Sampling is seeded with six**: Request sample from factory, Sample received from factory, Sample sent to client, Client feedback received, Changes sent to factory, Client sign-off. Still once per stage, ever. Tasks on hidden stages are left out of the checklist, health, the blocker pill and the Waiting tiles. |
+> | **The PO rule** | **A saved PO no longer moves a card.** Each live (not removed) card for the PO's client and a product on its new lines gets a `po-auto` Card Note naming the PO and who saved it, and its Last edited stamp; its stage and days-in-stage do not change. **Every product on the new lines is marked Production**, card or no card. `noteCardsForPO` in `lib/programs.js`. |
+> | **Product stage mirror** | `syncProductStage`: quoted → NULL, sampling → `sample`, **archived → nothing written** (finishing sampling is not production; a PO is). |
+> | **Card tab** | One **Sample tracking** row — the newest round that records a shipment, linked — replaces Sampling tracking and Revision tracking. |
+> | **Exports** | Working file and board file list rounds with **Sample type** (no Stage, Master sample or Comment), add every live round's notes (PDF blocks under the rounds, a *Round notes* sheet and CSV table), group card notes by stage then *Round N (round deleted)*, and list checklist tasks on board stages only. The board workbook has seven sheets. The records file gets the single Sample tracking row. |
+> | **Stage moves** | `setStage` now asks for the rows its update changed; an update that saved nothing puts the card back and toasts, instead of standing as an optimistic move. |
+> | **Quick emails** | Gone (removed before 1 Oct); the 2026-09-23 box below still mentions them. |
+
+> ## THE BOARD WAS REBUILT ON 2026-09-23.
+>
+> **Superseded in its specifics by the 2026-10-01 box above** — the six visible
+> stages, the master-sample strip, Revision tracking, per-stage Card Notes and the
+> PO move to Production are all gone or hidden. What still holds: the one door in,
+> the owner at creation, Remove from board and Delete card, and note authorship.
 >
 > **Riley's 11 Aug design, on today's data model.** Still manual, as the
 > 2026-09-17 box below explains, with one deliberate exception: a saved purchase

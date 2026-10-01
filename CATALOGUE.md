@@ -2747,6 +2747,104 @@ was answered by use: the card gained *Delete card* in `4e0031d`, behind a typed
 
 ---
 
+## The PLM simplification, as built — 2026-10-01
+
+Quoting → Sampling → Archived, after Matt's talk with Loren. PLM.md's top box is
+the current description; this is the record of how it got there. Seven stages,
+each tested by hand on localhost:3000 (on ZZTESTPLM, the demo card, and with a ZZ
+test PO that was deleted afterwards) before the next began, then **one push**:
+`6a06e64..fddc80b`, production deployment `dpl_7A3erimcme8es9rB4uCCdZnskRVo`,
+verified Ready on orders.vessl.io with *Sample tracking* and the
+`["archived","Archived","#636366",!0]` stage entry in the live bundle.
+**Rollback target: `6a06e64`** (`dpl_GBeduNM4eLaVfruAraQQfbpoMgXc`) — read the
+caveats below first.
+
+| Commit | What |
+|---|---|
+| `3f546e5` | Stage 1 — `VISIBLE_STAGES`: board and pills show Quoting and Sampling; Hidden stage column |
+| `1ea6fa7` | Stage 2 — Archived column, pill and drop target; outside health, blockers, stale, Waiting tiles |
+| `aa7d71a` | Stage 3 — every round on one tab, newest first; Sample type; Comment and Master sample off the form |
+| `e99dcf6` | A stage move checks its update changed a row |
+| `c273201` | Stage 4 — notes inside each round; Card Notes unscoped and labelled |
+| `f42d3c2` | Round form — Note field, round-number stepper |
+| `3138650` | Round Edit form — the stepper too |
+| `e0a5e2d` | Stage 5 — six-task Sampling seed; hidden-stage tasks ignored |
+| `50fd6f7` | Stage 6 — PO save notes the card and marks the product Production; no move |
+| `fddc80b` | Stage 7 — one Sample tracking row; the three exports |
+
+### Scripts 96 to 101, as run
+
+Each rehearsed with `rollback`, then committed, **one `z0` each** (96 also showed
+its `r1` hash row). Guards were re-measured against the live database before each
+was written — 97 and 99 both changed shape because the board had moved since the
+plan (ZZTESTPLM was on Archived for 97; no card was on Revision for 99).
+
+| Script | What it did |
+|---|---|
+| **96** | Added `archived` to the three stage CHECKs — `programs.declared_stage`, `program_notes.stage`, `program_tasks.stage` — keeping all six old values. Guarded on the three definitions hashing to their measured values; probes (each undone) proved a card, a task and a note accept `archived` and a junk value is still refused. |
+| **97** | Replaced `program_sample_rounds_round_stage_check` (script 80's round 1 = sampling, 2 up = revision) with `round >= 1 and stage in (sampling, revision)`; moved the one revision round (ZZTESTPLM round 2) to `sampling` without stamping it as an edit; added `sample_type` with a CHECK on the five keys. `master_sample` and `comment` untouched. |
+| **98** | Added `program_notes.round_id` (FK to the round, **`ON DELETE SET NULL`**) and `round_no` (the number, written with the note), two CHECKs (`round_no >= 1`; a note on a round carries its number) and an index. The number is stored at insert rather than stamped at delete because `authenticated` may update only `note` and `edited_at`, and only on its own notes. The key probe deleted a round and found its note kept, `round_id` NULL, `round_no` 2. |
+| **99** | Moved the eight revision tasks (four on BUC-158, four on ZZTESTPLM), by id, to `sampling` with `sort_order + 4`, so each card has one list 0–7. Done, blocker, due, owner, text and `updated_at` untouched. |
+| **100** | `vessl.sync_round_note_numbers()` (SECURITY DEFINER, owned by `postgres`, empty `search_path`, EXECUTE revoked from PUBLIC, anon and authenticated) and `trg_round_note_numbers`, AFTER UPDATE OF `round` on `program_sample_rounds`, WHEN the number changed: sets `round_no` on the round's notes. Deleted-round notes (`round_id` NULL) and `edited_at` are never touched. Probed as `postgres` and as a signed-in staff user through `set local role authenticated`. |
+| **101** | Rollback-only, no commit line: builds a throwaway card for ZZTESTPLM × ZZTESTFACTORY in Sampling, inserts the six-task seed the way `seedStageTasks` does, shows it (r1–r6, lengths `27,28,21,24,23,15`) and rolls back. Returned r1–r6 and `z0`. |
+
+**Reverses exist for 96 to 100 — `96r` … `100r` — and must run in reverse order:
+100r, 99r, 98r, 97r, 96r.** Each guards on the one before it having run and stops
+rather than lose work: 100r drops the trigger and function (take the Edit-form
+stepper out first); 99r moves back only the same eight tasks by id; 98r writes
+`Round N -- ` into the text of every note carrying a round number before dropping
+the columns, so no note loses what it was about; 97r refuses while any round has a
+sample type set; 96r refuses while any card, note or task holds `archived`. 96r and
+97r assert the restored CHECKs hash to the pre-change values — if only that row
+shows, the CHECK is right and only its stored text differs.
+
+**Script 95 is still reserved** for the portal *Request access* staff
+notification (planned 30 Sep, not written). 96 onward skipped it deliberately.
+
+### If the code is ever rolled back to `6a06e64`
+
+Nothing fails outright — 96 to 100 only widened CHECKs and added columns, and the
+old code selects nothing that was dropped. What misbehaves, against the database
+as it now stands:
+
+1. **Archived cards vanish from the board.** The old board draws its six stages
+   and *No stage set*; a card on `archived` is counted in the health tiles and
+   drawn in no column, and its card shows the raw word. Move Archived cards to
+   Sampling before rolling back.
+2. **Round notes appear as Card Notes** — the old panel does not filter on
+   `round_id`. In the old stage-scoped view they sit under Sampling; the old
+   exports list them as card notes. Nothing is lost.
+3. **Rounds 2 and up on a Sampling card are hidden** — the old Sampling tab shows
+   round 1 only, and offers to save a round 1 when the card already has higher
+   ones.
+4. **Sample types are kept but not shown** — old edits write `master_sample` and
+   `comment` and leave `sample_type` alone.
+5. **A PO moves cards to Production again**, from any stage but Archived, and the
+   card note stops.
+6. **Moving a card to Revision reseeds** the four revision tasks, duplicating the
+   ones 99 merged into Sampling.
+7. **A Card Note or task stamped `archived`** is counted under "N notes in other
+   stages" on the old card and never drawn when expanded; the old exports list it
+   under *No stage*.
+8. Script 100's trigger is harmless to old code, which cannot renumber a round.
+
+Measured at push time: 0 Archived cards, 0 notes or tasks on `archived`, 0 live
+round notes, 0 typed rounds, 0 rounds numbered 2 or more — so none of 1 to 4 or 7
+would have bitten then. The exposure grows as the new features are used.
+
+### Two things the build turned up
+
+- **ZZTESTPLM's stage was not where it looked.** It was reported as moved back to
+  Sampling while the database still held `archived` with no write since; it had
+  been put there on purpose. It prompted the stage-move check in `e99dcf6` anyway:
+  `setStage` checked for an error but not for a row, so a write that went nowhere
+  would have stood as an optimistic move.
+- **`next build` and `next dev` share `.next`.** Building for the push meant
+  stopping the dev server, building from an empty `.next`, then clearing it and
+  restarting dev on 3000.
+
+---
+
 ## Scripts 75, 76 and 77, as run — 2026-09-23, the PLM rebuild groundwork
 
 One `z0` each, preflight passed first time on all three, and all three verified
