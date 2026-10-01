@@ -179,6 +179,17 @@ const HEALTH = {
   at_risk:  { label:'At risk',  color:'#FF9F0A' },
   stalled:  { label:'Stalled',  color:'#FF375F' },
 };
+// ── THE CHECKLIST IS OFF, BEHIND ONE FLAG ───────────────────────────────────
+// Loren's feedback, after the 1 Oct simplification: the card has no checklist.
+// Nothing is deleted -- every row stays in program_tasks -- and turning this
+// back to true brings back, together: the checklist on the card, seeding on
+// arrival in a stage, the bulk task read, the tile's N open and blocker pills,
+// the three Waiting tiles and their filter, the two task rules in health, and
+// the Checklist sections, sheets and columns in the working and board exports.
+// Every one of those reads this constant rather than being removed, so they
+// cannot come back out of step with each other.
+const CHECKLIST_ON = false;
+
 // STAGE_TASKS and seedStageTasks live in lib/programs.js since stage 4. A saved
 // purchase order moves a card into Production from page.jsx, and it has to leave
 // the same checklist a person moving the card here would -- one list, one rule.
@@ -195,7 +206,7 @@ const BLOCKERS = {
 // waited on: the blocker pill, the Waiting tiles, health and the checklist's
 // Open elsewhere lines all skip it, so a card cannot read as stalled over work
 // nobody can see.
-const openTasks = r => (r.tasks || []).filter(t => !t.done && !isHiddenStage(t.stage));
+const openTasks = r => (CHECKLIST_ON ? (r.tasks || []) : []).filter(t => !t.done && !isHiddenStage(t.stage));
 // The blocker a tile names -- us first, because that is the one this office can
 // act on, then client, then factory.
 const blockerOf = r => {
@@ -217,7 +228,9 @@ const sampleOverdue = r => {
 };
 const healthOf = (r, tasks = []) => {
   if (r.stage === ARCHIVED) return 'archived';
-  const open = (tasks || []).filter(t => !t.done && !isHiddenStage(t.stage));
+  // The two task rules below need tasks; with the checklist off there are none
+  // to read, so health is the overdue sample and days in stage alone.
+  const open = (CHECKLIST_ON ? (tasks || []) : []).filter(t => !t.done && !isHiddenStage(t.stage));
   const days = r.days || 0;
   if (sampleOverdue(r)) return 'stalled';
   if (open.some(t => t.blocker === 'us') && days > 7) return 'stalled';
@@ -2121,18 +2134,21 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes, roundNotes = []
 
   const board = {
     name: 'Board',
+    // Blocker and Open tasks are columns only while the checklist is on; the
+    // two lists below are filtered together so a row and its header agree.
     cols: [['SKU'], ['Product'], ['Client'], ['Factory'], ['Stage'], ['Days in stage', 'num'], ['Owner'],
            ['Health'], ['Blocker'], ['Sample overdue'], ['Open tasks', 'num'], ['Latest round'], ['Testing lab'],
-           ['Created by'], ['Created at', 'stamp'], ['Last edited by'], ['Last edited at', 'stamp'], ['Removed']],
+           ['Created by'], ['Created at', 'stamp'], ['Last edited by'], ['Last edited at', 'stamp'], ['Removed']]
+      .filter(([h]) => CHECKLIST_ON || (h !== 'Blocker' && h !== 'Open tasks')),
     rows: list.map(r => {
       const blk = blockerOf(r);
       return [
         skuOf(r), (r.products || {}).name || '', clientOf(r), r.factoryName || '',
         stageLabel(r.stage), (r.days === null || r.days === undefined) ? null : r.days,
         r.ownerName || 'Unowned', HEALTH[healthOf(r, r.tasks)].label,
-        blk ? BLOCKERS[blk].label : '', sampleOverdue(r) ? 'Yes' : 'No',
+        ...(CHECKLIST_ON ? [blk ? BLOCKERS[blk].label : ''] : []), sampleOverdue(r) ? 'Yes' : 'No',
         // The tile count -- open tasks in the stage the card is in.
-        openTasks(r).filter(t => t.stage === r.stage).length,
+        ...(CHECKLIST_ON ? [openTasks(r).filter(t => t.stage === r.stage).length] : []),
         sampleStripText(r) || '', r.testing_lab || '',
         r.createdByName || '', r.created_at || null,
         r.edited ? (r.lastTouchBy || '') : '', r.edited ? (r.updated_at || null) : null,
@@ -2207,7 +2223,7 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes, roundNotes = []
     }),
   };
 
-  return [board, rounds, roundNoteTable, checklist, cardNoteTable, records, general];
+  return [board, rounds, roundNoteTable, ...(CHECKLIST_ON ? [checklist] : []), cardNoteTable, records, general];
 };
 const boardFileBase = withRemoved => 'plm-board-' + (withRemoved ? 'with-removed-' : '') + stampToday();
 
@@ -2257,11 +2273,13 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, roundNotes = [], logo })
     +'</div>'
     // Each round's own notes, under the rounds table, as the card shows them.
     +roundNoteGroups(r, roundNotes).map(g => docNoteBlock(g.label + ' notes', g.list, '')).join('')
-    +'<div style="margin-top:26px;">'
-      +'<div style="'+DOC_LBL+'margin-bottom:2px;">Checklist</div>'
-      +(groups.length ? groups.map(table).join('')
-        : '<div style="border-top:1px solid #e5e7eb;padding:9px 0;font-size:13px;color:#6b7280;">No tasks.</div>')
-    +'</div>'
+    +(CHECKLIST_ON
+      ? '<div style="margin-top:26px;">'
+        +'<div style="'+DOC_LBL+'margin-bottom:2px;">Checklist</div>'
+        +(groups.length ? groups.map(table).join('')
+          : '<div style="border-top:1px solid #e5e7eb;padding:9px 0;font-size:13px;color:#6b7280;">No tasks.</div>')
+        +'</div>'
+      : '')
     +(workingNoteGroups(card).length
       ? workingNoteGroups(card).map(g => docNoteBlock('Card notes · ' + g.label, g.list, '')).join('')
       : docNoteBlock('Card notes', [], 'No notes.'))
@@ -2406,15 +2424,17 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         [8, 30, 19, 9, 90].forEach((w, i) => { rn.getColumn(i + 1).width = w; });
         rn.getColumn(5).alignment = { wrapText: true, vertical: 'top' };
 
-        const cs = wb.addWorksheet('Checklist');
-        cs.addRow(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker']);
-        workingTasks(r, staff).forEach(g => g.tasks.forEach(t =>
-          cs.addRow([g.label, t.task, t.done, excelDate(t.doneAt), t.owner, excelDate(t.due), t.blocker])));
-        cs.getRow(1).font = { bold: true };
-        cs.views = [{ state:'frozen', ySplit:1 }];
-        cs.getColumn(4).numFmt = 'yyyy-mm-dd hh:mm';
-        cs.getColumn(6).numFmt = 'yyyy-mm-dd';
-        [13, 44, 7, 17, 22, 12, 18].forEach((w, i) => { cs.getColumn(i + 1).width = w; });
+        if (CHECKLIST_ON) {
+          const cs = wb.addWorksheet('Checklist');
+          cs.addRow(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker']);
+          workingTasks(r, staff).forEach(g => g.tasks.forEach(t =>
+            cs.addRow([g.label, t.task, t.done, excelDate(t.doneAt), t.owner, excelDate(t.due), t.blocker])));
+          cs.getRow(1).font = { bold: true };
+          cs.views = [{ state:'frozen', ySplit:1 }];
+          cs.getColumn(4).numFmt = 'yyyy-mm-dd hh:mm';
+          cs.getColumn(6).numFmt = 'yyyy-mm-dd';
+          [13, 44, 7, 17, 22, 12, 18].forEach((w, i) => { cs.getColumn(i + 1).width = w; });
+        }
 
         const ns = wb.addWorksheet('Card notes');
         ns.addRow(['Stage', 'Kind', 'Author', 'Date', 'Edited', 'Note']);
@@ -2503,10 +2523,12 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         roundNoteGroups(r, notes.rounds).forEach(g => g.list.forEach(n => lines.push(
           [g.round, n.author, stampText(n.date), n.edited ? 'Yes' : '', n.text].map(cell).join(','))));
         lines.push('');
-        lines.push(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker'].map(cell).join(','));
-        workingTasks(r, staff).forEach(g => g.tasks.forEach(t => lines.push(
-          [g.label, t.task, t.done, t.doneAt ? stampText(t.doneAt) : '', t.owner, t.due || '', t.blocker].map(cell).join(','))));
-        lines.push('');
+        if (CHECKLIST_ON) {
+          lines.push(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker'].map(cell).join(','));
+          workingTasks(r, staff).forEach(g => g.tasks.forEach(t => lines.push(
+            [g.label, t.task, t.done, t.doneAt ? stampText(t.doneAt) : '', t.owner, t.due || '', t.blocker].map(cell).join(','))));
+          lines.push('');
+        }
         lines.push(['Stage', 'Kind', 'Author', 'Date', 'Edited', 'Note'].map(cell).join(','));
         workingNoteGroups(notes.card).forEach(g => g.list.forEach(n => lines.push(
           [g.label, n.kind, n.author, stampText(n.date), n.edited ? 'Yes' : '', n.text].map(cell).join(','))));
@@ -2565,7 +2587,8 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         <div style={{display:'flex',alignItems:'center',gap:'10px',flexShrink:0}}>
           <ExportButton count={1} busy={exporting || busy} compact align="right"
             note={exportKind === 'records' ? 'The records view, with its notes'
-                                           : 'This tab: stage, sample, checklist and card notes'}
+                                           : CHECKLIST_ON ? 'This tab: stage, sample, checklist and card notes'
+                                                          : 'This tab: stage, sample rounds and card notes'}
             onPdf={exportPdf} onXlsx={exportXlsx} onCsv={exportCsv} />
           <button onClick={guardedClose} aria-label="Close"
             style={{background:'none',border:'none',fontSize:'22px',lineHeight:1,color:'#A0A0A4',
@@ -2672,7 +2695,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       {/* Above the notes, where the 11 Aug card had it. */}
       {['testing', 'production', 'shipped'].includes(r.stage) && <TestingLab r={r} busy={busy} onLab={onLab} />}
 
-      <Checklist r={r} staff={staff} userEmail={userEmail} onTouched={onTouched} />
+      {CHECKLIST_ON && <Checklist r={r} staff={staff} userEmail={userEmail} onTouched={onTouched} />}
 
       {/* author is the caller's EMAIL, inside NotesPanel. The 11 Aug card wrote
           a display name, and the restrictive policies compare lower(author) to
@@ -2864,9 +2887,13 @@ export default function Programs({ userEmail }) {
         // EVERY CHECKLIST, IN BULK. The tile's blocker pill, its health edge and
         // the three waiting tiles all read tasks, so they arrive with the board
         // rather than when a card opens -- the trade the note counts make.
-        SB.from('program_tasks')
-          .select('id,program_id,stage,task,owner_id,assigned_by,due_date,blocker,done,done_at,sort_order,created_at')
-          .order('sort_order').order('created_at'),
+        // Not read at all while the checklist is off -- nothing on the board or
+        // in the files would use it.
+        CHECKLIST_ON
+          ? SB.from('program_tasks')
+              .select('id,program_id,stage,task,owner_id,assigned_by,due_date,blocker,done,done_at,sort_order,created_at')
+              .order('sort_order').order('created_at')
+          : Promise.resolve({ data: [], error: null }),
         // EVERY SAMPLE ROUND, IN BULK, highest round first per card -- the tile
         // pill and the Stalled and Overdue samples tiles read the latest one's
         // due back, so they have to arrive with the board.
@@ -3049,7 +3076,7 @@ export default function Programs({ userEmail }) {
       setSaving(null);
       return;
     }
-    await seedStageTasks(r, next);
+    if (CHECKLIST_ON) await seedStageTasks(r, next);
     // The product's own stage mirrors the card, forward or back -- see
     // syncProductStage. After the move and never able to undo it.
     const ps = await syncProductStage(r.product_id, next);
@@ -3272,7 +3299,10 @@ export default function Programs({ userEmail }) {
 
   // A waiting tile, pressed. Any OPEN task with that blocker qualifies, as on
   // 11 Aug -- the tile counts cards, and this shows the cards it counted.
-  const blockerMatches = r => !ui.blocker || (r.stage !== ARCHIVED && openTasks(r).some(t => t.blocker === ui.blocker));
+  // A Waiting filter left in the page store from before the checklist went off
+  // must not narrow the board with no tile on screen to clear it.
+  const blockerMatches = r => !CHECKLIST_ON || !ui.blocker
+    || (r.stage !== ARCHIVED && openTasks(r).some(t => t.blocker === ui.blocker));
 
   const matches = r => {
     if (!ui.search) return true;
@@ -3471,8 +3501,10 @@ export default function Programs({ userEmail }) {
                 that count cannot disagree. */}
             {(h === 'stalled' || h === 'at_risk') && (
               <span title={h === 'stalled'
-                  ? 'A sample is overdue, or a task is waiting on us and the card has not moved in over 7 days'
-                  : 'Over 14 days in this stage, or a task is past its due date'}
+                  ? (CHECKLIST_ON ? 'A sample is overdue, or a task is waiting on us and the card has not moved in over 7 days'
+                                  : 'A sample is overdue')
+                  : (CHECKLIST_ON ? 'Over 14 days in this stage, or a task is past its due date'
+                                  : 'Over 14 days in this stage')}
                 style={{fontSize:'11px',fontWeight:600,borderRadius:'6px',padding:'2px 8px',
                         color:HEALTH[h].color,
                         background:h === 'stalled' ? 'rgba(255,55,95,.08)' : 'rgba(255,159,10,.10)'}}>
@@ -3639,7 +3671,8 @@ export default function Programs({ userEmail }) {
                    gap:'12px',marginBottom:'18px'}}>
         {[
           { k:'Stalled',         v:stalledCards.length, c:HEALTH.stalled.color,
-            t:'A sample is overdue, or the card has not moved and somebody is waiting on us' },
+            t:CHECKLIST_ON ? 'A sample is overdue, or the card has not moved and somebody is waiting on us'
+                           : 'A sample is overdue' },
           { k:'Overdue samples', v:overdueCards.length, c:HEALTH.stalled.color,
             t:'Due back date has passed while the card is in Sampling or Revision' },
           { k:'Waiting on us',        v:waitingOn('us').length,      c:BLOCKERS.us.dot,      f:'us',
@@ -3648,7 +3681,7 @@ export default function Programs({ userEmail }) {
             t:'Cards with an open task waiting on the client. Click to show only those' },
           { k:'Waiting on factories', v:waitingOn('factory').length, c:BLOCKERS.factory.dot, f:'factory',
             t:'Cards with an open task waiting on the factory. Click to show only those' },
-        ].map(m => {
+        ].filter(m => CHECKLIST_ON || !m.f).map(m => {
           // THE THREE WAITING TILES ARE FILTERS, as on 11 Aug; a second press
           // clears. Stalled and Overdue stay display-only -- the tile edges and
           // the overdue pill already mark those cards where they sit.
@@ -3690,7 +3723,7 @@ export default function Programs({ userEmail }) {
       {/* The owner chip row was here. The one thing it carried that still has a
           job is the N shown hint, which now follows only the Waiting tile
           filter. */}
-      {ui.blocker && (
+      {CHECKLIST_ON && ui.blocker && (
         <div style={{fontSize:'12px',color:'#86868B',margin:'-4px 0 14px'}}>{shownBoard.length} shown</div>
       )}
 
