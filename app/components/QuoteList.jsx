@@ -14,6 +14,7 @@ import { buildListDoc, showListDoc, logoDataUrl } from '@/lib/listDoc';
 // size_scale the sizes of that product).
 //
 // WHERE EACH COLUMN COMES FROM
+//   Quote ID            quotes.quote_code (script 103), Q-0001 and on
 //   SKU, Product Name   quotes.sku, quotes.product
 //   Created             quotes.created_at, shown as the app shows dates
 //   Company             the linked client company (client_company_id ->
@@ -59,10 +60,10 @@ const fileBit = s => String(s || '').replace(/[^A-Za-z0-9-]+/g, '').slice(0, 30)
 
 const card = { maxWidth: 1280, margin: '0 auto', background: '#ffffff', border: '1px solid #e7eaf0',
                borderRadius: 16, overflow: 'hidden', boxShadow: '0 2px 10px rgba(26,34,56,0.05)' };
-const GRID = '160px minmax(0,2fr) 130px minmax(0,1.4fr)';
+const GRID = '96px 150px minmax(0,2fr) 130px minmax(0,1.4fr)';
 
 export function QuoteList({ reloadKey, onOpen }) {
-  const [ui, setUi] = usePageState('quotelist', { company: [], product: [], sku: [], from: '', to: '', page: 1 });
+  const [ui, setUi] = usePageState('quotelist', { company: [], product: [], sku: [], from: '', to: '', code: '', page: 1 });
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState('');
   const [exporting, setExporting] = useState(false);
@@ -71,13 +72,16 @@ export function QuoteList({ reloadKey, onOpen }) {
     let live = true;
     (async () => {
       const { data, error } = await SB.from('quotes')
-        .select('id,sku,product,client,client_company_id,created_at,company:companies!client_company_id(name)')
+        .select('id,quote_code,sku,product,client,client_company_id,created_at,company:companies!client_company_id(name)')
         .order('created_at', { ascending: false });
       if (!live) return;
       if (error) { setErr(error.message); setRows([]); return; }
       setErr('');
       setRows((data || []).map(q => ({
         id: q.id,
+        code: q.quote_code || '',
+        // The number alone, for the ID search -- Q-0356 is 356.
+        codeNo: q.quote_code ? String(parseInt(q.quote_code.replace(/[^0-9]/g, ''), 10) || '') : '',
         sku: (q.sku || '').trim(),
         product: (q.product || '').trim(),
         company: ((q.company && q.company.name) || q.client || '').trim(),
@@ -102,10 +106,16 @@ export function QuoteList({ reloadKey, onOpen }) {
   const skuOptions     = useMemo(() => optionsFor('sku', 'All SKUs'), [rows]);
 
   const inSet = (set, v) => !set.length || set.includes(v || DASH);
+  // THE ID SEARCH IS FORGIVING. Q-0356, q356, Q-356 and 0356 all mean 356: the
+  // letters, hyphen and leading zeros are dropped and what is left is matched
+  // against the start of each quote's number, so 35 lists Q-0035, Q-0350 to
+  // Q-0359 and so on as it is typed.
+  const codeQ = String(ui.code || '').replace(/[^0-9]/g, '').replace(/^0+/, '');
   const shown = useMemo(() => all.filter(r =>
-    inSet(ui.company, r.company) && inSet(ui.product, r.product) && inSet(ui.sku, r.sku)
+    (!codeQ || r.codeNo.startsWith(codeQ))
+    && inSet(ui.company, r.company) && inSet(ui.product, r.product) && inSet(ui.sku, r.sku)
     && (!ui.from || (r.day && r.day >= ui.from)) && (!ui.to || (r.day && r.day <= ui.to))
-  ), [rows, ui.company, ui.product, ui.sku, ui.from, ui.to]);
+  ), [rows, codeQ, ui.company, ui.product, ui.sku, ui.from, ui.to]);
   // Newest first, by the timestamp; created_at order from the read already, and
   // stated here so the list never depends on how it was fetched.
   const sorted = useMemo(() => [...shown].sort((a, b) => String(b.created || '').localeCompare(String(a.created || ''))), [shown]);
@@ -116,13 +126,14 @@ export function QuoteList({ reloadKey, onOpen }) {
 
   // Every filter change goes back to page 1.
   const setFilter = (k, v) => { setUi(k, v); setUi('page', 1); };
-  const anyFilter = ui.company.length || ui.product.length || ui.sku.length || ui.from || ui.to;
-  const clear = () => { setUi('company', []); setUi('product', []); setUi('sku', []); setUi('from', ''); setUi('to', ''); setUi('page', 1); };
+  const anyFilter = codeQ || ui.company.length || ui.product.length || ui.sku.length || ui.from || ui.to;
+  const clear = () => { setUi('code', ''); setUi('company', []); setUi('product', []); setUi('sku', []); setUi('from', ''); setUi('to', ''); setUi('page', 1); };
 
   // ── WHAT THE FILES SAY ABOUT THE FILTERS ──────────────────────────────────
   const listOf = (set, noun) => !set.length ? null : set.length <= 3 ? set.join(', ') : set.length + ' ' + noun;
   const filterLines = () => {
     const out = [];
+    if (codeQ) out.push('Quote ID starts with: ' + codeQ);
     const c = listOf(ui.company, 'companies'), p = listOf(ui.product, 'product names'), s = listOf(ui.sku, 'SKUs');
     if (c) out.push('Company: ' + c);
     if (p) out.push('Product Name: ' + p);
@@ -135,13 +146,14 @@ export function QuoteList({ reloadKey, onOpen }) {
   // when one is chosen, a count when several are.
   const fileBase = () => {
     const bits = ['Quotes'];
+    if (codeQ) bits.push('Q' + codeQ);
     const one = (set, noun) => !set.length ? null : set.length === 1 ? fileBit(set[0]) : set.length + noun;
     [one(ui.company, 'companies'), one(ui.product, 'products'), one(ui.sku, 'SKUs')].forEach(b => { if (b) bits.push(b); });
     if (ui.from || ui.to) bits.push((ui.from || 'start') + '-to-' + (ui.to || todayYmd()));
     else bits.push(todayYmd());
     return bits.filter(Boolean).join('-');
   };
-  const COLS = ['SKU', 'Product Name', 'Created', 'Company'];
+  const COLS = ['Quote ID', 'SKU', 'Product Name', 'Created', 'Company'];
   const download = (blob, name) => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = name; a.click();
@@ -159,12 +171,12 @@ export function QuoteList({ reloadKey, onOpen }) {
       const ws = wb.addWorksheet('Quotes');
       ws.addRow(COLS);
       // Created is a real date cell -- the local day at noon, so no timezone moves it.
-      sorted.forEach(r => ws.addRow([r.sku || DASH, r.product || DASH, excelDate(r.day), r.company || DASH]));
+      sorted.forEach(r => ws.addRow([r.code || DASH, r.sku || DASH, r.product || DASH, excelDate(r.day), r.company || DASH]));
       ws.getRow(1).font = { bold: true };
       ws.views = [{ state: 'frozen', ySplit: 1 }];
       ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: COLS.length } };
-      ws.getColumn(3).numFmt = 'yyyy-mm-dd';
-      [18, 44, 13, 34].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+      ws.getColumn(4).numFmt = 'yyyy-mm-dd';
+      [11, 18, 44, 13, 34].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
 
       const fs = wb.addWorksheet('Filters');
       fs.addRow(['Export', 'King Universal - Quote List']);
@@ -191,7 +203,7 @@ export function QuoteList({ reloadKey, onOpen }) {
     const cell = v => '"' + csvSafe(v).replace(/"/g, '""') + '"';
     const lines = [cell('# Quote List · ' + filterLines().join(' · ') + ' · ' + sorted.length + ' of ' + all.length)];
     lines.push(COLS.map(cell).join(','));
-    sorted.forEach(r => lines.push([r.sku || DASH, r.product || DASH, r.day, r.company || DASH].map(cell).join(',')));
+    sorted.forEach(r => lines.push([r.code || DASH, r.sku || DASH, r.product || DASH, r.day, r.company || DASH].map(cell).join(',')));
     download(new Blob(['﻿' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8;' }), fileBase() + '.csv');
   };
 
@@ -207,9 +219,9 @@ export function QuoteList({ reloadKey, onOpen }) {
         title: 'Quote List',
         kicker: 'Quotes',
         lines: [...filterLines(), sorted.length + ' quote' + (sorted.length === 1 ? '' : 's') + ' · newest first'],
-        columns: [{ label: 'SKU', width: '18%' }, { label: 'Product Name', width: '42%' },
-                  { label: 'Created', width: '14%' }, { label: 'Company' }],
-        rows: sorted.map(r => [r.sku || DASH, r.product || DASH, fmtDay(r.created), r.company || DASH]),
+        columns: [{ label: 'Quote ID', width: '11%' }, { label: 'SKU', width: '16%' }, { label: 'Product Name', width: '36%' },
+                  { label: 'Created', width: '13%' }, { label: 'Company' }],
+        rows: sorted.map(r => [r.code || DASH, r.sku || DASH, r.product || DASH, fmtDay(r.created), r.company || DASH]),
         logo,
         footLeft: 'King Universal · Quote List · ' + fmtDay(new Date().toISOString()),
       });
@@ -235,6 +247,14 @@ export function QuoteList({ reloadKey, onOpen }) {
           height of a FilterSelect button -- so the dropdowns, the date inputs and
           the controls after them share one line, and each piece wraps whole. */}
       <div style={{ maxWidth: 1280, margin: '0 auto 16px', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
+        {/* THE ID SEARCH. A text box, not a dropdown -- 355 codes are not a list
+            anybody can pick from. In the 40px band the dropdowns sit in. */}
+        <div style={{ display: 'flex', alignItems: 'center', height: 40 }}>
+          <input value={ui.code} onChange={e => setFilter('code', e.target.value)} placeholder="Quote ID, e.g. Q-0356"
+            aria-label="Search by Quote ID"
+            style={{ border: '1px solid #e7eaf0', borderRadius: 10, padding: '9px 12px', fontSize: 13, fontFamily: 'inherit',
+                     color: '#0f1729', background: '#fff', outline: 'none', width: 170, boxSizing: 'border-box' }} />
+        </div>
         <div className="fs-row">
           <FilterSelect multiple label="All Companies" value={ui.company} onChange={v => setFilter('company', v)} options={companyOptions} />
           <FilterSelect multiple label="All Product Names" value={ui.product} onChange={v => setFilter('product', v)} options={productOptions} />
@@ -296,6 +316,8 @@ export function QuoteList({ reloadKey, onOpen }) {
                      borderTop: i > 0 ? '1px solid #f1f3f7' : 'none', cursor: 'pointer' }}
             onMouseEnter={e => { e.currentTarget.style.background = '#f8f9fc'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: '#3461e0', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                          fontVariantNumeric: 'tabular-nums' }}>{r.code || DASH}</div>
             <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0f1729', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.sku || DASH}</div>
             <div style={{ fontSize: 13.5, color: '#2c3446', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.product || DASH}</div>
             <div style={{ fontSize: 13, color: '#6a7488', fontVariantNumeric: 'tabular-nums' }}>{fmtDay(r.created)}</div>

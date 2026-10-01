@@ -562,6 +562,9 @@ function rowToForm(r) {
   });
   return {
     id: r.id,
+    // The Quote ID (script 103). Read only: formToRow never sends it, and the
+    // database issues it on insert and keeps it on update whatever is sent.
+    quoteCode: r.quote_code || "",
     quoteDate: r.quote_date || "", product: r.product || "",
     sku: r.sku || "", sizeScales: scales, sizeDeltas: deltasToMap(r.size_price_deltas, scales), sizePlateFees: platesToMap(r.size_plate_fees, scales), sizeCartons: cartonsToMap(r.size_cartons, scales), notes: r.notes || "",
     client: r.client || "", clientContact: r.client_contact || "", clientEmail: r.client_email || "",
@@ -1027,7 +1030,8 @@ function Platform({ session, newQuote = null }) {
       flash("Quote saved, but " + failedTasks.length + " task" + (failedTasks.length === 1 ? "" : "s")
         + " did not: " + failedTasks.map((t) => "“" + t.task + "”").join(", ") + " — Save again to retry");
     }
-    else flash("Quote saved" + (assignedCount ? " · " + assignedCount + " task" + (assignedCount === 1 ? "" : "s") + " assigned" : ""));
+    else flash((!f.id && savedRow.quote_code ? "Saved as " + savedRow.quote_code : "Quote saved")
+               + (assignedCount ? " · " + assignedCount + " task" + (assignedCount === 1 ? "" : "s") + " assigned" : ""));
 
     // ── SKU PROPAGATION ──────────────────────────────────────────────────────
     // Runs after the save is confirmed, never before: offering to propagate a
@@ -1145,7 +1149,7 @@ function Platform({ session, newQuote = null }) {
   const searchResults = useMemo(() => {
     const s = ui.search.toLowerCase();
     return quotes.filter((q) => {
-      const hay = `${q.client} ${q.product} ${q.factory} ${q.sku} ${q.clientContact} ${q.factoryContact} ${q.country}`.toLowerCase();
+      const hay = `${q.quoteCode} ${q.client} ${q.product} ${q.factory} ${q.sku} ${q.clientContact} ${q.factoryContact} ${q.country}`.toLowerCase();
       return hay.includes(s);
     });
   }, [quotes, ui.search]);
@@ -1368,7 +1372,10 @@ function Platform({ session, newQuote = null }) {
                     {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
                   </div>
                   <div style={{ flex: isMobile ? 1.8 : 2.4, minWidth: 0 }}>
-                    <div style={S.cellPrimary}>{q.sku || "No SKU"}</div>
+                    <div style={S.cellPrimary}>
+                      {q.quoteCode && <span style={S.quoteCode}>{q.quoteCode}</span>}
+                      {q.sku || "No SKU"}
+                    </div>
                     <div style={S.cellSub}>{q.product || "Untitled product"}{view === "search" && q.client ? ` · ${q.client}` : ""}</div>
                   </div>
                   {!isMobile && (
@@ -2034,6 +2041,12 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
   const cbm = (Number(q.cartonL) * Number(q.cartonW) * Number(q.cartonH)) / 1000000;
   return (
     <div style={S.detailPanel}>
+      {q.quoteCode && (
+        <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span style={{ fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", color: "#9aa3b5", fontWeight: 600 }}>Quote ID</span>
+          <span style={{ ...S.quoteCode, fontSize: 13 }}>{q.quoteCode}</span>
+        </div>
+      )}
       <div style={{ gridColumn: "1 / -1" }}>
         <div style={S.detailHead}><Layers size={14} /> Tiered Pricing</div>
         <div style={S.tierTable}>
@@ -3531,7 +3544,14 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
       )}
       <div ref={cardRef} style={S.modal} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
-          <h2 style={S.modalTitle}>{initial.id ? "Edit Quote" : "New Quote"}</h2>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+            <h2 style={S.modalTitle}>{initial.id ? "Edit Quote" : "New Quote"}</h2>
+            {/* The ID is the database's to give: shown read only on an existing
+                quote, and promised on a new one. */}
+            {initial.quoteCode
+              ? <span style={{ ...S.quoteCode, fontSize: 13 }}>{initial.quoteCode}</span>
+              : <span style={{ fontSize: 12.5, color: "#9aa3b5" }}>ID assigned on save</span>}
+          </div>
           <button style={S.iconBtn} onClick={guardedClose}><X size={18} /></button>
         </div>
         <div style={S.modalBody}>
@@ -4398,6 +4418,9 @@ const S = {
   modal: { background: "#ffffff", borderRadius: 20, width: "100%", maxWidth: 1100, boxShadow: "0 24px 60px rgba(11,21,48,0.22)", border: "1px solid #e7eaf0" },
   modalHead: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 26px", borderBottom: "1px solid #e7eaf0" },
   modalTitle: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 25, fontWeight: 600, margin: 0, color: "#0f1729" },
+  // The Quote ID, wherever a quote shows it: monospace, so Q-0356 reads as a code.
+  quoteCode: { display: "inline-block", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, fontWeight: 600,
+               color: "#3461e0", background: "#eef2fd", borderRadius: 6, padding: "1px 7px", marginRight: 8, letterSpacing: "0.01em" },
   modalBody: { padding: "22px 26px", maxHeight: "66vh", overflowY: "auto" },
   modalFoot: { display: "flex", justifyContent: "flex-end", gap: 10, padding: "16px 26px", borderTop: "1px solid #e7eaf0" },
   formSection: { marginBottom: 20 },
