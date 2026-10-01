@@ -804,6 +804,23 @@ const roundText = (x, withTracking = false) => {
 // it is always the newest shipment somebody recorded, and a round saved with
 // neither does not blank the one before it. "FedEx · 1Z… · round 3".
 const shipLine = x => [x.carrier, x.tracking_number].filter(Boolean).join(' · ');
+// ── THE SOURCE QUOTE (script 104) ───────────────────────────────────────────
+// The quote a card was created from, as { code, url } or null. The url is the
+// Quotes page's own deep link (?quote=id), which opens the quote's client and
+// expands it; it opens in a new tab so the board stays where it is.
+const sourceQuoteOf = r => {
+  const q = r.source_quote;
+  if (!q || !q.id) return null;
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  return { code: q.quote_code || 'the quote', url: origin + '/?quote=' + q.id + '#quotes' };
+};
+function QuoteLinkValue({ link }) {
+  return (
+    <a href={link.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+      title="Open this quote on the Quotes page"
+      style={{color:'#0A84FF',textDecoration:'underline',textUnderlineOffset:'2px',fontFamily:'var(--mono)'}}>{link.code}</a>
+  );
+}
 // The shipment a Card row names, with its link -- null when the row names none.
 // url is null too when trackingUrl cannot tell whose number it is, and then the
 // number is plain text everywhere.
@@ -1813,6 +1830,12 @@ const recordRows = r => {
       shipOf(trackedRound(r), true, r.carriers)],
     ['Purchase order', po ? po.num + (po.on ? ' · ' + fmt(po.on) : '') + ofN(po.n) : none, !po],
     ['Sales order', so ? so.num + (so.on ? ' · ' + fmt(so.on) : '') + ofN(so.n) : none, !so],
+    // The quote the card was created from (script 104). The 4th element is the
+    // link -- url as for a tracking number, so the workbook makes it a hyperlink.
+    ...(() => {
+      const sq = sourceQuoteOf(r);
+      return [['Source quote', sq ? sq.code : 'None recorded', !sq, sq ? { quote: true, ...sq } : null]];
+    })(),
     // AN ETD IS A PLAN AND SAYS SO. Departed is what actually happened and wins
     // whenever it exists; the estimate only speaks when nothing has moved.
     //
@@ -1855,7 +1878,7 @@ function SystemKnows({ r }) {
     <div key={label} style={{display:'flex',gap:'10px',padding:'6px 0',borderTop:'1px solid #F2F2F4'}}>
       <span style={{fontSize:'11.5px',color:'#86868B',minWidth:'118px',flexShrink:0}}>{label}</span>
       <span style={{fontSize:'12.5px',color:muted?'#A0A0A4':'#1D1D1F',lineHeight:1.45}}>
-        {ship ? <ShipValue ship={ship} /> : value}
+        {ship ? (ship.quote ? <QuoteLinkValue link={ship} /> : <ShipValue ship={ship} />) : value}
       </span>
     </div>
   );
@@ -2769,6 +2792,11 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
           <div style={{fontSize:'13px',color:'#5A5A5E',marginTop:'3px'}}>
             {[(r.client||{}).name, factoryName].filter(Boolean).join(' · ') || '—'}
           </div>
+          {sourceQuoteOf(r) && (
+            <div style={{fontSize:'12.5px',color:'#86868B',marginTop:'3px'}}>
+              From quote <QuoteLinkValue link={sourceQuoteOf(r)} />
+            </div>
+          )}
         </div>
         {/* EXPORT SITS BESIDE THE CLOSE, above both tabs, so it is there
             whichever tab is open -- and it exports THAT tab: the records file
@@ -3048,7 +3076,9 @@ export default function Programs({ userEmail }) {
         // name on the card and the owner filter.
         SB.from('programs')
           .select('id,product_id,client_company_id,expected_ship_date,archived,declared_stage,declared_stage_at,owner_id,'
-                + 'created_at,created_by,updated_at,updated_by,testing_lab,'
+                + 'created_at,created_by,updated_at,updated_by,testing_lab,source_quote_id,'
+                // The quote the card came from (script 104), for "From quote Q-...".
+                + 'source_quote:quotes!programs_source_quote_id_fkey(id,quote_code),'
                 + 'products(id,sku,name,active,product_stage,compliance_status),client:companies!client_company_id(id,name),'
                 + 'owner:staff_profiles!owner_id(id,email,full_name)')
           .order('created_at', { ascending:true }),

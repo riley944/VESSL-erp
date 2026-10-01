@@ -1648,8 +1648,10 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
     try {
       // ownerId only, never ownerEmail. Unowned is a choice somebody can make in
       // the picker, and an email fallback would quietly overrule it.
+      // The card remembers this quote as its source (script 104).
       const { error: pErr } = await createProgram(ask.row.product_id, ask.row.client_company_id,
-                                                  { stage: 'quoted', ownerId: ask.ownerId, createdBy: userEmail });
+                                                  { stage: 'quoted', ownerId: ask.ownerId, createdBy: userEmail,
+                                                    sourceQuoteId: q.id });
       setBusy(false);
       if (pErr) { alert('Could not start the program: ' + pErr.message); return; }
       setAsk(null);
