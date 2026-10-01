@@ -723,7 +723,34 @@ const SAMPLE_TYPES = [
   ['testing_production', 'Testing Production Sample', true],
   ['testing',            'Testing',                   false],
 ];
-const sampleTypeLabel = k => (SAMPLE_TYPES.find(([v]) => v === k) || [null, k || ''])[1];
+// ── THE LIVE LIST (script 102) ──────────────────────────────────────────────
+// vessl.sample_types is the list now; SAMPLE_TYPES above is only what the page
+// shows if the table cannot be read. The board load writes the rows here, so the
+// plain functions that print a round -- roundText, workingRounds, the board file
+// -- read the same labels the dropdown does without being handed them. A key
+// the list does not know prints as itself rather than as nothing.
+let liveSampleTypes = null;
+const setLiveSampleTypes = list => { liveSampleTypes = list; };
+const sampleTypeLabel = k => {
+  if (!k) return '';
+  const hit = (liveSampleTypes || []).find(t => t.key === k);
+  if (hit) return hit.label;
+  return (SAMPLE_TYPES.find(([v]) => v === k) || [null, k])[1];
+};
+// The dropdown: active types, seeded ones in their order, added ones after them
+// alphabetically -- plus the value the round already holds when that one is
+// retired, so an Edit never blanks it.
+const sampleTypeOptions = (types, current) => {
+  const list = types && types.length ? types
+    : SAMPLE_TYPES.map(([key, label, active], i) => ({ key, label, active, sort_order: (i + 1) * 10 }));
+  return list
+    .filter(t => t.active || t.key === current)
+    .sort((a, b) => (a.sort_order ?? 1e9) - (b.sort_order ?? 1e9) || a.label.localeCompare(b.label));
+};
+// What a new type is saved as -- trimmed, every run of white space one space --
+// so the CHECK on sample_types (single spaces, no tabs) corrects rather than
+// refuses somebody who typed two spaces.
+const cleanTypeLabel = v => String(v || '').replace(/\s+/g, ' ').trim();
 
 // ── ONE ROUND IN ONE LINE ───────────────────────────────────────────────────
 // "Round 2 · Pre-Production Sample · sent Jan 1, 2026 · due back Oct 1, 2026".
@@ -853,11 +880,16 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   const [form, setForm] = useState(blank);
   const [editId, setEditId] = useState(null);
   const [edit, setEdit] = useState(blank);
+  // The + Add new sample type form -- which round form opened it, and its text.
+  const [typeFor, setTypeFor] = useState(null);     // 'form' | 'edit' | null
+  const [typeName, setTypeName] = useState('');
+  const [typeMsg, setTypeMsg] = useState('');
+  const [typeBusy, setTypeBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   // A new form for a card that moved stage, so a round half filled in before an
   // archive does not reappear when the card comes back.
-  useEffect(() => { setForm(blank); setRoundPick(null); setEditId(null); setErr(''); }, [r.id, r.stage]);
+  useEffect(() => { setForm(blank); setRoundPick(null); setEditId(null); setErr(''); setTypeFor(null); }, [r.id, r.stage]);
   // The card's lab changed -- saved from here, from the Testing section, or by
   // somebody else -- so every form shows the stored value again.
   useEffect(() => {
@@ -905,7 +937,8 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   // card closes without asking; input left unsaved still asks. The note counts
   // through hasAny, and a round number moved off its default counts too.
   const editing = editId ? rounds.find(x => x.id === editId) : null;
-  useDirtySource((showForm && (!!hasAny(form) || labChanged(form) || (roundPick !== null && roundPick !== nextRound)))
+  useDirtySource((!!typeFor && !!cleanTypeLabel(typeName))
+              || (showForm && (!!hasAny(form) || labChanged(form) || (roundPick !== null && roundPick !== nextRound)))
               || (!!editing && (!unchanged(editing, edit) || labChanged(edit))));
 
   // THE NEW-ROUND FORM SAVES A ROUND, THE LAB, OR BOTH. A round needs one of its
@@ -1106,6 +1139,53 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     );
   };
 
+  // ── + ADD NEW SAMPLE TYPE ─────────────────────────────────────────────────
+  // The last option in the dropdown opens a one-field form under it. The name is
+  // cleaned (cleanTypeLabel) and checked against the list ignoring case first:
+  // a name already there is simply selected, and says so. Otherwise it is
+  // inserted -- label and created_by, all staff may (script 102) -- and the new
+  // type is selected in the form that asked for it, then the board re-reads so
+  // every card offers it. The database refuses the same name in another case
+  // too (unique on lower(label)); if a colleague added it a moment earlier, the
+  // list is re-read and that one is selected. Nothing is saved on the ROUND
+  // until the round itself is saved.
+  const openAddType = which => { setTypeFor(which); setTypeName(''); setTypeMsg(''); };
+  const pickType = (which, key) => (which === 'form' ? setForm : setEdit)(f => ({ ...f, type: key }));
+  const addType = async () => {
+    const which = typeFor;
+    const label = cleanTypeLabel(typeName);
+    if (!label) { setTypeMsg('Type a name first.'); return; }
+    if (label.length > 60) { setTypeMsg('Keep it to 60 characters.'); return; }
+    const same = (r.sampleTypes || []).find(t => t.label.toLowerCase() === label.toLowerCase());
+    if (same) {
+      pickType(which, same.key);
+      setTypeFor(null);
+      window._toast?.(same.active ? '“' + same.label + '” is already in the list — selected it'
+                                  : '“' + same.label + '” exists but is retired, so it was not added again', same.active ? 'ok' : 'err');
+      return;
+    }
+    setTypeBusy(true); setTypeMsg('');
+    const { data, error } = await SB.from('sample_types')
+      .insert({ label, created_by: userEmail || null })
+      .select('key,label').single();
+    if (error) {
+      if (error.code === '23505') {
+        if (onTouched) await onTouched();
+        setTypeBusy(false);
+        setTypeMsg('“' + label + '” was just added by somebody else — pick it from the list.');
+        return;
+      }
+      setTypeBusy(false);
+      setTypeMsg(error.message);
+      return;
+    }
+    pickType(which, data.key);
+    setTypeFor(null);
+    setTypeBusy(false);
+    window._toast?.('Sample type “' + data.label + '” added', 'ok');
+    if (onTouched) await onTouched();
+  };
+
   const fields = (f, set, roundNo, which) => (
     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'14px'}}>
       <div style={{textAlign:'center'}}>
@@ -1138,12 +1218,33 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
             reads, and choosing it again clears a type picked by mistake. */}
         <span style={lbl}>Sample type</span>
         <select data-noguard value={f.type} disabled={busy} aria-label="Sample type"
-          onChange={e=>set({ ...f, type: e.target.value })}
+          onChange={e=>{
+            if (e.target.value === '__add_type__') { openAddType(which); return; }
+            set({ ...f, type: e.target.value });
+          }}
           style={{...inp,height:ROW_H,cursor:busy?'default':'pointer',color:f.type?'#1D1D1F':'#86868B'}}>
           <option value="">—</option>
-          {SAMPLE_TYPES.filter(([v, , offered]) => offered || v === f.type)
-            .map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          {sampleTypeOptions(r.sampleTypes, f.type).map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+          <option value="__add_type__">+ Add new sample type…</option>
         </select>
+        {typeFor === which && (
+          <div style={{marginTop:'6px'}}>
+            <div style={{display:'flex',gap:'6px'}}>
+              <input data-noguard autoFocus value={typeName} disabled={typeBusy} aria-label="New sample type name"
+                placeholder="New sample type" maxLength={80}
+                onChange={e=>{ setTypeName(e.target.value); if (typeMsg) setTypeMsg(''); }}
+                onKeyDown={e=>{ if (e.key === 'Enter') { e.preventDefault(); addType(); }
+                                if (e.key === 'Escape') { e.preventDefault(); setTypeFor(null); } }}
+                style={{...inp,flex:1}} />
+              <button type="button" onClick={addType} disabled={typeBusy || !cleanTypeLabel(typeName)}
+                style={pillBtn(!!cleanTypeLabel(typeName), typeBusy || !cleanTypeLabel(typeName))}>
+                {typeBusy ? 'Adding…' : 'Add'}</button>
+              <button type="button" onClick={()=>setTypeFor(null)} disabled={typeBusy}
+                style={{...pillBtn(false, typeBusy),background:'#fff',border:'1px solid #E5E5EA',color:'#5A5A5E'}}>Cancel</button>
+            </div>
+            {typeMsg && <div style={{fontSize:'11.5px',color:'var(--hot)',marginTop:'5px'}}>{typeMsg}</div>}
+          </div>
+        )}
       </div>
       <div>
         <span style={lbl}>Sent</span>
@@ -2845,6 +2946,7 @@ export default function Programs({ userEmail }) {
   const [tasks, setTasks] = useState({});
   const [rounds, setRounds] = useState({});
   const [carriers, setCarriers] = useState([]);
+  const [sampleTypes, setSampleTypes] = useState([]);
 
   // QUIET AFTER THE FIRST READ. loading starts true and only the first load
   // shows the placeholder; every later one -- after a stage move, a note, a
@@ -2854,7 +2956,7 @@ export default function Programs({ userEmail }) {
   const load = async () => {
     setErr('');
     try {
-      const [p, nt, q, poi, soi, tr, st, tk, sr, pc] = await Promise.all([
+      const [p, nt, q, poi, soi, tr, st, tk, sr, pc, stp] = await Promise.all([
         // declared_stage and declared_stage_at are the board now -- the stage a
         // person set, and when they set it. owner_id joins staff_profiles for the
         // name on the card and the owner filter.
@@ -2910,14 +3012,19 @@ export default function Programs({ userEmail }) {
         // page pattern on companies.tracking_url. They are managed on Companies ->
         // Carriers; the round form lists every one, there being no retire column.
         SB.from('companies').select('id,name,tracking_url').eq('type', 'carrier').order('name'),
+        // THE SAMPLE TYPES (script 102), every one including retired, so a round
+        // on a retired type still reads its label.
+        SB.from('sample_types').select('key,label,active,sort_order,created_at'),
       ]);
-      const e = [p,nt,q,poi,soi,tr,st,tk,sr,pc].find(r => r.error);
+      const e = [p,nt,q,poi,soi,tr,st,tk,sr,pc,stp].find(r => r.error);
       if (e) throw new Error(e.error.message);
       setRows(p.data || []);
       setStaff(st.data || []);
       setTasks((tk.data || []).reduce((m, t) => { (m[t.program_id] = m[t.program_id] || []).push(t); return m; }, {}));
       setRounds((sr.data || []).reduce((m, x) => { (m[x.program_id] = m[x.program_id] || []).push(x); return m; }, {}));
       setCarriers(pc.data || []);
+      setLiveSampleTypes(stp.data || []);
+      setSampleTypes(stp.data || []);
       setNoteCounts((nt.data || []).reduce((m, n) => { m[n.program_id] = (m[n.program_id] || 0) + 1; return m; }, {}));
       setEv({ quotes:q.data||[], poItems:poi.data||[], soItems:soi.data||[], reports:tr.data||[] });
     } catch (x) {
@@ -3024,6 +3131,8 @@ export default function Programs({ userEmail }) {
                rounds: rounds[r.id] || [],
                // The same array on every card -- the links and the dropdown read it.
                carriers,
+               // Likewise the sample types, for the round form's dropdown.
+               sampleTypes,
                factoryName: factoryOfQuotes(buckets.quotes[k] || []),
                // The order rows read these three. null when there is none.
                latestSO: soL ? { num: soL.top.so_number || 'Sales order', on: soL.top.order_date || null, n: soL.n } : null,
@@ -3037,7 +3146,7 @@ export default function Programs({ userEmail }) {
     // staff and noteCounts are dependencies now: without them a name stays
     // unresolved and a count stays zero until some other change happens to
     // recompute this.
-  }, [rows, buckets, staff, noteCounts, tasks, rounds, carriers]);
+  }, [rows, buckets, staff, noteCounts, tasks, rounds, carriers, sampleTypes]);
 
   // ── WRITING A STAGE, AND WRITING AN OWNER ───────────────────────────────────
   // The only two things this page changes. Both re-read from the database after
