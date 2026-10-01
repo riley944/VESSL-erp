@@ -190,7 +190,12 @@ const BLOCKERS = {
   client:  { label:'Waiting · client',  dot:'#FF9F0A',     text:'#B45309' },
   us:      { label:'Waiting · us',      dot:'#FF375F',     text:'#B91C1C' },
 };
-const openTasks = r => (r.tasks || []).filter(t => !t.done);
+// OPEN MEANS OPEN ON THE BOARD. A task left on a stage that is off the board
+// (Testing, Production, Shipped -- VISIBLE_STAGES) stays in the table but is not
+// waited on: the blocker pill, the Waiting tiles, health and the checklist's
+// Open elsewhere lines all skip it, so a card cannot read as stalled over work
+// nobody can see.
+const openTasks = r => (r.tasks || []).filter(t => !t.done && !isHiddenStage(t.stage));
 // The blocker a tile names -- us first, because that is the one this office can
 // act on, then client, then factory.
 const blockerOf = r => {
@@ -212,7 +217,7 @@ const sampleOverdue = r => {
 };
 const healthOf = (r, tasks = []) => {
   if (r.stage === ARCHIVED) return 'archived';
-  const open = (tasks || []).filter(t => !t.done);
+  const open = (tasks || []).filter(t => !t.done && !isHiddenStage(t.stage));
   const days = r.days || 0;
   if (sampleOverdue(r)) return 'stalled';
   if (open.some(t => t.blocker === 'us') && days > 7) return 'stalled';
@@ -1366,7 +1371,7 @@ function TaskRow({ t, staff, dim, pending, onToggle, onBlocker, onDel }) {
 function Checklist({ r, staff = [], userEmail, onTouched }) {
   const tasks = r.tasks || [];
   const here = tasks.filter(t => t.stage === r.stage);
-  const elsewhere = tasks.filter(t => t.stage !== r.stage && !t.done);
+  const elsewhere = tasks.filter(t => t.stage !== r.stage && !t.done && !isHiddenStage(t.stage));
   const [text, setText] = useState('');
   // The new task's owner starts as the card's owner, which is who the seeded
   // tasks went to -- the 11 Aug default was the stage owner, which is gone.
