@@ -72,7 +72,7 @@ export function QuoteList({ reloadKey, onOpen }) {
     (async () => {
       const { data, error } = await SB.from('quotes')
         .select('id,sku,product,client,client_company_id,created_at,company:companies!client_company_id(name)')
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: false });
       if (!live) return;
       if (error) { setErr(error.message); setRows([]); return; }
       setErr('');
@@ -106,9 +106,9 @@ export function QuoteList({ reloadKey, onOpen }) {
     inSet(ui.company, r.company) && inSet(ui.product, r.product) && inSet(ui.sku, r.sku)
     && (!ui.from || (r.day && r.day >= ui.from)) && (!ui.to || (r.day && r.day <= ui.to))
   ), [rows, ui.company, ui.product, ui.sku, ui.from, ui.to]);
-  // Oldest first, by the timestamp; created_at order from the read already, and
+  // Newest first, by the timestamp; created_at order from the read already, and
   // stated here so the list never depends on how it was fetched.
-  const sorted = useMemo(() => [...shown].sort((a, b) => String(a.created || '').localeCompare(String(b.created || ''))), [shown]);
+  const sorted = useMemo(() => [...shown].sort((a, b) => String(b.created || '').localeCompare(String(a.created || ''))), [shown]);
 
   const pages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const page = Math.min(Math.max(1, ui.page || 1), pages);
@@ -206,7 +206,7 @@ export function QuoteList({ reloadKey, onOpen }) {
       const html = buildListDoc({
         title: 'Quote List',
         kicker: 'Quotes',
-        lines: [...filterLines(), sorted.length + ' quote' + (sorted.length === 1 ? '' : 's') + ' · oldest first'],
+        lines: [...filterLines(), sorted.length + ' quote' + (sorted.length === 1 ? '' : 's') + ' · newest first'],
         columns: [{ label: 'SKU', width: '18%' }, { label: 'Product Name', width: '42%' },
                   { label: 'Created', width: '14%' }, { label: 'Company' }],
         rows: sorted.map(r => [r.sku || DASH, r.product || DASH, fmtDay(r.created), r.company || DASH]),
