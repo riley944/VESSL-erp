@@ -1365,7 +1365,7 @@ function Platform({ session, newQuote = null }) {
             <div style={{ textAlign: "center" }}>SKU</div>
             <div>Product Name</div>
             {view === "search" && <div>Client</div>}
-            <div>Factory</div>
+            <div style={{ textAlign: "center" }}>Factory</div>
             <div style={{ textAlign: "center" }}>Tiers</div>
             <div style={{ textAlign: "center" }}>Method</div>
             <div style={{ textAlign: "center", whiteSpace: "nowrap" }}>Client Price Range</div>
@@ -1422,8 +1422,9 @@ function Platform({ session, newQuote = null }) {
                   <div style={{ ...S.cellPrimary, ...ELL, textAlign: "center" }} title={q.sku || ""}>{q.sku || "No SKU"}</div>
                   <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.product || ""}>{q.product || "Untitled product"}</div>
                   {view === "search" && <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.client || ""}>{q.client || "—"}</div>}
-                  <div style={{ minWidth: 0 }}>
-                    {/* Wraps onto a second line rather than truncating. */}
+                  <div style={{ minWidth: 0, textAlign: "center" }}>
+                    {/* Wraps onto a second line rather than truncating, every
+                        line centred, the country centred beneath. */}
                     <div style={{ ...S.cellPrimary, lineHeight: 1.3, overflowWrap: "break-word" }}>{q.factory || "—"}</div>
                     <div style={{ ...S.cellSub, ...ELL }}>{q.country || ""}</div>
                   </div>
