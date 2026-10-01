@@ -14,7 +14,7 @@ import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
 import { productByKey, ensureProductForQuote, skuActivity } from "@/lib/products";
 // The one door into the programs table. See the note at the top of lib/programs.js.
 import { createProgram } from "@/lib/programs";
-import { resolveQuoteLinks, existingCardFor, missingWords } from "@/lib/quoteCard";
+import { resolveQuoteLinks, existingCardFor, missingWords, existingCardMessage } from "@/lib/quoteCard";
 import { CardOwnerPopup } from "@/app/components/CardOwnerPopup";
 // The house modal, and the owner picker the Create PLM Card popup uses. Overlay
 // rather than a hand-rolled backdrop or a window.prompt: this file already has
@@ -1568,12 +1568,7 @@ function PlmSavedPanel({ saved, staff = [], userEmail, onBack, onStay }) {
       const ex = await existingCardFor(res.productId, res.clientId);
       if (ex.error) { setMsg("Could not check for a card — " + ex.error.message); return; }
       if (ex.card) {
-        const c = ex.card;
-        const from = c.source_quote && c.source_quote.quote_code ? "from " + c.source_quote.quote_code : "no source quote recorded";
-        onBack({ openCard: c.id, cardNote:
-          c.archived ? "A card already exists for " + label + " but was removed from the board. Use “Put back on the board” on the card to bring it back."
-          : c.declared_stage === "archived" ? "A card already exists for " + label + " and is Archived. Drag it back to Sampling to work on it."
-          : "A card already exists for " + label + " (" + from + "). Opened it." });
+        onBack({ openCard: ex.card.id, cardNote: existingCardMessage(ex.card, label) });
         return;
       }
       setAsk({ productId: res.productId, clientId: res.clientId, ownerId: ownerIdForEmail(staff, res.row && res.row.updated_by) });

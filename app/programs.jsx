@@ -35,7 +35,7 @@ import { loadExcelJS, excelDate } from '@/lib/excel';
 import { trackingUrl, findCarrier } from '@/lib/tracking';
 import { CreateCompanyModal } from '@/app/components/CreateCompanyModal';
 import { seedStageTasks as seedTasksFor, syncProductStage, createProgram } from '@/lib/programs';
-import { parseQuoteCode, findQuoteByCode, resolveQuoteLinks, existingCardFor, missingWords } from '@/lib/quoteCard';
+import { parseQuoteCode, findQuoteByCode, resolveQuoteLinks, existingCardFor, missingWords, existingCardMessage } from '@/lib/quoteCard';
 import { CardOwnerPopup } from '@/app/components/CardOwnerPopup';
 import { ownerIdForEmail } from '@/app/components/OwnerSelect';
 // Sync from records is gone with the derived board -- nothing here creates a
@@ -3023,16 +3023,8 @@ function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
       const ex = await existingCardFor(res.productId, res.clientId);
       if (ex.error) { setMsg({ tone: 'err', text: 'Could not check for a card — ' + ex.error.message }); return; }
       if (ex.card) {
-        const c = ex.card;
-        onOpen(c.id);
-        const from = c.source_quote && c.source_quote.quote_code
-          ? 'from ' + c.source_quote.quote_code : 'no source quote recorded';
-        setMsg({ tone: 'info', text:
-          c.archived
-            ? 'A card already exists for ' + labelOf(q) + ' but was removed from the board. Use “Put back on the board” on the card to bring it back.'
-          : c.declared_stage === ARCHIVED
-            ? 'A card already exists for ' + labelOf(q) + ' and is Archived. Drag it back to Sampling to work on it.'
-          : 'A card already exists for ' + labelOf(q) + ' (in ' + stageLabel(c.declared_stage) + ', ' + from + '). Opened it.' });
+        onOpen(ex.card.id);
+        setMsg({ tone: 'info', text: existingCardMessage(ex.card, labelOf(q)) });
         return;
       }
       setAsk({ quote: q, productId: res.productId, clientId: res.clientId, code,
