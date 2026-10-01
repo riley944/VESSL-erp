@@ -711,12 +711,17 @@ function useCardFactory(r) {
 // Yes or No, on the 1 Oct simplification. The keys are the CHECK; the labels are
 // what the dropdown, the saved line and the files say. master_sample is still in
 // the table and nothing reads or writes it.
+//
+// THE THIRD ELEMENT IS WHETHER THE DROPDOWN OFFERS IT. Testing came off the
+// dropdown after Loren's feedback; it stays here so a round already holding it
+// still reads Testing, and an Edit of that round still shows it selected rather
+// than blanking it. The CHECK still allows it.
 const SAMPLE_TYPES = [
-  ['first',              'First Sample'],
-  ['pre_production',     'Pre-Production Sample'],
-  ['production',         'Production Sample'],
-  ['testing_production', 'Testing Production Sample'],
-  ['testing',            'Testing'],
+  ['first',              'First Sample',              true],
+  ['pre_production',     'Pre-Production Sample',     true],
+  ['production',         'Production Sample',         true],
+  ['testing_production', 'Testing Production Sample', true],
+  ['testing',            'Testing',                   false],
 ];
 const sampleTypeLabel = k => (SAMPLE_TYPES.find(([v]) => v === k) || [null, k || ''])[1];
 
@@ -1136,7 +1141,8 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
           onChange={e=>set({ ...f, type: e.target.value })}
           style={{...inp,height:ROW_H,cursor:busy?'default':'pointer',color:f.type?'#1D1D1F':'#86868B'}}>
           <option value="">—</option>
-          {SAMPLE_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          {SAMPLE_TYPES.filter(([v, , offered]) => offered || v === f.type)
+            .map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
       </div>
       <div>
