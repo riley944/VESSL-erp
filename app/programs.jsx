@@ -3825,8 +3825,23 @@ export default function Programs({ userEmail }) {
                 boxShadow:'0 1px 3px rgba(0,0,0,.05)',cursor:'pointer',textAlign:'left',
                 display:'block',width:'100%',borderLeft:'3px solid '+accentOf(r.stage),
                 fontFamily:'inherit',boxSizing:'border-box'}}>
-        <div style={{fontFamily:'var(--mono)',fontSize:'11.5px',fontWeight:700,color:'#1A1A1C',
-                     whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.sku || '—'}</div>
+        {/* THE SOURCE QUOTE, small, at the right of the SKU line (script 104).
+            Nothing when the card has none. A span rather than a link, because
+            the tile is a button and a link may not sit inside one; it opens the
+            quote in a new tab and stops the click, so the card does not open. */}
+        <div style={{display:'flex',alignItems:'baseline',gap:'8px',minWidth:0}}>
+          <div style={{fontFamily:'var(--mono)',fontSize:'11.5px',fontWeight:700,color:'#1A1A1C',flex:1,minWidth:0,
+                       whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.sku || '—'}</div>
+          {sourceQuoteOf(r) && (
+            <span role="link" title={'Open quote ' + sourceQuoteOf(r).code + ' on the Quotes page'}
+              onMouseDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); e.preventDefault(); window.open(sourceQuoteOf(r).url, '_blank', 'noopener'); }}
+              style={{fontFamily:'var(--mono)',fontSize:'10.5px',fontWeight:600,color:'#0A84FF',flexShrink:0,
+                      cursor:'pointer',textDecoration:'underline',textUnderlineOffset:'2px'}}>
+              {sourceQuoteOf(r).code}
+            </span>
+          )}
+        </div>
         {/* Two lines then cut. A product name is the one field here with no length
             discipline behind it, and one long name must not set the height of
             every tile in the column. */}
