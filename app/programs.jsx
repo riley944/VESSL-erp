@@ -3093,10 +3093,7 @@ function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
   );
 }
 
-// navigate, openCard and cardNote come from the shell. openCard is a card to
-// open once the board has loaded, and cardNote the line to show with it -- the
-// Quotes page's "Saved as" panel sends both after making or finding a card.
-export default function Programs({ userEmail, navigate = null, openCard = null, cardNote = null }) {
+export default function Programs({ userEmail }) {
   const [rows, setRows]   = useState([]);
   const [ev, setEv]       = useState(null);
   const [loading, setLoad]= useState(true);
@@ -3266,14 +3263,7 @@ export default function Programs({ userEmail, navigate = null, openCard = null, 
     }
     setLoad(false);
   };
-  // OPEN THE CARD THE QUOTES PAGE SENT, once, when the board first has rows.
-  const sentCardDone = useRef(false);
-  useEffect(() => {
-    if (sentCardDone.current || loading || !openCard) return;
-    sentCardDone.current = true;
-    setOpenId(openCard);
-    if (cardNote) window._toast?.(cardNote, 'ok');
-  }, [loading, openCard, cardNote]);
+
   useEffect(()=>{ load(); }, []);
 
   // The document-level dragend and drop listeners were here. They existed to wipe
@@ -4084,16 +4074,7 @@ export default function Programs({ userEmail, navigate = null, openCard = null, 
         {/* A card from a Quote ID, last in the row so its message line -- flex
             basis 100% -- falls under everything rather than splitting the row. */}
         <CardFromQuoteBox staff={staff} userEmail={userEmail} onOpen={id => setOpenId(id)} onReload={load} />
-        {/* NEW QUOTE jumps to the Quotes page with the new-quote form open and a
-            note that it came from here; once saved, that page offers to make the
-            card and come back with it open (PlmSavedPanel in quotes.jsx). */}
-        {navigate && (
-          <button onClick={() => navigate('quotes', { newQuote: { from: 'plm' } })}
-            style={{border:'1px solid rgba(0,0,0,.12)',borderRadius:'10px',padding:'9px 14px',fontSize:'13px',fontWeight:600,
-                    fontFamily:'inherit',background:'#fff',color:'#1D1D1F',cursor:'pointer',whiteSpace:'nowrap'}}>
-            + New quote
-          </button>
-        )}
+
       </div>
 
       {/* The owner chip row was here. The one thing it carried that still has a

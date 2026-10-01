@@ -14,7 +14,7 @@ import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
 import { productByKey, ensureProductForQuote, skuActivity } from "@/lib/products";
 // The one door into the programs table. See the note at the top of lib/programs.js.
 import { createProgram } from "@/lib/programs";
-import { resolveQuoteLinks, existingCardFor, missingWords, existingCardMessage } from "@/lib/quoteCard";
+import { resolveQuoteLinks } from "@/lib/quoteCard";
 import { CardOwnerPopup } from "@/app/components/CardOwnerPopup";
 // The house modal, and the owner picker the Create PLM Card popup uses. Overlay
 // rather than a hand-rolled backdrop or a window.prompt: this file already has
@@ -659,7 +659,7 @@ const BLANK = {
 //  Login is handled by the ERP shell; we read the existing session
 //  and render the Platform directly.
 // ============================================================
-export default function Quotes({ session: erpSession, newQuote = null, navigate = null }) {
+export default function Quotes({ session: erpSession, newQuote = null }) {
   const [session, setSession] = useState(erpSession || null);
 
   useEffect(() => {
@@ -670,7 +670,7 @@ export default function Quotes({ session: erpSession, newQuote = null, navigate 
   }, [erpSession]);
 
   if (!session) return <div style={S.shell}><style>{CSS}</style><div style={S.center}>Loading quotes…</div></div>;
-  return <Platform session={session} newQuote={newQuote} navigate={navigate} />;
+  return <Platform session={session} newQuote={newQuote} />;
 }
 
 // ---------- tier calc helpers ----------
@@ -697,7 +697,7 @@ function quoteSummary(q) {
 const ALL = "__all_clients__";
 
 // ---------- main platform ----------
-function Platform({ session, newQuote = null, navigate = null }) {
+function Platform({ session, newQuote = null }) {
   const userEmail = session?.user?.email || "unknown";
   const isMobile = useIsMobile();
   const lastSaveRef = useRef(0);
@@ -721,10 +721,6 @@ function Platform({ session, newQuote = null, navigate = null }) {
   // card modal offers for reassignment, so the two pickers cannot disagree about
   // who exists. Loaded once with the other reference lists.
   const [staff, setStaff] = useState([]);
-  // PLM round trip: whether the open new-quote form came from the PLM page, and
-  // the quote it saved, for the "Saved as" panel.
-  const [fromPlm, setFromPlm] = useState(false);
-  const [plmSaved, setPlmSaved] = useState(null);   // { id, code, sku, client }
   const [showDirectory, setShowDirectory] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [showTasks, setShowTasks] = useState(false);
@@ -736,10 +732,6 @@ function Platform({ session, newQuote = null, navigate = null }) {
   // Keyed on that object, so a later visit to this page without one opens nothing.
   useEffect(() => {
     if (!newQuote) return;
-    // A new quote opened from the PLM page (newQuote.from === 'plm') ends, once
-    // saved, on the "Saved as Q-..." panel that can make its card and go back.
-    // Every other new quote saves exactly as it always has.
-    setFromPlm(newQuote.from === 'plm');
     setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), sku: newQuote.sku || "", product: newQuote.product || "", client: newQuote.client || "", tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] });
   }, [newQuote]);
 
@@ -1035,12 +1027,6 @@ function Platform({ session, newQuote = null, navigate = null }) {
     }
 
     if (!failedTasks.length) setEditing(null);
-    // Only for a quote the PLM page asked for, and only once it has fully saved
-    // and the form has closed -- a quote kept open to retry its tasks waits.
-    if (!failedTasks.length && fromPlm && savedRow) {
-      setFromPlm(false);
-      setPlmSaved({ id: savedRow.id, code: savedRow.quote_code || '', sku: savedRow.sku || '', client: savedRow.client || '' });
-    }
     if (!savedRow) await load();
     else if (failedTasks.length) {
       flash("Quote saved, but " + failedTasks.length + " task" + (failedTasks.length === 1 ? "" : "s")
@@ -1521,12 +1507,7 @@ function Platform({ session, newQuote = null, navigate = null }) {
 
       </>)}
 
-      {plmSaved && (
-        <PlmSavedPanel saved={plmSaved} staff={staff} userEmail={userEmail}
-          onBack={(params) => { setPlmSaved(null); if (navigate) navigate('programs', params || {}); }}
-          onStay={() => setPlmSaved(null)} />
-      )}
-      {editing && <QuoteForm initial={editing} onClose={() => { setEditing(null); setFromPlm(false); }} onSave={saveQuote} userEmail={userEmail}
+      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} userEmail={userEmail}
         existingTasks={editing.id ? tasks.filter((t) => t.quote_id === editing.id) : []} />}
       {/* Opens after a SKU change is saved. onDone reloads so the list shows the
           result; the modal stays up because the report IS the result. */}
@@ -1540,95 +1521,6 @@ function Platform({ session, newQuote = null, navigate = null }) {
 const Q_GAP = 14;
 // One line, cut with an ellipsis -- the full text rides on the cell's title.
 const ELL = { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
-
-// ── SAVED, FROM THE PLM PAGE ────────────────────────────────────────────────
-// Shown after a quote that the PLM page's New quote opened has saved. It says
-// the Quote ID it was given and offers to make its card -- the same steps as
-// the PLM page's Quote ID box and Create PLM Card (lib/quoteCard.js and
-// CardOwnerPopup), so the same refusals and the same owner popup, and nothing
-// is written until Start. Making the card, or finding one that already exists
-// for the product and client, goes back to the PLM page with that card open and
-// a line saying which. Back to PLM goes without a card; Stay here closes.
-function PlmSavedPanel({ saved, staff = [], userEmail, onBack, onStay }) {
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-  const [ask, setAsk] = useState(null);     // { productId, clientId, ownerId }
-  const label = (saved.sku || "No SKU") + " · " + (saved.client || "no client");
-
-  const make = async () => {
-    setMsg(""); setBusy(true);
-    try {
-      const res = await resolveQuoteLinks(saved.id);
-      if (res.error) { setMsg("Could not read " + saved.code + " — " + res.error.message); return; }
-      if (res.needsProduct || res.needsClient) {
-        setMsg(saved.code + " needs " + missingWords(res.needsProduct, res.needsClient)
-               + " before it can have a card — edit the quote, set " + (res.needsProduct && res.needsClient ? "them" : "it") + ", and save.");
-        return;
-      }
-      const ex = await existingCardFor(res.productId, res.clientId);
-      if (ex.error) { setMsg("Could not check for a card — " + ex.error.message); return; }
-      if (ex.card) {
-        onBack({ openCard: ex.card.id, cardNote: existingCardMessage(ex.card, label) });
-        return;
-      }
-      setAsk({ productId: res.productId, clientId: res.clientId, ownerId: ownerIdForEmail(staff, res.row && res.row.updated_by) });
-    } catch (e) {
-      setMsg("Something went wrong — " + ((e && e.message) || e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const start = async () => {
-    if (!ask) return;
-    setBusy(true);
-    try {
-      const { error } = await createProgram(ask.productId, ask.clientId,
-        { stage: "quoted", ownerId: ask.ownerId, createdBy: userEmail, sourceQuoteId: saved.id });
-      if (error) { setMsg("Could not create the card — " + error.message); setAsk(null); return; }
-      const ex = await existingCardFor(ask.productId, ask.clientId);
-      const ours = ex.card && ex.card.source_quote && ex.card.source_quote.quote_code === saved.code;
-      onBack({ openCard: ex.card ? ex.card.id : null,
-               cardNote: ours ? "PLM card created from " + saved.code + " — " + label + "."
-                              : "A card for " + label + " was created by somebody else a moment ago. Opened it." });
-    } catch (e) {
-      setMsg("Something went wrong — " + ((e && e.message) || e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <>
-      <Overlay onClose={onStay} maxWidth={440}>
-        <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: ".08em", textTransform: "uppercase", color: "#86868B" }}>Quote saved</div>
-        <div style={{ fontSize: 20, fontWeight: 600, color: "#0f1729", marginTop: 6 }}>
-          Saved as <span style={{ ...S.quoteCode, fontSize: 16, marginRight: 0 }}>{saved.code || "—"}</span>
-        </div>
-        <div style={{ fontSize: 13, color: "#6a7488", marginTop: 6 }}>{label}</div>
-        {msg && <div style={{ fontSize: 12.5, color: "#c2683a", marginTop: 12, lineHeight: 1.5 }}>{msg}</div>}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20, flexWrap: "wrap" }}>
-          <button onClick={onStay} disabled={busy}
-            style={{ background: "#F2F2F4", border: "none", borderRadius: 10, padding: "9px 14px", fontSize: 13, fontWeight: 600,
-                     color: "#5A5A5E", fontFamily: "inherit", cursor: busy ? "default" : "pointer" }}>Stay on Quotes</button>
-          <button onClick={() => onBack({})} disabled={busy}
-            style={{ background: "#F2F2F4", border: "none", borderRadius: 10, padding: "9px 14px", fontSize: 13, fontWeight: 600,
-                     color: "#5A5A5E", fontFamily: "inherit", cursor: busy ? "default" : "pointer" }}>Back to PLM</button>
-          <button onClick={make} disabled={busy}
-            style={{ background: "#0f7d43", border: "none", borderRadius: 10, padding: "9px 16px", fontSize: 13, fontWeight: 600,
-                     color: "#fff", fontFamily: "inherit", cursor: busy ? "default" : "pointer" }}>
-            {busy && !ask ? "Checking…" : "Create PLM card"}</button>
-        </div>
-      </Overlay>
-      {ask && (
-        <CardOwnerPopup title={"Create PLM card for " + (saved.sku || saved.code) + " · " + saved.code}
-          staff={staff} ownerId={ask.ownerId} busy={busy}
-          onOwner={v => setAsk(a => ({ ...a, ownerId: v }))}
-          onStart={start} onCancel={() => setAsk(null)} />
-      )}
-    </>
-  );
-}
 
 // ---------- expanded detail ----------
 // ── MARK WON, BACK ON THE NEW HELPER ────────────────────────────────────────
