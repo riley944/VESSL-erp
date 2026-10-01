@@ -812,13 +812,19 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   // somebody touches the arrows, and then the form uses it. The saved list
   // sorts by round number, so a back-filled round lands in its place.
   //
-  // NOT ON THE EDIT FORM. A saved round keeps its number: its notes were written
-  // under it and carry it as round_no (script 98).
+  // ON THE EDIT FORM TOO. A saved round can be renumbered, stepping over the
+  // numbers the card's OTHER rounds hold. Its notes follow in the database --
+  // trg_round_note_numbers (script 100) rewrites their round_no, which staff
+  // could not do from here. Notes from a deleted round keep their number.
   const used = new Set(rounds.map(x => x.round));
   const [roundPick, setRoundPick] = useState(null);
   const chosen = roundPick ?? nextRound;
-  const stepDown = () => { for (let n = chosen - 1; n >= 1; n--) if (!used.has(n)) return n; return null; };
-  const stepUp = () => { let n = chosen + 1; while (used.has(n)) n++; return n; };
+  // From n, the nearest free number below (null if none down to 1) and above.
+  // taken is the set to step over -- every round for a new one, every round
+  // but the one being edited for an edit.
+  const freeBelow = (n, taken) => { for (let k = n - 1; k >= 1; k--) if (!taken.has(k)) return k; return null; };
+  const freeAbove = (n, taken) => { let k = n + 1; while (taken.has(k)) k++; return k; };
+  const takenBesides = id => new Set(rounds.filter(x => x.id !== id).map(x => x.round));
 
   // lab is the CARD'S testing lab, programs.testing_lab -- one per card, not per
   // round. It rides in the round form so it can be set while the card is being
@@ -858,7 +864,8 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   });
   const unchanged = (x, f) => {
     const v = values(f);
-    return v.sample_type === (x.sample_type || null) && v.sent_date === (x.sent_date || null)
+    return (f.round === undefined || f.round === x.round)
+        && v.sample_type === (x.sample_type || null) && v.sent_date === (x.sent_date || null)
         && v.due_back === (x.due_back || null)
         && v.tracking_number === (x.tracking_number || null)
         && (v.carrier || '').toLowerCase() === (x.carrier || '').toLowerCase();
@@ -947,7 +954,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
 
   const startEdit = x => {
     setEditId(x.id); setErr('');
-    setEdit({ type: x.sample_type || '',
+    setEdit({ round: x.round, type: x.sample_type || '',
               sent: x.sent_date || '', due: x.due_back || '', carrier: x.carrier || '',
               tracking: x.tracking_number || '', lab: r.testing_lab || '' });
   };
@@ -972,7 +979,14 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   };
   const saveEdit = async x => {
     if (!datesOk(edit)) { setErr('Check the dates — each needs a full year from 2000 on.'); return; }
-    const v = values(edit);
+    const renumbered = edit.round !== x.round;
+    // The same plain words as the new-round form, before the unique constraint
+    // would refuse it.
+    if (renumbered && takenBesides(x.id).has(edit.round)) {
+      setErr('Round ' + edit.round + ' is already saved on this card. Pick another number with the arrows.');
+      return;
+    }
+    const v = { ...values(edit), ...(renumbered ? { round: edit.round } : {}) };
     // Nothing changed is a cancel, not a write -- an edited stamp for an edit
     // that changed nothing would be a false record. A changed lab alone writes
     // the card and leaves the round, and its edited stamp, untouched.
@@ -983,12 +997,19 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
       const { error } = await SB.from('program_sample_rounds')
         .update({ ...v, updated_by: userEmail || null, updated_at: new Date().toISOString() })
         .eq('id', x.id);
-      if (error) { setBusy(false); setErr(error.message); return; }
+      if (error) {
+        setBusy(false);
+        if (error.code === '23505') {
+          setErr('Round ' + edit.round + ' was just saved by somebody else. The list has been refreshed — pick another number.');
+          if (onTouched) await onTouched();
+        } else setErr(error.message);
+        return;
+      }
     }
     if (withLab) {
       const labErr = await saveLab(edit);
       if (labErr) {
-        setErr((roundChanged ? 'Round ' + x.round + ' was saved, but the testing lab was not — ' : 'Could not save the testing lab — ') + labErr);
+        setErr((roundChanged ? 'Round ' + edit.round + ' was saved, but the testing lab was not — ' : 'Could not save the testing lab — ') + labErr);
         await settle(); setBusy(false); return;
       }
     }
@@ -1071,29 +1092,28 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'14px'}}>
       <div style={{textAlign:'center'}}>
         <span style={lblMid}>Sample round</span>
-        {/* A stepper on the new-round form, fixed on an edit. Either way the
-            number sits in a box as tall as the Sample type select, so it is on
-            that line rather than at the top. */}
-        {which === 'form' ? (() => {
-          const down = stepDown();
+        {/* A stepper on both forms. The new-round form steps over every saved
+            number and keeps its pick in roundPick; an edit steps over the
+            card's other rounds and keeps it in the edit state. The number sits
+            in a box as tall as the Sample type select, so it is on that line. */}
+        {(() => {
+          const taken = which === 'form' ? used : takenBesides(editId);
+          const setNo = which === 'form' ? setRoundPick : (n => set({ ...f, round: n }));
+          const down = freeBelow(roundNo, taken);
           const arrow = on => ({ background:'none', border:'none', padding:'0 8px', fontSize:'16px',
                                  lineHeight:1, fontFamily:'inherit', color:on ? '#1D1D1F' : '#D1D1D6',
                                  cursor:on && !busy ? 'pointer' : 'default' });
           return (
             <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:ROW_H}}>
               <button type="button" aria-label="Lower round number" disabled={busy || down === null}
-                onClick={()=>{ if (down !== null) setRoundPick(down); }} style={arrow(down !== null)}>‹</button>
+                onClick={()=>{ if (down !== null) setNo(down); }} style={arrow(down !== null)}>‹</button>
               <span style={{fontSize:'16px',fontWeight:600,color:'#1D1D1F',fontVariantNumeric:'tabular-nums',
                             minWidth:'22px',textAlign:'center'}}>{roundNo}</span>
               <button type="button" aria-label="Higher round number" disabled={busy}
-                onClick={()=>setRoundPick(stepUp())} style={arrow(true)}>›</button>
+                onClick={()=>setNo(freeAbove(roundNo, taken))} style={arrow(true)}>›</button>
             </div>
           );
-        })() : (
-          <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:ROW_H,
-                       fontSize:'16px',fontWeight:600,color:'#1D1D1F',
-                       fontVariantNumeric:'tabular-nums'}}>{roundNo}</div>
-        )}
+        })()}
       </div>
       <div style={{gridColumn:'span 2'}}>
         {/* A dash is Not set, which is what every round saved before script 97
@@ -1180,7 +1200,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         </div>
         {editing ? (
           <div style={{marginTop:'6px'}}>
-            {fields(edit, setEdit, x.round, 'edit')}
+            {fields(edit, setEdit, edit.round ?? x.round, 'edit')}
             <div style={{display:'flex',gap:'7px',marginTop:'10px'}}>
               <button onClick={()=>saveEdit(x)} disabled={busy} style={pillBtn(true, busy)}>
                 {busy ? 'Saving…' : 'Save'}
