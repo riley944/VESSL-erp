@@ -243,7 +243,7 @@ export function QuoteList({ reloadKey, onOpen }) {
         {/* The heading names the pair, in the FROM / TO label style, so the two
             inputs read as one range filter. */}
         <div role="group" aria-label="Quote Creation Date Range" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={lbl}>Quote Creation Date Range</span>
+          <span style={{ ...lbl, textAlign: 'center' }}>Quote Creation Date Range</span>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, minHeight: 40 }}>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <span style={lbl}>From</span>
