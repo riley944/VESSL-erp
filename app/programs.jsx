@@ -104,7 +104,16 @@ const MANUAL_STAGES = [
   ['testing',    'Testing',    '#d6492f', false],
   ['production', 'Production', '#3461e0', false],
   ['shipped',    'Shipped',    '#0f9d6e', false],
+  // ARCHIVED IS WHERE A CARD GOES AFTER SAMPLING (script 96), a stage and a
+  // column like any other -- not Remove from board, which still means the card
+  // is off the board for any reason and lives behind Show removed. It is last
+  // so the visible flow reads Quoting, Sampling, Archived. A slate grey: done,
+  // and quieter than any stage still being worked.
+  ['archived',   'Archived',   '#636366', true],
 ];
+// The stage the board stops watching. Health, the Waiting tiles, the blocker
+// pill and the stale flag all skip it -- a finished card is not stalled.
+const ARCHIVED = 'archived';
 const VISIBLE_STAGES = MANUAL_STAGES.filter(s => s[3]);
 // A card still holding a hidden stage is shown, never dropped from the board --
 // see the Hidden stage column in Programs.
@@ -163,6 +172,9 @@ const STALE_DAYS = 21;
 // left as they are because unifying them is a decision about what the board
 // should warn at, not a tidy-up, and nobody has made it.
 const HEALTH = {
+  // Not a health. An archived card is outside the model, and the board export
+  // says so in its Health column rather than calling it On track.
+  archived: { label:'Not tracked', color:'#8E8E93' },
   on_track: { label:'On track', color:'#30D158' },
   at_risk:  { label:'At risk',  color:'#FF9F0A' },
   stalled:  { label:'Stalled',  color:'#FF375F' },
@@ -182,6 +194,7 @@ const openTasks = r => (r.tasks || []).filter(t => !t.done);
 // The blocker a tile names -- us first, because that is the one this office can
 // act on, then client, then factory.
 const blockerOf = r => {
+  if (r.stage === ARCHIVED) return null;
   const open = openTasks(r);
   return ['us', 'client', 'factory'].find(b => open.some(t => t.blocker === b)) || null;
 };
@@ -198,6 +211,7 @@ const sampleOverdue = r => {
   return !!due && daysSince(due) > 0 && SAMPLING_STAGES.includes(r.stage);
 };
 const healthOf = (r, tasks = []) => {
+  if (r.stage === ARCHIVED) return 'archived';
   const open = (tasks || []).filter(t => !t.done);
   const days = r.days || 0;
   if (sampleOverdue(r)) return 'stalled';
@@ -2759,7 +2773,7 @@ export default function Programs({ userEmail }) {
                // STALE IS ABOUT THE CARD, NOT THE PRODUCT. It counts days since the
                // stage was set, so a card nobody has moved in three weeks says so
                // whatever the records are doing underneath.
-               stale: stage !== SHIPPED && days !== null && days >= STALE_DAYS,
+               stale: stage !== SHIPPED && stage !== ARCHIVED && days !== null && days >= STALE_DAYS,
                ownerName: (r.owner || {}).full_name || (r.owner || {}).email || null,
                // LAST TOUCH, which is a different question from the stage date.
                // declared_stage_at answers when the card last MOVED; updated_at
@@ -3056,7 +3070,7 @@ export default function Programs({ userEmail }) {
 
   // A waiting tile, pressed. Any OPEN task with that blocker qualifies, as on
   // 11 Aug -- the tile counts cards, and this shows the cards it counted.
-  const blockerMatches = r => !ui.blocker || openTasks(r).some(t => t.blocker === ui.blocker);
+  const blockerMatches = r => !ui.blocker || (r.stage !== ARCHIVED && openTasks(r).some(t => t.blocker === ui.blocker));
 
   const matches = r => {
     if (!ui.search) return true;
@@ -3244,12 +3258,12 @@ export default function Programs({ userEmail }) {
         {/* THE PILL ROW IS ABSENT RATHER THAN EMPTY when a card has nothing to
             flag, because a reserved blank strip is a row of nothing repeated down
             the whole board. */}
-        {h !== 'on_track' || (r.days !== null && r.days !== undefined) || late || openHere > 0 || blk || r.noteCount > 0 || notReq || r.retired ? (
+        {(h === 'stalled' || h === 'at_risk') || (r.days !== null && r.days !== undefined) || late || openHere > 0 || blk || r.noteCount > 0 || notReq || r.retired ? (
           <div style={{display:'flex',alignItems:'center',gap:'6px',marginTop:'11px',flexWrap:'wrap'}}>
             {/* HEALTH, FIRST IN THE ROW -- what the edge used to say. The same
                 healthOf the Stalled tile above the board counts, so a pill and
                 that count cannot disagree. */}
-            {h !== 'on_track' && (
+            {(h === 'stalled' || h === 'at_risk') && (
               <span title={h === 'stalled'
                   ? 'A sample is overdue, or a task is waiting on us and the card has not moved in over 7 days'
                   : 'Over 14 days in this stage, or a task is past its due date'}
@@ -3373,7 +3387,9 @@ export default function Programs({ userEmail }) {
   // one open task carrying that blocker. A card can sit in more than one.
   const stalledCards = board.filter(r => healthOf(r, r.tasks) === 'stalled');
   const overdueCards = board.filter(sampleOverdue);
-  const waitingOn = b => board.filter(r => openTasks(r).some(t => t.blocker === b));
+  // Archived cards are skipped: a task left open on a finished card is not
+  // something anybody is waiting on.
+  const waitingOn = b => board.filter(r => r.stage !== ARCHIVED && openTasks(r).some(t => t.blocker === b));
 
   return (
     <div style={{padding:'26px 30px 60px'}}>
