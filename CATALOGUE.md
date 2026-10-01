@@ -2845,6 +2845,77 @@ would have bitten then. The exposure grows as the new features are used.
 
 ---
 
+## The 1 Oct follow-ups — after Loren's feedback, same day
+
+Five code changes and one script on top of the simplification, each tested by
+hand on ZZTESTPLM before the next. PLM.md's top box is the current description.
+
+| Commit | What |
+|---|---|
+| `7ec7b91` | A round's notes stay on screen under its Edit form; adding one keeps the form and its unsaved edits |
+| `9b8e8c8` | Checklist off behind `CHECKLIST_ON` (below) |
+| `a58fdf3` | Testing no longer offered as a sample type; a round holding it still reads Testing |
+| `57b3cf1` | The dropdown reads `vessl.sample_types` (script 102) and ends with + Add New Sample Type… |
+| `00748ef` | Edit view order is fields, notes, then Save / Cancel / Delete; Save adds a typed note; Cancel asks; title-case label |
+
+### The checklist is off, not gone
+
+One constant, `CHECKLIST_ON = false` in `app/programs.jsx`, gates every reader,
+so they come back together and cannot return out of step: the card's checklist,
+seeding on arrival, the bulk `program_tasks` read (no query is made), the tile's
+*N open* and blocker pills, the three Waiting tiles and their filter (a filter
+left in the page store is ignored), health's two task rules, and the Checklist
+section, sheet, table and Blocker / Open tasks columns in the exports. Stalled
+and Overdue samples stay. **No task was deleted.** Still touching tasks: Delete
+card, whose cascade removes a card's hidden tasks with it (its confirm still says
+so); `seedStageTasks`, reached only with the flag on; `advanceToProductionForPO`,
+which seeds but has had no caller since the simplification; the `Checklist` and
+`TaskRow` components, defined and unrendered. The records file never read tasks.
+
+### Script 102, as run — sample types become a list
+
+Rehearsal and commit, `z0` each. `vessl.sample_types` (`key` text primary key,
+generated for added types; `label`; `active`; `sort_order`; `created_by`;
+`created_at`), seeded with the five keys script 97's CHECK allowed so no stored
+value moved — First Sample, Pre-Production Sample, Production Sample, Testing
+Production Sample active at 10 to 40, **Testing inactive** at 50. That CHECK was
+dropped and `program_sample_rounds_sample_type_fkey` put in its place.
+
+- **Near-duplicates refused by the database.** `sample_types_label_clean` keeps a
+  label trimmed, non-empty, at most 60 characters, without a double space, tab
+  or line break; `sample_types_label_ci`, unique on `lower(label)`, refuses the
+  same name in another case. The double-space test is written
+  `strpos(label, repeat(chr(32), 2)) = 0` — a quoted space tripped preflight's
+  absence-check rule, and the transport rules forbid a run of spaces in a
+  literal. The app collapses spacing before it inserts.
+- **Privileges.** The schema default (`authenticated=arwdDxtm`) revoked first;
+  then SELECT, and INSERT on `label` and `created_by` only, so a key, `active`
+  and `sort_order` always come from their defaults. Row security with two staff
+  policies, SELECT and INSERT. No UPDATE, no DELETE; anon nothing.
+- **Ten probes**, undone, mostly as a signed-in staff user: add a type (key 36
+  characters, active, no sort order); the same name in another case, a leading
+  space, a double space, choosing the key, editing, deleting — each refused; a
+  round takes a new key; an unknown key refused by the foreign key; anon refused.
+
+**102r** drops the foreign key, restores script 97's CHECK (asserted by its
+hash), and drops the table. Types added from the app go with it (r1 counts
+them); it refuses while any round holds one. **Undoing the whole day now runs
+102r first**, then 100r, 99r, 98r, 97r, 96r.
+
+**Measured before the push:** the table holds the five seeded types and nothing
+added; no round holds any type.
+
+### If the code is ever rolled back past these
+
+To `fddc80b` (the simplification without the follow-ups): the dropdown is the
+built-in list again and offers Testing; a round on a type added from the app
+prints its generated key instead of a name; + Add New Sample Type is gone; the
+checklist and Waiting tiles return over whatever `program_tasks` holds. To
+`6a06e64`, the caveats in *The PLM simplification* above apply as well, plus the
+same unknown-key printing for added types.
+
+---
+
 ## Scripts 75, 76 and 77, as run — 2026-09-23, the PLM rebuild groundwork
 
 One `z0` each, preflight passed first time on all three, and all three verified
