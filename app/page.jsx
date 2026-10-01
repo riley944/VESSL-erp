@@ -10192,7 +10192,7 @@ export default function App() {
       {page==='quotes' ? (
         <div className="main-area">
           <div className="quotes-root" style={{height:'100%',overflowY:'auto'}}>
-            <Quotes session={session} newQuote={params.newQuote} />
+            <Quotes session={session} newQuote={params.newQuote} navigate={navigate} />
           </div>
         </div>
       ) : (
@@ -10217,7 +10217,7 @@ export default function App() {
           {page==='testing'          && <Testing userEmail={user?.email||''} />}
           {page==='codes'            && <Codes canDeleteCodes={role !== 'limited_qc'} />}
           {page==='pricing'          && <Pricing />}
-          {page==='programs'         && <Programs userEmail={user?.email||''} />}
+          {page==='programs'         && <Programs userEmail={user?.email||''} navigate={navigate} openCard={params.openCard} cardNote={params.cardNote} />}
           {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} userEmail={user?.email||''} />}
           {page==='inventory'        && <Inventory />}
           {/* role and user are already in this scope for the gate and the header;
