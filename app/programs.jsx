@@ -317,9 +317,30 @@ const touchFailedToast = msg =>
 // that opens to them grouped by stage, the way Open elsewhere does for tasks.
 // The stage a note was written in comes from insertExtra, which the card fills
 // with its current stage; it is never edited afterwards, and the grant agrees.
+//
+// CARD NOTES ARE NO LONGER SCOPED (1 Oct). With the board down to Quoting,
+// Sampling and Archived, folding a Sampling note away once a card is archived
+// hid the record people most wanted. Card Notes pass labelOf instead, and every
+// note says the stage it was written in. stageScoped is kept, unused, for a
+// longer ladder.
+//
+// FOUR PROPS FOR ROUND NOTES (script 98), all optional, so General Notes pass
+// nothing and behave as before.
+//   nullCol      -- a column that must be NULL. Card Notes pass round_id, so a
+//                   note on a live round shows under its round and not here.
+//   selectExtra  -- more columns to read, comma-separated.
+//   labelOf      -- a word or two after the date, from the note. Card Notes
+//                   say the stage, or Round N for a note whose round was
+//                   deleted (round_no stays when round_id is set to NULL).
+//   reloadKey    -- re-read when it changes. Card Notes pass the round ids, so
+//                   a deleted round's notes appear here at once.
+//   quietExtras  -- values of extraCol not worth saying, extraDefault by default.
+//   compact      -- the smaller form used inside a sample round.
 function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraCol, extraDefault,
                       filter = null, title, subtitle, programId, userEmail, onTouched,
-                      stageScoped = false, stage = null }) {
+                      stageScoped = false, stage = null,
+                      nullCol = null, selectExtra = '', labelOf = null, reloadKey = '',
+                      quietExtras = null, compact = false }) {
   const [notes, setNotes] = useState(null);
   // Per card-open, not remembered -- the same rule as Open elsewhere.
   const [showOther, setShowOther] = useState(false);
@@ -353,9 +374,11 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
   // data rather than like a bug, and is the worse kind of wrong.
   const load = async () => {
     let qy = SB.from(table)
-      .select('id,author,note,created_at,edited_at' + (extraCol ? ',' + extraCol : '') + (stageScoped ? ',stage' : ''))
+      .select('id,author,note,created_at,edited_at' + (extraCol ? ',' + extraCol : '') + (stageScoped ? ',stage' : '')
+              + (selectExtra ? ',' + selectExtra : ''))
       .eq(keyCol, keyId);
     if (filter) qy = qy.eq(filter.col, filter.val);
+    if (nullCol) qy = qy.is(nullCol, null);
     const { data, error } = await qy.order('created_at', { ascending:false });
     if (error) { setErr(error.message); setNotes([]); return; }
     setNotes(data || []);
@@ -363,6 +386,15 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
   // Keyed on the row the notes belong to, not on the program -- the sampling panel
   // reloads when the product changes and the general one when the card does.
   useEffect(()=>{ setNotes(null); setEditId(null); load(); }, [table, keyId]);
+  // A quiet re-read, without blanking the list, when the caller says the rows
+  // behind it may have changed -- a round deleted, its notes now Card Notes.
+  // The first value is the one the mount effect above already read for.
+  const seenKey = useRef(reloadKey);
+  useEffect(()=>{
+    if (reloadKey === seenKey.current) return;
+    seenKey.current = reloadKey;
+    load();
+  }, [reloadKey]);
 
   // A NOTE IS A TOUCH, and so is editing one or deleting one. The card reports a
   // single last-touch line and it would be a lie if working on a card left it
@@ -464,7 +496,8 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
                         anybody needs it; what the reader needs here is to know the
                         words changed after they were first written. */}
                     {n.edited_at ? ' · edited' : ''}
-                    {extraCol && n[extraCol] && n[extraCol] !== extraDefault ? ' · ' + n[extraCol] : ''}
+                    {labelOf && labelOf(n) ? ' · ' + labelOf(n) : ''}
+                    {extraCol && n[extraCol] && !(quietExtras || [extraDefault]).includes(n[extraCol]) ? ' · ' + n[extraCol] : ''}
                   </span>
                   {/* OFFERED ONLY ON YOUR OWN NOTES, and the database agrees --
                       the restrictive policy refuses an update to anybody else row,
@@ -511,15 +544,16 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
   };
 
   return (
-    <div style={{marginTop:'16px',paddingTop:'14px',borderTop:'1px solid #ECECEE'}}>
-      <div style={{fontSize:'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',
-                   color:'#86868B',marginBottom:subtitle?'3px':'9px'}}>{title}</div>
+    <div style={compact ? {marginTop:'10px',paddingTop:'9px',borderTop:'1px solid #F0F0F2'}
+                        : {marginTop:'16px',paddingTop:'14px',borderTop:'1px solid #ECECEE'}}>
+      <div style={{fontSize:compact?'10px':'11px',fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',
+                   color:'#86868B',marginBottom:subtitle?'3px':(compact?'6px':'9px')}}>{title}</div>
       {subtitle && (
         <div style={{fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5,marginBottom:'9px'}}>{subtitle}</div>
       )}
 
-      <textarea data-noguard value={text} onChange={e=>setText(e.target.value)} rows={2}
-        placeholder="Add a note — you can edit or delete your own notes later"
+      <textarea data-noguard value={text} onChange={e=>setText(e.target.value)} rows={compact ? 1 : 2}
+        placeholder={compact ? 'Add a note on this round' : 'Add a note — you can edit or delete your own notes later'}
         style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 11px',
                 fontSize:'13px',fontFamily:'inherit',outline:'none',resize:'vertical',
                 background:'#fff',boxSizing:'border-box'}} />
@@ -873,9 +907,17 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
               tracking: x.tracking_number || '', lab: r.testing_lab || '' });
   };
 
-  // Asked once, in the words agreed, and there is no undo -- the row is gone.
+  // Asked once, and there is no undo -- the round row is gone. ITS NOTES ARE NOT
+  // (script 98). The foreign key sets their round_id to NULL and they keep
+  // round_no, so they move to Card Notes labelled Round N. The confirm counts
+  // them first so it can say so; a failed count just leaves the number out.
   const removeRound = async x => {
-    if (!window.confirm("Delete round " + x.round + "? This can't be undone.")) return;
+    const { count } = await SB.from('program_notes')
+      .select('id', { count: 'exact', head: true }).eq('round_id', x.id);
+    const kept = count > 0
+      ? ' Its ' + count + ' note' + (count === 1 ? '' : 's') + ' will be kept as Card Notes, labelled Round ' + x.round + '.'
+      : ' Any notes on it will be kept as Card Notes.';
+    if (!window.confirm('Delete round ' + x.round + '?' + kept + " The round itself can't be brought back.")) return;
     setBusy(true); setErr('');
     const { error } = await SB.from('program_sample_rounds').delete().eq('id', x.id);
     if (error) { setBusy(false); setErr(error.message); return; }
@@ -1083,6 +1125,13 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
               Saved by <span style={{fontWeight:600,color:'#5A5A5E'}}>{staffName(staff, x.created_by) || 'unknown'}</span> · {when(x.created_at)}
               {x.updated_at && <> · edited by <span style={{fontWeight:600,color:'#5A5A5E'}}>{staffName(staff, x.updated_by) || 'unknown'}</span> · {when(x.updated_at)}</>}
             </div>
+            {/* THE ROUND'S OWN NOTES (script 98) -- Card Notes in shape, keyed
+                on the round. Each carries the card, the stage and the round
+                number, so it still reads as this round if the round is deleted. */}
+            <NotesPanel staff={staff} table="program_notes" keyCol="round_id" keyId={x.id}
+              insertExtra={{ program_id: r.id, source: 'round', stage: 'sampling', round_no: x.round }}
+              extraCol="source" extraDefault="round" compact
+              title={'Round ' + x.round + ' notes'} programId={r.id} userEmail={userEmail} onTouched={onTouched} />
           </>
         )}
       </div>
@@ -1686,9 +1735,11 @@ const shapeNotes = (list, kindCol, dflt, staff = []) => (list || []).map(n => ({
 }));
 
 const fetchCardNotes = async (r, staff = []) => {
+  // round_id NULL: a note on a live round belongs to its round, not to Card
+  // Notes (script 98). A deleted round's notes have NULL here and are included.
   const own = await SB.from('program_notes')
     .select('author,note,created_at,edited_at,source,stage')
-    .eq('program_id', r.id).order('created_at', { ascending:false });
+    .eq('program_id', r.id).is('round_id', null).order('created_at', { ascending:false });
   if (own.error) throw new Error(own.error.message);
   // A card with no product has no product notes to ask for. product_id is the
   // key, and .eq on null matches nothing -- a round trip to learn what is already
@@ -2478,9 +2529,15 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
           a display name, and the restrictive policies compare lower(author) to
           the email in the token -- a name would insert and then be uneditable
           and undeletable by the person who wrote it. */}
+      {/* NOT SCOPED BY STAGE any more, and only notes with no live round --
+          those sit under their round. A note whose round was deleted reads
+          Round N; every other says the stage it was written in. */}
       <NotesPanel staff={staff} table="program_notes" keyCol="program_id" keyId={r.id}
         insertExtra={{ source: 'manual', stage: r.stage || null }} extraCol="source" extraDefault="manual"
-        stageScoped stage={r.stage || null}
+        quietExtras={['manual', 'round']}
+        nullCol="round_id" selectExtra="stage,round_no"
+        labelOf={n => n.round_no ? 'Round ' + n.round_no : (n.stage ? stageLabel(n.stage) : null)}
+        reloadKey={(r.rounds || []).map(x => x.id).join(',') || 'none'}
         title="Card Notes" programId={r.id} userEmail={userEmail} onTouched={onTouched} />
       {/* ── OFF THE BOARD, NOT OUT OF EXISTENCE ─────────────────────────────
           Riley's Archive, and last in the tab, which is where CodeModal and
@@ -3101,7 +3158,7 @@ export default function Programs({ userEmail }) {
   const boardTables = async () => {
     const [cn, gn] = await Promise.all([
       SB.from('program_notes').select('program_id,author,note,created_at,edited_at,source,stage')
-        .order('created_at', { ascending:false }),
+        .is('round_id', null).order('created_at', { ascending:false }),
       SB.from('product_notes').select('product_id,author,note,created_at,edited_at,kind')
         .eq('kind', 'sampling').order('created_at', { ascending:false }),
     ]);
