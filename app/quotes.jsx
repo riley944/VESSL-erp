@@ -1184,9 +1184,16 @@ function Platform({ session, newQuote = null }) {
   // SKU, Product Name, [Client in search], Factory, Tiers, Method, Client Price
   // Range, Avg Margin, Updated, the three icons. Fixed widths for the short
   // columns; the text columns share what is left and truncate.
-  const qGrid = "22px 78px minmax(0,130px) minmax(0,1.6fr) "
-    + (view === "search" ? "minmax(0,1fr) " : "")
-    + "minmax(0,1.1fr) 56px 76px 140px 88px 138px 108px";
+  //
+  // FACTORY GETS THE LARGEST SHARE, and wraps rather than truncates: factory
+  // names run to 45 characters ("Universal Plastic and Metal Manufacturing
+  // LTD"), and a cut-off factory reads as a different factory. Product Name
+  // gives up width for it and keeps truncating, with the full name on hover.
+  // Client Price Range stays 140px -- the widest real range is about
+  // "$12.345 – $14.50".
+  const qGrid = "22px 78px 120px minmax(0,1.1fr) "
+    + (view === "search" ? "minmax(0,0.9fr) " : "")
+    + "minmax(0,1.6fr) 52px 72px 140px 80px 126px 104px";
 
   const myOpenTaskCount = tasks.filter((t) => !t.done && (t.assigned_to || "").toLowerCase() === userEmail.toLowerCase()).length;
 
@@ -1355,14 +1362,14 @@ function Platform({ session, newQuote = null }) {
           <div style={{ ...S.theadRow, display: "grid", gridTemplateColumns: qGrid, columnGap: Q_GAP }}>
             <div />
             <div>Quote ID</div>
-            <div>SKU</div>
+            <div style={{ textAlign: "center" }}>SKU</div>
             <div>Product Name</div>
             {view === "search" && <div>Client</div>}
             <div>Factory</div>
             <div style={{ textAlign: "center" }}>Tiers</div>
             <div style={{ textAlign: "center" }}>Method</div>
-            <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>Client Price Range</div>
-            <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>Avg Margin</div>
+            <div style={{ textAlign: "center", whiteSpace: "nowrap" }}>Client Price Range</div>
+            <div style={{ textAlign: "center", whiteSpace: "nowrap" }}>Avg Margin</div>
             <div style={{ paddingLeft: 10 }}>Updated</div>
             <div />
           </div>
@@ -1412,11 +1419,12 @@ function Platform({ session, newQuote = null }) {
                   <div style={{ minWidth: 0 }}>
                     {q.quoteCode ? <span style={{ ...S.quoteCode, marginRight: 0 }}>{q.quoteCode}</span> : <span style={S.cellSub}>—</span>}
                   </div>
-                  <div style={{ ...S.cellPrimary, ...ELL }} title={q.sku || ""}>{q.sku || "No SKU"}</div>
+                  <div style={{ ...S.cellPrimary, ...ELL, textAlign: "center" }} title={q.sku || ""}>{q.sku || "No SKU"}</div>
                   <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.product || ""}>{q.product || "Untitled product"}</div>
                   {view === "search" && <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.client || ""}>{q.client || "—"}</div>}
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ ...S.cellPrimary, ...ELL }} title={q.factory || ""}>{q.factory || "—"}</div>
+                    {/* Wraps onto a second line rather than truncating. */}
+                    <div style={{ ...S.cellPrimary, lineHeight: 1.3, overflowWrap: "break-word" }}>{q.factory || "—"}</div>
                     <div style={{ ...S.cellSub, ...ELL }}>{q.country || ""}</div>
                   </div>
                   <div style={{ textAlign: "center" }}>
@@ -1426,8 +1434,8 @@ function Platform({ session, newQuote = null }) {
                       plain muted text, centred in a column wide enough to stand
                       clear of Tiers. */}
                   <div style={{ textAlign: "center", fontSize: 13, color: "#6a7488" }}>{sum.method || "—"}</div>
-                  <div style={{ textAlign: "right", whiteSpace: "nowrap", ...S.num, fontWeight: 600, color: "#0f1729" }}>{priceRange}</div>
-                  <div style={{ textAlign: "right", whiteSpace: "nowrap", ...S.num }}>{marginCell}</div>
+                  <div style={{ textAlign: "center", whiteSpace: "nowrap", ...S.num, fontWeight: 600, color: "#0f1729" }}>{priceRange}</div>
+                  <div style={{ textAlign: "center", whiteSpace: "nowrap", ...S.num }}>{marginCell}</div>
                   {/* paddingLeft on top of the column gap, so the margin figure
                       and the date read as two things, not one. */}
                   <div style={{ minWidth: 0, paddingLeft: 10 }}>
