@@ -716,8 +716,8 @@ const sampleTypeLabel = k => (SAMPLE_TYPES.find(([v]) => v === k) || [null, k ||
 // withTracking adds the shipment -- "· FedEx 1Z…", carrier then number, on the
 // entry line only. A carrier alone reads "· FedEx", a number alone "· tracking
 // 1Z…" so a bare number is not left unlabelled. The Sampling row and the board's
-// Latest round column leave it off, because the Sampling tracking and Revision
-// tracking rows beside them already say it.
+// Latest round column leave it off, because the Sample tracking row beside them
+// already says it.
 const roundText = (x, withTracking = false) => {
   if (!x) return null;
   const parts = ['Round ' + x.round];
@@ -732,11 +732,11 @@ const roundText = (x, withTracking = false) => {
 };
 
 // ── TRACKING, ON THE CARD TAB ───────────────────────────────────────────────
-// Sampling tracking is round 1's shipment. Revision tracking is the shipment on
-// the HIGHEST revision round that records one -- a carrier or a number -- so it
-// always names the newest shipment somebody recorded, and a round saved with
-// neither does not blank the one before it. "FedEx · 1Z… · round 3". A dash when
-// there is no revision round at all.
+// ONE ROW, Sample tracking (1 Oct). It replaced Sampling tracking (round 1) and
+// Revision tracking (round 2 up) when the two stages became one. It names the
+// shipment on the HIGHEST round that records one -- a carrier or a number -- so
+// it is always the newest shipment somebody recorded, and a round saved with
+// neither does not blank the one before it. "FedEx · 1Z… · round 3".
 const shipLine = x => [x.carrier, x.tracking_number].filter(Boolean).join(' · ');
 // The shipment a Card row names, with its link -- null when the row names none.
 // url is null too when trackingUrl cannot tell whose number it is, and then the
@@ -765,14 +765,9 @@ const ShipValue = ({ ship }) => (
     {ship.round ? ' · round ' + ship.round : ''}
   </>
 );
-const samplingTracking = r => {
-  const x = (r.rounds || []).find(y => y.round === 1);
-  return (x && shipLine(x)) || 'Not recorded';
-};
-const revisionTracking = r => {
-  const rev = (r.rounds || []).filter(y => y.round >= 2);
-  if (!rev.length) return '—';
-  const hit = [...rev].sort((a, b) => b.round - a.round).find(y => shipLine(y));
+const trackedRound = r => [...(r.rounds || [])].sort((a, b) => b.round - a.round).find(y => shipLine(y)) || null;
+const sampleTracking = r => {
+  const hit = trackedRound(r);
   return hit ? shipLine(hit) + ' · round ' + hit.round : 'Not recorded';
 };
 
@@ -1608,14 +1603,11 @@ const recordRows = r => {
                : sampled === 'sample' ? 'Product marked Sample'
                : 'Not recorded', !strip && !sampled]];
     })(),
-    // Round 1's tracking number, and the newest revision round's that has one.
-    // The 4th element is the shipment the row names, so the screen can link its
-    // number and the workbooks can make the cell a hyperlink. Text readers take
-    // the first two and never see it.
-    ['Sampling tracking', samplingTracking(r), samplingTracking(r) === 'Not recorded',
-      shipOf((r.rounds || []).find(y => y.round === 1), false, r.carriers)],
-    ['Revision tracking', revisionTracking(r), ['—', 'Not recorded'].includes(revisionTracking(r)),
-      shipOf([...(r.rounds || [])].filter(y => y.round >= 2).sort((a, b) => b.round - a.round).find(y => shipLine(y)), true, r.carriers)],
+    // The newest round that records a shipment. The 4th element is the shipment
+    // the row names, so the screen can link its number and the workbooks can
+    // make the cell a hyperlink. Text readers take the first two and never see it.
+    ['Sample tracking', sampleTracking(r), sampleTracking(r) === 'Not recorded',
+      shipOf(trackedRound(r), true, r.carriers)],
     ['Purchase order', po ? po.num + (po.on ? ' · ' + fmt(po.on) : '') + ofN(po.n) : none, !po],
     ['Sales order', so ? so.num + (so.on ? ' · ' + fmt(so.on) : '') + ofN(so.n) : none, !so],
     // AN ETD IS A PLAN AND SAYS SO. Departed is what actually happened and wins
@@ -1832,15 +1824,22 @@ const shapeNotes = (list, kindCol, dflt, staff = []) => (list || []).map(n => ({
   kind: (n[kindCol] && n[kindCol] !== dflt) ? n[kindCol] : '', author: staffName(staff, n.author) || 'unknown',
   date: n.created_at, edited: !!n.edited_at, text: n.note || '', stage: n.stage || null,
   programId: n.program_id || null, productId: n.product_id || null,
+  roundId: n.round_id || null, roundNo: n.round_no || null,
 }));
 
 const fetchCardNotes = async (r, staff = []) => {
   // round_id NULL: a note on a live round belongs to its round, not to Card
   // Notes (script 98). A deleted round's notes have NULL here and are included.
   const own = await SB.from('program_notes')
-    .select('author,note,created_at,edited_at,source,stage')
+    .select('author,note,created_at,edited_at,source,stage,round_no')
     .eq('program_id', r.id).is('round_id', null).order('created_at', { ascending:false });
   if (own.error) throw new Error(own.error.message);
+  // The notes on the card's live rounds, for the working file's Round notes.
+  // Oldest first within a round, the order they were written in.
+  const onRounds = await SB.from('program_notes')
+    .select('author,note,created_at,edited_at,source,round_id,round_no')
+    .eq('program_id', r.id).not('round_id', 'is', null).order('created_at', { ascending:true });
+  if (onRounds.error) throw new Error(onRounds.error.message);
   // A card with no product has no product notes to ask for. product_id is the
   // key, and .eq on null matches nothing -- a round trip to learn what is already
   // known here.
@@ -1855,7 +1854,8 @@ const fetchCardNotes = async (r, staff = []) => {
     if (prod.error) throw new Error(prod.error.message);
   }
   return { card: shapeNotes(own.data, 'source', 'manual', staff),
-           general: shapeNotes(prod.data, 'kind', 'sampling', staff) };
+           general: shapeNotes(prod.data, 'kind', 'sampling', staff),
+           rounds: shapeNotes(onRounds.data, 'source', 'round', staff) };
 };
 
 // ── THE PRINTED CARD ────────────────────────────────────────────────────────
@@ -2008,16 +2008,18 @@ const workingStrip = r => [
 ];
 // EVERY SAVED ROUND, round 1 first, so the file reads as the history it is --
 // the card lists newest first because that is what somebody working it needs.
+// SAMPLE TYPE, NOT MASTER SAMPLE (script 97), and no Stage or Comment column:
+// every round is a Sampling round now, and Comment folded into the round notes,
+// which the files list under their round (roundNoteGroups).
 const workingRounds = (r, staff) => [...(r.rounds || [])].sort((a, b) => a.round - b.round).map(x => ({
+  id: x.id,
   round: String(x.round),
-  stage: stageLabel(x.stage),
-  master: x.master_sample === true ? 'Included' : x.master_sample === false ? 'Not included' : '',
+  type: x.sample_type ? sampleTypeLabel(x.sample_type) : '',
   sent: x.sent_date || null,
   due: x.due_back || null,
   carrier: x.carrier || '',
   tracking: x.tracking_number || '',
   trackingUrl: trackingUrl(x.carrier, x.tracking_number, r.carriers),
-  comment: x.comment || '',
   savedBy: staffName(staff, x.created_by) || 'unknown',
   savedAt: x.created_at || null,
   editedBy: x.updated_at ? (staffName(staff, x.updated_by) || 'unknown') : '',
@@ -2034,10 +2036,13 @@ const cellText = v => (v && typeof v === 'object' && 'text' in v ? v.text : v);
 const styleLinks = ws => ws.eachRow(row => row.eachCell(c => {
   if (c.value && typeof c.value === 'object' && c.value.hyperlink) c.font = LINK_FONT;
 }));
-const ROUND_COLS = ['Round', 'Stage', 'Master sample', 'Sent', 'Due back', 'Carrier', 'Tracking #', 'Comment', 'Saved by', 'Saved at', 'Edited by', 'Edited at'];
-// Every task, in ladder order, stages with no tasks left out. Within a stage
-// the order the board loaded them in -- sort_order, then created_at.
-const workingTasks = (r, staff) => MANUAL_STAGES.map(([k, l]) => ({
+const ROUND_COLS = ['Round', 'Sample type', 'Sent', 'Due back', 'Carrier', 'Tracking #', 'Saved by', 'Saved at', 'Edited by', 'Edited at'];
+const ROUND_NOTE_COLS = ['Round', 'Author', 'Date', 'Edited', 'Note'];
+// Every task on a stage that is on the board, in ladder order, stages with no
+// tasks left out. Tasks left on a hidden stage are not in the files, as they
+// are not on the card (VISIBLE_STAGES). Within a stage the order the board
+// loaded them in -- sort_order, then created_at.
+const workingTasks = (r, staff) => VISIBLE_STAGES.map(([k, l]) => ({
   label: l,
   tasks: (r.tasks || []).filter(t => t.stage === k).map(t => {
     const who = t.owner_id ? (staff.find(s => s.id === t.owner_id) || {}) : null;
@@ -2052,24 +2057,37 @@ const workingTasks = (r, staff) => MANUAL_STAGES.map(([k, l]) => ({
   }),
 })).filter(g => g.tasks.length);
 
-// ALL card notes, grouped by the stage they were written in, ladder order, the
-// stage named; notes with no stage last. The card shows one stage at a time;
-// the file is the whole history.
+// ALL card notes, grouped the way the card labels them: by the stage they were
+// written in, ladder order, then the notes kept from deleted rounds, Round N in
+// number order, then notes with no stage. Live round notes are not Card Notes
+// and are not in this list (fetchCardNotes); they are in roundNoteGroups.
 const workingNoteGroups = card => {
-  const groups = MANUAL_STAGES.map(([k, l]) => ({ label: l, list: card.filter(n => n.stage === k) }));
-  groups.push({ label: 'No stage', list: card.filter(n => !n.stage || STAGE_LABEL[n.stage] === undefined) });
+  const fromRound = card.filter(n => n.roundNo);
+  const rest = card.filter(n => !n.roundNo);
+  const groups = MANUAL_STAGES.map(([k, l]) => ({ label: l, list: rest.filter(n => n.stage === k) }));
+  [...new Set(fromRound.map(n => n.roundNo))].sort((a, b) => a - b).forEach(no =>
+    groups.push({ label: 'Round ' + no + ' (round deleted)', list: fromRound.filter(n => n.roundNo === no) }));
+  groups.push({ label: 'No stage', list: rest.filter(n => !n.stage || STAGE_LABEL[n.stage] === undefined) });
   return groups.filter(g => g.list.length);
 };
+// THE NOTES ON EACH LIVE ROUND, round 1 first as the rounds table reads, one
+// group per round that has any. roundNotes come from fetchCardNotes (rounds) or
+// the board fetch, shaped by shapeNotes, each carrying its roundId.
+const roundNoteGroups = (r, roundNotes) => [...(r.rounds || [])]
+  .sort((a, b) => a.round - b.round)
+  .map(x => ({ round: x.round, label: 'Round ' + x.round, list: (roundNotes || []).filter(n => n.roundId === x.id) }))
+  .filter(g => g.list.length);
 
 // ── THE BOARD AS A FILE ─────────────────────────────────────────────────────
 // Every card on the board in one workbook or one CSV, built from the SAME
 // pieces the card files use -- workingRounds, workingTasks, workingNoteGroups,
 // cardGroups, sampleStripText, healthOf, blockerOf -- so a card reads the same
-// in the board file as in its own. Six tables, each keyed by SKU and client so
+// in the board file as in its own. Seven tables, each keyed by SKU and client so
 // any row says which card it belongs to:
 //   Board          one row per card, the tile and its header facts
 //   Rounds         one row per saved sample round
-//   Checklist      one row per task
+//   Round notes    one row per note on a live round
+//   Checklist      one row per task on a stage that is on the board
 //   Card notes     one row per card note
 //   Records        one row per card, a column per What the system knows line
 //   General notes  one row per product note, with the clients whose cards show it
@@ -2082,7 +2100,7 @@ const workingNoteGroups = card => {
 // text. The workbook turns dates into real dates; the CSV writes them as text,
 // the same split the card files make.
 const BOARD_STAGE_ORDER = Object.fromEntries(MANUAL_STAGES.map(([k], i) => [k, i]));
-const buildBoardTables = (cards, staff, cardNotes, generalNotes) => {
+const buildBoardTables = (cards, staff, cardNotes, generalNotes, roundNotes = []) => {
   // Ladder order, then SKU, so the file reads down the board left to right.
   const list = [...cards].sort((a, b) => {
     const sa = a.stage in BOARD_STAGE_ORDER ? BOARD_STAGE_ORDER[a.stage] : 99;
@@ -2118,12 +2136,20 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes) => {
 
   const rounds = {
     name: 'Rounds',
-    cols: [['SKU'], ['Client'], ['Round', 'num'], ['Stage'], ['Master sample'], ['Sent', 'date'], ['Due back', 'date'],
-           ['Carrier'], ['Tracking #'], ['Comment'], ['Saved by'], ['Saved at', 'stamp'], ['Edited by'], ['Edited at', 'stamp']],
+    cols: [['SKU'], ['Client'], ['Round', 'num'], ['Sample type'], ['Sent', 'date'], ['Due back', 'date'],
+           ['Carrier'], ['Tracking #'], ['Saved by'], ['Saved at', 'stamp'], ['Edited by'], ['Edited at', 'stamp']],
     rows: list.flatMap(r => workingRounds(r, staff).map(x => [
-      ...key(r), Number(x.round), x.stage, x.master, x.sent, x.due, x.carrier, linkCell(x.tracking, x.trackingUrl), x.comment,
+      ...key(r), Number(x.round), x.type, x.sent, x.due, x.carrier, linkCell(x.tracking, x.trackingUrl),
       x.savedBy, x.savedAt, x.editedBy, x.editedAt,
     ])),
+  };
+
+  const roundNoteTable = {
+    name: 'Round notes',
+    cols: [['SKU'], ['Client'], ['Round', 'num'], ['Author'], ['Date', 'stamp'], ['Edited'], ['Note']],
+    rows: list.flatMap(r => roundNoteGroups(r, roundNotes.filter(n => n.programId === r.id)).flatMap(g => g.list.map(n => [
+      ...key(r), g.round, n.author, n.date, n.edited ? 'Yes' : '', n.text,
+    ]))),
   };
 
   const checklist = {
@@ -2174,11 +2200,11 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes) => {
     }),
   };
 
-  return [board, rounds, checklist, cardNoteTable, records, general];
+  return [board, rounds, roundNoteTable, checklist, cardNoteTable, records, general];
 };
 const boardFileBase = withRemoved => 'plm-board-' + (withRemoved ? 'with-removed-' : '') + stampToday();
 
-const buildWorkingDoc = ({ r, factoryName, staff, card, logo }) => {
+const buildWorkingDoc = ({ r, factoryName, staff, card, roundNotes = [], logo }) => {
   const p = r.products || {};
   // SKU, product and client are the letterhead; the grid carries the rest.
   const grid = workingHead(r, factoryName).filter(([l]) => !['SKU', 'Product', 'Client'].includes(l));
@@ -2205,24 +2231,25 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, logo }) => {
       +'<div style="'+DOC_LBL+'margin-bottom:6px;">Sample rounds</div>'
       +(rounds.length
         ? '<table style="width:100%;border-collapse:collapse;">'
-          +'<tr><th style="'+th+'">Round</th><th style="'+th+'">Master sample</th><th style="'+th+'">Sent</th>'
-          +'<th style="'+th+'">Due back</th><th style="'+th+'">Carrier</th><th style="'+th+'">Tracking #</th><th style="'+th+'width:22%;">Comment</th><th style="'+th+'">Saved</th></tr>'
+          +'<tr><th style="'+th+'">Round</th><th style="'+th+'">Sample type</th><th style="'+th+'">Sent</th>'
+          +'<th style="'+th+'">Due back</th><th style="'+th+'">Carrier</th><th style="'+th+'">Tracking #</th><th style="'+th+'">Saved</th></tr>'
           +rounds.map(x => '<tr>'
-            +'<td style="'+td+'">'+docEsc(x.round + ' · ' + x.stage)+'</td>'
-            +'<td style="'+td+'">'+docEsc(x.master)+'</td>'
+            +'<td style="'+td+'">'+docEsc(x.round)+'</td>'
+            +'<td style="'+td+'">'+docEsc(x.type)+'</td>'
             +'<td style="'+td+'">'+docEsc(x.sent ? fmt(x.sent) : '')+'</td>'
             +'<td style="'+td+'">'+docEsc(x.due ? fmt(x.due) : '')+'</td>'
             +'<td style="'+td+'">'+docEsc(x.carrier)+'</td>'
             +'<td style="'+td+'">'+(x.trackingUrl
               ? '<a href="'+docEsc(x.trackingUrl)+'" style="color:#0563c1;">'+docEsc(x.tracking)+'</a>'
               : docEsc(x.tracking))+'</td>'
-            +'<td style="'+td+'white-space:pre-wrap;">'+docEsc(x.comment)+'</td>'
             +'<td style="'+td+'">'+docEsc(x.savedBy + ' · ' + stampText(x.savedAt))
               +(x.editedAt ? '<br>'+docEsc('edited ' + x.editedBy + ' · ' + stampText(x.editedAt)) : '')+'</td>'
           +'</tr>').join('')
           +'</table>'
         : '<div style="border-top:1px solid #e5e7eb;padding:9px 0;font-size:13px;color:#6b7280;">No rounds saved.</div>')
     +'</div>'
+    // Each round's own notes, under the rounds table, as the card shows them.
+    +roundNoteGroups(r, roundNotes).map(g => docNoteBlock(g.label + ' notes', g.list, '')).join('')
     +'<div style="margin-top:26px;">'
       +'<div style="'+DOC_LBL+'margin-bottom:2px;">Checklist</div>'
       +(groups.length ? groups.map(table).join('')
@@ -2310,7 +2337,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       } catch (e) {}
       const html = exportKind === 'records'
         ? buildCardDoc({ r, card: notes.card, general: notes.general, logo })
-        : buildWorkingDoc({ r, factoryName, staff, card: notes.card, logo });
+        : buildWorkingDoc({ r, factoryName, staff, card: notes.card, roundNotes: notes.rounds, logo });
       // The document prints itself once its fonts have landed, so nothing here
       // has to guess at a delay.
       if (win) { win.document.open(); win.document.write(html); win.document.close(); }
@@ -2337,8 +2364,9 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       const wb = new ExcelJS.Workbook();
       wb.creator = 'VESSL'; wb.created = new Date();
 
-      // THE WORKING WORKBOOK -- four sheets: the card and its latest round one
-      // field per row, every sample round, the checklist one task per row, and the card notes.
+      // THE WORKING WORKBOOK -- five sheets: the card and its latest round one
+      // field per row, every sample round, every round note, the checklist one
+      // task per row, and the card notes.
       if (exportKind === 'working') {
         const ws = wb.addWorksheet('Working');
         ws.addRow(['Field', 'Value']);
@@ -2350,16 +2378,26 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
 
         const rs = wb.addWorksheet('Sample rounds');
         rs.addRow(ROUND_COLS);
-        workingRounds(r, staff).forEach(x => rs.addRow([Number(x.round), x.stage, x.master, excelDate(x.sent), excelDate(x.due),
-          x.carrier, linkCell(x.tracking, x.trackingUrl), x.comment, x.savedBy, excelDate(x.savedAt), x.editedBy,
+        workingRounds(r, staff).forEach(x => rs.addRow([Number(x.round), x.type, excelDate(x.sent), excelDate(x.due),
+          x.carrier, linkCell(x.tracking, x.trackingUrl), x.savedBy, excelDate(x.savedAt), x.editedBy,
           excelDate(x.editedAt)]));
         styleLinks(rs);
         rs.getRow(1).font = { bold: true };
         rs.views = [{ state:'frozen', ySplit:1 }];
-        [4, 5].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd'; });
-        [10, 12].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd hh:mm'; });
-        [8, 12, 14, 12, 12, 14, 24, 44, 22, 17, 22, 17].forEach((w, i) => { rs.getColumn(i + 1).width = w; });
-        rs.getColumn(8).alignment = { wrapText: true, vertical: 'top' };
+        [3, 4].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd'; });
+        [8, 10].forEach(c => { rs.getColumn(c).numFmt = 'yyyy-mm-dd hh:mm'; });
+        [8, 26, 12, 12, 14, 24, 22, 17, 22, 17].forEach((w, i) => { rs.getColumn(i + 1).width = w; });
+
+        // Every live round's notes, one row per note, the round named.
+        const rn = wb.addWorksheet('Round notes');
+        rn.addRow(ROUND_NOTE_COLS);
+        roundNoteGroups(r, notes.rounds).forEach(g => g.list.forEach(n =>
+          rn.addRow([g.round, n.author, excelDate(n.date), n.edited ? 'Yes' : '', n.text])));
+        rn.getRow(1).font = { bold: true };
+        rn.views = [{ state:'frozen', ySplit:1 }];
+        rn.getColumn(3).numFmt = 'yyyy-mm-dd hh:mm';
+        [8, 30, 19, 9, 90].forEach((w, i) => { rn.getColumn(i + 1).width = w; });
+        rn.getColumn(5).alignment = { wrapText: true, vertical: 'top' };
 
         const cs = wb.addWorksheet('Checklist');
         cs.addRow(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker']);
@@ -2442,8 +2480,8 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
       const p = r.products || {};
       const lines = [];
-      // THE WORKING CSV -- four tables, a blank line between them, the CSV
-      // answer to the working workbook's four sheets.
+      // THE WORKING CSV -- five tables, a blank line between them, the CSV
+      // answer to the working workbook's five sheets.
       if (exportKind === 'working') {
         lines.push(cell('# PLM card, working: ' + (p.sku || 'no SKU') + ' — ' + (p.name || '') + ' — ' + ((r.client || {}).name || '')));
         lines.push([cell('Field'), cell('Value')].join(','));
@@ -2451,8 +2489,12 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         lines.push('');
         lines.push(ROUND_COLS.map(cell).join(','));
         workingRounds(r, staff).forEach(x => lines.push(
-          [x.round, x.stage, x.master, x.sent || '', x.due || '', x.carrier, x.tracking, x.comment, x.savedBy, stampText(x.savedAt),
+          [x.round, x.type, x.sent || '', x.due || '', x.carrier, x.tracking, x.savedBy, stampText(x.savedAt),
            x.editedBy, x.editedAt ? stampText(x.editedAt) : ''].map(cell).join(',')));
+        lines.push('');
+        lines.push(ROUND_NOTE_COLS.map(cell).join(','));
+        roundNoteGroups(r, notes.rounds).forEach(g => g.list.forEach(n => lines.push(
+          [g.round, n.author, stampText(n.date), n.edited ? 'Yes' : '', n.text].map(cell).join(','))));
         lines.push('');
         lines.push(['Stage', 'Task', 'Done', 'Done at', 'Owner', 'Due', 'Blocker'].map(cell).join(','));
         workingTasks(r, staff).forEach(g => g.tasks.forEach(t => lines.push(
@@ -3256,16 +3298,20 @@ export default function Programs({ userEmail }) {
   const [boardExporting, setBoardExporting] = useState(false);
   const exportCards = ui.showRemoved ? [...board, ...removed] : board;
   const boardTables = async () => {
-    const [cn, gn] = await Promise.all([
-      SB.from('program_notes').select('program_id,author,note,created_at,edited_at,source,stage')
+    const [cn, gn, rn] = await Promise.all([
+      SB.from('program_notes').select('program_id,author,note,created_at,edited_at,source,stage,round_no')
         .is('round_id', null).order('created_at', { ascending:false }),
       SB.from('product_notes').select('product_id,author,note,created_at,edited_at,kind')
         .eq('kind', 'sampling').order('created_at', { ascending:false }),
+      SB.from('program_notes').select('program_id,author,note,created_at,edited_at,source,round_id,round_no')
+        .not('round_id', 'is', null).order('created_at', { ascending:true }),
     ]);
     if (cn.error) throw new Error(cn.error.message);
     if (gn.error) throw new Error(gn.error.message);
+    if (rn.error) throw new Error(rn.error.message);
     return buildBoardTables(exportCards, staff,
-      shapeNotes(cn.data, 'source', 'manual', staff), shapeNotes(gn.data, 'kind', 'sampling', staff));
+      shapeNotes(cn.data, 'source', 'manual', staff), shapeNotes(gn.data, 'kind', 'sampling', staff),
+      shapeNotes(rn.data, 'source', 'round', staff));
   };
   const exportBoardXlsx = async () => {
     setBoardExporting(true);
@@ -3302,7 +3348,7 @@ export default function Programs({ userEmail }) {
     }
     setBoardExporting(false);
   };
-  // One file, the six tables in the workbook's order, each under a # title line
+  // One file, the seven tables in the workbook's order, each under a # title line
   // with a blank line between -- the per-card CSV's shape.
   const exportBoardCsv = async () => {
     setBoardExporting(true);
