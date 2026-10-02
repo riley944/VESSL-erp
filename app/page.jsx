@@ -9277,88 +9277,124 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
     </div>
   );
 }
-// Open a printable freight quote sheet in a new window
-function openFreightSheet(q, clientName, forwarderName) {
+// Open the printable freight quote sheet in a new window. The window opens BEFORE
+// the letterhead is fetched, so the click still counts as a user gesture and a
+// pop-up blocker lets it through; the sheet is written into it once the logo and
+// settings are in. 900ms before printing, as the order documents: the sheet
+// paginates itself once its fonts land.
+async function openFreightSheet(q, clientName, forwarderName) {
   const win = window.open('', '_blank');
   if (win) win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating freight sheet…</body>');
-  const html = buildFreightDoc(q, clientName, forwarderName);
-  if (win) { win.document.open(); win.document.write(html); win.document.close(); setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 500); }
+  const brand = await loadLetterhead();
+  const html = buildFreightDoc(q, clientName, forwarderName, brand);
+  if (win) { win.document.open(); win.document.write(html); win.document.close(); setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 900); }
 }
 
-function buildFreightDoc(q, clientName, forwarderName) {
+// ── Freight quote sheet ──────────────────────────────────────────────────────
+// The request a forwarder reads. Same letterhead, details grid, line styling,
+// footer and US Letter print model as the order confirmation and the purchase
+// order, the shared parts from lib/orderDoc.js.
+//
+// THE SHIPMENT BOX IS BORDERED, NOT FILLED. It was a dark panel with light text,
+// and Chrome prints without background graphics by default -- which left white
+// text on white paper. A 2px rule and dark type print the same either way.
+function buildFreightDoc(q, clientName, forwarderName, brand = {}) {
   const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const nl = s => esc(s).replace(/\n/g,'<br>');
+  const dash = v => { const x=(v==null?'':String(v)).trim(); return x===''?'—':esc(x); };
   const fd = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
-  const rows = (q.line_items||[]).map(l=>
+  const st = brand.settings || {};
+  const coName = (st.company_name||'').trim() || 'King Universal Inc.';
+  const LBL = 'font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;';
+  const lcl = isLCL(q);
+
+  // ── LINE ITEMS, the columns the sheet always had ──────────────────────────
+  const NUM = 'padding:10px 0 10px 10px;text-align:right;vertical-align:top;font-size:13px;color:#111827;white-space:nowrap;border-bottom:1px solid #e5e7eb;';
+  const rows = (q.line_items||[]).map(l =>
     '<tr>'
-    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;">'+esc(l.desc)+'</td>'
-    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;">'+(l.upc?Number(l.upc).toLocaleString():'—')+'</td>'
-    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;">'+(l.cartons||0).toLocaleString()+'</td>'
-    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;">'+(l.pieces?Number(l.pieces).toLocaleString():'—')+'</td>'
-    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;">'+(l.cbm_per||0).toFixed(4)+'</td>'
-    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;">'+(l.weight||0)+'</td>'
-    +'<td style="padding:9px 12px;border-bottom:1px solid #eef;text-align:right;font-weight:600;">'+(l.cbm_total||0).toFixed(3)+'</td>'
-    +'</tr>'
-  ).join('');
+    + '<td style="padding:10px 10px 10px 0;vertical-align:top;font-size:14px;font-weight:600;color:#111827;line-height:1.35;border-bottom:1px solid #e5e7eb;">'+esc(l.desc)+'</td>'
+    + '<td class="mono" style="'+NUM+'">'+(l.upc?Number(l.upc).toLocaleString():'—')+'</td>'
+    + '<td class="mono" style="'+NUM+'">'+(l.cartons||0).toLocaleString()+'</td>'
+    + '<td class="mono" style="'+NUM+'">'+(l.pieces?Number(l.pieces).toLocaleString():'—')+'</td>'
+    + '<td class="mono" style="'+NUM+'">'+(l.cbm_per||0).toFixed(4)+'</td>'
+    + '<td class="mono" style="'+NUM+'">'+(l.weight||0)+'</td>'
+    + '<td class="mono" style="'+NUM+'font-weight:600;">'+(l.cbm_total||0).toFixed(3)+'</td>'
+    + '</tr>').join('');
+  const th = (label, left) => '<th style="'+LBL+'text-align:'+(left?'left':'right')+';padding:0 '+(left?'10px 8px 0':'0 8px 10px')+';border-bottom:2px solid #0c1322;">'+label+'</th>';
+
   const totalPieces = (q.line_items||[]).reduce((a,l)=>a+(Number(l.pieces)||0),0);
-  const box = (label,val) => '<div style="flex:1;min-width:120px;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:4px;">'+label+'</div><div style="font-size:15px;color:#0f172a;font-weight:600;">'+val+'</div></div>';
-  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    +'<title>Freight Quote '+esc(q.quote_number)+'</title></head>'
-    +'<body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:#0f172a;background:#fff;">'
-    +'<div style="max-width:820px;margin:0 auto;padding:44px 48px;">'
-    // header
-    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:20px;margin-bottom:8px;">'
-      +'<div><div style="font-size:24px;font-weight:800;letter-spacing:-.02em;">KING UNIVERSAL INC.</div><div style="font-size:12px;color:#64748b;margin-top:3px;">Freight Quote Request</div></div>'
-      +'<div style="text-align:right;"><div style="font-size:18px;font-weight:700;font-family:ui-monospace,monospace;">'+esc(q.quote_number)+'</div><div style="font-size:12px;color:#64748b;margin-top:3px;">'+fd(new Date().toISOString())+'</div></div>'
-    +'</div>'
-    // parties
-    +'<div style="display:flex;gap:40px;margin:24px 0 20px;">'
-      +'<div style="flex:1;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:5px;">Shipper / Client</div><div style="font-size:14px;font-weight:600;">'+esc(clientName||'—')+'</div></div>'
-      +'<div style="flex:1;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:5px;">Freight Forwarder</div><div style="font-size:14px;font-weight:600;">'+esc(forwarderName||'—')+'</div></div>'
-    +'</div>'
-    // route boxes
-    +'<div style="display:flex;gap:20px;background:#f8fafc;border-radius:12px;padding:18px 20px;margin-bottom:24px;flex-wrap:wrap;">'
-      +box('Origin', esc(q.origin||'—'))
-      +box('Destination', esc(q.destination||'—'))
-      +box('Incoterm', esc(q.incoterm||'—'))
-      +box('Cargo Ready', fd(q.ready_date))
-    +'</div>'
-    // line items
-    +'<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;">'
-      +'<thead><tr style="background:#0f172a;color:#fff;">'
-        +'<th style="padding:10px 12px;text-align:left;font-weight:600;">Description</th>'
-        +'<th style="padding:10px 12px;text-align:right;font-weight:600;">Pcs/Ctn</th>'
-        +'<th style="padding:10px 12px;text-align:right;font-weight:600;">Cartons</th>'
-        +'<th style="padding:10px 12px;text-align:right;font-weight:600;">Pieces</th>'
-        +'<th style="padding:10px 12px;text-align:right;font-weight:600;">CBM/ctn</th>'
-        +'<th style="padding:10px 12px;text-align:right;font-weight:600;">Kg/ctn</th>'
-        +'<th style="padding:10px 12px;text-align:right;font-weight:600;">Total CBM</th>'
-      +'</tr></thead><tbody>'+rows+'</tbody></table>'
-    // totals + container recommendation
-    +'<div style="display:flex;gap:20px;margin-top:24px;flex-wrap:wrap;">'
-      +'<div style="flex:2;min-width:260px;background:#f8fafc;border-radius:12px;padding:18px 20px;">'
-        +(totalPieces>0?'<div style="display:flex;justify-content:space-between;margin-bottom:10px;"><span style="color:#64748b;font-size:13px;">Total pieces</span><span style="font-weight:700;font-size:14px;">'+totalPieces.toLocaleString()+'</span></div>':'')
-        +'<div style="display:flex;justify-content:space-between;margin-bottom:10px;"><span style="color:#64748b;font-size:13px;">Total cartons</span><span style="font-weight:700;font-size:14px;">'+(q.total_cartons||0).toLocaleString()+'</span></div>'
-        +'<div style="display:flex;justify-content:space-between;margin-bottom:10px;"><span style="color:#64748b;font-size:13px;">Total volume</span><span style="font-weight:700;font-size:14px;">'+(q.total_cbm||0).toFixed(2)+' CBM</span></div>'
-        +'<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;font-size:13px;">Total weight</span><span style="font-weight:700;font-size:14px;">'+(q.total_weight_kg||0).toLocaleString()+' kg</span></div>'
-      +'</div>'
-      +(isLCL(q)
-      // LCL: no container recommendation to make -- the cargo is the request.
-      ? '<div style="flex:1;min-width:200px;background:#0f172a;color:#fff;border-radius:12px;padding:18px 20px;">'
-        +'<div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.6);margin-bottom:8px;">Shipment</div>'
-        +'<div style="font-size:32px;font-weight:800;letter-spacing:-.02em;">LCL</div>'
-        +'<div style="font-size:12px;color:rgba(255,255,255,.7);margin-top:6px;">'+esc(lclSummary(q, false))+'</div>'
-        +'<div style="font-size:12px;color:rgba(255,255,255,.85);margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.15);">One all-in total for the shipment, please.</div>'
-      +'</div>'
-      : '<div style="flex:1;min-width:200px;background:#0f172a;color:#fff;border-radius:12px;padding:18px 20px;">'
-        +'<div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.6);margin-bottom:8px;">Container recommendation</div>'
-        +'<div style="font-size:32px;font-weight:800;letter-spacing:-.02em;">'+(q.containers_needed||0)+' × '+esc(q.container_type||"40'HQ")+'</div>'
-        +'<div style="font-size:12px;color:rgba(255,255,255,.7);margin-top:6px;">'+(q.utilization_pct||0)+'% utilization · '+(q.cbm_max||68)+' CBM max/container</div>'
-        +((totalPieces>0&&q.containers_needed>0)?'<div style="font-size:12px;color:rgba(255,255,255,.85);margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.15);">'+Math.round(totalPieces/q.containers_needed).toLocaleString()+' pcs · '+Math.round((q.total_cartons||0)/q.containers_needed).toLocaleString()+' cartons per container</div>':'')
-      +'</div>')
-    +'</div>'
-    +(q.notes?'<div style="margin-top:24px;padding:16px 18px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;font-size:13px;color:#78350f;"><b>Notes:</b> '+esc(q.notes)+'</div>':'')
-    +'<div style="margin-top:36px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;">'+(isLCL(q) ? 'Please quote one all-in total for this LCL shipment.' : 'Please quote FCL and, where relevant, LCL rates for the above.')+' King Universal Inc. · Raleigh, NC</div>'
-    +'</div></body></html>';
+  const totLine = (k, v) => '<div style="display:flex;justify-content:space-between;font-size:13.5px;color:#4b5563;padding:5px 0;">'
+    + '<span>'+k+'</span><span class="mono" style="color:#111827;font-weight:600;">'+v+'</span></div>';
+
+  // ── DETAILS GRID, the PO's bordered grid, four across ─────────────────────
+  const cell = (l,v) => '<div style="border-right:2px solid #6b7280;border-bottom:2px solid #6b7280;padding:12px 14px;">'
+    + '<div style="'+LBL+'">'+l+'</div>'
+    + '<div style="font-size:14px;color:#111827;margin-top:5px;line-height:1.3;">'+v+'</div></div>';
+
+  // ── THE SHIPMENT BOX, its wording unchanged ───────────────────────────────
+  const box = (label, big, sub, extra) => '<div style="flex:1;min-width:0;border:2px solid #0c1322;border-radius:10px;padding:16px 18px;">'
+    + '<div style="'+LBL+'color:#374151;margin-bottom:8px;">'+label+'</div>'
+    + '<div style="font-size:28px;font-weight:700;letter-spacing:-.02em;color:#0c1322;line-height:1.1;">'+big+'</div>'
+    + '<div style="font-size:12.5px;color:#374151;margin-top:6px;">'+sub+'</div>'
+    + (extra ? '<div style="font-size:12.5px;color:#111827;margin-top:10px;padding-top:10px;border-top:1px solid #d1d5db;">'+extra+'</div>' : '')
+    + '</div>';
+  const shipBox = lcl
+    ? box('Shipment', 'LCL', esc(lclSummary(q, false)), 'One all-in total for the shipment, please.')
+    : box('Container recommendation',
+        (q.containers_needed||0)+' × '+esc(q.container_type||"40'HQ"),
+        (q.utilization_pct||0)+'% utilization · '+(q.cbm_max||68)+' CBM max/container',
+        (totalPieces>0&&q.containers_needed>0)
+          ? Math.round(totalPieces/q.containers_needed).toLocaleString()+' pcs · '+Math.round((q.total_cartons||0)/q.containers_needed).toLocaleString()+' cartons per container'
+          : '');
+
+  const flow =
+    docLetterhead({ logo:brand.logo, coName, headLines:letterheadLines(st, esc), title:'Freight quote request', ref:q.quote_number||'', esc })
+
+    + '<div style="margin-top:30px;border-top:2px solid #6b7280;border-left:2px solid #6b7280;display:grid;grid-template-columns:repeat(4,1fr);">'
+      + cell('Client', dash(clientName))
+      + cell('Freight forwarder', dash(forwarderName))
+      + cell('Origin', dash(q.origin))
+      + cell('Destination', dash(q.destination))
+      + cell('Incoterm', dash(q.incoterm))
+      + cell('Cargo ready', fd(q.ready_date))
+      + cell('Date', fd(new Date().toISOString()))
+      + cell('Quote #', '<span class="mono">'+dash(q.quote_number)+'</span>')
+    + '</div>'
+
+    + '<div data-table="1" style="margin-top:30px;">'
+      + '<table style="width:100%;border-collapse:collapse;table-layout:fixed;">'
+        + '<colgroup><col><col style="width:66px"><col style="width:70px"><col style="width:76px"><col style="width:76px"><col style="width:62px"><col style="width:84px"></colgroup>'
+        + '<thead><tr>'+th('Description',true)+th('Pcs/Ctn')+th('Cartons')+th('Pieces')+th('CBM/ctn')+th('Kg/ctn')+th('Total CBM')+'</tr></thead>'
+        + '<tbody>'+rows+'</tbody>'
+      + '</table>'
+    + '</div>'
+
+    // SHIPMENT AND TOTALS, one block so neither is parted from the other.
+    + '<div style="display:flex;gap:28px;align-items:flex-start;margin-top:22px;">'
+      + shipBox
+      + '<div style="width:300px;flex-shrink:0;">'
+        + (totalPieces>0 ? totLine('Total pieces', totalPieces.toLocaleString()) : '')
+        + totLine('Total cartons', (q.total_cartons||0).toLocaleString())
+        + totLine('Total volume', (q.total_cbm||0).toFixed(2)+' CBM')
+        + '<div style="display:flex;justify-content:space-between;align-items:baseline;border-top:1.5px solid #0c1322;margin-top:6px;padding-top:8px;">'
+          + '<span style="font-size:14px;font-weight:600;color:#111827;">Total weight</span>'
+          + '<span class="mono" style="font-size:16px;font-weight:700;color:#0c1322;">'+(q.total_weight_kg||0).toLocaleString()+' kg</span></div>'
+      + '</div>'
+    + '</div>'
+
+    + (q.notes ? '<div style="margin-top:26px;border-left:3px solid #b45309;padding:2px 0 2px 14px;">'
+      + '<div style="'+LBL+'color:#b45309;margin-bottom:6px;">Notes for forwarder</div>'
+      + '<div style="font-size:13.5px;color:#374151;line-height:1.6;">'+nl(q.notes)+'</div></div>' : '')
+
+    // THE ASK, worded as before.
+    + '<div style="margin-top:30px;padding-top:14px;border-top:1px solid #e5e7eb;text-align:center;font-size:12px;color:#6b7280;">'
+      + (lcl ? 'Please quote one all-in total for this LCL shipment.' : 'Please quote FCL and, where relevant, LCL rates for the above.')
+      + ' King Universal Inc. · Raleigh, NC</div>';
+
+  return paginatedDocument({
+    titleHtml: esc(coName.replace(/\s*(Inc\.?|LLC)\s*$/i,'').trim()||'King Universal')+' — Freight Quote '+esc(q.quote_number||''),
+    flow, footLeftHtml: esc(coName+' · Freight quote request '+(q.quote_number||'')),
+  });
 }
 
 // The terms paragraph and acceptance line were removed on review 2026-09-10;
