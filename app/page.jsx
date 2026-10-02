@@ -8432,6 +8432,13 @@ const CONTAINER_TYPES = [
 ];
 const CONTAINER_MAP = Object.fromEntries(CONTAINER_TYPES.map(c=>[c.key,c]));
 const CBM_MAX_40HQ = 68; // legacy default fallback
+// The RFQ form's line grid: SKU, Description, Pcs/ctn, Cartons, CBM/ctn, Kg/ctn,
+// Line CBM, remove. Header and rows read the same list.
+const LINE_COLS = '96px 1fr 62px 62px 70px 62px 70px 24px';
+const FILL_WORDS = { desc:'Description', upc:'Pcs/ctn', cbmPer:'CBM/ctn', weight:'Kg/ctn' };
+const SKU_PANEL = {margin:'6px 0 2px',padding:'10px 11px',background:'#F7F7F9',border:'1px solid #ECECEE',borderRadius:'10px',fontSize:'12px',color:'#1A1A1C',lineHeight:1.45};
+const SKU_BTN = {background:'#fff',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'4px 11px',fontSize:'12px',fontWeight:500,color:'#4A4A4E',cursor:'pointer'};
+const SKU_BTN_ON = {...SKU_BTN,background:'#0071E3',border:'1px solid #0071E3',color:'#fff',fontWeight:600};
 
 // Pass `data` to edit that row, omit it to create — the same shape CreateProductModal
 // and MaterialModal use.
@@ -8472,16 +8479,33 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
     number: newQuoteNumber(),
     client:'', forwarder:'', poId:'', origin:'', destination:'', incoterm:'FOB', ready:'', notes:'', containerType:'40HQ'
   });
+  // ONE SHAPE FOR EVERY LINE. sku, quoteId and quoteCode say where a line came
+  // from -- the SKU looked up and the quote whose carton it took -- and are saved
+  // inside the line (sku, quote_id, quote_code) so a reopened RFQ still shows it.
+  // _k is never saved: it keys the row and its lookup message, because a line's
+  // index moves when a line above it is removed.
+  const lineSeq = useRef(0);
+  const newLine = (v = {}) => ({ desc:'', upc:'', cartons:'', cbmPer:'', weight:'', sku:'', quoteId:'', quoteCode:'', ...v, _k: ++lineSeq.current });
   // line_items is jsonb holding numbers; every box in this form is a string. The stored
   // shape uses cbm_per where the form uses cbmPer, and carries pieces and cbm_total,
   // which are derived on save and so are not read back.
   const [lines, setLines] = useState(() => {
     const stored = editing && Array.isArray(data.line_items) ? data.line_items : [];
-    if (!stored.length) return [{ desc:'', upc:'', cartons:'', cbmPer:'', weight:'' }];
+    if (!stored.length) return [newLine()];
     const s = v => (v === null || v === undefined ? '' : String(v));
-    return stored.map(l=>({ desc:l.desc||'', upc:s(l.upc), cartons:s(l.cartons), cbmPer:s(l.cbm_per), weight:s(l.weight) }));
+    return stored.map(l=>newLine({ desc:l.desc||'', upc:s(l.upc), cartons:s(l.cartons), cbmPer:s(l.cbm_per), weight:s(l.weight),
+      sku:l.sku||'', quoteId:l.quote_id||'', quoteCode:l.quote_code||'' }));
   });
   const [saving, setSaving] = useState(false);
+  const [quotesReady, setQuotesReady] = useState(false);
+  // What the SKU lookup has to say about a line, by its _k:
+  // { kind:'none', text } | { kind:'pick', options } | { kind:'confirm', quote, fill, clash, others }
+  // | { kind:'note', text }.
+  const [skuMsg, setSkuMsg] = useState({});
+  // _k -> true once the SKU box has been typed in since its last lookup. Leaving
+  // the box looks up only then, so tabbing through a saved line's SKU on a
+  // reopened RFQ asks nothing; Enter always looks up.
+  const skuTyped = useRef({});
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
 
   useEffect(()=>{
@@ -8501,13 +8525,14 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
     (async()=>{
       const { data } = await SBQ.from('quotes').select('*').order('created_at',{ascending:false});
       setProducts(data||[]);
+      setQuotesReady(true);
     })();
   },[]);
   const clients  = companies.filter(c=>['client','brand','customer'].includes(c.type));
   const forwarders = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
 
   const setLine = (i,k) => e => setLines(prev=>prev.map((l,j)=>j===i?{...l,[k]:e.target.value}:l));
-  const addLine = () => setLines(prev=>[...prev,{ desc:'', upc:'', cartons:'', cbmPer:'', weight:'' }]);
+  const addLine = () => setLines(prev=>[...prev,newLine()]);
   const rmLine = i => setLines(prev=>prev.filter((_,j)=>j!==i));
 
   // Fill the selected container to capacity. Single line → max cartons that fit under the CBM cap.
@@ -8548,6 +8573,72 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
     const cbm = (L>0&&W>0&&H>0) ? (L*W*H)/1000000 : 0;
     return { upc:Number(q.units_per_carton)||0, cbmPer:cbm, weight:Number(q.carton_weight)||0 };
   };
+  // ── SKU LOOKUP ON ONE LINE ──────────────────────────────────────────────────
+  // Typing a SKU on a line and pressing Enter (or leaving the box) looks it up
+  // among the quotes -- the same records the product picker lists, and the only
+  // ones holding carton data (every product row's carton columns are empty).
+  // Exact match only, ignoring case and spaces: no partial names, no guessing.
+  //   no quote has it          -> say so, the line is left alone
+  //   one quote, or several
+  //   that agree on the carton  -> fill Description, Pcs/ctn, CBM/ctn, Kg/ctn
+  //   several that disagree     -> list them; nothing fills until one is picked
+  // Cartons is never touched. A box that already holds a different value is
+  // never overwritten without asking. Only the line it was typed on changes,
+  // which is why this is offered when editing a saved RFQ too -- unlike the
+  // pickers, which re-source every line.
+  const normSku = v => String(v||'').toLowerCase().replace(/\s+/g,'');
+  const fillOf = q => {
+    const c = cartonFromQuote(q);
+    return { desc: q.product || q.sku || '',
+      upc: c.upc>0 ? String(c.upc) : '',
+      cbmPer: c.cbmPer>0 ? c.cbmPer.toFixed(4) : '',
+      weight: c.weight>0 ? String(c.weight) : '' };
+  };
+  const cartonSig = q => { const x = fillOf(q); return x.upc+'|'+x.cbmPer+'|'+x.weight; };
+  const setMsg = (k, m) => setSkuMsg(prev => { const n = { ...prev }; if (m) n[k] = m; else delete n[k]; return n; });
+
+  const applyFill = (k, q, fill, others) => {
+    setLines(prev=>prev.map(l=>l._k===k ? { ...l, ...fill, quoteId:q.id, quoteCode:q.quote_code||'' } : l));
+    const notes = [];
+    if (others>0) notes.push(others+' other quote'+(others===1?' has':'s have')+' this SKU with the same carton');
+    if (!fill.upc && !fill.cbmPer && !fill.weight) notes.push('that quote has no carton data, so only the description was filled');
+    setMsg(k, notes.length ? { kind:'note', text: notes.join(' \u00b7 ') } : null);
+  };
+  // Fill from q, or ask first when a box already holds something else.
+  const offerQuote = (k, q, others = 0) => {
+    const line = lines.find(l=>l._k===k);
+    if (!line) return;
+    const fill = fillOf(q);
+    const clash = Object.keys(FILL_WORDS).filter(fk => String(line[fk]||'').trim() !== '' && String(line[fk]).trim() !== fill[fk]);
+    if (clash.length) setMsg(k, { kind:'confirm', quote:q, fill, clash, others });
+    else applyFill(k, q, fill, others);
+  };
+  const lookupSku = (k, force) => {
+    const line = lines.find(l=>l._k===k);
+    if (!line) return;
+    if (!force && !skuTyped.current[k]) return;
+    const want = normSku(line.sku);
+    if (!want) { skuTyped.current[k] = false; setMsg(k, null); return; }
+    if (!quotesReady) { setMsg(k, { kind:'none', text:'Quotes are still loading \u2014 press Enter again in a moment.' }); return; }
+    const hits = products.filter(q=>normSku(q.sku)===want);   // newest first, as loaded
+    skuTyped.current[k] = false;
+    if (!hits.length) { setMsg(k, { kind:'none', text:'No quote has SKU \u201c'+line.sku.trim()+'\u201d. The line is left as it is.' }); return; }
+    if (new Set(hits.map(cartonSig)).size === 1) offerQuote(k, hits[0], hits.length-1);
+    else setMsg(k, { kind:'pick', options:hits });
+  };
+  // Typing a new SKU drops the old source: the line no longer names that quote's SKU.
+  const setLineSku = k => e => {
+    const v = e.target.value;
+    skuTyped.current[k] = true;
+    setLines(prev=>prev.map(l=>l._k===k ? { ...l, sku:v, quoteId:'', quoteCode:'' } : l));
+    setMsg(k, null);
+  };
+  const cartonWords = q => {
+    const L=Number(q.carton_l)||0, W=Number(q.carton_w)||0, H=Number(q.carton_h)||0, u=Number(q.units_per_carton)||0, kg=Number(q.carton_weight)||0;
+    if (!(L>0&&W>0&&H>0) && !u && !kg) return null;
+    return [(L>0&&W>0&&H>0) ? L+'\u00d7'+W+'\u00d7'+H+' cm' : 'no dimensions', u ? u+' pcs/ctn' : 'pcs/ctn not set', kg ? kg+' kg' : null].filter(Boolean).join(' \u00b7 ');
+  };
+
   // Best-effort match of a PO line to a quote record
   const matchQuote = (quotes, { desc, sku, sourceQuoteId }) => {
     if (sourceQuoteId) { const direct = quotes.find(q=>String(q.id)===String(sourceQuoteId)); if (direct) return direct; }
@@ -8587,14 +8678,14 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
         const weight = (fromQ&&fromQ.weight) || hint.weight || 0;
         const qty = Number(it.quantity)||0;
         const cartons = upc>0 ? Math.ceil(qty/upc) : '';
-        return { desc,
+        return newLine({ desc,
           upc: upc>0?String(upc):'',
           cartons: cartons!==''?String(cartons):'',
           cbmPer: cbmPer>0?cbmPer.toFixed(4):'',
-          weight: weight>0?String(weight):'' };
+          weight: weight>0?String(weight):'' });
       }));
     } else {
-      setLines([{ desc:'', upc:'', cartons:'', cbmPer:'', weight:'' }]);
+      setLines([newLine()]);
     }
     setPicked({ kind:'po', id:po.id, label:po.client_po_number||po.order_number||'PO', sub:po.client?.name||'' });
   };
@@ -8611,15 +8702,17 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
       if (partial) matchId = partial.id;
     }
     setForm(prev=>({ ...prev, poId:'', client: matchId || prev.client }));
-    setLines([{ desc: q.product || q.sku || '',
+    // The picked quote is this line's source, recorded like a SKU lookup's.
+    setLines([newLine({ desc: q.product || q.sku || '',
       upc: c&&c.upc>0 ? String(c.upc) : '',
       cartons:'',
       cbmPer: c&&c.cbmPer>0 ? c.cbmPer.toFixed(4) : '',
-      weight: c&&c.weight>0 ? String(c.weight) : '' }]);
+      weight: c&&c.weight>0 ? String(c.weight) : '',
+      sku: q.sku || '', quoteId: q.id, quoteCode: q.quote_code || '' })]);
     setPicked({ kind:'product', id:q.id, label:q.product||q.sku||'Product', sub:[q.client,q.sku].filter(Boolean).join(' \u00b7 ') });
   };
 
-  const resetPick = () => { setPicked(null); setForm(prev=>({...prev,poId:''})); setLines([{ desc:'', upc:'', cartons:'', cbmPer:'', weight:'' }]); };
+  const resetPick = () => { setPicked(null); setForm(prev=>({...prev,poId:''})); setLines([newLine()]); setSkuMsg({}); };
 
   const filteredPOs = pos.filter(p=>{ const q=poSearch.trim().toLowerCase(); if(!q) return true; return (p.client_po_number||'').toLowerCase().includes(q)||(p.order_number||'').toLowerCase().includes(q)||(p.client?.name||'').toLowerCase().includes(q); });
   const filteredProducts = products.filter(p=>{ const q=prodSearch.trim().toLowerCase(); if(!q) return true; return ((p.product||'')+' '+(p.client||'')+' '+(p.sku||'')+' '+(p.factory||'')).toLowerCase().includes(q); });
@@ -8644,7 +8737,9 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
     total_cartons: calc.cartons, total_cbm: Number(calc.cbm.toFixed(3)),
     total_weight_kg: Number(calc.weight.toFixed(2)),
     containers_needed: containers, utilization_pct: Number(utilization.toFixed(1)),
-    line_items: lines.filter(l=>l.desc||l.cartons).map(l=>({ desc:l.desc, upc:Number(l.upc)||0, cartons:Number(l.cartons)||0, pieces:(Number(l.cartons)||0)*(Number(l.upc)||0), cbm_per:Number(l.cbmPer)||0, cbm_total:Number(((Number(l.cartons)||0)*(Number(l.cbmPer)||0)).toFixed(3)), weight:Number(l.weight)||0 })),
+    line_items: lines.filter(l=>l.desc||l.cartons).map(l=>({ desc:l.desc, upc:Number(l.upc)||0, cartons:Number(l.cartons)||0, pieces:(Number(l.cartons)||0)*(Number(l.upc)||0), cbm_per:Number(l.cbmPer)||0, cbm_total:Number(((Number(l.cartons)||0)*(Number(l.cbmPer)||0)).toFixed(3)), weight:Number(l.weight)||0,
+      ...(l.sku.trim() ? { sku:l.sku.trim() } : {}),
+      ...(l.quoteId ? { quote_id:l.quoteId, quote_code:l.quoteCode||null } : {}) })),
     notes: form.notes||null, status,
     sent_at: status==='sent'? new Date().toISOString() : null,
   });
@@ -8808,15 +8903,19 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
                 <button type="button" onClick={addLine} style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'4px 10px',fontSize:'12px',fontWeight:500,color:'#4A4A4E',cursor:'pointer'}}>+ Add line</button>
               </div>
             </div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 66px 66px 74px 66px 78px 24px',gap:'6px',marginBottom:'6px'}}>
-              {['Description','Pcs/ctn','Cartons','CBM/ctn','Kg/ctn','Line CBM',''].map((h,i)=><div key={i} style={{fontSize:'9.5px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',color:'#A0A0A4',textAlign:i>=1&&i<6?'right':'left'}}>{h}</div>)}
+            <div style={{display:'grid',gridTemplateColumns:LINE_COLS,gap:'6px',marginBottom:'6px'}}>
+              {['SKU','Description','Pcs/ctn','Cartons','CBM/ctn','Kg/ctn','Line CBM',''].map((h,i)=><div key={i} style={{fontSize:'9.5px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',color:'#A0A0A4',textAlign:i>=2&&i<7?'right':'left'}}>{h}</div>)}
             </div>
             {lines.map((l,i)=>{
               const lineCbm = (Number(l.cartons)||0)*(Number(l.cbmPer)||0);
               const linePcs = (Number(l.cartons)||0)*(Number(l.upc)||0);
+              const m = skuMsg[l._k];
               return (
-                <div key={i} style={{marginBottom:'6px'}}>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 66px 66px 74px 66px 78px 24px',gap:'6px',alignItems:'center'}}>
+                <div key={l._k} style={{marginBottom:'6px'}}>
+                <div style={{display:'grid',gridTemplateColumns:LINE_COLS,gap:'6px',alignItems:'center'}}>
+                  <input style={{...inputS,padding:'8px 9px',fontSize:'12.5px'}} value={l.sku} onChange={setLineSku(l._k)}
+                    onKeyDown={e=>{ if (e.key==='Enter') { e.preventDefault(); lookupSku(l._k, true); } }}
+                    onBlur={()=>lookupSku(l._k, false)} placeholder="SKU" title="Type a SKU and press Enter to fill this line from its quote" />
                   <input style={{...inputS,padding:'8px 9px',fontSize:'12.5px'}} value={l.desc} onChange={setLine(i,'desc')} placeholder="Product / description" />
                   <input style={{...inputS,padding:'8px 9px',fontSize:'12.5px',textAlign:'right'}} value={l.upc} onChange={setLine(i,'upc')} placeholder="0" />
                   <input style={{...inputS,padding:'8px 9px',fontSize:'12.5px',textAlign:'right'}} value={l.cartons} onChange={setLine(i,'cartons')} placeholder="0" />
@@ -8825,7 +8924,41 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
                   <div style={{fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{lineCbm>0?lineCbm.toFixed(3):'—'}</div>
                   <button type="button" onClick={()=>rmLine(i)} style={{background:'none',border:'none',color:'#C0C0C4',cursor:'pointer',fontSize:'17px',lineHeight:1}}>×</button>
                 </div>
-                {linePcs>0 && <div style={{fontSize:'10.5px',color:'#8A8A8E',paddingLeft:'10px',marginTop:'3px'}}>= {fmtNum(linePcs)} pcs</div>}
+                {(linePcs>0 || l.quoteId) && (
+                  <div style={{fontSize:'10.5px',color:'#8A8A8E',paddingLeft:'10px',marginTop:'3px',display:'flex',gap:'12px',flexWrap:'wrap'}}>
+                    {l.quoteId && <span>from <b style={{fontFamily:'var(--mono)',color:'#3461e0'}}>{l.quoteCode||'a quote'}</b></span>}
+                    {linePcs>0 && <span>= {fmtNum(linePcs)} pcs</span>}
+                  </div>
+                )}
+                {m && (m.kind==='none' || m.kind==='note') && (
+                  <div style={{fontSize:'11.5px',color:m.kind==='none'?'#B45309':'#6B7280',padding:'4px 10px 0'}}>{m.text}</div>
+                )}
+                {m && m.kind==='confirm' && (
+                  <div style={SKU_PANEL}>
+                    <div style={{marginBottom:'7px'}}>
+                      {'This line already has '+m.clash.map(fk=>FILL_WORDS[fk]+' '+(String(l[fk]).length>28?String(l[fk]).slice(0,28)+'\u2026':l[fk])).join(', ')+'. Replace with '+(m.quote.quote_code||'the quote')+'\u2019s '
+                        +m.clash.map(fk=>m.fill[fk]?(fk==='desc'?'\u201c'+m.fill[fk]+'\u201d':m.fill[fk]):'(blank)').join(', ')+'?'}
+                    </div>
+                    <div style={{display:'flex',gap:'7px'}}>
+                      <button type="button" onClick={()=>applyFill(l._k, m.quote, m.fill, m.others)} style={SKU_BTN_ON}>Replace</button>
+                      <button type="button" onClick={()=>setMsg(l._k, { kind:'note', text:'Kept what was on the line; nothing was filled.' })} style={SKU_BTN}>Keep mine</button>
+                    </div>
+                  </div>
+                )}
+                {m && m.kind==='pick' && (
+                  <div style={SKU_PANEL}>
+                    <div style={{marginBottom:'7px'}}>{m.options.length+' quotes have SKU \u201c'+l.sku.trim()+'\u201d with different cartons. Pick the one to fill this line from:'}</div>
+                    {m.options.map(q=>{ const cw = cartonWords(q); return (
+                      <button type="button" key={q.id} onClick={()=>offerQuote(l._k, q)}
+                        style={{display:'flex',width:'100%',textAlign:'left',gap:'10px',alignItems:'baseline',padding:'7px 9px',marginBottom:'4px',border:'1px solid #E5E7EB',borderRadius:'8px',background:'#fff',cursor:'pointer',fontSize:'12px',color:'#1A1A1C'}}>
+                        <b style={{fontFamily:'var(--mono)',color:'#3461e0',minWidth:'56px'}}>{q.quote_code||'\u2014'}</b>
+                        <span style={{flex:1,minWidth:0}}>{[q.client,q.factory].filter(Boolean).join(' \u00b7 ')||'\u2014'}</span>
+                        <span style={{color:cw?'#4A4A4E':'#B45309',fontWeight:cw?400:600,whiteSpace:'nowrap'}}>{cw||'no carton data'}</span>
+                      </button>
+                    ); })}
+                    <button type="button" onClick={()=>setMsg(l._k, null)} style={SKU_BTN}>Cancel</button>
+                  </div>
+                )}
                 </div>
               );
             })}
