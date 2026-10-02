@@ -277,6 +277,30 @@ async function createShipmentForPO(poId) {
     return { ok: true, shipmentNumber: num };
   } catch(e){ return { error: e.message }; }
 }
+// ── ASK BEFORE A SHIPMENT IS MADE ──────────────────────────────────────────
+// Generate shipment, and setting a PO to Shipped from its status pills, the order
+// card's dropdown or the production board, all reach createShipmentForPO and all
+// write the PO's status -- one click, on the live database, with nothing to undo
+// it. So each asks first, in the ConfirmModal every delete here uses.
+//
+// via 'button' is Generate shipment, which leaves the status alone when the PO
+// already has a shipment; via 'status' is a status change, which sets Shipped
+// either way. The words say which will happen. Returns ConfirmModal's props.
+async function shipmentAsk(poId, poNo, via) {
+  let existing = '';
+  try {
+    const { data } = await SB.from('shipment_pos').select('shipments(shipment_number)').eq('purchase_order_id', poId).limit(1);
+    if (data && data[0]) existing = (data[0].shipments && data[0].shipments.shipment_number) || 'unnumbered';
+  } catch(e){}
+  const no = poNo || 'this PO';
+  if (!existing) return { title:'Generate a shipment for PO '+no+'?',
+    message:'This creates a new shipment and marks the PO as Shipped.', confirmLabel:'Generate shipment', danger:false };
+  return via === 'button'
+    ? { title:'Generate a shipment for PO '+no+'?',
+        message:'This PO already has a shipment ('+existing+'), so no new shipment will be created and the PO’s status will not change.', confirmLabel:'Continue', danger:false }
+    : { title:'Mark PO '+no+' as Shipped?',
+        message:'This PO already has a shipment ('+existing+'), so no new shipment will be created. The PO will be marked as Shipped.', confirmLabel:'Mark as Shipped', danger:false };
+}
 const fmtNum = n => n == null ? '—' : new Intl.NumberFormat('en-US').format(n);
 const nowDate = () => new Date().toISOString().slice(0,10);
 const STATUSES = ['draft','confirmed','sampling','sample_approved','in_production','ready_to_ship','shipped','delivered','closed','cancelled'];
@@ -3332,7 +3356,19 @@ function Orders({ navigate }) {
     setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
+  // Setting Shipped here creates a shipment, so it asks first (shipmentAsk).
+  // Cancel leaves the row alone: the dropdown is controlled and snaps back.
+  const [shipAsk, setShipAsk] = useState(null);
   const setStat = async (pid, st) => {
+    const p = rows.find(r=>r.id===pid);
+    if (st==='shipped' && p && p.status!=='shipped') {
+      const ask = await shipmentAsk(pid, p.order_number||p.client_po_number, 'status');
+      setShipAsk({ ...ask, onConfirm:()=>{ setShipAsk(null); applyStat(pid, st); } });
+      return;
+    }
+    applyStat(pid, st);
+  };
+  const applyStat = async (pid, st) => {
     await SB.from('purchase_orders').update({status:st,updated_at:new Date().toISOString()}).eq('id',pid);
     setRows(prev=>prev.map(p=>p.id===pid?{...p,status:st}:p));
     if (st==='shipped'){ const r=await createShipmentForPO(pid); if(r?.ok) window._toast?.('Shipment '+r.shipmentNumber+' created','ok'); else if(r?.error) window._toast?.(r.error,'err'); }
@@ -3359,6 +3395,7 @@ function Orders({ navigate }) {
           {shown.map(p=><OrderCard key={p.id} p={p} navigate={navigate} onStatus={setStat} />)}
         </div>
       ) : <div className="section-card"><div className="empty"><h3>No orders</h3><p>No purchase orders match your search or filters.</p></div></div>}
+      {shipAsk && <ConfirmModal title={shipAsk.title} message={shipAsk.message} confirmLabel={shipAsk.confirmLabel} danger={false} onConfirm={shipAsk.onConfirm} onCancel={()=>setShipAsk(null)} />}
     </>
   );
 }
@@ -3488,7 +3525,16 @@ function OrderDetail({ id, navigate }) {
     setLoading(false);
   };
   useEffect(()=>{ load(); },[id]);
+  // A status pill. Shipped creates a shipment, so it asks first (shipmentAsk).
   const updateStatus = async (status) => {
+    if (status === 'shipped' && po.status !== 'shipped') {
+      const ask = await shipmentAsk(id, po.order_number||po.client_po_number, 'status');
+      setConfirmDel({ ...ask, onConfirm:()=>{ setConfirmDel(null); applyStatus(status); } });
+      return;
+    }
+    applyStatus(status);
+  };
+  const applyStatus = async (status) => {
     await SB.from('purchase_orders').update({status,updated_at:new Date().toISOString()}).eq('id',id);
     setPO(prev=>({...prev,status}));
     if (status === 'shipped') {
@@ -3497,10 +3543,15 @@ function OrderDetail({ id, navigate }) {
       else if (r?.error) window._toast?.(r.error,'err');
     }
   };
+  // Asks first; see shipmentAsk.
   const generateShipment = async () => {
+    const ask = await shipmentAsk(id, po.order_number||po.client_po_number, 'button');
+    setConfirmDel({ ...ask, onConfirm:()=>{ setConfirmDel(null); doGenerateShipment(); } });
+  };
+  const doGenerateShipment = async () => {
     const r = await createShipmentForPO(id);
     if (r?.ok) {
-      await updateStatus('shipped');
+      await applyStatus('shipped');
       window._toast?.('Shipment '+r.shipmentNumber+' created · PO & SO set to Shipped','ok');
       load();
     } else if (r === false) {
@@ -3688,6 +3739,10 @@ function OrderDetail({ id, navigate }) {
   const mold = Number(po.mold_fee||0);
   const grand = subtotal+mold;
   const dep = po.deposit_percent ? grand*(po.deposit_percent/100) : null;
+  // The Line Items table's order and printed sizes, the same as the PO document's.
+  const lineBlocks = poLineBlocks(items, PO_ITEM_FIELDS);
+  const sizeLabel = new Map();
+  lineBlocks.forEach(b => { if (b.labels) b.labels.forEach((v, k) => sizeLabel.set(k, v)); });
   const notifyLabel = posting ? 'Posting...' : noteAssignee==='all' ? 'Post & notify team' : 'Post & notify '+((TEAM.find(m=>m.email===noteAssignee)||{}).name||'person');
   const onFileChange = (e) => { const f = e.target.files && e.target.files[0]; if (f) uploadFile(f); e.target.value = ''; };
   return (
@@ -3705,7 +3760,7 @@ function OrderDetail({ id, navigate }) {
         <button className="btn btn-ghost btn-sm" onClick={()=>setEditing(true)}>Edit</button>
         <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)'}} onClick={()=>setConfirmDel({title:'Delete purchase order?',message:'This will permanently delete '+( po?.order_number||'this PO')+' and all its line items.',onConfirm:()=>{setConfirmDel(null);deletePO();}})}>Delete</button>
       </div>
-      {confirmDel && <ConfirmModal title={confirmDel.title} message={confirmDel.message} onConfirm={confirmDel.onConfirm} onCancel={()=>setConfirmDel(null)} />}
+      {confirmDel && <ConfirmModal title={confirmDel.title} message={confirmDel.message} confirmLabel={confirmDel.confirmLabel} danger={confirmDel.danger!==false} onConfirm={confirmDel.onConfirm} onCancel={()=>setConfirmDel(null)} />}
       {editing && <PoEditModal po={po} items={items} onClose={()=>setEditing(false)} onSaved={()=>{setEditing(false);load();}} />}
       <div style={{marginBottom:'22px'}}>
         <div style={{fontSize:'10px',fontWeight:700,letterSpacing:'.14em',textTransform:'uppercase',color:'var(--muted)',marginBottom:'6px'}}>Purchase Order</div>
@@ -3775,7 +3830,7 @@ function OrderDetail({ id, navigate }) {
               {/* Grouped by style with sizes in scale order -- the same order the
                   PO document prints (lib/poLines.js). A PO with no sizes keeps
                   the order it was fetched in. */}
-              {poLineBlocks(items, PO_ITEM_FIELDS).flatMap(b=>b.kind==='line' ? [b.line] : [...b.lines, { _total:true, id:'total-'+b.lines[0].id, lines:b.lines }]).map(it=>{
+              {lineBlocks.flatMap(b=>b.kind==='line' ? [b.line] : [...b.lines, { _total:true, id:'total-'+b.lines[0].id, lines:b.lines }]).map(it=>{
                 if (it._total) {
                   const q = it.lines.reduce((a,l)=>a+(Number(l.quantity)||0),0);
                   const amt = it.lines.reduce((a,l)=>a+(Number(l.quantity)||0)*(Number(l.unit_price)||0),0);
@@ -3793,7 +3848,7 @@ function OrderDetail({ id, navigate }) {
                   <tr key={it.id}>
                     <td>
                       <div style={{fontWeight:500}}>{it.description||it.products?.name||'—'}</div>
-                      {it.size&&<div style={{marginTop:'3px'}}><span className="size-tag">Size {it.size}</span></div>}
+                      {it.size&&<div style={{marginTop:'3px'}}><span className="size-tag">Size {sizeLabel.get(it)||it.size}</span></div>}
                       {(it.product_sku||it.products?.sku)&&<div className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>SKU: {it.product_sku||it.products?.sku}</div>}
                       {it.vpn&&<div className="mono" style={{fontSize:'11px',color:'var(--muted)'}}>VPN# {it.vpn}</div>}
                       {it.carton_info&&<div style={{fontSize:'11px',color:'var(--muted)',marginTop:'2px'}}>{it.carton_info}</div>}
@@ -8305,7 +8360,7 @@ function buildPODoc(d, opts={}) {
   const BB = 'border-bottom:1px solid #e5e7eb;';
   const ciCell = l => ciOf(l) != null && String(ciOf(l)).trim() !== '' ? unitPrice(ciOf(l),cur) : '—';
 
-  const rows = poLineBlocks(allLines, PO_DOC_FIELDS).map(b => {
+  const rows = poLineBlocks(allLines, PO_DOC_FIELDS).map((b, bi) => {
     if (b.kind === 'line') {
       // An unsized line: one row, as it has always printed. A size, if a lone
       // line has one, reads as a tag under the description.
@@ -8320,19 +8375,23 @@ function buildPODoc(d, opts={}) {
     }
     // A sized style: a heading row with what every size shares, one row per size
     // with anything that differs, then the style's total. The heading is kept
-    // with the first size across a page break.
+    // with the first size across a page break, and every row carries the style's
+    // data-group, so a style that runs onto the next sheet gets its heading
+    // again there with "(continued)" -- see the paginator in lib/orderDoc.js.
     const ls = b.lines;
+    const grp = ' data-group="s'+bi+'"';
     const subs = ls.map(subsOf);
     const common = subs[0].filter(x => subs.every(list => list.includes(x)));
-    const head = '<tr data-keepnext="1">'
+    const head = '<tr data-keepnext="1" data-grouphead="1"'+grp+'>'
       + '<td colspan="'+nCols+'" style="padding:14px 0 4px;vertical-align:top;">'
-        + '<div style="font-size:14px;font-weight:600;color:#111827;line-height:1.35;">'+esc(ls[0].description||'—')+'</div>'
+        + '<div style="font-size:14px;font-weight:600;color:#111827;line-height:1.35;">'+esc(ls[0].description||'—')
+          + '<span data-cont="1" style="display:none;font-weight:500;color:#6b7280;"> (continued)</span></div>'
         + skuLine(ls[0].sku) + common.join('')
       + '</td></tr>';
     const IN = 'border-bottom:1px solid #f1f3f6;';
-    const sizeRows = ls.map((l, i) => '<tr>'
+    const sizeRows = ls.map((l, i) => '<tr'+grp+'>'
       + '<td style="padding:7px 10px 7px 16px;vertical-align:top;'+IN+'">'
-        + '<div class="mono" style="font-size:13px;font-weight:600;color:#111827;">'+(l.size ? esc(l.size) : '<span style="color:#9ca3af;font-weight:400;">No size</span>')+'</div>'
+        + '<div class="mono" style="font-size:13px;font-weight:600;color:#111827;">'+(l.size ? esc(b.labels.get(l)) : '<span style="color:#9ca3af;font-weight:400;">No size</span>')+'</div>'
         + subs[i].filter(x => !common.includes(x)).join('')
       + '</td>'
       + numCells(l.quantity, ciCell(l), unitPrice(l.unit_price,cur), m(l.line_amount,cur), IN, false, 7)
@@ -8340,7 +8399,7 @@ function buildPODoc(d, opts={}) {
     const qty = ls.reduce((a,l)=>a+(Number(l.quantity)||0),0);
     const amt = ls.reduce((a,l)=>a+(Number(l.line_amount)||0),0);
     const TOT = 'border-top:1.5px solid #9ca3af;'+BB;
-    const total = '<tr>'
+    const total = '<tr'+grp+'>'
       + '<td style="padding:8px 10px 12px 16px;vertical-align:top;'+TOT+'"><span style="'+LBL+'color:#111827;">Style total</span></td>'
       + numCells(qty, '', '', m(amt,cur), TOT, true, 8)
       + '</tr>';
