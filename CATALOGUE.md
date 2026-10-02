@@ -2916,6 +2916,153 @@ same unknown-key printing for added types.
 
 ---
 
+## 2 Oct — scripts 106 and 107, and what the day found
+
+### PO lines have no stored order
+
+`purchase_order_items` has **no position column**, and both readers — the PO
+detail page and `genPO` — fetch with no `ORDER BY`. Lines come back in the
+table's physical order, which follows entry order only until the PO is edited:
+the edit save UPDATEs every line, each new row version lands wherever there is
+room, and the lines come back shuffled. Kristy's *SEA-To FOllow* (two styles,
+eight sizes each) was created 17:13 UTC and edited 17:16; its 16 lines then sat
+on eight different heap pages and printed interleaved.
+
+Fixed **in display only**, `7b8e20b` and `14f28d1`: `lib/poLines.js` groups lines
+by style (description, SKU, product) in first-appearance order, sorts sizes by
+scale (Toddler, Youth, Adult; off-scale last), and adds a style total; the PO PDF
+and the PO detail table both use it, and a youth-only size in a youth-and-adult
+style prints as *Youth XS*. A PO with no sizes keeps its fetched order.
+**Style order can still move after an edit**, because "first appearance" is the
+fetch order; only a position column fixes that, and none was added. The Sales
+Order's size breakdown (`S 400 · M 600`) has the same root cause and was left
+alone on request.
+
+The PO PDF now shares the order confirmation's letterhead, loader and print model
+(`lib/orderDoc.js`). The confirmation's HTML is identical apart from the shared
+paginator script.
+
+### Script 106, as run — the accidental shipment on SEA-To FOllow undone
+
+At 18:44 UTC *Generate shipment* was clicked on SEA-To FOllow by mistake. It
+created shipment `5a1623db` (number `SEA-To FOllow`, `in_transit`, every logistics
+field empty) and its one `shipment_pos` link, and set the PO to `shipped` with a
+new `updated_at`. No sales order is linked, so `trg_sync_po_to_so` moved nothing,
+no portal notification was written, and nothing was emailed. At 18:57:08 the PO
+was set back to `draft` from a status control (its lines were not rewritten, so
+not the edit form), leaving the shipment and link behind.
+
+106 deleted the link and the shipment by id and set the PO's `updated_at` back to
+`17:16:33.359`, the last real edit; the status column was not written. Guards
+pinned the shipment as created and the PO at `draft` / `18:57:08.673`; checks
+hashed every other PO, shipment and link. Rehearsal and commit, `z0` each.
+**106r** recreates both rows and is verified by whole-row md5 against hashes taken
+before 106.
+
+The status before the click could not be read from the database — **`audit_log`
+is empty and always has been**: nothing writes to it, its `actor_id` must
+reference `vessl.app_users` (0 rows; the logins are in `auth.users`), and its
+`audit_log_auth_all` policy lets any signed-in user insert, edit or delete. It was
+left alone. That gap is why 107 exists.
+
+Since `14f28d1`, *Generate shipment*, and setting a PO to Shipped from its status
+pills, the order card dropdown or the production board, all ask first.
+
+### Script 107, as run — `vessl.order_history`
+
+Rehearsal two and commit, `z0` each. Every change to these fields is recorded,
+whatever screen, button, trigger or script made it:
+
+| Table | Fields |
+|---|---|
+| `purchase_orders` | status, cargo_ready_date, requested_ship_date, cancel_date |
+| `sales_orders` | status, cargo_ready_date, indc_date, cancel_date |
+| `shipments` | status, estimated_departure, estimated_arrival |
+
+One row per changed field: `table_name`, `row_id`, `order_ref` (the number at the
+time), `action` (insert / update / delete), `field`, `old_value`, `new_value`,
+`changed_at`, `actor_id` and `actor_email`, `db_role`, `app_name`, `via`
+(`direct`, or `trigger` when another trigger caused it), `note`.
+
+- **One function**, `vessl.record_order_history()`, SECURITY DEFINER with
+  `search_path = vessl, pg_temp`, behind `trg_order_history` on each table (after
+  insert, update, delete). An update writes only fields whose value changed, so
+  the PO edit form re-saving everything records nothing it did not change. An
+  insert records each field that has a value; a delete each one it had.
+- **It never fails a save.** Every error inside it becomes a Postgres-log warning
+  and the save goes through; the cost is a possible gap, not a blocked edit.
+  Probe p6 proved it with a table that refused every row.
+- **No foreign keys**, so history outlives a deleted order and cannot block one.
+- **Locked down.** Row security on; `order_history_staff_read` lets staff read;
+  nobody — app, anon or service role — may insert, update or delete.
+- **Who.** In the app, the signed-in user from the request JWT, `via direct`. A
+  change made by another trigger (PO status copied to the SO, a shipment's status
+  copied to its PO) names the same user, `via trigger`. A script in the SQL editor
+  has no user: `db_role` reads `postgres` and the script should label itself
+  (below).
+
+**The first rehearsal failed at p1 alone.** It ran as a made-up identity, and
+`kui_staff_only` on `purchase_orders` is a **restrictive** policy —
+`portal.is_kui_staff()`, which only checks the JWT email ends
+`@kinguniversal.com`. A row must pass every restrictive policy as well as one
+permissive one, so the update touched 0 rows and the probe's string came back
+NULL. `vessl.is_staff()` sits in a permissive policy beside `*_auth_all = true`
+and decides nothing. **Any future probe that acts as a signed-in user must use a
+`@kinguniversal.com` identity.** p1 was rewritten to use Matt's login
+(`cd479d49`), read by id from `auth.users`, and to spell out every piece so a
+refusal reads `updated 0` instead of NULL.
+
+By hand after the commit, a throwaway PO showed its creation, a status change, a
+date change and its delete, all under Matt's email, `via direct`.
+
+**107r** drops the three triggers and the function, and drops the table **only if
+it is empty** — a table holding history is kept with its rows, and b2 says so.
+
+#### Reading it
+
+One order's history by its number — matches the number each row recorded, and
+current orders by id, so a renamed or deleted order still shows:
+
+```sql
+select h.changed_at, h.table_name, h.order_ref, h.action, h.field, h.old_value, h.new_value,
+       coalesce(h.actor_email, h.db_role) as who, h.via, h.note
+  from vessl.order_history h
+ where h.order_ref = 'SEA-To FOllow'
+    or h.row_id in (select id from vessl.purchase_orders where order_number = 'SEA-To FOllow'
+                    union select id from vessl.sales_orders where so_number = 'SEA-To FOllow'
+                    union select id from vessl.shipments where shipment_number = 'SEA-To FOllow')
+ order by h.changed_at, h.id;
+```
+
+No screen yet. When one is wanted: a *History* section on the PO page under Line
+Items, the same on the Sales Order page and the shipment form, one shared
+component over this one table.
+
+### From now on: scripts label their changes
+
+Every hand-run script that writes to `purchase_orders`, `sales_orders` or
+`shipments` sets this as the line after `begin;`, so its history rows say which
+script and who ran it:
+
+```sql
+set local vessl.change_note = 'script 108 Matt';
+```
+
+`set local` lasts until the commit or rollback and touches nothing else.
+
+### Still open from the day
+
+- **Save logistics** on the PO page silently creates a shipment (status
+  `created`) and links it when the PO has none; no question is asked.
+- **Sales Order status buttons** change status in one click, and the trigger
+  writes a client-visible portal notification and pushes status down to the POs
+  and shipments.
+- **The PO's deposit line has never printed.** `genPO` passes `deposit_amt` /
+  `deposit_pct`; the document reads `deposit_amount` / `deposit_percent`.
+- **The Sales Order size breakdown** keeps the unstored line order above.
+
+---
+
 ## Scripts 75, 76 and 77, as run — 2026-09-23, the PLM rebuild groundwork
 
 One `z0` each, preflight passed first time on all three, and all three verified
