@@ -6520,26 +6520,29 @@ function Shipments({ onNewShipment, userEmail }) {
                     duplicate, Mark winner, Not selected, archive -- did not fit in
                     words even shrunk (about 367px at 11px), so EDIT AND SHEET ARE
                     ICON BUTTONS with tooltips; RFQ, Mark winner and Not selected stay
-                    words. Measured in Spline Sans 600 at 11px the Sent set is about
-                    278px: words 11px with 6px side padding, icon buttons 20px square
-                    (a 14px glyph), 3px gaps. Every control is flexShrink 0 and nowrap,
-                    so nothing squeezes or breaks a label.
+                    words. Sizes, measured in Spline Sans 600: RFQ 12px with 7px side
+                    padding; Edit and Sheet 24px round with 16px glyphs; Mark winner
+                    11px with 4px side padding, Not selected 2px; duplicate and archive
+                    20px with 14px glyphs; 3px gaps on the left, 2px inside the right
+                    group. The Sent set is about 284px of 292. Every control is
+                    flexShrink 0 and nowrap, so nothing squeezes or breaks a label.
                     Same order and alignment on every card: the quote's own actions on
                     the left, the spacer, then duplicate, any outcome buttons and
                     archive or delete on the right, so a card with fewer buttons only
                     has a longer spacer. marginTop auto pins the row to the foot of the
                     card, so rows line up across a grid row. */}
                 <div style={{display:'flex',flexWrap:'nowrap',gap:'3px',alignItems:'center',marginTop:'auto',borderTop:'1px solid rgba(0,0,0,.05)',paddingTop:'11px',minWidth:0}}>
-                  <button onClick={()=>setRfqQuote(q)} style={{...FQ_WORD,background:'#0A84FF',color:'#fff'}}>RFQ</button>
-                  <button onClick={()=>setQuoteModal(q)} title="Edit" aria-label={'Edit freight quote '+(q.quote_number||'')} style={{...FQ_ICON,background:'#F5F5F7',color:'#1D1D1F',borderRadius:'50%'}}>
+                  <button onClick={()=>setRfqQuote(q)} style={{...FQ_WORD,fontSize:'12px',padding:'6px 7px',background:'#0A84FF',color:'#fff'}}>RFQ</button>
+                  <button onClick={()=>setQuoteModal(q)} title="Edit" aria-label={'Edit freight quote '+(q.quote_number||'')} style={{...FQ_ICON,width:'24px',height:'24px',padding:'4px',background:'#F5F5F7',color:'#1D1D1F',borderRadius:'50%'}}>
                     {/* lucide pencil */}
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
                   </button>
-                  <button onClick={()=>reopen(q)} title="Sheet — the printable freight quote" aria-label={'Sheet for freight quote '+(q.quote_number||'')} style={{...FQ_ICON,background:'#F5F5F7',color:'#1D1D1F',borderRadius:'50%'}}>
+                  <button onClick={()=>reopen(q)} title="Sheet — the printable freight quote" aria-label={'Sheet for freight quote '+(q.quote_number||'')} style={{...FQ_ICON,width:'24px',height:'24px',padding:'4px',background:'#F5F5F7',color:'#1D1D1F',borderRadius:'50%'}}>
                     {/* lucide file-text */}
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
                   </button>
                   <div style={{flex:1,minWidth:0}} />
+                  <div style={{display:'flex',gap:'2px',alignItems:'center',flexShrink:0}}>
                   {/* lucide's Copy glyph, drawn inline rather than imported. page.jsx
                       imports no icon library and uses inline SVG throughout -- the same
                       call the eFiling clear button made. The path is lucide's own, so it
@@ -6551,13 +6554,13 @@ function Shipments({ onNewShipment, userEmail }) {
                       have won or lost -- and on an awarded one it becomes the undo. */}
                   {q.status==='sent' && (
                     <button title="Mark this forwarder as the winner" onClick={()=>markWinner(q)}
-                      style={{...FQ_WORD,background:'#F5F5F7',color:'#0A84FF'}}>
+                      style={{...FQ_WORD,padding:'6px 4px',background:'#F5F5F7',color:'#0A84FF'}}>
                       Mark winner
                     </button>
                   )}
                   {q.status==='sent' && (
                     <button title="Mark this RFQ as not selected" onClick={()=>markNotSelected(q)}
-                      style={{...FQ_WORD,background:'none',padding:'6px 3px',color:'#86868B'}}>
+                      style={{...FQ_WORD,background:'none',padding:'6px 2px',color:'#86868B'}}>
                       Not selected
                     </button>
                   )}
@@ -6589,6 +6592,7 @@ function Shipments({ onNewShipment, userEmail }) {
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
                     </button>
                   )}
+                  </div>
                 </div>
               </div>
             );
