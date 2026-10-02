@@ -1184,18 +1184,35 @@ function Platform({ session, newQuote = null }) {
   const shownQuotes = view === "search" ? searchResults : view === "clientQuotes" ? clientQuotes : [];
   // THE DESKTOP ROW GRID, read by the header and every row. Chevron, Quote ID,
   // SKU, Product Name, [Client in search], Factory, Tiers, Method, Client Price
-  // Range, Avg Margin, Updated, the three icons. Fixed widths for the short
-  // columns; the text columns share what is left and truncate.
+  // Range, Avg Margin, Updated, the three icons.
   //
-  // FACTORY GETS THE LARGEST SHARE, and wraps rather than truncates: factory
-  // names run to 45 characters ("Universal Plastic and Metal Manufacturing
-  // LTD"), and a cut-off factory reads as a different factory. Product Name
-  // gives up width for it and keeps truncating, with the full name on hover.
-  // Client Price Range stays 140px -- the widest real range is about
-  // "$12.345 – $14.50".
-  const qGrid = "22px 78px 120px minmax(0,1.1fr) "
-    + (view === "search" ? "minmax(0,0.9fr) " : "")
-    + "minmax(0,1.6fr) 52px 72px 140px 80px 126px 104px";
+  // THE SKU IS NEVER CUT. 140px fits 346 of the 353 SKUs on one line (measured
+  // in Spline Sans 600 at 14.5px, 2 Oct); the longest, about 174px, wraps onto
+  // a second line. It used to be 120px with an ellipsis, which cut 33 of them
+  // -- "VIP drawstring bag" is 128px -- and on a narrower screen the cut was
+  // what you noticed.
+  //
+  // WHO GIVES WAY WHEN THE SCREEN NARROWS. The short columns are minmax(least,
+  // usual): the grid fills those to their usual width before Product Name and
+  // Factory get anything, so the two text columns shrink first -- each down to
+  // a floor -- and only then do the short columns give up their spare room.
+  // At their usual widths (a screen that shows the table at its full 1280px)
+  // the row is as before, bar the SKU's extra 20px.
+  //
+  // FACTORY wraps rather than truncates: names run to 45 characters
+  // ("Universal Plastic and Metal Manufacturing LTD"), and a cut-off factory
+  // reads as a different factory. Its 104px floor fits "Manufacturing", the
+  // longest word. Product Name keeps truncating, with the full name on hover.
+  // Client Price Range is 140px at most -- the widest real range is about
+  // "$12.345 – $14.50", 104px -- and its header wraps below that.
+  const qGrid = "22px minmax(62px,78px) 140px minmax(56px,1.1fr) "
+    + (view === "search" ? "minmax(56px,0.9fr) " : "")
+    + "minmax(104px,1.6fr) minmax(48px,52px) minmax(50px,72px) minmax(106px,140px) minmax(56px,80px) minmax(86px,126px) minmax(97px,104px)";
+  // The row's narrowest: every floor above plus ten gaps at their narrowest.
+  // The table scrolls sideways below this rather than overlap or cut the icons
+  // off -- only the search view (one more column) at about 1280px with the
+  // sidebar open gets there.
+  const qMin = 22 + 62 + 140 + 56 + (view === "search" ? 56 + 10 : 0) + 104 + 48 + 50 + 106 + 56 + 86 + 97 + 10 * 10 + 36;
 
   const myOpenTaskCount = tasks.filter((t) => !t.done && (t.assigned_to || "").toLowerCase() === userEmail.toLowerCase()).length;
 
@@ -1341,14 +1358,15 @@ function Platform({ session, newQuote = null }) {
       )}
 
       {(view === "clientQuotes" || view === "search") && (
-        <div style={S.tableWrap}>
+        <div style={isMobile ? S.tableWrap : { ...S.tableWrap, overflowX: "auto" }}>
+        <div style={{ minWidth: isMobile ? 0 : qMin }}>
           {/* ── DESKTOP IS ONE GRID, header and rows alike ─────────────────────
               qGrid is the single column list both read, so a header cannot sit
               off its values. Quote ID, SKU and Product Name are columns of their
               own; search adds a Client column after Product Name, where the
-              client used to be appended to the product line. Text cells truncate
-              with an ellipsis and carry the full text as a tooltip, so a long
-              SKU or name never wraps or shoves a neighbour.
+              client used to be appended to the product line. The SKU and Factory
+              wrap; Product Name, Client and the Updated email truncate with an
+              ellipsis and carry the full text as a tooltip.
 
               MOBILE KEEPS ITS FLEX ROW, unchanged in what it shows -- chevron,
               the Quote ID pill and SKU with the product name beneath, price,
@@ -1370,8 +1388,8 @@ function Platform({ session, newQuote = null }) {
             <div style={{ textAlign: "center" }}>Factory</div>
             <div style={{ textAlign: "center" }}>Tiers</div>
             <div style={{ textAlign: "center" }}>Method</div>
-            <div style={{ textAlign: "center", whiteSpace: "nowrap" }}>Client Price Range</div>
-            <div style={{ textAlign: "center", whiteSpace: "nowrap" }}>Avg Margin</div>
+            <div style={{ textAlign: "center" }}>Client Price Range</div>
+            <div style={{ textAlign: "center" }}>Avg Margin</div>
             <div style={{ paddingLeft: 10 }}>Updated</div>
             <div />
           </div>
@@ -1421,7 +1439,7 @@ function Platform({ session, newQuote = null }) {
                   <div style={{ minWidth: 0 }}>
                     {q.quoteCode ? <span style={{ ...S.quoteCode, marginRight: 0 }}>{q.quoteCode}</span> : <span style={S.cellSub}>—</span>}
                   </div>
-                  <div style={{ ...S.cellPrimary, ...ELL, textAlign: "center" }} title={q.sku || ""}>{q.sku || "No SKU"}</div>
+                  <div style={{ ...S.cellPrimary, minWidth: 0, lineHeight: 1.3, overflowWrap: "anywhere", textAlign: "center" }}>{q.sku || "No SKU"}</div>
                   <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.product || ""}>{q.product || "Untitled product"}</div>
                   {view === "search" && <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.client || ""}>{q.client || "—"}</div>}
                   <div style={{ minWidth: 0, textAlign: "center" }}>
@@ -1503,6 +1521,7 @@ function Platform({ session, newQuote = null }) {
             );
           })}
         </div>
+        </div>
       )}
 
       </>)}
@@ -1517,8 +1536,10 @@ function Platform({ session, newQuote = null }) {
   );
 }
 
-// The gap between the columns of the desktop quote row, header and rows alike.
-const Q_GAP = 14;
+// The gap between the columns of the desktop quote row, header and rows alike:
+// 14px once the table is at its full width (a window about 1584px wide, sidebar
+// open), narrowing to 10px at 1280 so the columns keep their room.
+const Q_GAP = "clamp(10px, calc(1.2vw - 5px), 14px)";
 // One line, cut with an ellipsis -- the full text rides on the cell's title.
 const ELL = { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 
