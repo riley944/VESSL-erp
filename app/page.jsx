@@ -6514,53 +6514,62 @@ function Shipments({ onNewShipment, userEmail }) {
                   )}
                   {w && <div style={{fontSize:'11px',color:'#5A5A5E',marginTop:'3px'}}>{(lcl ? 'All-in shipment total' : '\u2248 '+money0(eff*ct)+' shipment total')+(w.transit_days?' \u00b7 '+w.transit_days+'d transit':'')}</div>}
                 </button>
-                {/* ACTIONS. Two groups that wrap rather than overflow: what you do
-                    with the quote on the left, its outcome and housekeeping on the
-                    right. When a card is too narrow for both on one line -- a Sent
-                    card needs about 450px and a card can be 292px inside -- the right
-                    group drops to a second line, right-aligned, still inside the card.
-                    Labels stay on one line (nowrap). marginTop auto pins the row to
-                    the foot of the card, so the rows line up across a grid row. */}
-                <div style={{display:'flex',flexWrap:'wrap',columnGap:'6px',rowGap:'8px',alignItems:'center',marginTop:'auto',borderTop:'1px solid rgba(0,0,0,.05)',paddingTop:'11px'}}>
-                  <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
-                  <button onClick={()=>setRfqQuote(q)} style={{display:'inline-flex',alignItems:'center',gap:'5px',background:'#0A84FF',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#fff',cursor:'pointer',whiteSpace:'nowrap'}}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
-                    RFQ
+                {/* ACTIONS. ONE LINE, never wrapped, inside the card at every width
+                    the grid makes. The narrowest card is 330px (the grid minimum),
+                    292px inside its padding. The full Sent set -- RFQ, Edit, Sheet,
+                    duplicate, Mark winner, Not selected, archive -- did not fit in
+                    words even shrunk (about 367px at 11px), so EDIT AND SHEET ARE
+                    ICON BUTTONS with tooltips; RFQ, Mark winner and Not selected stay
+                    words. Measured in Spline Sans 600 at 11px the Sent set is about
+                    278px: words 11px with 6px side padding, icon buttons 20px square
+                    (a 14px glyph), 3px gaps. Every control is flexShrink 0 and nowrap,
+                    so nothing squeezes or breaks a label.
+                    Same order and alignment on every card: the quote's own actions on
+                    the left, the spacer, then duplicate, any outcome buttons and
+                    archive or delete on the right, so a card with fewer buttons only
+                    has a longer spacer. marginTop auto pins the row to the foot of the
+                    card, so rows line up across a grid row. */}
+                <div style={{display:'flex',flexWrap:'nowrap',gap:'3px',alignItems:'center',marginTop:'auto',borderTop:'1px solid rgba(0,0,0,.05)',paddingTop:'11px',minWidth:0}}>
+                  <button onClick={()=>setRfqQuote(q)} style={{...FQ_WORD,background:'#0A84FF',color:'#fff'}}>RFQ</button>
+                  <button onClick={()=>setQuoteModal(q)} title="Edit" aria-label={'Edit freight quote '+(q.quote_number||'')} style={{...FQ_ICON,background:'#F5F5F7',color:'#1D1D1F',borderRadius:'50%'}}>
+                    {/* lucide pencil */}
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
                   </button>
-                  <button onClick={()=>setQuoteModal(q)} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer',whiteSpace:'nowrap'}}>Edit</button>
-                  <button onClick={()=>reopen(q)} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer',whiteSpace:'nowrap'}}>Sheet</button>
-                  </div>
-                  <div style={{display:'flex',flexWrap:'wrap',gap:'6px',alignItems:'center',justifyContent:'flex-end',marginLeft:'auto'}}>
+                  <button onClick={()=>reopen(q)} title="Sheet — the printable freight quote" aria-label={'Sheet for freight quote '+(q.quote_number||'')} style={{...FQ_ICON,background:'#F5F5F7',color:'#1D1D1F',borderRadius:'50%'}}>
+                    {/* lucide file-text */}
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+                  </button>
+                  <div style={{flex:1,minWidth:0}} />
                   {/* lucide's Copy glyph, drawn inline rather than imported. page.jsx
                       imports no icon library and uses inline SVG throughout -- the same
                       call the eFiling clear button made. The path is lucide's own, so it
                       is the identical icon to the Duplicate control on the Quotes page. */}
-                  <button title="Duplicate" aria-label={'Duplicate freight quote '+(q.quote_number||'')} onClick={()=>duplicateQuote(q)} style={{background:'none',border:'none',cursor:'pointer',padding:'5px',borderRadius:'7px',color:'#C7C7CC',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#1D1D1F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                  <button title="Duplicate" aria-label={'Duplicate freight quote '+(q.quote_number||'')} onClick={()=>duplicateQuote(q)} style={{...FQ_ICON,color:'#C7C7CC'}} onMouseEnter={e=>{e.currentTarget.style.color='#1D1D1F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
                   </button>
                   {/* OUTCOME. Only on a sent RFQ -- a quote nobody has sent cannot
                       have won or lost -- and on an awarded one it becomes the undo. */}
                   {q.status==='sent' && (
                     <button title="Mark this forwarder as the winner" onClick={()=>markWinner(q)}
-                      style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 12px',fontSize:'12px',fontWeight:600,color:'#0A84FF',cursor:'pointer',whiteSpace:'nowrap'}}>
+                      style={{...FQ_WORD,background:'#F5F5F7',color:'#0A84FF'}}>
                       Mark winner
                     </button>
                   )}
                   {q.status==='sent' && (
                     <button title="Mark this RFQ as not selected" onClick={()=>markNotSelected(q)}
-                      style={{background:'none',border:'none',padding:'7px 8px',fontSize:'12px',fontWeight:600,color:'#86868B',cursor:'pointer',whiteSpace:'nowrap'}}>
+                      style={{...FQ_WORD,background:'none',padding:'6px 3px',color:'#86868B'}}>
                       Not selected
                     </button>
                   )}
                   {q.status==='awarded' && (
                     <button title="Undo the award and put this shipment back to awaiting" onClick={()=>unawardRfq(q)}
-                      style={{background:'none',border:'none',padding:'7px 8px',fontSize:'12px',fontWeight:600,color:'#86868B',cursor:'pointer',whiteSpace:'nowrap'}}>
+                      style={{...FQ_WORD,background:'none',padding:'6px 3px',color:'#86868B'}}>
                       Undo award
                     </button>
                   )}
                   {(q.status==='not_selected' || q.status==='archived') && (
                     <button title="Put this RFQ back to awaiting" onClick={()=>reopenRfq(q)}
-                      style={{background:'none',border:'none',padding:'7px 8px',fontSize:'12px',fontWeight:600,color:'#86868B',cursor:'pointer',whiteSpace:'nowrap'}}>
+                      style={{...FQ_WORD,background:'none',padding:'6px 3px',color:'#86868B'}}>
                       Reopen
                     </button>
                   )}
@@ -6571,16 +6580,15 @@ function Shipments({ onNewShipment, userEmail }) {
                       it. Delete survives only for a never-sent draft with nothing
                       attached, and deleteQuote re-checks both before it fires. */}
                   {(q.sent_at || bc>0) ? (
-                    <button title="Archive quote" onClick={()=>archiveQuote(q)} style={{background:'none',border:'none',cursor:'pointer',padding:'5px',borderRadius:'7px',color:'#C7C7CC',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#0A84FF';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
+                    <button title="Archive quote" onClick={()=>archiveQuote(q)} style={{...FQ_ICON,color:'#C7C7CC'}} onMouseEnter={e=>{e.currentTarget.style.color='#0A84FF';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
                       {/* lucide archive, drawn inline like every other icon here */}
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg>
                     </button>
                   ) : (
-                    <button title="Delete draft" onClick={()=>deleteQuote(q)} style={{background:'none',border:'none',cursor:'pointer',padding:'5px',borderRadius:'7px',color:'#C7C7CC',display:'flex'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
+                    <button title="Delete draft" onClick={()=>deleteQuote(q)} style={{...FQ_ICON,color:'#C7C7CC'}} onMouseEnter={e=>{e.currentTarget.style.color='#FF375F';}} onMouseLeave={e=>{e.currentTarget.style.color='#C7C7CC';}}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
                     </button>
                   )}
-                  </div>
                 </div>
               </div>
             );
@@ -6785,6 +6793,13 @@ function Shipments({ onNewShipment, userEmail }) {
 // to the import rather than to this function.
 
 // RFQ_* geometry now lives in lib/rfqSheet.js, imported above.
+
+// The freight quote card's action row: a word button and an icon button, sized
+// so the whole Sent set fits one line in the narrowest card (see ACTIONS there).
+const FQ_WORD = { border:'none', borderRadius:'980px', padding:'6px', fontSize:'11px', fontWeight:600, lineHeight:1.2,
+  cursor:'pointer', whiteSpace:'nowrap', flexShrink:0, fontFamily:'inherit' };
+const FQ_ICON = { background:'none', border:'none', cursor:'pointer', padding:'3px', width:'20px', height:'20px',
+  boxSizing:'border-box', borderRadius:'6px', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 };
 
 // An LCL bid is ONE all-in total for the shipment, kept as rates.LCL.total --
 // entered by hand, or read from B22 of a returned LCL sheet. null when a bid
