@@ -1,3 +1,5 @@
+> **From 2 Oct 2026 this feature is shown to users as Sample Life Management (SLM).** Code, file names, tables, the `#programs` URL and these docs keep the PLM name.
+
 # Product Lifecycle Management — design brief
 
 > ## THE BOARD WAS SIMPLIFIED ON 2026-10-01. READ THIS FIRST.

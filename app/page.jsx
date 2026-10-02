@@ -674,7 +674,7 @@ const readStoreSet = (key, allowed) => {
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, role=null, collapsed=false, onToggleRail=null }) {
   const links = [
-    { id:'programs',           label:'Product Life Management' },
+    { id:'programs',           label:'Sample Life Management' },
     { id:'dashboard',          label:'Insights' },
     { id:'sales-orders',       label:'Sales Orders' },
     { id:'orders',             label:'Purchase Orders' },
@@ -7585,10 +7585,10 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
 async function notePlmCardsForPO(clientCompanyId, productIds, poNumber) {
   if (!(productIds || []).length) return;
   const { noted, productsChanged, error } = await noteCardsForPO({ clientCompanyId, productIds, poNumber });
-  if (error) window._toast?.('PO saved, but the PLM note or the product stage did not all land — '+(error.message||String(error)),'err');
+  if (error) window._toast?.('PO saved, but the SLM note or the product stage did not all land — '+(error.message||String(error)),'err');
   else if (noted.length || productsChanged) {
     const parts = [];
-    if (noted.length) parts.push(noted.length+' PLM card'+(noted.length===1?'':'s')+' noted');
+    if (noted.length) parts.push(noted.length+' SLM card'+(noted.length===1?'':'s')+' noted');
     if (productsChanged) parts.push(productsChanged+' product'+(productsChanged===1?'':'s')+' marked Production');
     window._toast?.(parts.join(' · '),'ok');
   }

@@ -1654,9 +1654,9 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
     : missing.needsClient && missing.needsProduct ? 'Needs a client and a product'
     : missing.needsClient ? 'Needs a client'
     : 'Needs a product';
-  const label = state==='done'   ? 'PLM card ready — see Programs'
+  const label = state==='done'   ? 'SLM card ready — see SLM'
     : state==='cannot' ? cannotLabel
-    : busy && !ask ? 'Opening…' : 'Create PLM Card';
+    : busy && !ask ? 'Opening…' : 'Create SLM Card';
   const bg = state==='done' ? '#e7f5ec' : state==='cannot' ? '#fef3e2' : '#0f7d43';
   const col = state==='done' ? '#2f7d52' : state==='cannot' ? '#b45309' : '#fff';
 
@@ -1665,7 +1665,7 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
       <button
         style={{ display:'inline-flex', alignItems:'center', gap:7, background:bg, border:'1px solid '+(state==='idle'?'#0f7d43':'transparent'), color:col, borderRadius:10, padding:'9px 16px', fontSize:13.5, fontWeight:600, cursor:'pointer' }}
         onClick={open} disabled={busy}
-        title="Create a PLM card for this quote, at Quoted, owned by whoever you choose"
+        title="Create an SLM card for this quote, at Quoted, owned by whoever you choose"
       >
         <CheckCircle2 size={15} /> {label}
       </button>
@@ -1699,7 +1699,7 @@ function MarkWonButton({ q, userEmail, staff = [] }) {
       )}
 
       {ask && (
-        <CardOwnerPopup title={'Create PLM card for ' + (q.sku || 'this quote')}
+        <CardOwnerPopup title={'Create SLM card for ' + (q.sku || 'this quote')}
           staff={staff} ownerId={ask.ownerId} busy={busy}
           onOwner={v => setAsk(a => ({ ...a, ownerId: v }))}
           onStart={start} onCancel={() => setAsk(null)} />
