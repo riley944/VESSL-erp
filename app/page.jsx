@@ -6461,7 +6461,7 @@ function Shipments({ onNewShipment, userEmail }) {
             <div style={{color:'#86868B',fontSize:'14px',maxWidth:'420px',margin:'0 auto',lineHeight:1.6}}>{quotes.length===0?'Create a freight quote to spec the cargo, then RFQ it to your forwarders.':'Try clearing the search or filter.'}</div>
           </div>
         ) : (
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(330px,1fr))',gap:'14px'}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(min(330px,100%),1fr))',gap:'14px'}}>
           {shownQuotes.map(q=>{
             const pcs = (q.line_items||[]).reduce((a,l)=>a+(Number(l.pieces)||0),0);
             const w = winnerOf(q.id); const bc = bidCount(q.id);
@@ -6471,7 +6471,7 @@ function Shipments({ onNewShipment, userEmail }) {
             const eff = w ? (lcl ? (lclBidTotal(w)||0) : bidEffective(w, q.container_type||'40HQ')) : 0;
             const ct = Math.max(1, Number(q.containers_needed)||1);
             return (
-              <div key={q.id} style={{background:'#fff',borderRadius:'18px',padding:'18px 19px 14px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',display:'flex',flexDirection:'column',gap:'12px'}}>
+              <div key={q.id} style={{background:'#fff',borderRadius:'18px',padding:'18px 19px 14px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',display:'flex',flexDirection:'column',gap:'12px',minWidth:0}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'10px'}}>
                   <span style={{fontFamily:'var(--mono)',fontSize:'13px',fontWeight:700,color:'#1D1D1F'}}>{q.quote_number}</span>
                   {(()=>{ const pill = rfqPill(q.status); return (
@@ -6514,15 +6514,23 @@ function Shipments({ onNewShipment, userEmail }) {
                   )}
                   {w && <div style={{fontSize:'11px',color:'#5A5A5E',marginTop:'3px'}}>{(lcl ? 'All-in shipment total' : '\u2248 '+money0(eff*ct)+' shipment total')+(w.transit_days?' \u00b7 '+w.transit_days+'d transit':'')}</div>}
                 </button>
-                {/* actions */}
-                <div style={{display:'flex',gap:'6px',alignItems:'center',borderTop:'1px solid rgba(0,0,0,.05)',paddingTop:'11px'}}>
-                  <button onClick={()=>setRfqQuote(q)} style={{display:'inline-flex',alignItems:'center',gap:'5px',background:'#0A84FF',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#fff',cursor:'pointer'}}>
+                {/* ACTIONS. Two groups that wrap rather than overflow: what you do
+                    with the quote on the left, its outcome and housekeeping on the
+                    right. When a card is too narrow for both on one line -- a Sent
+                    card needs about 450px and a card can be 292px inside -- the right
+                    group drops to a second line, right-aligned, still inside the card.
+                    Labels stay on one line (nowrap). marginTop auto pins the row to
+                    the foot of the card, so the rows line up across a grid row. */}
+                <div style={{display:'flex',flexWrap:'wrap',columnGap:'6px',rowGap:'8px',alignItems:'center',marginTop:'auto',borderTop:'1px solid rgba(0,0,0,.05)',paddingTop:'11px'}}>
+                  <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
+                  <button onClick={()=>setRfqQuote(q)} style={{display:'inline-flex',alignItems:'center',gap:'5px',background:'#0A84FF',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#fff',cursor:'pointer',whiteSpace:'nowrap'}}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
                     RFQ
                   </button>
-                  <button onClick={()=>setQuoteModal(q)} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Edit</button>
-                  <button onClick={()=>reopen(q)} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer'}}>Sheet</button>
-                  <div style={{flex:1}} />
+                  <button onClick={()=>setQuoteModal(q)} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer',whiteSpace:'nowrap'}}>Edit</button>
+                  <button onClick={()=>reopen(q)} style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 14px',fontSize:'12px',fontWeight:600,color:'#1D1D1F',cursor:'pointer',whiteSpace:'nowrap'}}>Sheet</button>
+                  </div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:'6px',alignItems:'center',justifyContent:'flex-end',marginLeft:'auto'}}>
                   {/* lucide's Copy glyph, drawn inline rather than imported. page.jsx
                       imports no icon library and uses inline SVG throughout -- the same
                       call the eFiling clear button made. The path is lucide's own, so it
@@ -6534,25 +6542,25 @@ function Shipments({ onNewShipment, userEmail }) {
                       have won or lost -- and on an awarded one it becomes the undo. */}
                   {q.status==='sent' && (
                     <button title="Mark this forwarder as the winner" onClick={()=>markWinner(q)}
-                      style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 12px',fontSize:'12px',fontWeight:600,color:'#0A84FF',cursor:'pointer'}}>
+                      style={{background:'#F5F5F7',border:'none',borderRadius:'980px',padding:'7px 12px',fontSize:'12px',fontWeight:600,color:'#0A84FF',cursor:'pointer',whiteSpace:'nowrap'}}>
                       Mark winner
                     </button>
                   )}
                   {q.status==='sent' && (
                     <button title="Mark this RFQ as not selected" onClick={()=>markNotSelected(q)}
-                      style={{background:'none',border:'none',padding:'7px 8px',fontSize:'12px',fontWeight:600,color:'#86868B',cursor:'pointer'}}>
+                      style={{background:'none',border:'none',padding:'7px 8px',fontSize:'12px',fontWeight:600,color:'#86868B',cursor:'pointer',whiteSpace:'nowrap'}}>
                       Not selected
                     </button>
                   )}
                   {q.status==='awarded' && (
                     <button title="Undo the award and put this shipment back to awaiting" onClick={()=>unawardRfq(q)}
-                      style={{background:'none',border:'none',padding:'7px 8px',fontSize:'12px',fontWeight:600,color:'#86868B',cursor:'pointer'}}>
+                      style={{background:'none',border:'none',padding:'7px 8px',fontSize:'12px',fontWeight:600,color:'#86868B',cursor:'pointer',whiteSpace:'nowrap'}}>
                       Undo award
                     </button>
                   )}
                   {(q.status==='not_selected' || q.status==='archived') && (
                     <button title="Put this RFQ back to awaiting" onClick={()=>reopenRfq(q)}
-                      style={{background:'none',border:'none',padding:'7px 8px',fontSize:'12px',fontWeight:600,color:'#86868B',cursor:'pointer'}}>
+                      style={{background:'none',border:'none',padding:'7px 8px',fontSize:'12px',fontWeight:600,color:'#86868B',cursor:'pointer',whiteSpace:'nowrap'}}>
                       Reopen
                     </button>
                   )}
@@ -6572,6 +6580,7 @@ function Shipments({ onNewShipment, userEmail }) {
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6"/><path d="M10 11v6M14 11v6"/></svg>
                     </button>
                   )}
+                  </div>
                 </div>
               </div>
             );
