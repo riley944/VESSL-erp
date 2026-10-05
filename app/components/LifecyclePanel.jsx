@@ -26,7 +26,7 @@ import { LIFECYCLE_STAGES, fmt, deriveEvents, deriveExceptions, anyEvent, scopeT
 // lookups against keys that already exist.
 
 // ── The exception badges are OFF ─────────────────────────────────────────────
-// Deliberately, and this constant is the whole switch. PLM.md records product
+// Deliberately, and this constant is the whole switch. docs/PLM.md records product
 // identity as a PREREQUISITE of the badges, because several of the contradictions
 // are duplicate-product problems in a lifecycle costume -- LLF-1617 declares
 // passed on BOTH twins with a report on neither, and JON-106 needed a report

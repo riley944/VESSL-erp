@@ -471,7 +471,7 @@ export default function Testing({ userEmail = '' }) {
   // reason; see LifecyclePanel.
   //
   // The number is also the EVIDENCE for the Sample-to-Production proposal in
-  // PLM.md phase 2. Nobody updates product_stage once an order lands, which is
+  // docs/PLM.md phase 2. Nobody updates product_stage once an order lands, which is
   // what unassisted declaration produces and why the transition should be offered
   // rather than waited for.
   const movedPast = useMemo(()=>{

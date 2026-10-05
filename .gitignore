@@ -1,5 +1,6 @@
 .vercel
 .env*
+!.env.example
 node_modules/
 .next/
 # SQL scripts stay untracked while the repo is public. Files already tracked
