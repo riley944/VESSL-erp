@@ -3,14 +3,18 @@
 `kui.vessl.io` is the client-facing portal. These are the things about how it
 meets this codebase that are not obvious from the code here.
 
-## The portal is not in this repository
+## The portal is in its own repository, KUI-portal
 
-It is a separate Next.js app on Vercel, deployed from a different account. It is
-not on any branch of `VESSL-erp` — `git ls-tree -r origin/main` matches no path
-containing "portal", and `git ls-remote` shows `refs/heads/main` and nothing else.
+It is a separate Next.js app, not part of `VESSL-erp`. Its code lives in the
+**KUI-portal** repository, checked out beside this one
+(`VESSL-ERP MDILL97/KUI-portal`). It runs locally on **port 3100**
+(`npm run dev`, bound to 127.0.0.1) and deploys from **its own Vercel project**,
+separate from this app's.
 
-**We cannot read, test, or change it.** Anything client-facing is therefore a
-prediction until someone with that repo confirms it. Say so rather than assuming.
+We can read, test and change it there. Client-facing behaviour should be checked
+in that repo, or on localhost:3100, rather than predicted from this one.
+(This section used to say the opposite; some older entries below were written
+when the portal code was out of reach.)
 
 What we share is the database: the `portal` schema, whose views (`portal.orders`,
 `order_items`, `order_logistics`, `me`) read straight from `vessl.*`, scoped by
