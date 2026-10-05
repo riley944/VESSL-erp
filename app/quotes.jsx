@@ -1182,9 +1182,11 @@ function Platform({ session, newQuote = null }) {
   if (searching) view = "search";
   else if (ui.activeClient) view = "clientQuotes";
   const shownQuotes = view === "search" ? searchResults : view === "clientQuotes" ? clientQuotes : [];
-  // THE DESKTOP ROW GRID, read by the header and every row. Chevron, Quote ID,
-  // SKU, Product Name, [Client in search], Factory, Tiers, Method, Client Price
-  // Range, Avg Margin, Updated, the three icons.
+  // THE DESKTOP ROW GRID, read by the header and every row. Chevron, SKU,
+  // Product Name, [Client in search], Factory, Tiers, Method, Client Price
+  // Range, Avg Margin, Updated, the three icons. The Quote ID column went on
+  // 5 Oct 2026 -- the ID is still on the expanded row, in the quote form, on
+  // the mobile row and in the Quote List tab, and search still matches it.
   //
   // THE SKU IS NEVER CUT. 140px fits 346 of the 353 SKUs on one line (measured
   // in Spline Sans 600 at 14.5px, 2 Oct); the longest, about 174px, wraps onto
@@ -1205,14 +1207,14 @@ function Platform({ session, newQuote = null }) {
   // longest word. Product Name keeps truncating, with the full name on hover.
   // Client Price Range is 140px at most -- the widest real range is about
   // "$12.345 – $14.50", 104px -- and its header wraps below that.
-  const qGrid = "22px minmax(62px,78px) 140px minmax(56px,1.1fr) "
+  const qGrid = "22px 140px minmax(56px,1.1fr) "
     + (view === "search" ? "minmax(56px,0.9fr) " : "")
     + "minmax(104px,1.6fr) minmax(48px,52px) minmax(50px,72px) minmax(106px,140px) minmax(56px,80px) minmax(86px,126px) minmax(97px,104px)";
-  // The row's narrowest: every floor above plus ten gaps at their narrowest.
+  // The row's narrowest: every floor above plus nine gaps at their narrowest.
   // The table scrolls sideways below this rather than overlap or cut the icons
   // off -- only the search view (one more column) at about 1280px with the
   // sidebar open gets there.
-  const qMin = 22 + 62 + 140 + 56 + (view === "search" ? 56 + 10 : 0) + 104 + 48 + 50 + 106 + 56 + 86 + 97 + 10 * 10 + 36;
+  const qMin = 22 + 140 + 56 + (view === "search" ? 56 + 10 : 0) + 104 + 48 + 50 + 106 + 56 + 86 + 97 + 9 * 10 + 36;
 
   const myOpenTaskCount = tasks.filter((t) => !t.done && (t.assigned_to || "").toLowerCase() === userEmail.toLowerCase()).length;
 
@@ -1362,7 +1364,7 @@ function Platform({ session, newQuote = null }) {
         <div style={{ minWidth: isMobile ? 0 : qMin }}>
           {/* ── DESKTOP IS ONE GRID, header and rows alike ─────────────────────
               qGrid is the single column list both read, so a header cannot sit
-              off its values. Quote ID, SKU and Product Name are columns of their
+              off its values. SKU and Product Name are columns of their
               own; search adds a Client column after Product Name, where the
               client used to be appended to the product line. The SKU and Factory
               wrap; Product Name, Client and the Updated email truncate with an
@@ -1381,7 +1383,6 @@ function Platform({ session, newQuote = null }) {
           ) : (
           <div style={{ ...S.theadRow, display: "grid", gridTemplateColumns: qGrid, columnGap: Q_GAP }}>
             <div />
-            <div>Quote ID</div>
             <div style={{ textAlign: "center" }}>SKU</div>
             <div>Product Name</div>
             {view === "search" && <div>Client</div>}
@@ -1435,9 +1436,6 @@ function Platform({ session, newQuote = null }) {
                   onClick={() => setExpanded(open ? null : q.id)}>
                   <div style={{ display: "flex", alignItems: "center" }}>
                     {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    {q.quoteCode ? <span style={{ ...S.quoteCode, marginRight: 0 }}>{q.quoteCode}</span> : <span style={S.cellSub}>—</span>}
                   </div>
                   <div style={{ ...S.cellPrimary, minWidth: 0, lineHeight: 1.3, overflowWrap: "anywhere", textAlign: "center" }}>{q.sku || "No SKU"}</div>
                   <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.product || ""}>{q.product || "Untitled product"}</div>
