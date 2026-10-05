@@ -5,7 +5,7 @@ Lexes a hand-run SQL script and asserts, in one pass, the rules earned by script
 14 through 60. Every rule here cost at least one rehearsal. Run it before printing
 any script that a person will paste into a SQL editor by hand.
 
-    python preflight.py 61-delete-duplicate-quote-TRE-011.sql
+    python sql/preflight.py sql/061-delete-duplicate-quote-TRE-011.sql
 
 Exit 0 is a pass. Anything else prints the rule and the line.
 """

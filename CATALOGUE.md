@@ -21,7 +21,7 @@ without a database sweep.
 
 Customer asked that `BUC-157` become **`BUC-157 KU2607001`**.
 
-### Status: FULLY CLOSED 2026-08-31 — `scratchpad/15` then `scratchpad/20`
+### Status: FULLY CLOSED 2026-08-31 — script 15 then script 20 (both files lost)
 
 Script 15 (2026-08-28 22:17 UTC) renamed three rows: `products.sku`, which was
 still the bare `BUC-157`; and the quote and SO line, normalising Kristy's
@@ -120,7 +120,7 @@ was the only mechanism that exists.
   one row that gets *heard* as a claim about the product. Any future propagation
   feature should report **what it changed, by row**, rather than that it
   succeeded — both to the operator and to whatever reads its output later.
-- `scratchpad/15-buc157-sku-rename.sql` finished the rename on 2026-08-28:
+- Script 15, `15-buc157-sku-rename.sql` (file lost), finished the rename on 2026-08-28:
   three rows updated, all normalised to the single-space form, rows 4–7 left
   alone as decisions for Kristy. It was safe to run because product `c8f3d2d2`
   has zero linked order lines, so the live-SKU read at `page.jsx:2518`/`:2651`
@@ -242,7 +242,7 @@ own merits, independent of the catalogue work.
 
 ---
 
-## 3. Prior work — `scratchpad/backfill-poi-product-id.sql`
+## 3. Prior work — `backfill-poi-product-id.sql` (file lost)
 
 An earlier session already wrote and, on the evidence, **committed** a backfill.
 Its rule: line `description` = product `name`, trimmed, case-insensitive, applied
@@ -377,7 +377,7 @@ of the first group and set nothing at all, losing the rows that were fine.
 
 ## 6. Deferred work
 
-- **`scratchpad/14-batch1-poi-product-id.sql` — PARKED, needs Kristy.** Re-censused
+- **`sql/014-batch1-poi-product-id.sql` — PARKED, needs Kristy.** (Since run, 2026-09-10 — see *Scripts 42 and 14, as run*.) Re-censused
   2026-08-31: of 166 unlinked PO lines, 64 have no name match, 89 are ambiguous,
   and 13 resolve to exactly one product under both case-insensitive and exact
   comparison. Nine of those are blocked by `UNIQUE (purchase_order_id, product_id)`
@@ -447,7 +447,7 @@ of the first group and set nothing at all, losing the rows that were fine.
   product now exists in five places: `prodKey` (`page.jsx:3358`), `productByKey`
   (`page.jsx`, just above `ProductDetailModal`), `productByKey` (`quotes.jsx`, module
   scope), `keyOf` (`components/RenameSkuModal.jsx`), and the backfill predicate in
-  `scratchpad/18-quotes-product-id-and-rename-fn.sql`. All five agree today —
+  script 18, `18-quotes-product-id-and-rename-fn.sql` (file lost). All five agree today —
   `btrim`, `coalesce` to `''`, name required — and each carries a comment pointing at
   the others, but that is a convention, not a guarantee. The fix is one exported
   helper beside `lib/textFilter.js`, which is the existing precedent for a pure
@@ -732,10 +732,16 @@ angle-bracketed could break the page. Everything goes through `esc` now.
 
 ## The scripts are the as-run record
 
-`scratchpad/14` through `scratchpad/41` are the scripts as actually executed
-against production, not drafts. Each carries its measured baseline in the header,
-its guards in the `where` clause rather than in a comment, and a verification
-block that returns exactly one row on success.
+Scripts 14 through 41 are the scripts as actually executed against production,
+not drafts. Each carries its measured baseline in the header, its guards in the
+`where` clause rather than in a comment, and a verification block that returns
+exactly one row on success.
+
+**Since 2026-10-05 every script lives in `sql/`, three-digit numbered
+(`sql/014-…`), and `sql/README.md` is the complete index — every number, its
+status and where that status comes from.** The files for 15–20 and 22–33 are lost;
+the table below is their only record. It stopped being maintained at 41 and is
+kept as history; read the README for current status.
 
 | | what it did | status |
 |---|---|---|
@@ -766,7 +772,7 @@ block that returns exactly one row on success.
 | 41 | both order-item `UNIQUE (order_id, product_id)` constraints dropped | run 2026-09-09 |
 | 39 | 231 sales order lines linked to products, in three passes | run 2026-09-09 |
 | 40 | the JON-106 test report moved to the product it describes | run 2026-09-09 |
-| 14 | four remaining PO-line links | **parked, see §6** |
+| 14 | four remaining PO-line links | parked here; **run 2026-09-10**, see *Scripts 42 and 14, as run* |
 
 ---
 
@@ -863,7 +869,7 @@ must equal 2 per literal plus 2 per doubled pair. Test a `values` block by
 running it as a read-only `select count(*) from (values …) t(…)` first.
 
 *Printing a script is not writing it.* Several scripts were printed into the chat
-and never landed in `scratchpad/`, so the on-disk record and the executed record
+and never landed in `scratchpad/` (now `sql/`), so the on-disk record and the executed record
 diverged — and 14's on-disk copy was a stale pre-re-census version naming
 different rows than the one that had been reviewed. Write the file, then print it.
 
@@ -1292,7 +1298,7 @@ same three currently read `true/true/true`, so it is not a tautology.
 Proving `id = 2` is refused means causing an error, and a failed statement poisons
 the transaction unless wrapped in savepoint handling that differs by client. So the
 rehearsal asserts the constraint **exists**, and the behaviour test lives in
-`34-after-commit-checks.sql`, run in a fresh tab after commit, where a rejected
+`sql/034-after-commit-checks.sql`, run in a fresh tab after commit, where a rejected
 insert costs nothing. It failed with `kui_settings_single_row` as intended, and the
 table still reads 0 rows afterwards.
 
@@ -1327,7 +1333,7 @@ the blanks** — a wire route with no ACH routing number now prints five lines
 instead of a paragraph with a dangling empty label.
 
 **Run 2026-09-08. Rehearsal one `z0` row, commit one `z0` row, and
-`35-after-commit-checks.sql` clean in a fresh tab — every check passed.** Verified
+`sql/035-after-commit-checks.sql` clean in a fresh tab — every check passed.** Verified
 independently afterwards: 14 columns, the six `bank_` present and `text`,
 `ach_info` gone, policies `INSERT, SELECT, UPDATE`, privileges
 `true/true/true/false`, `can_write_settings` still `true/s`, 0 rows.
@@ -2104,7 +2110,8 @@ a comment, an apostrophe in a comment, a double space in a literal, the broken r
 10 form, a first branch missing `as got`, a live `commit;` and no trailing rollback —
 **all eight fired**; and one carrying the script 42 fault, an uncast `got` reading an
 enum — **rule 7 fired**. Rule 9, the absence check, is unproven and does not apply
-here. It now lives at `scratchpad/preflight.py`, committed, so it stops disappearing.
+here. It now lives at `sql/preflight.py` (moved from `scratchpad/` on 2026-10-05),
+committed, so it stops disappearing.
 
 ### Open
 
@@ -3454,7 +3461,7 @@ LL1-1616, SL-117, LL1-1621) into the pipeline as quoted, never-ordered work.
 
 ## Scripts 50 and 51, as run — 2026-09-11
 
-Both `z0` on rehearsal and commit, `51-after-commit-checks` `z0` and rolled back
+Both `z0` on rehearsal and commit, `sql/051-after-commit-checks` `z0` and rolled back
 as designed.
 
 ### 50 — the Koozie, and the last SKU-less product
@@ -3502,7 +3509,7 @@ untouched. Now `anon` false, `authenticated` true, `PUBLIC` none.
 
 **The proof is a rename that actually happened.** 51's own checks are a text
 search over the definition, which cannot tell you the function still works.
-`51-after-commit-checks` creates a throwaway product, renames it **through the
+`sql/051-after-commit-checks` creates a throwaway product, renames it **through the
 RPC** rather than by a raw UPDATE that would pass either way, then checks what
 the function *reported* and what the table *holds* as two separate things — a
 report claiming a change nobody made is the failure that pair exists to catch.
@@ -3847,7 +3854,7 @@ What each was:
 - **13 rows** — a real query, correctly measuring exactly-one-match. Wrong as a
   repair set: 9 of the 13 violate `UNIQUE (purchase_order_id, product_id)` and the
   script would have aborted on row 2. Caught only by reading
-  `scratchpad/backfill-poi-product-id.sql`, where the same three groups were
+  `backfill-poi-product-id.sql` (since lost), where the same three groups were
   already documented.
 - **4 rows** — measured, collision-checked against both the target set and existing
   linked rows (0 collisions), and written up as script 14.
@@ -3858,7 +3865,7 @@ What each was:
    196 → 253 rows between the earlier backfill and tonight; any figure older than
    the current session is stale by construction.
 2. **Check the UNIQUE constraints before writing an UPDATE**, not after it fails.
-3. **Read the prior scripts in `scratchpad/`** — two failure modes are already
+3. **Read the prior scripts in `sql/`** — two failure modes are already
    recorded there.
 4. **A verification that passes on zero rows proves nothing.** Assert the expected
    row count explicitly (`got` / `want`), so a no-op cannot read as a success.

@@ -2,3 +2,6 @@
 .env*
 node_modules/
 .next/
+# SQL scripts stay untracked while the repo is public. Files already tracked
+# under sql/ stay tracked; anything new needs a deliberate git add -f.
+sql/*
