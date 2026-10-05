@@ -3019,8 +3019,14 @@ and decides nothing. **Any future probe that acts as a signed-in user must use a
 (`cd479d49`), read by id from `auth.users`, and to spell out every piece so a
 refusal reads `updated 0` instead of NULL.
 
-By hand after the commit, a throwaway PO showed its creation, a status change, a
-date change and its delete, all under Matt's email, `via direct`.
+**Correction, 5 Oct.** This entry first said a throwaway PO tested by hand after
+the commit on 2 Oct had recorded its creation, a status change, a date change and
+its delete. That test left no rows — on 5 Oct the table held none at all, and
+nothing can delete from it — so it must not be cited as evidence. **The first
+verified live recording is 5 Oct:** throwaway PO `ZZ-HISTORY-TEST2`, saved and
+removed in the app by Matt, wrote rows 12 to 14 (16.38 to 16.40 UTC) — insert,
+status `draft`; update, `draft` to `confirmed`; delete — each under Matt's login,
+`via direct`. Recording works on real app saves.
 
 **107r** drops the three triggers and the function, and drops the table **only if
 it is empty** — a table holding history is kept with its rows, and b2 says so.
