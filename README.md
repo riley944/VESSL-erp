@@ -40,8 +40,8 @@ npm run lint
 ## Deployment
 
 Vercel deploys automatically from `main`: every push to `main` goes to production.
-There are no feature branches. A weekly Vercel cron job (`vercel.json`) calls the
-freight-quote digest route on Monday mornings.
+There are no feature branches. Two weekly Vercel cron jobs (`vercel.json`) run on
+Mondays at 13:00 UTC: the freight-quote digest and the testing digest.
 
 ## Layout
 

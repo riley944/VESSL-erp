@@ -27,6 +27,9 @@ import {
 //                      the subject, no cc
 // With no query string -- which is what the cron sends -- it goes to Jenn with
 // Matt copied. It sends even when every count is zero.
+//
+// SCHEDULED in vercel.json for Mondays at 13:00 UTC (0 13 * * 1), the same slot
+// as the RFQ digest. On a Hobby plan Vercel may fire it up to 59 minutes late.
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
