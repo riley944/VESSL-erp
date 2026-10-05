@@ -2007,7 +2007,7 @@ const stampText = iso => {
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')
        +' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
 };
-// <SKU>-plm-records-<date> or <SKU>-plm-working-<date>, with anything a
+// <SKU>-sample-card-records-<date> or <SKU>-sample-card-working-<date>, with anything a
 // filesystem would argue about replaced. The kind tells the two files apart --
 // records from the Card tab, working from the first tab. A SKU is not guaranteed
 // to be tame -- BUC-157 has a sibling with a double space in its name -- and a
@@ -2015,7 +2015,7 @@ const stampText = iso => {
 const fileBase = (r, kind = 'records') => {
   const raw = (r.products || {}).sku || 'no-sku';
   const safe = raw.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
-  return (safe || 'no-sku') + '-slm-' + kind + '-' + stampToday();
+  return (safe || 'no-sku') + '-sample-card-' + kind + '-' + stampToday();
 };
 const downloadBlob = (blob, filename) => {
   const a = document.createElement('a');
@@ -2188,7 +2188,7 @@ const docShell = (title, flow) => '<!DOCTYPE html><html lang="en"><head><meta ch
 const buildCardDoc = ({ r, card, general, logo }) => {
   const p = r.products || {};
   const g = cardGroups(r);
-  const flow = docLetterhead(logo, 'SLM card', r)
+  const flow = docLetterhead(logo, 'Sample card', r)
     +docGrid(g.head)
     +'<div style="margin-top:30px;">'
       +'<div style="'+DOC_LBL+'margin-bottom:2px;">What the system knows</div>'
@@ -2200,8 +2200,8 @@ const buildCardDoc = ({ r, card, general, logo }) => {
     +docNoteBlock('Card notes', card, 'No notes.')
     +docNoteBlock('General notes', general,
                r.product_id ? 'No notes.' : 'No product linked, so there are no product notes.')
-    +docFooter('SLM card');
-  return docShell('SLM Card — '+(p.sku || p.name || 'Program'), flow);
+    +docFooter('Sample card');
+  return docShell('Sample card — '+(p.sku || p.name || 'Program'), flow);
 };
 
 // ── THE WORKING FILE, exported from the first (stage-named) tab ─────────────
@@ -2438,7 +2438,7 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes, roundNotes = []
 
   return [board, rounds, roundNoteTable, ...(CHECKLIST_ON ? [checklist] : []), cardNoteTable, records, general];
 };
-const boardFileBase = withRemoved => 'slm-board-' + (withRemoved ? 'with-removed-' : '') + stampToday();
+const boardFileBase = withRemoved => 'samples-board-' + (withRemoved ? 'with-removed-' : '') + stampToday();
 
 const buildWorkingDoc = ({ r, factoryName, staff, card, roundNotes = [], logo }) => {
   const p = r.products || {};
@@ -2461,7 +2461,7 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, roundNotes = [], logo })
       +'</tr>').join('')
     +'</table></div>';
   const rounds = workingRounds(r, staff);
-  const flow = docLetterhead(logo, 'SLM card · working', r)
+  const flow = docLetterhead(logo, 'Sample card · working', r)
     +docGrid(grid)
     +'<div style="margin-top:30px;">'
       +'<div style="'+DOC_LBL+'margin-bottom:6px;">Sample rounds</div>'
@@ -2497,8 +2497,8 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, roundNotes = [], logo })
     +(workingNoteGroups(card).length
       ? workingNoteGroups(card).map(g => docNoteBlock('Card notes · ' + g.label, g.list, '')).join('')
       : docNoteBlock('Card notes', [], 'No notes.'))
-    +docFooter('SLM card · working');
-  return docShell('SLM Working — '+(p.sku || p.name || 'Program'), flow);
+    +docFooter('Sample card · working');
+  return docShell('Sample card · working — '+(p.sku || p.name || 'Program'), flow);
 };
 
 
@@ -2555,7 +2555,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
 
   const exportPdf = async () => {
     const win = window.open('', '_blank');
-    if (win) win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating SLM card…</body>');
+    if (win) win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating sample card…</body>');
     setExporting(true);
     try {
       const notes = await fetchCardNotes(r, staff);
@@ -2729,7 +2729,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       // THE WORKING CSV -- five tables, a blank line between them, the CSV
       // answer to the working workbook's five sheets.
       if (exportKind === 'working') {
-        lines.push(cell('# SLM card, working: ' + (p.sku || 'no SKU') + ' — ' + (p.name || '') + ' — ' + ((r.client || {}).name || '')));
+        lines.push(cell('# Sample card · working: ' + (p.sku || 'no SKU') + ' — ' + (p.name || '') + ' — ' + ((r.client || {}).name || '')));
         lines.push([cell('Field'), cell('Value')].join(','));
         [...workingHead(r, factoryName), ...workingStrip(r)].forEach(([l, v]) => lines.push([cell(l), cell(v)].join(',')));
         lines.push('');
@@ -2756,7 +2756,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         setExporting(false);
         return;
       }
-      lines.push(cell('# SLM card: ' + (p.sku || 'no SKU') + ' — ' + (p.name || '') + ' — ' + ((r.client || {}).name || '')));
+      lines.push(cell('# Sample card: ' + (p.sku || 'no SKU') + ' — ' + (p.name || '') + ' — ' + ((r.client || {}).name || '')));
       lines.push([cell('Field'), cell('Value')].join(','));
       cardFields(r).forEach(([label, value]) => lines.push([cell(label), cell(value)].join(',')));
       // ONE FILE, TWO TABLES, a blank line between them -- the CSV answer to the
@@ -3051,7 +3051,7 @@ function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
       if (ex.card) onOpen(ex.card.id);
       const ours = ex.card && ex.card.source_quote && ex.card.source_quote.quote_code === ask.code;
       setMsg(ours
-        ? { tone: 'ok', text: 'SLM card created from ' + ask.code + ' — ' + labelOf(ask.quote) + '.' }
+        ? { tone: 'ok', text: 'Sample card created from ' + ask.code + ' — ' + labelOf(ask.quote) + '.' }
         : { tone: 'info', text: 'A card for ' + labelOf(ask.quote) + ' was created by somebody else a moment ago. Opened it.' });
       setText('');
       setAsk(null);
@@ -3084,7 +3084,7 @@ function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
         </div>
       )}
       {ask && (
-        <CardOwnerPopup title={'Create SLM card for ' + (ask.quote.sku || ask.code) + ' · ' + ask.code}
+        <CardOwnerPopup title={'Create sample card for ' + (ask.quote.sku || ask.code) + ' · ' + ask.code}
           staff={staff} ownerId={ask.ownerId} busy={busy}
           onOwner={v => setAsk(a => ({ ...a, ownerId: v }))}
           onStart={start} onCancel={() => setAsk(null)} />
@@ -4009,7 +4009,7 @@ export default function Programs({ userEmail }) {
       <div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',alignItems:'start',columnGap:'12px',marginBottom:'18px'}}>
         <div />
         <div style={{textAlign:'center'}}>
-          <h1 style={{fontSize:'26px',fontWeight:700,letterSpacing:'-.02em',color:'#1D1D1F',margin:0}}>Sample Life Management</h1>
+          <h1 style={{fontSize:'26px',fontWeight:700,letterSpacing:'-.02em',color:'#1D1D1F',margin:0}}>Samples</h1>
           <div style={{fontSize:'13px',color:'#86868B',marginTop:'5px'}}>
             {board.length} on the board
           </div>
@@ -4112,7 +4112,7 @@ export default function Programs({ userEmail }) {
           <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',marginBottom:'8px',
                        letterSpacing:'-.018em'}}>The board is clear</div>
           <div style={{color:'#86868B',fontSize:'14px',maxWidth:'440px',margin:'0 auto',lineHeight:1.6}}>
-            A card appears when somebody presses Create SLM Card on a quote. Nothing else makes one.
+            A card appears when somebody presses Create Sample Card on a quote. Nothing else makes one.
           </div>
         </div>
       ) : (
@@ -4148,7 +4148,7 @@ export default function Programs({ userEmail }) {
 
       <p style={{margin:'18px 0 0',fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.55,maxWidth:'720px'}}>
         Open a card to change its stage, change its owner or add a note. A card appears
-        only when somebody presses Create SLM Card on a quote. Nothing here moves on its
+        only when somebody presses Create Sample Card on a quote. Nothing here moves on its
         own &mdash; an order, a test report or a change on Testing is reported on the card
         and never acts on it.
       </p>

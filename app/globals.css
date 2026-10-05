@@ -50,8 +50,9 @@ html,body{height:100%;overflow:hidden;font-family:var(--sans);font-size:14px;col
 /* ── SHELL (CSS Grid — sidebar & topbar never scroll) ───── */
 /* THE WIDTH IS A VARIABLE so one value drives the grid column, and collapsing is
    a class on the shell rather than a second copy of the layout. 240px, not 220,
-   because "Product Life Management" (now "Sample Life Management") needs 164px at weight 600 and the label only
-   gets width minus 16 margin, 24 padding, 16 icon and 9 gap -- 175px at 240. */
+   because "Product Life Management" needed 164px at weight 600 and the label only
+   gets width minus 16 margin, 24 padding, 16 icon and 9 gap -- 175px at 240.
+   That item has been "Samples" since 5 Oct 2026; the width was left as it was. */
 .app-shell{
   --sb-w:240px;
   display:grid;

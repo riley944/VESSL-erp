@@ -1528,7 +1528,7 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, orderState 
                   so the caption warns that a value picked here lasts only until the
                   card next moves. */}
               {plmProducts[p.id] && (
-                <div style={{fontSize:'10.5px',color:'#8A8A8E',marginTop:'3px',lineHeight:1.3}}>Updated by SLM cards</div>
+                <div style={{fontSize:'10.5px',color:'#8A8A8E',marginTop:'3px',lineHeight:1.3}}>Updated by sample cards</div>
               )}
             </div>
             {/* Fourth track: the latest test date, or N/A. Reaches 4 of 271 products

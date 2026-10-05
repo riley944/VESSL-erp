@@ -63,7 +63,7 @@ The `docs/` folder holds the working notes behind the code:
 
 - [`docs/CATALOGUE.md`](docs/CATALOGUE.md) — the product catalogue and the record
   of data and schema changes
-- [`docs/PLM.md`](docs/PLM.md) — the sample lifecycle board (shown to users as SLM)
+- [`docs/PLM.md`](docs/PLM.md) — the sample lifecycle board (shown to users as Samples)
 - [`docs/PORTAL.md`](docs/PORTAL.md) — how the ERP and the client portal fit together
 - [`docs/RFQ-SEND.md`](docs/RFQ-SEND.md) — sending freight quote requests and the
   weekly digest

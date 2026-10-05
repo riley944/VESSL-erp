@@ -1,4 +1,4 @@
-> **From 2 Oct 2026 this feature is shown to users as Sample Life Management (SLM).** Code, file names, tables, the `#programs` URL and these docs keep the PLM name.
+> **From 5 Oct 2026 this feature is shown to users as "Samples", and a card as a "sample card".** From 2 to 5 Oct it was shown as Sample Life Management (SLM). Code, file names, tables, the `#programs` URL and these docs keep the PLM name.
 
 # Product Lifecycle Management — design brief
 
