@@ -219,9 +219,11 @@ executed before this test: no client had ever had a shipment-linked order, so
 the code shipped and sat unreachable. BucketGolf has 21 such orders, meaning
 **Killian would hit this the moment he opens a shipment card**.
 
-This is the lead item for the portal-repo access request, ahead of the badge bug.
-It is entirely in code we cannot read or fix, and unlike the badge — which shows
-a wrong number — this one takes the page down.
+This was the lead item for the portal-repo access request, ahead of the badge bug.
+It was entirely in portal code, which at the time we could not read or fix, and
+unlike the badge — which shows a wrong number — it took the page down. The portal
+code is now in the KUI-portal repo (see the top of this file), and this was fixed
+there on 21 Sep.
 
 ## Delivery-request emails and client edits (29–30 Sep, scripts 86–92)
 

@@ -22,27 +22,32 @@ import { execFileSync } from 'node:child_process';
 const PORT = Number(process.env.PORT || 3000);
 const WIN = process.platform === 'win32';
 
+// Busy only when something actually holds the address. Any other bind error --
+// EADDRNOTAVAIL for ::1 on a machine without IPv6 -- means nothing can be
+// listening there, so it must not read as "in use".
 const freeOn = (port, host) => new Promise((resolve) => {
   const s = createServer();
-  s.once('error', () => resolve(false));
+  s.once('error', (e) => resolve(!['EADDRINUSE', 'EACCES'].includes(e.code)));
   s.once('listening', () => s.close(() => resolve(true)));
-  // host null means "the way Next does it" -- no host argument at all.
+  // host null means no host argument at all: Node binds :: in dual-stack mode.
   if (host === null) s.listen(port); else s.listen(port, host);
 });
 
-// TEST THE PORT THE WAY NEXT BINDS IT, WHICH IS NOT 0.0.0.0.
-// `next dev` calls listen(port) with no host, so Node binds :: in dual-stack
-// mode. This guard used to probe 0.0.0.0 alone, and on Windows that bind
-// SUCCEEDS while another process holds :: -- so a stale server was reported as
-// "port free", the guard returned without killing anything, and Next then died
-// with EADDRINUSE on ::. Meanwhile localhost:3000 answered 200 the whole time,
-// from the stale process. That is the exact failure this file exists to stop,
-// produced by the file itself.
-// Both families are probed and the port counts as busy if either refuses: :: to
-// match Next, 0.0.0.0 to catch a server bound only to IPv4, which :: alone can
-// miss on some hosts.
+// TEST THE PORT THE WAY NEXT BINDS IT, AND EVERY WAY A STALE SERVER MIGHT.
+// `npm run dev` is `next dev -H 127.0.0.1`, so Next binds 127.0.0.1 alone, and
+// that is probed first. On Windows a bind on one address can SUCCEED while
+// another process holds the same port on a different one -- this guard once
+// probed 0.0.0.0 alone, reported a stale server on :: as "port free", and Next
+// died with EADDRINUSE while localhost:3000 kept answering 200 from the stale
+// process. So every address that localhost:3000 could reach is probed too:
+//   ::1      the browser tries it first for "localhost"; a stale server there
+//            would answer instead of ours
+//   ::       a server from before 5 Oct 2026, bound with no host (all of IPv6
+//            and, dual-stack, IPv4)
+//   0.0.0.0  a server bound to all of IPv4 only
+// The port counts as busy if any of them refuses.
 const free = async (port) => {
-  for (const host of [null, '0.0.0.0']) {
+  for (const host of ['127.0.0.1', '::1', null, '0.0.0.0']) {
     if (!(await freeOn(port, host))) return false;
   }
   return true;
