@@ -2101,6 +2101,37 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
       )}
       <div style={{ gridColumn: "1 / -1" }}>
         <div style={S.detailHead}><Layers size={14} /> Tiered Pricing</div>
+        {/* ON A PHONE EACH TIER IS A CARD. Seven columns in one row need about
+            400px and a phone has about 264 here; the table and the list both clip,
+            so Client Price and Margin were simply cut off. Same numbers, same
+            formatting, same order -- laid out as label and value pairs. */}
+        {isMobile ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {(q.tiers || []).map((t, i) => {
+              const m = tierMargin(t, t.client, q.moldFee);
+              const total = tierTotalCost(t, q.moldFee);
+              const mpu = moldPerUnit(q.moldFee, effectiveQty(t));
+              const pair = (label, value, strong) => (
+                <div style={{ minWidth: 0 }}>
+                  <div style={S.detailLabel}>{label}</div>
+                  <div style={{ ...S.num, fontSize: 13.5, ...(strong ? { fontWeight: 600, color: "#0f1729" } : {}) }}>{value}</div>
+                </div>
+              );
+              return (
+                <div key={i} style={{ ...S.tierTable, padding: "10px 12px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 14px" }}>
+                  {pair("Quantity", t.qty ? Number(t.qty).toLocaleString() : "—", true)}
+                  {pair("EXW Cost", t.landed ? `$${fmtUnit(t.landed)}` : "—")}
+                  {pair("Method", <span style={S.methodTag}>{(t.ship || "ocean") === "air" ? "Air" : "Ocean"}</span>)}
+                  {pair("Freight + Duty", activeFreight(t) ? `$${fmtUnit(activeFreight(t))}` : "—")}
+                  {pair("Total Cost", <>{total ? `$${fmtUnit(total)}` : "—"}{mpu > 0 && <div style={{ fontSize: 10.5, color: "#6a7488", fontWeight: 500 }}>incl. ${fmtUnit(mpu)} mold</div>}</>, true)}
+                  {pair("Client Price", t.client ? `$${fmtUnit(t.client)}` : "—", true)}
+                  {pair("Margin", <span style={{ color: m && m < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{m ? m.toFixed(0) + "%" : "—"}</span>)}
+                </div>
+              );
+            })}
+            {(!q.tiers || q.tiers.length === 0) && <div style={{ ...S.tierTable, padding: "11px 14px", color: "#6a7488", textAlign: "center", fontSize: 13.5 }}>No tiers entered.</div>}
+          </div>
+        ) : (
         <div style={S.tierTable}>
           <div style={S.tierHeadRow}>
             <div style={{ flex: 1 }}>Quantity</div>
@@ -2138,6 +2169,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
           })}
           {(!q.tiers || q.tiers.length === 0) && <div style={{ ...S.tierBodyRow, color: "#6a7488", justifyContent: "center" }}>No tiers entered.</div>}
         </div>
+        )}
         {(Number(q.moldFee) > 0 || Number(q.sampleFee) > 0) && (
           <div style={S.feeNote}>
             {Number(q.moldFee) > 0 && <span>Mold/tooling fee: <b>${fmt(q.moldFee)}</b> <span style={{ color: "#6a7488" }}>(amortized into total cost per unit)</span></span>}
