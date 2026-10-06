@@ -24,6 +24,7 @@ import { Overlay } from "@/app/components/ModalGuard";
 import { OwnerSelect, ownerIdForEmail } from "@/app/components/OwnerSelect";
 // The search term and the open client survive navigation, and go on reload.
 import { usePageState } from "@/lib/pageState";
+import { useIsMobile } from "@/lib/useIsMobile";
 // sizesForScale is gone from this file: a quote can now carry several scales, and
 // every size here is addressed by the composite key sizesForSelection hands out.
 import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey, storedQtyToMap as qtyMapFrom } from "@/app/components/SizeGrid";
@@ -77,16 +78,8 @@ function nameForEmail(email) {
   return t ? t.name : (email || "").split("@")[0];
 }
 
-// detect narrow viewport (phones) for responsive layout
-function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 720 : false);
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth <= 720);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-  return isMobile;
-}
+// The phone switch (720px or narrower) lives in lib/useIsMobile.js so the Quote
+// List tab reads the same one.
 
 // ---------- KUI margin logic ----------
 function suggestedMarkup(landed) {

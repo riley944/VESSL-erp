@@ -5,6 +5,7 @@ import { FilterSelect } from '@/app/components/FilterSelect';
 import { ExportButton } from '@/app/components/ExportButton';
 import { loadExcelJS, excelDate } from '@/lib/excel';
 import { usePageState } from '@/lib/pageState';
+import { useIsMobile } from '@/lib/useIsMobile';
 import { buildListDoc, showListDoc, logoDataUrl } from '@/lib/listDoc';
 
 // ── QUOTE LIST ──────────────────────────────────────────────────────────────
@@ -63,6 +64,7 @@ const card = { maxWidth: 1280, margin: '0 auto', background: '#ffffff', border: 
 const GRID = '96px 150px minmax(0,2fr) 130px minmax(0,1.4fr)';
 
 export function QuoteList({ reloadKey, onOpen }) {
+  const isMobile = useIsMobile();
   const [ui, setUi] = usePageState('quotelist', { company: [], product: [], sku: [], from: '', to: '', code: '', page: 1 });
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState('');
@@ -295,10 +297,12 @@ export function QuoteList({ reloadKey, onOpen }) {
 
       {/* ── THE TABLE ── */}
       <div style={card}>
+        {!isMobile && (
         <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 14, padding: '14px 18px', borderBottom: '1px solid #e7eaf0',
                       fontSize: 11, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#9aa3b5', fontWeight: 600 }}>
           {COLS.map(h => <div key={h}>{h}</div>)}
         </div>
+        )}
         {rows === null ? (
           <div style={{ padding: '50px 20px', textAlign: 'center', color: '#6a7488' }}>Loading…</div>
         ) : err ? (
@@ -308,7 +312,24 @@ export function QuoteList({ reloadKey, onOpen }) {
             <div style={{ fontSize: 15, fontWeight: 600, color: '#0f1729' }}>{all.length ? 'No quotes match these filters' : 'No quotes yet'}</div>
             {all.length > 0 && <div style={{ fontSize: 13, color: '#6a7488', marginTop: 6 }}>Change a filter, or clear them all.</div>}
           </div>
-        ) : pageRows.map((r, i) => (
+        ) : isMobile ? pageRows.map((r, i) => (
+          // ON A PHONE, TWO LINES PER QUOTE. The five-column grid needs about
+          // 430px and a phone has about 300, so Product and Company collapsed to
+          // nothing and Created was cut off. Line 1 is what identifies the quote,
+          // line 2 what it is, for whom, and when. Same tap opens it.
+          <div key={r.id} onClick={() => onOpen && onOpen(r.id)} role="button" tabIndex={0}
+            onKeyDown={e => { if (e.key === 'Enter') onOpen && onOpen(r.id); }}
+            style={{ padding: '11px 14px', borderTop: i > 0 ? '1px solid #f1f3f7' : 'none', cursor: 'pointer' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: '#3461e0', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                             fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{r.code || DASH}</span>
+              <span style={{ fontSize: 13.5, fontWeight: 600, color: '#0f1729', minWidth: 0, overflowWrap: 'anywhere' }}>{r.sku || DASH}</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: '#6a7488', marginTop: 3, overflowWrap: 'anywhere' }}>
+              {(r.product || DASH) + ' · ' + (r.company || DASH) + ' · ' + fmtDay(r.created)}
+            </div>
+          </div>
+        )) : pageRows.map((r, i) => (
           <div key={r.id} onClick={() => onOpen && onOpen(r.id)} role="button" tabIndex={0}
             onKeyDown={e => { if (e.key === 'Enter') onOpen && onOpen(r.id); }}
             title="Open this quote"
