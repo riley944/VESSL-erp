@@ -6695,7 +6695,7 @@ function Shipments({ onNewShipment, userEmail }) {
                         {hit
                           ? <span style={{fontSize:'11.5px',color:'#8A8A8E'}}>
                               {hit.via==='so' ? 'sales order' : 'shipment'}
-                              {ship ? ' · '+(ship.status||'').replace(/_/g,' ') : ''}
+                              {ship ? ' · '+shipmentStatusLabel(ship.status) : ''}
                               {ship && ship.container_no ? ' · '+ship.container_no : ''}
                               {hit.via==='so' && !ship ? ' · no shipment yet' : ''}
                               {hit.via==='so' && hit.ships.length>1 ? ' · +'+(hit.ships.length-1)+' more' : ''}
