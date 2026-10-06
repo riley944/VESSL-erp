@@ -2084,12 +2084,18 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
     setAssigning(false);
     if (ok) setTaskText("");
   };
+  // ON A PHONE, ONE COLUMN, AND LONG VALUES WRAP. Two columns of about 140px
+  // could not hold an email or an address, and the panel clips what overflows,
+  // so the end of the value was simply cut off. Desktop keeps two columns and its
+  // own wrapping.
+  const gridStyle = isMobile ? { ...S.detailGrid, gridTemplateColumns: "1fr" } : S.detailGrid;
+  const valueStyle = isMobile ? { ...S.detailValue, overflowWrap: "anywhere" } : S.detailValue;
   const Section = ({ icon, title, children }) => (
-    <div style={S.detailSection}><div style={S.detailHead}>{icon} {title}</div><div style={S.detailGrid}>{children}</div></div>
+    <div style={S.detailSection}><div style={S.detailHead}>{icon} {title}</div><div style={gridStyle}>{children}</div></div>
   );
   const F = ({ label, value, span }) => (
     <div style={span ? { gridColumn: "1 / -1" } : {}}>
-      <div style={S.detailLabel}>{label}</div><div style={S.detailValue}>{value || "—"}</div>
+      <div style={S.detailLabel}>{label}</div><div style={valueStyle}>{value || "—"}</div>
     </div>
   );
   const cbm = (Number(q.cartonL) * Number(q.cartonW) * Number(q.cartonH)) / 1000000;
