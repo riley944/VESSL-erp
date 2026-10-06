@@ -1192,7 +1192,8 @@ function Platform({ session, newQuote = null }) {
   // in Spline Sans 600 at 14.5px, 2 Oct); the longest, about 174px, wraps onto
   // a second line. It used to be 120px with an ellipsis, which cut 33 of them
   // -- "VIP drawstring bag" is 128px -- and on a narrower screen the cut was
-  // what you noticed.
+  // what you noticed. Header and value sit at the left edge of the column,
+  // beside the chevron (left-aligned 6 Oct; they were centred before).
   //
   // WHO GIVES WAY WHEN THE SCREEN NARROWS. The short columns are minmax(least,
   // usual): the grid fills those to their usual width before Product Name and
@@ -1383,7 +1384,7 @@ function Platform({ session, newQuote = null }) {
           ) : (
           <div style={{ ...S.theadRow, display: "grid", gridTemplateColumns: qGrid, columnGap: Q_GAP }}>
             <div />
-            <div style={{ textAlign: "center" }}>SKU</div>
+            <div>SKU</div>
             <div>Product Name</div>
             {view === "search" && <div>Client</div>}
             <div style={{ textAlign: "center" }}>Factory</div>
@@ -1437,7 +1438,7 @@ function Platform({ session, newQuote = null }) {
                   <div style={{ display: "flex", alignItems: "center" }}>
                     {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
                   </div>
-                  <div style={{ ...S.cellPrimary, minWidth: 0, lineHeight: 1.3, overflowWrap: "anywhere", textAlign: "center" }}>{q.sku || "No SKU"}</div>
+                  <div style={{ ...S.cellPrimary, minWidth: 0, lineHeight: 1.3, overflowWrap: "anywhere" }}>{q.sku || "No SKU"}</div>
                   <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.product || ""}>{q.product || "Untitled product"}</div>
                   {view === "search" && <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.client || ""}>{q.client || "—"}</div>}
                   <div style={{ minWidth: 0, textAlign: "center" }}>
