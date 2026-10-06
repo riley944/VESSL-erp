@@ -3555,7 +3555,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
   };
 
   return (
-    <div style={S.overlay} onClick={guardedClose}>
+    <div className="quote-form" style={S.overlay} onClick={guardedClose}>
       {/* Rendered inside the quote form, above it, and stopping its own clicks:
           adding a code must never unmount the draft underneath.
 
@@ -4419,6 +4419,14 @@ const CSS = `
 input::placeholder, textarea::placeholder { color: #cdd5e2; }
 .quotes-root input, .quotes-root select, .quotes-root textarea, .quotes-root button { font-family: 'Spline Sans', system-ui, sans-serif; }
 .quotes-root input:focus, .quotes-root select:focus, .quotes-root textarea:focus { outline: none; border-color: #3461e0 !important; box-shadow: 0 0 0 3px rgba(61,86,128,0.14); }
+/* iOS SAFARI ZOOMS INTO ANY FIELD WHOSE TEXT IS UNDER 16px, and stays zoomed, so
+   the page no longer fits once someone has typed in the search box. At phone
+   width every input, select and textarea on the Quotes page is 16px. !important
+   because the sizes here are inline styles. The New / Edit Quote form
+   (.quote-form) is left as it is for now. Desktop sizes are untouched. */
+@media (max-width: 720px) {
+  .quotes-root input:not(.quote-form *), .quotes-root select:not(.quote-form *), .quotes-root textarea:not(.quote-form *) { font-size: 16px !important; }
+}
 `;
 
 const S = {
