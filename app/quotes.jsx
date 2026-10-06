@@ -1467,11 +1467,20 @@ function Platform({ session, newQuote = null }) {
                     {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
                   </div>
                   <div style={{ flex: isMobile ? 1.8 : 2.4, minWidth: 0 }}>
-                    <div style={S.cellPrimary}>
+                    {/* overflowWrap: a SKU with no break in it (BGBALLSFUSION-USA)
+                        wraps inside its column instead of running under the price. */}
+                    <div style={{ ...S.cellPrimary, overflowWrap: "anywhere" }}>
                       {q.quoteCode && <span style={S.quoteCode}>{q.quoteCode}</span>}
                       {q.sku || "No SKU"}
                     </div>
                     <div style={S.cellSub}>{q.product || "Untitled product"}{view === "search" && q.client ? ` · ${q.client}` : ""}</div>
+                    {/* The desktop row has an Updated column; the phone row had
+                        nowhere to show it, and the expanded panel does not either. */}
+                    {q.updatedAt && (
+                      <div style={{ ...S.cellSub, fontSize: 11.5, overflowWrap: "anywhere" }}>
+                        Updated {fmtStamp(q.updatedAt)}{q.updatedBy ? " · " + q.updatedBy : ""}
+                      </div>
+                    )}
                   </div>
                   {!isMobile && (
                     <div style={{ flex: 1.5 }}>
