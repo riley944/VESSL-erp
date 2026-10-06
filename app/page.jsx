@@ -123,6 +123,7 @@ import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompan
 import { usePageState } from '@/lib/pageState';
 import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
+import { shipmentStatusLabel } from '@/lib/shipmentStatus';
 // The RFQ sheet geometry and its builder, shared with app/api/rfq/send/route.js.
 // The row numbers are a wire format between the workbook this writes and the one
 // ImportBidsModal parses back -- a second copy would be a second chance to drift.
@@ -7598,7 +7599,7 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>PO #</label><input className="form-input" value={linkedPO?.order_number||s.shipment_number||''} readOnly style={{opacity:.7,cursor:'default'}} /></div>
-            <div><label>Status</label><select className="form-select" value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{STAT.map(x=><option key={x} value={x}>{x.replace(/_/g,' ')}</option>)}</select></div>
+            <div><label>Status</label><select className="form-select" value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{STAT.map(x=><option key={x} value={x}>{shipmentStatusLabel(x)}</option>)}</select></div>
           </div>
           <div className="form-row-2">
             <div><label>Client</label><input className="form-input" value={(linkedPO?.client?.name||s.companies?.name||'—').toUpperCase()} readOnly style={{opacity:.7,cursor:'default',fontWeight:600}} /></div>
@@ -8416,7 +8417,7 @@ function CreateShipmentModal({ onClose, onCreated }) {
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>Shipment # *</label><input className="form-input" value={form.number} onChange={e=>f('number')(e.target.value)} /></div>
-            <div><label>Status</label><select className="form-select" value={form.status} onChange={e=>f('status')(e.target.value)}>{STATUSES.map(s=><option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}</select></div>
+            <div><label>Status</label><select className="form-select" value={form.status} onChange={e=>f('status')(e.target.value)}>{STATUSES.map(s=><option key={s} value={s}>{shipmentStatusLabel(s)}</option>)}</select></div>
           </div>
           <div className="form-row-2">
             <div><label>Client</label><select className="form-select" value={form.client} onChange={e=>f('client')(e.target.value)}><option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
