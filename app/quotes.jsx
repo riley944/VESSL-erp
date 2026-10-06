@@ -1368,11 +1368,14 @@ function Platform({ session, newQuote = null }) {
               the Quote ID pill and SKU with the product name beneath, price,
               margin -- because a grid of eleven columns has no phone layout. */}
           {isMobile ? (
+          // PRICE AND MARGIN TAKE ONLY WHAT THEY NEED; the product takes the rest.
+          // Price sizes to its own text, right-aligned, so its right edge lines up
+          // row to row; Margin is a fixed 56px, wide enough for the MARGIN header.
           <div style={S.theadRow}>
-            <div style={{ width: 20 }} />
-            <div style={{ flex: 1.8 }}>Product{view === "search" ? " / Client" : ""}</div>
-            <div style={{ flex: 1.3, textAlign: "right", whiteSpace: "nowrap" }}>Price</div>
-            <div style={{ width: 52, textAlign: "right", whiteSpace: "nowrap" }}>Marg</div>
+            <div style={{ width: 20, flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>Product{view === "search" ? " / Client" : ""}</div>
+            <div style={{ flex: "0 0 auto", textAlign: "right", whiteSpace: "nowrap" }}>Price</div>
+            <div style={{ width: 56, flexShrink: 0, textAlign: "right", whiteSpace: "nowrap" }}>Margin</div>
           </div>
           ) : (
           <div style={{ ...S.theadRow, display: "grid", gridTemplateColumns: qGrid, columnGap: Q_GAP }}>
@@ -1463,10 +1466,10 @@ function Platform({ session, newQuote = null }) {
                 </div>
                 ) : (
                 <div id={`quote-row-${q.id}`} style={{ ...S.row, ...(open ? S.rowOpen : {}) }} onClick={() => setExpanded(open ? null : q.id)}>
-                  <div style={{ width: isMobile ? 20 : 26, display: "flex", alignItems: "center" }}>
+                  <div style={{ width: isMobile ? 20 : 26, flexShrink: 0, display: "flex", alignItems: "center" }}>
                     {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
                   </div>
-                  <div style={{ flex: isMobile ? 1.8 : 2.4, minWidth: 0 }}>
+                  <div style={{ flex: isMobile ? 1 : 2.4, minWidth: 0 }}>
                     {/* overflowWrap: a SKU with no break in it (BGBALLSFUSION-USA)
                         wraps inside its column instead of running under the price. */}
                     <div style={{ ...S.cellPrimary, overflowWrap: "anywhere" }}>
@@ -1477,8 +1480,8 @@ function Platform({ session, newQuote = null }) {
                     {/* The desktop row has an Updated column; the phone row had
                         nowhere to show it, and the expanded panel does not either. */}
                     {q.updatedAt && (
-                      <div style={{ ...S.cellSub, fontSize: 11.5, overflowWrap: "anywhere" }}>
-                        Updated {fmtStamp(q.updatedAt)}{q.updatedBy ? " · " + q.updatedBy : ""}
+                      <div style={{ ...S.cellSub, fontSize: 11.5 }}>
+                        Updated {fmtStamp(q.updatedAt)}{q.updatedBy ? " · " + nameForEmail(q.updatedBy) : ""}
                       </div>
                     )}
                   </div>
@@ -1496,8 +1499,8 @@ function Platform({ session, newQuote = null }) {
                   {/* Air and Ocean are not good and bad, so no colour coding —
                       plain muted text, same tone as the other secondary cells. */}
                   {!isMobile && <div style={{ flex: 0.8, fontSize: 13, color: "#6a7488" }}>{sum.method || "—"}</div>}
-                  <div style={{ flex: isMobile ? 1.3 : 1.5, textAlign: "right", whiteSpace: "nowrap", ...S.num, fontWeight: 600, color: "#0f1729", fontSize: isMobile ? 13 : undefined }}>{priceRange}</div>
-                  <div style={{ ...(isMobile ? { width: 52 } : { flex: 0.9 }), textAlign: "right", whiteSpace: "nowrap", ...S.num }}>
+                  <div style={{ flex: isMobile ? "0 0 auto" : 1.5, textAlign: "right", whiteSpace: "nowrap", ...S.num, fontWeight: 600, color: "#0f1729", fontSize: isMobile ? 13 : undefined }}>{priceRange}</div>
+                  <div style={{ ...(isMobile ? { width: 56, flexShrink: 0 } : { flex: 0.9 }), textAlign: "right", whiteSpace: "nowrap", ...S.num }}>
                     <span style={{ color: sum.avgMargin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>
                       {sum.avgMargin ? sum.avgMargin.toFixed(0) + "%" : "—"}
                     </span>
