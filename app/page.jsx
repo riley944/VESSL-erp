@@ -8164,7 +8164,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
 
           <div className="form-row" style={{marginTop:picked?4:0}}><label>Factory *</label>
             <select className="form-select" value={form.factoryId} onChange={e=>f('factoryId')(e.target.value)}>
-              <option value="">Select factory...</option>
+              <option value="">— Select Factory —</option>
               {factories.map(fc=><option key={fc.id} value={fc.id}>{fc.name}</option>)}
             </select>
           </div>
@@ -9736,7 +9736,7 @@ function NewThreadModal({ options, initialCompanyId, onClose, onCreated }) {
           <div className="form-row">
             <label>Client *</label>
             <select className="form-select" value={companyId} onChange={e=>setCompanyId(e.target.value)}>
-              <option value="">Select a client…</option>
+              <option value="">— Select Client —</option>
               {options.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
           </div>
