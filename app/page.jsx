@@ -122,7 +122,7 @@ import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompan
 // See the note at the top of lib/pageState.js for what may and may not go in it.
 import { usePageState } from '@/lib/pageState';
 import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
-import { PAYMENT_TERMS_OPTS } from '@/lib/productOptions';
+import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 // The RFQ sheet geometry and its builder, shared with app/api/rfq/send/route.js.
 // The row numbers are a wire format between the workbook this writes and the one
 // ImportBidsModal parses back -- a second copy would be a second chance to drift.
@@ -2399,14 +2399,54 @@ function PaymentTermsSelect({ value, onChange, keep = '' }){
   );
 }
 
+// Shipping method on a Sales Order, one field for both forms. The dropdown is
+// SHIPPING_METHOD_OPTS; choosing Other opens a box directly beneath it, and what
+// is SAVED is the typed text, in the same column -- so the order page, the order
+// confirmation and the portal print it as they print any other value.
+//
+// AN OLDER ORDER NEVER CHANGES BY BEING OPENED. A stored value in the list is
+// selected as it is. A value outside the list (typed before this existed) opens
+// as Other with that text in the box. The literal word Other opens as Other
+// with an empty box, and may be saved like that. Nothing is mapped or rewritten.
+const shipChoiceOf = v => !v ? '' : SHIPPING_METHOD_OPTS.includes(v) ? v : 'Other';
+const shipOtherOf  = v => v && !SHIPPING_METHOD_OPTS.includes(v) ? v : '';
+// { value } to save, or { error } to show. `keep` is what the order held when the
+// form opened: the untouched text is saved exactly, and an order that already
+// said Other may keep saying it.
+const shipSaveValue = (choice, other, keep = '') => {
+  if (choice !== 'Other') return { value: choice || null };
+  const typed = (other || '').trim();
+  if (typed) return { value: other === keep ? keep : typed };
+  if (keep === 'Other') return { value: 'Other' };
+  return { error: 'Enter the other shipping method' };
+};
+function ShippingMethodField({ choice, other, onChoice, onOther }){
+  return (
+    <div>
+      <label>Shipping Method</label>
+      <select className="form-select" value={choice} onChange={e=>onChoice(e.target.value)}>
+        <option value="">— select —</option>
+        {SHIPPING_METHOD_OPTS.map(m=><option key={m} value={m}>{m}</option>)}
+      </select>
+      {choice === 'Other' && (
+        <div style={{marginTop:'8px'}}>
+          <label>Other shipping method</label>
+          <input className="form-input" value={other} onChange={e=>onOther(e.target.value)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CreateSOModal({onClose,onCreated}){
   // markDirty is needed here: togglePO writes linkedPOIds, which renders as a
   // styled div tick rather than a checkbox, so it never reaches a control value.
   const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
   const nd=()=>new Date().toISOString().split('T')[0];
   const [mode,setMode]=useState('catalog');
-  const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',crd:'',cancel:'',payment:'',currency:'USD',notes:'',shipTo:'',shipMethod:''});
+  const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',crd:'',cancel:'',payment:'',currency:'USD',notes:'',shipTo:'',shipMethod:'',shipOther:''});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
+  const setShip=v=>setForm(prev=>({...prev,shipMethod:v,shipOther:v==='Other'?prev.shipOther:''}));
   const [items,setItems]=useState([]);
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const addItem=()=>setItems(prev=>[...prev,{desc:'',sku:'',qty:'',price:'',quoteId:null,tierIdx:0,noPrice:false,sizeScales:[],sizeQty:{},sizePrice:{}}]);
@@ -2549,6 +2589,8 @@ function CreateSOModal({onClose,onCreated}){
     if(!form.clientId){window._toast?.('Client is required','err');return;}
     if(!form.clientPO.trim()){window._toast?.('Client PO number is required','err');return;}
     if(!form.date){window._toast?.('Order date is required','err');return;}
+    const ship=shipSaveValue(form.shipMethod,form.shipOther);
+    if(ship.error){window._toast?.(ship.error,'err');return;}
     if(!items.filter(it=>it.desc.trim()).length){window._toast?.('Add at least one line item','err');return;}
     // A sized line expands to one row per size, so with every size at zero it would
     // contribute nothing and the order could be saved with no line items at all.
@@ -2557,7 +2599,7 @@ function CreateSOModal({onClose,onCreated}){
     setLoading(true);
     // auto-generate so_number from client PO if not set
     const soNum = form.num.trim() || ('KUI-'+form.clientPO.trim().replace(/[^A-Za-z0-9]/g,'-').slice(0,20).toUpperCase());
-    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:form.shipMethod||null,status:'received'}).select().single();
+    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:ship.value,status:'received'}).select().single();
     if(e0||!so){alert('Error: '+(e0?.message||'unknown'));setLoading(false);return;}
     // A line with a size scale expands into one row per size carrying a quantity;
     // an unsized line still writes exactly one row, with size NULL. Sizes left blank
@@ -2740,14 +2782,7 @@ function CreateSOModal({onClose,onCreated}){
             <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}>{['USD','CAD','EUR','GBP','AUD'].map(c=><option key={c} value={c}>{c}</option>)}</select></div>
           </div>
           <div className="form-row-2">
-            <div><label>Shipping Method</label><select className="form-select" value={form.shipMethod} onChange={e=>f('shipMethod')(e.target.value)}>
-              <option value="">— select —</option>
-              <option value="FedEx">FedEx</option>
-              <option value="Sine Trading">Sine Trading</option>
-              <option value="Ocean Freight">Ocean Freight</option>
-              <option value="Air Freight">Air Freight</option>
-              <option value="Other">Other</option>
-            </select></div>
+            <ShippingMethodField choice={form.shipMethod} other={form.shipOther} onChoice={setShip} onOther={f('shipOther')} />
             <div></div>
           </div>
           <div><label>Ship-To Address <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>prints on order confirmation</span></label><textarea className="form-input" rows={3} value={form.shipTo} onChange={e=>f('shipTo')(e.target.value)} placeholder="Full ship-to address for the client" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
@@ -2827,8 +2862,9 @@ function CreateSOModal({onClose,onCreated}){
 function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved}){
   // markDirty for togglePO, same as CreateSOModal: the linked-PO ticks are divs.
   const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
-  const [form,setForm]=useState({num:so.so_number||'',clientId:so.client_company_id||'',clientPO:so.client_po_number||'',date:so.order_date||'',ship:so.indc_date||so.required_ship_date||'',crd:so.cargo_ready_date||'',cancel:so.cancel_date||'',payment:so.payment_terms||'',currency:so.currency||'USD',notes:so.notes||'',shipTo:so.delivery_address||'',shipMethod:so.shipping_method||''});
+  const [form,setForm]=useState({num:so.so_number||'',clientId:so.client_company_id||'',clientPO:so.client_po_number||'',date:so.order_date||'',ship:so.indc_date||so.required_ship_date||'',crd:so.cargo_ready_date||'',cancel:so.cancel_date||'',payment:so.payment_terms||'',currency:so.currency||'USD',notes:so.notes||'',shipTo:so.delivery_address||'',shipMethod:shipChoiceOf(so.shipping_method),shipOther:shipOtherOf(so.shipping_method)});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
+  const setShip=v=>setForm(prev=>({...prev,shipMethod:v,shipOther:v==='Other'?prev.shipOther:''}));
   const [items,setItems]=useState((initItems||[]).map(it=>({id:it.id,desc:it.description||'',sku:it.client_sku||'',qty:it.quantity!=null?String(it.quantity):'',price:it.client_price!=null?String(it.client_price):''})));
   const si=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const addItem=()=>setShowPicker(true);
@@ -2868,8 +2904,10 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
   const togglePO=pid=>{ markDirty(); setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]); };
   const save=async()=>{
     if(!form.date){window._toast?.('Order date is required','err');return;}
+    const ship=shipSaveValue(form.shipMethod,form.shipOther,so.shipping_method||'');
+    if(ship.error){window._toast?.(ship.error,'err');return;}
     setLoading(true);
-    const {error}=await SB.from('sales_orders').update({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:form.shipMethod||null,updated_at:new Date().toISOString()}).eq('id',so.id);
+    const {error}=await SB.from('sales_orders').update({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:ship.value,updated_at:new Date().toISOString()}).eq('id',so.id);
     if(error){alert('Error: '+error.message);setLoading(false);return;}
     const filled=items.filter(it=>it.desc.trim());
     // SAFETY: never wipe all line items. If the form somehow has none but the
@@ -2947,14 +2985,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
           </div>
           <div><label>Payment Terms</label><PaymentTermsSelect value={form.payment} onChange={f('payment')} keep={so.payment_terms||''} /></div>
           <div className="form-row-2">
-            <div><label>Shipping Method</label><select className="form-select" value={form.shipMethod} onChange={e=>f('shipMethod')(e.target.value)}>
-              <option value="">— select —</option>
-              <option value="FedEx">FedEx</option>
-              <option value="Sine Trading">Sine Trading</option>
-              <option value="Ocean Freight">Ocean Freight</option>
-              <option value="Air Freight">Air Freight</option>
-              <option value="Other">Other</option>
-            </select></div>
+            <ShippingMethodField choice={form.shipMethod} other={form.shipOther} onChoice={setShip} onOther={f('shipOther')} />
             <div></div>
           </div>
           <div><label>Ship-To Address <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>prints on order confirmation</span></label><textarea className="form-input" rows={3} value={form.shipTo} onChange={e=>f('shipTo')(e.target.value)} placeholder="Full ship-to address for the client" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
