@@ -122,6 +122,7 @@ import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompan
 // See the note at the top of lib/pageState.js for what may and may not go in it.
 import { usePageState } from '@/lib/pageState';
 import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
+import { PAYMENT_TERMS_OPTS } from '@/lib/productOptions';
 // The RFQ sheet geometry and its builder, shared with app/api/rfq/send/route.js.
 // The row numbers are a wire format between the workbook this writes and the one
 // ImportBidsModal parses back -- a second copy would be a second chance to drift.
@@ -2381,6 +2382,23 @@ function QuotePickerModal({ onPick, onClose, priceField='client' }){
   );
 }
 
+// Payment terms on a Sales Order: Kristy's five from PAYMENT_TERMS_OPTS, with
+// "Not set" first, which saves NULL exactly as an empty box did. `keep` is the
+// value the order held when the form opened. If it is not one of the five --
+// "60", "Net60" and the like, typed before this was a dropdown -- it is offered
+// as its own choice, selected, so opening and saving an order never changes it.
+// Nothing here maps an old value to a new one; that is a decision, not a default.
+function PaymentTermsSelect({ value, onChange, keep = '' }){
+  const legacy = keep && !PAYMENT_TERMS_OPTS.includes(keep) ? keep : null;
+  return (
+    <select className="form-select" value={value} onChange={e=>onChange(e.target.value)}>
+      <option value="">Not set</option>
+      {PAYMENT_TERMS_OPTS.map(t=><option key={t} value={t}>{t}</option>)}
+      {legacy && <option value={legacy}>{legacy}</option>}
+    </select>
+  );
+}
+
 function CreateSOModal({onClose,onCreated}){
   // markDirty is needed here: togglePO writes linkedPOIds, which renders as a
   // styled div tick rather than a checkbox, so it never reaches a control value.
@@ -2718,7 +2736,7 @@ function CreateSOModal({onClose,onCreated}){
             <div></div>
           </div>
           <div className="form-row-2">
-            <div><label>Payment Terms</label><input className="form-input" value={form.payment} onChange={e=>f('payment')(e.target.value)} placeholder="e.g. Net 30, 50% deposit" /></div>
+            <div><label>Payment Terms</label><PaymentTermsSelect value={form.payment} onChange={f('payment')} /></div>
             <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}>{['USD','CAD','EUR','GBP','AUD'].map(c=><option key={c} value={c}>{c}</option>)}</select></div>
           </div>
           <div className="form-row-2">
@@ -2927,7 +2945,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
             <div><label>Cargo Ready Date <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>when goods are picked up — shown to client</span></label><input type="date" className="form-input" value={form.crd} onChange={e=>f('crd')(e.target.value)} /></div>
             <div><label>Cancel Date</label><input type="date" className="form-input" value={form.cancel} onChange={e=>f('cancel')(e.target.value)} /></div>
           </div>
-          <div><label>Payment Terms</label><input className="form-input" value={form.payment} onChange={e=>f('payment')(e.target.value)} /></div>
+          <div><label>Payment Terms</label><PaymentTermsSelect value={form.payment} onChange={f('payment')} keep={so.payment_terms||''} /></div>
           <div className="form-row-2">
             <div><label>Shipping Method</label><select className="form-select" value={form.shipMethod} onChange={e=>f('shipMethod')(e.target.value)}>
               <option value="">— select —</option>
