@@ -260,14 +260,14 @@ function EstimatorView({ quotes, lanes }) {
         <div style={{fontSize:'15px',fontWeight:700,color:'#1A1A1C',marginBottom:'16px'}}>Estimate a landed cost</div>
         <div style={{marginBottom:'12px'}}><label style={lbl}>Product</label>
           <select style={inp} value={qid} onChange={e=>setQid(e.target.value)}>
-            <option value="">— select a product —</option>
+            <option value="">— Select a Product —</option>
             {(quotes||[]).map(x=><option key={x.id} value={x.id}>{(x.product||x.sku||'Untitled')+(x.client?' · '+x.client:'')}</option>)}
           </select>
         </div>
         <div style={{marginBottom:'12px'}}><label style={lbl}>Quantity</label><input style={inp} value={units} onChange={e=>setUnits(e.target.value)} placeholder="e.g. 10000" /></div>
         <div style={{marginBottom:'12px'}}><label style={lbl}>Lane</label>
           <select style={inp} value={laneKey} onChange={e=>setLaneKey(e.target.value)}>
-            <option value="">— select a lane —</option>
+            <option value="">— Select a Lane —</option>
             {(lanes||[]).map(l=>{ const k=l.origin+'|||'+l.destination+'|||'+l.mode; return <option key={k} value={k}>{l.origin+' → '+l.destination+' ('+l.mode+')'}</option>; })}
           </select>
         </div>

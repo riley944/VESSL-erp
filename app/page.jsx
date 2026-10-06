@@ -2431,7 +2431,7 @@ function ShippingMethodField({ choice, other, onChoice, onOther }){
       <div>
         <label>Shipping Method</label>
         <select className="form-select" value={choice} onChange={e=>onChoice(e.target.value)}>
-          <option value="">— select —</option>
+          <option value="">— Select —</option>
           {SHIPPING_METHOD_OPTS.map(m=><option key={m} value={m}>{m}</option>)}
         </select>
       </div>
@@ -2763,7 +2763,7 @@ function CreateSOModal({onClose,onCreated}){
 
           <div className="form-row"><label>Client *</label>
             <select className="form-select" value={form.clientId} onChange={e=>{const cid=e.target.value;const c=clients.find(x=>x.id===cid);setForm(prev=>({...prev,clientId:cid,shipTo:(c&&c.shipping_address&&!prev.shipTo)?c.shipping_address:prev.shipTo}));}}>
-              <option value="">— select client —</option>
+              <option value="">— Select Client —</option>
               {clients.sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=><option key={c.id} value={c.id}>{c.name}{c.vendor_number?' ('+c.vendor_number+')':''}</option>)}
             </select>
             {!showNC?<button className="btn btn-ghost btn-sm" style={{marginTop:'8px'}} onClick={()=>setShowNC(true)}>+ New client</button>:<div style={{display:'flex',gap:'8px',marginTop:'8px',alignItems:'center'}}><input className="form-input" style={{flex:1}} placeholder="Client name…" value={ncName} onChange={e=>setNcName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNC()} autoFocus /><button className="btn btn-dark btn-sm" onClick={addNC}>Add</button><button className="btn btn-ghost btn-sm" onClick={()=>{setShowNC(false);setNcName('');}}>✕</button></div>}
@@ -2978,7 +2978,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
             <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}>{['USD','CAD','EUR','GBP','AUD'].map(c=><option key={c} value={c}>{c}</option>)}</select></div>
           </div>
           <div style={{marginBottom:'16px'}}><label>Client</label>
-            <select className="form-select" value={form.clientId} onChange={e=>{const cid=e.target.value;const c=clients.find(x=>x.id===cid);setForm(prev=>({...prev,clientId:cid,shipTo:(c&&c.shipping_address&&!prev.shipTo)?c.shipping_address:prev.shipTo}));}}><option value="">— select client —</option>{[...clients].sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+            <select className="form-select" value={form.clientId} onChange={e=>{const cid=e.target.value;const c=clients.find(x=>x.id===cid);setForm(prev=>({...prev,clientId:cid,shipTo:(c&&c.shipping_address&&!prev.shipTo)?c.shipping_address:prev.shipTo}));}}><option value="">— Select Client —</option>{[...clients].sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
             {!showNC?<button className="btn btn-ghost btn-sm" style={{marginTop:'8px'}} onClick={()=>setShowNC(true)}>+ New client</button>:<div style={{display:'flex',gap:'8px',marginTop:'8px',alignItems:'center'}}><input className="form-input" style={{flex:1}} placeholder="Client name…" value={ncName} onChange={e=>setNcName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNC()} autoFocus /><button className="btn btn-dark btn-sm" onClick={addNC}>Add</button><button className="btn btn-ghost btn-sm" onClick={()=>{setShowNC(false);setNcName('');}}>✕</button></div>}
           </div>
           <div><label>Client PO #</label><input className="form-input" value={form.clientPO} onChange={e=>f('clientPO')(e.target.value)} /></div>

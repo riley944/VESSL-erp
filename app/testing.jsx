@@ -2033,11 +2033,11 @@ function ReportModal({ preset, data, materials, products, labs, regs, onClose, o
               -- and only the code told two of them apart. Twelve fibre names are
               distinguishable on sight, so it earns it differently now: MAT-0002 is what
               you paste into a search, and a name is not. */}
-          <div><label style={lbl}>Material</label><select style={inp} value={f.material_id} onChange={set('material_id')}><option value="">— select —</option>{materials.map(m=><option key={m.id} value={m.id}>{materialLabel(m)}</option>)}</select></div>
-          <div><label style={lbl}>or Product (direct)</label><select style={inp} value={f.product_id} onChange={set('product_id')}><option value="">— none —</option>{productOptions.map(p=><option key={p.id} value={p.id}>{(p.sku||p.name)+(isSelectableProduct(p)?'':' (inactive)')}</option>)}</select></div>
+          <div><label style={lbl}>Material</label><select style={inp} value={f.material_id} onChange={set('material_id')}><option value="">— Select —</option>{materials.map(m=><option key={m.id} value={m.id}>{materialLabel(m)}</option>)}</select></div>
+          <div><label style={lbl}>or Product (direct)</label><select style={inp} value={f.product_id} onChange={set('product_id')}><option value="">— None —</option>{productOptions.map(p=><option key={p.id} value={p.id}>{(p.sku||p.name)+(isSelectableProduct(p)?'':' (inactive)')}</option>)}</select></div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'12px'}}>
-          <div><label style={lbl}>Lab</label><select style={inp} value={f.lab_id} onChange={set('lab_id')}><option value="">— select —</option>{labs.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></div>
+          <div><label style={lbl}>Lab</label><select style={inp} value={f.lab_id} onChange={set('lab_id')}><option value="">— Select —</option>{labs.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></div>
           <div><label style={lbl}>Report #</label><input style={inp} value={f.report_number} onChange={set('report_number')} /></div>
           <div><label style={lbl}>Test date</label><input type="date" style={inp} value={f.test_date} onChange={set('test_date')} /></div>
         </div>
