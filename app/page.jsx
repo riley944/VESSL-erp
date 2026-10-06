@@ -2400,7 +2400,7 @@ function PaymentTermsSelect({ value, onChange, keep = '' }){
 }
 
 // Shipping method on a Sales Order, one field for both forms. The dropdown is
-// SHIPPING_METHOD_OPTS; choosing Other opens a box directly beneath it, and what
+// SHIPPING_METHOD_OPTS; choosing Other enables the box beside it, and what
 // is SAVED is the typed text, in the same column -- so the order page, the order
 // confirmation and the portal print it as they print any other value.
 //
@@ -2420,21 +2420,29 @@ const shipSaveValue = (choice, other, keep = '') => {
   if (keep === 'Other') return { value: 'Other' };
   return { error: 'Enter the other shipping method' };
 };
+// TWO CELLS, for a form-row-2: the dropdown on the left, the Other box on the
+// right. The box is always there and is only enabled while Other is chosen;
+// otherwise it is greyed, empty and cannot be typed in (setShip clears it on the
+// way out of Other), so the row never changes shape as the choice changes.
 function ShippingMethodField({ choice, other, onChoice, onOther }){
+  const isOther = choice === 'Other';
   return (
-    <div>
-      <label>Shipping Method</label>
-      <select className="form-select" value={choice} onChange={e=>onChoice(e.target.value)}>
-        <option value="">— select —</option>
-        {SHIPPING_METHOD_OPTS.map(m=><option key={m} value={m}>{m}</option>)}
-      </select>
-      {choice === 'Other' && (
-        <div style={{marginTop:'8px'}}>
-          <label>Other shipping method</label>
-          <input className="form-input" value={other} onChange={e=>onOther(e.target.value)} />
-        </div>
-      )}
-    </div>
+    <>
+      <div>
+        <label>Shipping Method</label>
+        <select className="form-select" value={choice} onChange={e=>onChoice(e.target.value)}>
+          <option value="">— select —</option>
+          {SHIPPING_METHOD_OPTS.map(m=><option key={m} value={m}>{m}</option>)}
+        </select>
+      </div>
+      <div>
+        <label style={isOther ? undefined : {opacity:.6}}>Other shipping method</label>
+        <input className="form-input" value={isOther ? other : ''} disabled={!isOther}
+          placeholder={isOther ? '' : 'Select Other to type'}
+          onChange={e=>onOther(e.target.value)}
+          style={isOther ? undefined : {opacity:.6, cursor:'not-allowed'}} />
+      </div>
+    </>
   );
 }
 
@@ -2783,7 +2791,6 @@ function CreateSOModal({onClose,onCreated}){
           </div>
           <div className="form-row-2">
             <ShippingMethodField choice={form.shipMethod} other={form.shipOther} onChoice={setShip} onOther={f('shipOther')} />
-            <div></div>
           </div>
           <div><label>Ship-To Address <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>prints on order confirmation</span></label><textarea className="form-input" rows={3} value={form.shipTo} onChange={e=>f('shipTo')(e.target.value)} placeholder="Full ship-to address for the client" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
 
@@ -2986,7 +2993,6 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
           <div><label>Payment Terms</label><PaymentTermsSelect value={form.payment} onChange={f('payment')} keep={so.payment_terms||''} /></div>
           <div className="form-row-2">
             <ShippingMethodField choice={form.shipMethod} other={form.shipOther} onChoice={setShip} onOther={f('shipOther')} />
-            <div></div>
           </div>
           <div><label>Ship-To Address <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>prints on order confirmation</span></label><textarea className="form-input" rows={3} value={form.shipTo} onChange={e=>f('shipTo')(e.target.value)} placeholder="Full ship-to address for the client" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
           <span className="form-section-label">Line Items</span>
