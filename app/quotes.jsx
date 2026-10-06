@@ -72,6 +72,8 @@ const TEAM = [
   { name: "Riley", email: "riley@kinguniversal.com" },
   { name: "Steven", email: "steven@kinguniversal.com" },
   { name: "Carmela", email: "carmela@kinguniversal.com" },
+  // Last, so TEAM[0] -- the default assignee in both task boxes -- stays Kristy.
+  { name: "Matt", email: "mattdillon@kinguniversal.com" },
 ];
 function nameForEmail(email) {
   const t = TEAM.find((m) => m.email.toLowerCase() === (email || "").toLowerCase());
