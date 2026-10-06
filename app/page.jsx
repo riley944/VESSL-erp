@@ -4037,10 +4037,12 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     currency:po.currency||'USD', notes:po.notes||'', status:po.status||'draft', pallet:po.pallet_info||'',
     needs_samples:!!po.needs_samples, sample_type:po.sample_type||'', sample_qty:po.sample_qty!=null?String(po.sample_qty):'', sample_date:po.sample_date||'',
     clientId: po.client_company_id||'',
-    testing_required: !!po.testing_required, delivery_address: po.delivery_address||'', shipping_method: po.shipping_method||''
+    testing_required: !!po.testing_required, delivery_address: po.delivery_address||'',
+    shipping_method: shipChoiceOf(po.shipping_method), shipOther: shipOtherOf(po.shipping_method)
   });
   const [items, setItems] = useState((initialItems||[]).map(it=>({id:it.id,prodId:it.product_id||'',desc:it.description||it.products?.name||'',qty:it.quantity!=null?String(it.quantity):'',price:it.unit_price!=null?String(it.unit_price):'',ci:it.ci_value!=null?String(it.ci_value):'',carton:it.carton_info||'',vpn:it.vpn||'',masterSku:it.master_sku||'',packSku:it.pack_sku||'',babySku:it.baby_sku||'',retailPrice:it.retail_price!=null?String(it.retail_price):''})));
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
+  const setShip = v => setForm(prev=>({...prev, shipping_method:v, shipOther: v==='Other' ? prev.shipOther : ''}));
   const setItem=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const addItem=()=>setShowPicker(true);
   const [showPicker,setShowPicker]=useState(false);
@@ -4135,6 +4137,8 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
   const save = async () => {
     if(!form.num){alert('PO number required');return;}
     if(!form.date){alert('Order date is required');return;}
+    const ship = shipSaveValue(form.shipping_method, form.shipOther, po.shipping_method||'');
+    if(ship.error){window._toast?.(ship.error,'err');return;}
     const { error } = await SB.from('purchase_orders').update({
       order_number:form.num, order_date:form.date||null, requested_ship_date:form.ship||null, cargo_ready_date:form.ship||null, cancel_date:form.cancel||null,
       incoterm:form.inco||null, payment_terms:form.pay||null, deposit_percent:Number(form.dep)||null,
@@ -4142,7 +4146,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
       notes:form.notes||null, status:form.status, pallet_info:form.pallet||null,
       client_company_id: form.clientId||null,
       needs_samples:!!form.needs_samples, sample_type:form.needs_samples?(form.sample_type||null):null, sample_qty:form.needs_samples?(Number(form.sample_qty)||null):null, sample_date:form.needs_samples?(form.sample_date||null):null,
-      testing_required:!!form.testing_required, delivery_address:form.delivery_address||null, shipping_method:form.shipping_method||null,
+      testing_required:!!form.testing_required, delivery_address:form.delivery_address||null, shipping_method:ship.value,
       updated_at:new Date().toISOString()
     }).eq('id',po.id);
     if(error){alert('Error: '+error.message);return;}
@@ -4198,7 +4202,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
             <div><label>Incoterm</label><input className="form-input" value={form.inco} onChange={e=>f('inco')(e.target.value)} /></div>
           </div>
           <div className="form-row-2">
-            <div><label>Payment Terms</label><input className="form-input" value={form.pay} onChange={e=>f('pay')(e.target.value)} /></div>
+            <div><label>Payment Terms</label><PaymentTermsSelect value={form.pay} onChange={f('pay')} keep={po.payment_terms||''} /></div>
             <div></div>
           </div>
           <span className="form-section-label">Line Items</span>
@@ -4299,20 +4303,13 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
           <div className="form-row"><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>f('notes')(e.target.value)} /></div>
           <span className="form-section-label">Compliance & Delivery</span>
           <div className="form-row-2">
-            <div><label>Shipping Method</label>
-              <select className="form-select" value={form.shipping_method} onChange={e=>f('shipping_method')(e.target.value)}>
-                <option value="">— select —</option>
-                <option value="FedEx">FedEx</option>
-                <option value="Sine Trading">Sine Trading</option>
-                <option value="Other">Other</option>
-              </select>
-            </div>
-            <div style={{display:'flex',flexDirection:'column',justifyContent:'flex-end'}}>
+            <ShippingMethodField choice={form.shipping_method} other={form.shipOther} onChoice={setShip} onOther={f('shipOther')} />
+          </div>
+          <div className="form-row">
               <label style={{display:'flex',alignItems:'center',gap:'10px',fontSize:'13.5px',cursor:'pointer',fontFamily:'var(--sans)',textTransform:'none',letterSpacing:0,color:'var(--ink)',fontWeight:400,marginBottom:'2px'}}>
                 <input type="checkbox" checked={!!form.testing_required} onChange={e=>f('testing_required')(e.target.checked)} style={{width:'16px',height:'16px',accentColor:'#7c3aed'}} />
                 Testing Required
               </label>
-            </div>
           </div>
           <div className="form-row"><label>Delivery Address</label><textarea className="form-textarea" rows={3} value={form.delivery_address} onChange={e=>f('delivery_address')(e.target.value)} placeholder="Full delivery address for factory reference" /></div>
         </div>
@@ -7678,8 +7675,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [showPicker, setShowPicker] = useState(false);
   const onPickPOItem = (li) => setItems(prev=>[...prev,{prodId:'',desc:li.desc,qty:li.qty,price:li.price,ci:'',carton:'',vpn:'',masterSku:'',packSku:'',babySku:'',retailPrice:'',sizeScales:[],sizeQty:{},sizePrice:{}}]);
   const [recentDescs, setRecentDescs] = useState([]);
-  const [form, setForm]  = useState({ factoryId:'', clientId:'', num:'', date:nowDate(), ship:'', cancel:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'', needs_samples:false, sample_type:'', sample_qty:'', sample_date:'' });
+  const [form, setForm]  = useState({ factoryId:'', clientId:'', shipping_method:'', shipOther:'', num:'', date:nowDate(), ship:'', cancel:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'', needs_samples:false, sample_type:'', sample_qty:'', sample_date:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
+  const setShip = v => setForm(prev=>({...prev, shipping_method:v, shipOther: v==='Other' ? prev.shipOther : ''}));
 
   // Build the next sequential PO number, e.g. KUI-PO-2026-007, from existing ones.
   const genNum = (list=[]) => {
@@ -7945,6 +7943,8 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const submit  = async () => {
     if (!form.factoryId||!form.num) { alert('Factory and PO number required'); return; }
     if (!form.date) { alert('Order date is required'); return; }
+    const ship = shipSaveValue(form.shipping_method, form.shipOther);
+    if (ship.error) { window._toast?.(ship.error,'err'); return; }
     const valid = items.filter(it => (it.prodId || (it.desc||'').trim()) && lineQty(it)>0);
     if (valid.length===0) { alert('Add at least one line item with a quantity greater than 0 before creating the PO.'); return; }
     const baseFields = {
@@ -7953,7 +7953,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       deposit_percent:Number(form.dep)||null, mold_fee:Number(form.mold)||0, sample_fee:Number(form.sample)||0,
       currency:form.currency, notes:form.notes||null, status:'draft',
       needs_samples:!!form.needs_samples, sample_type:form.needs_samples?(form.sample_type||null):null, sample_qty:form.needs_samples?(Number(form.sample_qty)||null):null, sample_date:form.needs_samples?(form.sample_date||null):null,
-      testing_required:!!form.testing_required, delivery_address:form.delivery_address||null, shipping_method:form.shipping_method||null,
+      testing_required:!!form.testing_required, delivery_address:form.delivery_address||null, shipping_method:ship.value,
       source_quote_id: picked?.id || null
     };
     let po=null, lastErr=null, orderNumber=form.num;
@@ -8200,7 +8200,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
             <div></div>
           </div>
           <div className="form-row-2">
-            <div><label>Payment Terms</label><input className="form-input" placeholder="e.g. 30/70" value={form.pay} onChange={e=>f('pay')(e.target.value)} /></div>
+            <div><label>Payment Terms</label><PaymentTermsSelect value={form.pay} onChange={f('pay')} /></div>
             <div><label>Deposit %</label><input type="number" className="form-input" placeholder="30" value={form.dep} onChange={e=>f('dep')(e.target.value)} /></div>
           </div>
           <span className="form-section-label">Line Items</span>
@@ -8331,20 +8331,13 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
           <div className="form-row"><label>Notes</label><textarea className="form-textarea" placeholder="Special instructions..." value={form.notes} onChange={e=>f('notes')(e.target.value)} /></div>
           <span className="form-section-label">Compliance & Delivery</span>
           <div className="form-row-2">
-            <div><label>Shipping Method</label>
-              <select className="form-select" value={form.shipping_method||''} onChange={e=>f('shipping_method')(e.target.value)}>
-                <option value="">— select —</option>
-                <option value="FedEx">FedEx</option>
-                <option value="Sine Trading">Sine Trading</option>
-                <option value="Other">Other</option>
-              </select>
-            </div>
-            <div style={{display:'flex',flexDirection:'column',justifyContent:'flex-end'}}>
+            <ShippingMethodField choice={form.shipping_method} other={form.shipOther} onChoice={setShip} onOther={f('shipOther')} />
+          </div>
+          <div className="form-row">
               <label style={{display:'flex',alignItems:'center',gap:'10px',fontSize:'13.5px',cursor:'pointer',fontFamily:'var(--sans)',textTransform:'none',letterSpacing:0,color:'var(--ink)',fontWeight:400,marginBottom:'4px'}}>
                 <input type="checkbox" checked={!!form.testing_required} onChange={e=>f('testing_required')(e.target.checked)} style={{width:'16px',height:'16px',accentColor:'#7c3aed'}} />
                 Testing Required
               </label>
-            </div>
           </div>
           <div className="form-row"><label>Delivery Address</label><textarea className="form-textarea" rows={3} value={form.delivery_address||''} onChange={e=>f('delivery_address')(e.target.value)} placeholder="Full delivery address for factory reference" /></div>
           </>
