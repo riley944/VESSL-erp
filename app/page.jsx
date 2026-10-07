@@ -677,7 +677,7 @@ const readStoreSet = (key, allowed) => {
 function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, role=null, collapsed=false, onToggleRail=null }) {
   const links = [
     { id:'programs',           label:'Samples' },
-    { id:'dashboard',          label:'Insights' },
+    { id:'dashboard',          label:'KUI Vessl Analytics' },
     { id:'sales-orders',       label:'Sales Orders' },
     { id:'orders',             label:'Purchase Orders' },
     { id:'companies',          label:'Companies' },
@@ -10585,7 +10585,7 @@ export default function App() {
   // holds the screen steady for the render in between.
   if (hasProfile === false) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
 
-  const titles = {dashboard:'Insights','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations','company-banking':'KUI Banking'};
+  const titles = {dashboard:'KUI Vessl Analytics','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations','company-banking':'KUI Banking'};
   const badges = {'client-relations': crUnread, 'shipments': dreqOpen};
 
 
