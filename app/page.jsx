@@ -1123,7 +1123,7 @@ function Dashboard({ navigate }) {
   const INK = '#14171F';
   const TONES = { red: { bg: '#FDECEA', ink: '#8F1D14' }, amber: { bg: '#FFF3DC', ink: '#7A4700' }, grey: { bg: '#EEF1F5', ink: '#414A58' } };
   const smallHead = { fontSize: '13px', fontWeight: 600, color: muted, letterSpacing: '.02em', margin: '0 2px 10px' };
-  const lbl = { display: 'block', fontSize: '10.5px', fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: muted, marginBottom: '5px' };
+  const lbl = { display: 'block', textAlign: 'center', fontSize: '10.5px', fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: muted, marginBottom: '5px' };
   // The per-card slot on the right of each header holds the card's dropdown.
   const CardHead = ({ title, sub, actions }) => (
     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '18px 22px 12px' }}>
@@ -1216,7 +1216,9 @@ function Dashboard({ navigate }) {
         <label className="kva-f"><span style={lbl}>Factory</span><Sel label="Factory" value={f.factory} onChange={v => set('factory', v)} options={[['', 'All Factories'], ...opts.factories]} /></label>
         <label className="kva-f"><span style={lbl}>Order stage</span><Sel label="Order stage" value={f.stage} onChange={v => set('stage', v)} options={STAGE_FILTER_OPTS} /></label>
         <label className="kva-f"><span style={lbl}>Shipping method</span><Sel label="Shipping method" value={f.method} onChange={v => set('method', v)} options={[['', 'All Methods'], ...SHIPPING_METHOD_OPTS.map(m => [m, m])]} /></label>
-        <button onClick={clearAll} className="kva-clear" style={{ background: 'none', border: 'none', padding: '0 2px', fontSize: '13px', color: '#0066CC', cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', textUnderlineOffset: '2px', alignSelf: 'center' }}>Clear filters</button>
+        {/* Bottom-aligned with the controls and the same 38px tall, so its text sits
+            level with theirs rather than with the labels above them. */}
+        <button onClick={clearAll} className="kva-clear" style={{ background: 'none', border: 'none', padding: '0 2px', height: '38px', display: 'inline-flex', alignItems: 'center', alignSelf: 'flex-end', whiteSpace: 'nowrap', fontSize: '13px', color: '#0066CC', cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', textUnderlineOffset: '2px' }}>Clear filters</button>
       </div>
 
       {/* ── 2. Needs attention ── */}
