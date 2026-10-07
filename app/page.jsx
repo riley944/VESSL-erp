@@ -124,6 +124,7 @@ import { usePageState } from '@/lib/pageState';
 import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel } from '@/lib/shipmentStatus';
+import { buildAnalytics, filterOptions, ANALYTICS_DEFAULTS, PERIOD_OPTS, DATES_BY_OPTS, STAGE_FILTER_OPTS, BOOKED_METRIC_OPTS, TOP_SORT_OPTS } from '@/lib/analytics';
 // The RFQ sheet geometry and its builder, shared with app/api/rfq/send/route.js.
 // The row numbers are a wire format between the workbook this writes and the one
 // ImportBidsModal parses back -- a second copy would be a second chance to drift.
@@ -1067,203 +1068,89 @@ function ResetPassword({ onDone }) {
 }
 
 // ── KUI Vessl Analytics (the 'dashboard' route) ──────────────────────────────
-// Release 1 of the revamp. READ ONLY: four selects, no writes.
+// Release 2: filters and a date range. Still READ ONLY -- four selects, no
+// writes. Every figure is worked out by buildAnalytics in lib/analytics.js, which
+// also holds the definitions (open, test records, cost, margin); this component
+// fetches, keeps the filter state and draws.
 //
-// ONE DEFINITION OF OPEN, used by the header, the tiles, the stage rows and every
-// figure that says "open": a SALES ORDER whose status is not closed, delivered or
-// invoiced. Purchase Order figures are always labelled as Purchase Orders, so a
-// PO count can never be read as a Sales Order one again (the old In production
-// tile counted POs beside a stage row counting SOs).
-//
-// TEST RECORDS ARE OUT OF EVERY FIGURE. A record is a test one when any name or
-// number that identifies it starts with ZZ, in any case:
-//   Sales Order      SO number, client PO number, or client name
-//   Purchase Order   PO number, client PO number, factory name, or client name
-//   Shipment         shipment number, client name, or a linked PO's number
-//   Freight quote    quote number or client name
-//
-// MONEY is Sales Order line quantity x client price, as before. COST is the
-// linked Purchase Orders' lines (quantity x unit price) plus the order's extra
-// costs -- no freight or duty, which is why margin says so wherever it appears.
-const DASH_OPEN_EXCLUDE = ['closed', 'delivered', 'invoiced'];
-const DASH_STAGES = [
-  ['received', 'Received', '#AF52DE'], ['confirmed', 'Confirmed', '#0071E3'], ['testing', 'Testing', '#FF375F'],
-  ['in_production', 'In Production', '#FF9F0A'], ['shipped', 'Shipped', '#5AC8FA'],
-];
-// Sales Orders not yet shipped, for "past cargo ready date and not shipped".
-const DASH_SO_UNSHIPPED = ['received', 'confirmed', 'testing', 'in_production'];
-// Purchase Orders still to ship: anything but shipped, delivered, closed or cancelled.
-const DASH_PO_SHIPPED_OR_DONE = ['shipped', 'delivered', 'closed', 'cancelled'];
-const DASH_SHIP_TERMINAL = ['delivered', 'cancelled', 'closed'];
-const DASH_PO_TERMINAL = ['delivered', 'invoiced', 'closed', 'cancelled'];
-
-const isZZ = v => /^zz/i.test(String(v || '').trim());
-const ymdLocal = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+// Filter state lives in the app's usePageState store: it survives moving to
+// another page and back, and a refresh starts again from the defaults -- which
+// reproduce release 1 exactly.
 const usd0 = n => '$' + Math.round(n || 0).toLocaleString('en-US');
 const pctTxt = p => p == null ? '—' : (p >= 0 ? '' : '−') + Math.abs(p).toFixed(1) + '%';
+const numCompact = n => { const a = Math.abs(n || 0); return a >= 1e6 ? (n / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M' : a >= 1e4 ? Math.round(n / 1e3) + 'K' : Math.round(n || 0).toLocaleString('en-US'); };
 
 function Dashboard({ navigate }) {
-  const [data, setData] = useState(null);
+  const [raw, setRaw] = useState(null);
   const [loadErr, setLoadErr] = useState('');
+  const [f, set] = usePageState('analytics', ANALYTICS_DEFAULTS);
 
   useEffect(() => {
     (async () => {
       const [r1, r2, r3, r4] = await Promise.all([
-        SB.from('sales_orders').select('id,so_number,client_po_number,status,order_date,cancel_date,cargo_ready_date,client:companies!client_company_id(name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(quantity,unit_price))),order_costs(amount)'),
-        SB.from('purchase_orders').select('id,order_number,client_po_number,status,cancel_date,cargo_ready_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name)'),
-        SB.from('shipments').select('id,shipment_number,container_no,status,estimated_arrival,actual_arrival,client:companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,status))'),
-        SB.from('shipment_quotes').select('id,quote_number,status,sent_at,client:companies!client_company_id(name)').eq('status', 'sent'),
+        SB.from('sales_orders').select('id,so_number,client_po_number,status,order_date,cancel_date,cargo_ready_date,shipping_method,client_company_id,client:companies!client_company_id(name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(factory_company_id,purchase_order_items(quantity,unit_price))),order_costs(amount)'),
+        SB.from('purchase_orders').select('id,order_number,client_po_number,status,cancel_date,cargo_ready_date,shipping_method,client_company_id,factory_company_id,factory:companies!factory_company_id(name),client:companies!client_company_id(name)'),
+        SB.from('shipments').select('id,shipment_number,container_no,status,estimated_arrival,actual_arrival,client_company_id,client:companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,status,factory_company_id,shipping_method))'),
+        SB.from('shipment_quotes').select('id,quote_number,status,sent_at,client_company_id,client:companies!client_company_id(name)').eq('status', 'sent'),
       ]);
       const err = r1.error || r2.error || r3.error || r4.error;
       if (err) { setLoadErr(err.message || String(err)); return; }
-
-      const now = new Date();
-      const today = ymdLocal(now);
-      const monthStart = today.slice(0, 8) + '01';
-      const day = now.getDate();
-      const lastStart = ymdLocal(new Date(now.getFullYear(), now.getMonth() - 1, 1));
-      const lastLen = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
-      // Same days of last month: 1 to today's day number, capped at its length.
-      const lastSameEnd = lastStart.slice(0, 8) + String(Math.min(day, lastLen)).padStart(2, '0');
-
-      // ── Sales Orders ──────────────────────────────────────────────────────
-      const sos = (r1.data || [])
-        .filter(so => !(isZZ(so.so_number) || isZZ(so.client_po_number) || isZZ(so.client?.name)))
-        .map(so => {
-          const items = so.sales_order_items || [];
-          const rev = items.reduce((a, i) => a + (Number(i.quantity) || 0) * (Number(i.client_price) || 0), 0);
-          const units = items.reduce((a, i) => a + (Number(i.quantity) || 0), 0);
-          const factoryCost = (so.sales_order_pos || []).reduce((a, l) => a + ((l.purchase_orders?.purchase_order_items) || [])
-            .reduce((b, i) => b + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0), 0), 0);
-          const extra = (so.order_costs || []).reduce((a, c) => a + (Number(c.amount) || 0), 0);
-          return { ...so, rev, units, factoryCost, cost: factoryCost + extra, open: !DASH_OPEN_EXCLUDE.includes(so.status) };
-        });
-      const open = sos.filter(so => so.open);
-      const openValue = open.reduce((a, so) => a + so.rev, 0);
-      const openUnits = open.reduce((a, so) => a + so.units, 0);
-      const activeClients = new Set(open.map(so => so.client?.name).filter(Boolean)).size;
-
-      // Stage rows add up to the open tile EXACTLY: every open order lands in a
-      // row, and a status outside the five gets an "Other status" row rather
-      // than vanishing (the old page lost its Testing order this way).
-      const stages = DASH_STAGES.map(([key, label, color]) => {
-        const rows = open.filter(so => so.status === key);
-        return { key, label, color, count: rows.length, value: rows.reduce((a, so) => a + so.rev, 0) };
-      });
-      const known = DASH_STAGES.map(s => s[0]);
-      const other = open.filter(so => !known.includes(so.status));
-      if (other.length) stages.push({ key: 'other', label: 'Other status', color: '#8E8E93', count: other.length, value: other.reduce((a, so) => a + so.rev, 0) });
-      const done = sos.filter(so => so.status === 'delivered' || so.status === 'invoiced');
-      const completed = { count: done.length, value: done.reduce((a, so) => a + so.rev, 0) };
-
-      // Margin counts only orders with a factory cost -- an order with no linked
-      // Purchase Order would otherwise read as 100% margin.
-      const costed = open.filter(so => so.factoryCost > 0);
-      const costedRev = costed.reduce((a, so) => a + so.rev, 0);
-      const blended = costedRev > 0 ? (costedRev - costed.reduce((a, so) => a + so.cost, 0)) / costedRev * 100 : null;
-
-      // ── Booked (all statuses, by order date) ──────────────────────────────
-      const inRange = (so, a, b) => so.order_date && so.order_date >= a && so.order_date <= b;
-      const thisMonth = sos.filter(so => inRange(so, monthStart, today));
-      const bookedMTD = thisMonth.reduce((a, so) => a + so.rev, 0);
-      const bookedLastSame = sos.filter(so => inRange(so, lastStart, lastSameEnd)).reduce((a, so) => a + so.rev, 0);
-      const bookedDelta = bookedLastSame > 0 ? (bookedMTD - bookedLastSame) / bookedLastSame * 100 : null;
-      const months = [];
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const key = ymdLocal(d).slice(0, 7);
-        months.push({ key, label: d.toLocaleDateString('en-US', { month: 'short' }) + (d.getMonth() === 0 || i === 5 ? ' ' + d.getFullYear() : ''), current: i === 0,
-          value: sos.filter(so => so.order_date && so.order_date.slice(0, 7) === key && so.order_date <= today).reduce((a, so) => a + so.rev, 0) });
-      }
-
-      // Top clients, this month's bookings.
-      const byClient = {};
-      thisMonth.forEach(so => {
-        const n = so.client?.name || 'No client';
-        const c = byClient[n] || (byClient[n] = { name: n, rev: 0, costedRev: 0, cost: 0 });
-        c.rev += so.rev;
-        if (so.factoryCost > 0) { c.costedRev += so.rev; c.cost += so.cost; }
-      });
-      const topClients = Object.values(byClient).sort((a, b) => b.rev - a.rev).slice(0, 6)
-        .map(c => ({ ...c, margin: c.costedRev > 0 ? (c.costedRev - c.cost) / c.costedRev * 100 : null }));
-
-      // ── Purchase Orders ───────────────────────────────────────────────────
-      const pos = (r2.data || []).filter(po => !(isZZ(po.order_number) || isZZ(po.client_po_number) || isZZ(po.factory?.name) || isZZ(po.client?.name)));
-      const poUnshipped = pos.filter(po => !DASH_PO_SHIPPED_OR_DONE.includes(po.status));
-      const factories = {};
-      pos.filter(po => po.status === 'in_production').forEach(po => {
-        const n = po.factory?.name || 'No factory';
-        const f = factories[n] || (factories[n] = { name: n, count: 0, late: 0 });
-        f.count++;
-        if (po.cargo_ready_date && po.cargo_ready_date < today) f.late++;
-      });
-      const byFactory = Object.values(factories).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
-
-      // ── Shipments: ALL of them, not the 40 newest ─────────────────────────
-      // Active means not finished: its status is not delivered, cancelled or
-      // closed, it has no actual arrival, and no linked Purchase Order is already
-      // delivered, invoiced, closed or cancelled.
-      const ships = (r3.data || [])
-        .filter(s => !(isZZ(s.shipment_number) || isZZ(s.client?.name) || (s.shipment_pos || []).some(l => isZZ(l.purchase_orders?.order_number) || isZZ(l.purchase_orders?.client_po_number))))
-        .filter(s => !DASH_SHIP_TERMINAL.includes(String(s.status || '').toLowerCase()) && !s.actual_arrival
-          && !(s.shipment_pos || []).some(l => DASH_PO_TERMINAL.includes(String(l.purchase_orders?.status || '').toLowerCase())));
-      const refOf = s => s.shipment_number || s.container_no || s.shipment_pos?.[0]?.purchase_orders?.order_number || '—';
-      const overdue = ships.filter(s => s.estimated_arrival && new Date(s.estimated_arrival) < now)
-        .sort((a, b) => new Date(a.estimated_arrival) - new Date(b.estimated_arrival));
-      const noEta = ships.filter(s => !s.estimated_arrival);
-      const horizon = new Date(now.getTime() + 56 * 86400000);
-      const arriving = ships.filter(s => s.estimated_arrival && new Date(s.estimated_arrival) >= now && new Date(s.estimated_arrival) <= horizon)
-        .sort((a, b) => new Date(a.estimated_arrival) - new Date(b.estimated_arrival));
-
-      const fqs = (r4.data || []).filter(q => !(isZZ(q.quote_number) || isZZ(q.client?.name)));
-      const oldestSent = fqs.filter(q => q.sent_at).sort((a, b) => new Date(a.sent_at) - new Date(b.sent_at))[0];
-
-      setData({
-        openCount: open.length, openValue, openUnits, activeClients, stages, completed,
-        blended, costedCount: costed.length,
-        bookedMTD, bookedDelta, thisMonthCount: thisMonth.length, lastSameLabel: 'same days of ' + new Date(now.getFullYear(), now.getMonth() - 1, 1).toLocaleDateString('en-US', { month: 'long' }),
-        months, topClients, byFactory,
-        overdue, noEta, arriving, refOf,
-        soPastCancel: open.filter(so => so.cancel_date && so.cancel_date < today).length,
-        poPastCancel: poUnshipped.filter(po => po.cancel_date && po.cancel_date < today).length,
-        soPastCrd: sos.filter(so => DASH_SO_UNSHIPPED.includes(so.status) && so.cargo_ready_date && so.cargo_ready_date < today).length,
-        poPastCrd: poUnshipped.filter(po => po.cargo_ready_date && po.cargo_ready_date < today).length,
-        fqSent: fqs.length, oldestSent,
-      });
+      setRaw({ sos: r1.data || [], pos: r2.data || [], ships: r3.data || [], fqs: r4.data || [] });
     })();
   }, []);
 
+  const d = useMemo(() => raw ? buildAnalytics(raw, f, new Date()) : null, [raw, f]);
+  const opts = useMemo(() => raw ? filterOptions(raw) : { clients: [], factories: [] }, [raw]);
+
   if (loadErr) return <div style={{ padding: '40px 24px', color: '#C0392B', fontSize: '14px' }}>Could not load the analytics: {loadErr}</div>;
-  if (!data) return (
+  if (!d) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', flexDirection: 'column', gap: '14px' }}>
       <div style={{ width: '32px', height: '32px', borderRadius: '50%', border: '3px solid var(--line)', borderTopColor: 'var(--accent)', animation: 'spin 0.7s linear infinite' }} />
       <div style={{ fontSize: '13px', color: 'var(--muted)' }}>Loading analytics…</div>
     </div>
   );
 
-  const d = data;
+  // ── Filter actions ──────────────────────────────────────────────────────────
+  // A preset fills FROM and TO from today; typing a date switches to Custom,
+  // seeding the other end from whatever the page is showing.
+  const toCustom = () => { if (f.period !== 'custom') { set('from', d.range.from); set('to', d.range.to); set('period', 'custom'); } };
+  const onDate = (k, v) => { toCustom(); set(k, v); };
+  const clearAll = () => ['period', 'from', 'to', 'datesBy', 'client', 'factory', 'stage', 'method'].forEach(k => set(k, ANALYTICS_DEFAULTS[k]));
+
   const card = { background: '#fff', borderRadius: '20px', boxShadow: '0 1px 3px rgba(0,0,0,.04)', overflow: 'hidden', minWidth: 0 };
   const rule = '1px solid rgba(0,0,0,.06)';
   const muted = '#86868B';
-  // Every card header has an empty slot on the right, kept for the small per-card
-  // button (export, options) planned for a later release.
-  const CardHead = ({ title, sub }) => (
-    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '12px', padding: '18px 22px 12px' }}>
-      <div style={{ minWidth: 0 }}>
+  const INK = '#14171F';
+  const TONES = { red: { bg: '#FDECEA', ink: '#8F1D14' }, amber: { bg: '#FFF3DC', ink: '#7A4700' }, grey: { bg: '#EEF1F5', ink: '#414A58' } };
+  const smallHead = { fontSize: '13px', fontWeight: 600, color: muted, letterSpacing: '.02em', margin: '0 2px 10px' };
+  const lbl = { display: 'block', fontSize: '10.5px', fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: muted, marginBottom: '5px' };
+  // The per-card slot on the right of each header holds the card's dropdown.
+  const CardHead = ({ title, sub, actions }) => (
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '18px 22px 12px' }}>
+      <div style={{ minWidth: 0, flex: '1 1 200px' }}>
         <div style={{ fontSize: '17px', fontWeight: 600, color: '#1D1D1F', letterSpacing: '-.018em' }}>{title}</div>
-        {sub && <div style={{ fontSize: '12.5px', color: muted, marginTop: '3px', letterSpacing: '-.006em' }}>{sub}</div>}
+        {sub && <div style={{ fontSize: '12.5px', color: muted, marginTop: '3px', letterSpacing: '-.006em', lineHeight: 1.4 }}>{sub}</div>}
       </div>
-      <div className="kva-card-actions" />
+      <div className="kva-card-actions">{actions}</div>
     </div>
   );
-  const fmtEta = s => fmtDateShort(s);
+  const Sel = ({ value, onChange, options, label }) => (
+    <select className="kva-ctl" aria-label={label} value={value} onChange={e => onChange(e.target.value)}>
+      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
+  );
   const daysFrom = s => Math.round((new Date(s) - new Date()) / 86400000);
-  const maxMonth = Math.max(1, ...d.months.map(m => m.value));
-  const stageTotal = d.stages.reduce((a, s) => a + s.value, 0) || 1;
+  const refOf = s => s.shipment_number || s.container_no || s.shipment_pos?.[0]?.purchase_orders?.order_number || '—';
+  const missingLine = d.missingDate > 0 && f.datesBy !== 'order' ? d.missingDate + ' order' + (d.missingDate === 1 ? ' has' : 's have') + ' no ' + d.dateName + ' and ' + (d.missingDate === 1 ? 'is' : 'are') + ' not shown' : '';
+  const periodLabel = d.range.label;
+  const bookedBy = 'by ' + d.dateName + ', ' + periodLabel;
+  const asOf = 'As of today';
+  const pipeWord = !d.single ? 'open' : d.stageLabel;
+  const pipeNote = !d.single ? '' : (f.stage === 'delivered' || f.stage === 'invoiced') ? ' — showing ' + d.stageLabel + ' orders, which are not open' : ' — ' + d.stageLabel + ' only';
 
   const attention = [
     { k: 'Shipments overdue', n: d.overdue.length, to: 'shipments', tone: 'red',
-      line: d.overdue.length ? 'Most overdue: ' + d.refOf(d.overdue[0]) + ', ' + Math.abs(daysFrom(d.overdue[0].estimated_arrival)) + ' days past ETA' : 'No active shipment is past its ETA' },
+      line: d.overdue.length ? 'Most overdue: ' + refOf(d.overdue[0]) + ', ' + Math.abs(daysFrom(d.overdue[0].estimated_arrival)) + ' days past ETA' : 'No active shipment is past its ETA' },
     { k: 'Active shipments with no ETA', n: d.noEta.length, to: 'shipments', tone: 'amber',
       line: d.noEta.length ? 'Add an ETA so arrivals can be planned' : 'Every active shipment has an ETA' },
     { k: 'Open Sales Orders past cancel date', n: d.soPastCancel, to: 'sales-orders', tone: 'amber',
@@ -1274,43 +1161,71 @@ function Dashboard({ navigate }) {
       line: d.oldestSent ? 'Oldest sent ' + Math.abs(daysFrom(d.oldestSent.sent_at)) + ' days ago (' + d.oldestSent.quote_number + ')' : 'Nothing sent and waiting' },
   ];
 
-  // Soft filled cards, one palette per kind of problem: red for late goods,
-  // amber for dates and gaps, grey for things that are only waiting.
-  const TONES = { red: { bg: '#FDECEA', ink: '#8F1D14' }, amber: { bg: '#FFF3DC', ink: '#7A4700' }, grey: { bg: '#EEF1F5', ink: '#414A58' } };
-  const INK = '#14171F';
-  const smallHead = { fontSize: '13px', fontWeight: 600, color: muted, letterSpacing: '.02em', margin: '0 2px 10px' };
-
   const tiles = [
-    { k: 'Revenue booked this month', v: moneyCompact(d.bookedMTD), dark: true,
-      extra: d.bookedDelta == null ? null : { up: d.bookedDelta >= 0, t: (d.bookedDelta >= 0 ? '↑ ' : '↓ ') + Math.abs(Math.round(d.bookedDelta)) + '% vs ' + d.lastSameLabel },
-      def: 'Sales Order lines ordered since the 1st (' + d.thisMonthCount + ' orders), by order date' },
+    { k: 'Revenue booked, ' + periodLabel, v: moneyCompact(d.bookedRev), dark: true,
+      extra: d.bookedDelta == null ? { muted: true, t: 'No orders in ' + d.range.prevLabel + ' to compare with' } : { up: d.bookedDelta >= 0, t: (d.bookedDelta >= 0 ? '↑ ' : '↓ ') + Math.abs(Math.round(d.bookedDelta)) + '% vs ' + d.range.prevLabel },
+      def: 'Sales Order lines ' + bookedBy + ' (' + d.bookedCount + ' order' + (d.bookedCount === 1 ? '' : 's') + ')' + (missingLine ? '. ' + missingLine : '') },
     { k: 'Blended margin', v: d.blended == null ? '—' : pctTxt(d.blended),
-      def: 'Open Sales Orders with a factory cost (' + d.costedCount + ' of ' + d.openCount + '); excludes freight and duty' },
-    { k: 'Open pipeline value', v: moneyCompact(d.openValue),
-      def: d.openCount + ' open Sales Orders: not closed, delivered or invoiced' },
-    { k: 'Units on open orders', v: fmtNum(d.openUnits),
-      def: 'Line quantities on the same ' + d.openCount + ' open Sales Orders' },
+      def: asOf + ' · ' + pipeWord + ' Sales Orders with a factory cost (' + d.costedCount + ' of ' + d.pipeCount + '); excludes freight and duty' },
+    { k: !d.single ? 'Open pipeline value' : d.stageLabel + ' orders value', v: moneyCompact(d.pipeValue),
+      def: asOf + ' · ' + d.pipeCount + ' ' + (!d.single ? 'open Sales Orders: not closed, delivered or invoiced' : d.stageLabel + ' Sales Orders' + ((f.stage === 'delivered' || f.stage === 'invoiced') ? ', not open' : '')) },
+    { k: !d.single ? 'Units on open orders' : 'Units on ' + d.stageLabel + ' orders', v: fmtNum(d.pipeUnits),
+      def: asOf + ' · line quantities on the same ' + d.pipeCount + ' Sales Orders' },
   ];
+
+  const metric = f.bookedMetric;
+  const mVal = m => metric === 'units' ? m.units : metric === 'orders' ? m.orders : metric === 'margin' ? (m.margin == null ? 0 : Math.max(0, m.margin)) : m.revenue;
+  const mTxt = m => metric === 'units' ? numCompact(m.units) : metric === 'orders' ? String(m.orders) : metric === 'margin' ? pctTxt(m.margin) : moneyCompact(m.revenue);
+  const maxM = Math.max(1, ...d.months.map(mVal));
+  const stageTotal = d.stages.reduce((a, s) => a + s.value, 0) || 1;
+  const filterNote = 'client, factory and shipping method apply';
+  const stageGrid = { display: 'grid', gridTemplateColumns: 'minmax(96px,130px) minmax(30px,1fr) auto minmax(24px,auto)', gap: '12px', alignItems: 'center' };
 
   return (
     <div className="db-apple kva" style={{ padding: '30px clamp(14px,3vw,32px) 80px', background: '#F5F5F7', minHeight: 'calc(100vh - 54px)', marginTop: '-24px', boxSizing: 'border-box', overflowX: 'hidden', maxWidth: '100%' }}>
 
-      {/* ── 1. Header ── */}
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '16px', marginBottom: '22px', flexWrap: 'wrap' }}>
+      {/* ── 1. Header, period buttons and View orders ── */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '16px', marginBottom: '16px', flexWrap: 'wrap' }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}><span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#0A84FF' }} /><span style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', color: muted }}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</span></div>
-          <div style={{ fontSize: 'clamp(26px,5vw,32px)', fontWeight: 700, color: '#1D1D1F', letterSpacing: '-.032em', lineHeight: 1.05 }}>KUI Vessl Analytics</div>
-          <div style={{ fontSize: '15px', color: muted, marginTop: '7px', letterSpacing: '-.01em' }}>{d.openCount} open sales orders · {d.activeClients} active clients</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 'clamp(26px,5vw,32px)', fontWeight: 700, color: '#1D1D1F', letterSpacing: '-.032em', lineHeight: 1.05 }}>KUI Vessl Analytics</div>
+            {/* So a filtered page is never read as the whole business. */}
+            {d.filtered && <span style={{ fontSize: '12px', fontWeight: 700, color: '#7A4700', background: '#FFF3DC', borderRadius: '999px', padding: '4px 10px', letterSpacing: '.02em' }}>Filtered</span>}
+          </div>
+          <div style={{ fontSize: '15px', color: muted, marginTop: '7px', letterSpacing: '-.01em' }}>{d.pipeCount} {!d.single ? 'open' : d.stageLabel} sales orders · {d.activeClients} active clients</div>
         </div>
-        <button onClick={() => navigate('sales-orders')} style={{ background: '#0066CC', color: '#fff', border: 'none', borderRadius: '980px', padding: '9px 18px', fontSize: '14px', fontWeight: 500, letterSpacing: '-.01em', cursor: 'pointer' }}>View orders</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div role="group" aria-label="Period" style={{ display: 'inline-flex', background: '#E8E8ED', borderRadius: '12px', padding: '3px', flexWrap: 'wrap' }}>
+            {PERIOD_OPTS.map(([v, l]) => {
+              const on = f.period === v;
+              return <button key={v} className="kva-seg" onClick={() => { if (v === 'custom') toCustom(); else set('period', v); }}
+                style={{ border: 'none', borderRadius: '9px', padding: '7px 12px', fontSize: '13px', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', background: on ? '#fff' : 'transparent', color: on ? '#1D1D1F' : '#5A5A5E', boxShadow: on ? '0 1px 3px rgba(0,0,0,.12)' : 'none' }}>{l}</button>;
+            })}
+          </div>
+          <button onClick={() => navigate('sales-orders')} style={{ background: '#0066CC', color: '#fff', border: 'none', borderRadius: '980px', padding: '9px 18px', fontSize: '14px', fontWeight: 500, letterSpacing: '-.01em', cursor: 'pointer' }}>View orders</button>
+        </div>
       </div>
-      {/* Reserved for the filter bar (date range, client) planned for a later release. */}
-      <div className="kva-filters" />
+
+      {/* ── Filter bar ── */}
+      <div className="kva-filters" style={{ ...card, padding: '14px 18px', marginBottom: '22px', display: 'flex', flexWrap: 'wrap', gap: '12px 14px', alignItems: 'flex-end' }}>
+        <label className="kva-f"><span style={lbl}>From</span><input type="date" className="kva-ctl" value={d.range.from} onChange={e => onDate('from', e.target.value)} /></label>
+        <label className="kva-f"><span style={lbl}>To</span><input type="date" className="kva-ctl" value={d.range.to} onChange={e => onDate('to', e.target.value)} /></label>
+        <label className="kva-f"><span style={lbl}>Dates by</span><Sel label="Dates by" value={f.datesBy} onChange={v => set('datesBy', v)} options={DATES_BY_OPTS.map(o => [o[0], o[1]])} /></label>
+        <label className="kva-f"><span style={lbl}>Client</span><Sel label="Client" value={f.client} onChange={v => set('client', v)} options={[['', 'All Clients'], ...opts.clients]} /></label>
+        <label className="kva-f"><span style={lbl}>Factory</span><Sel label="Factory" value={f.factory} onChange={v => set('factory', v)} options={[['', 'All Factories'], ...opts.factories]} /></label>
+        <label className="kva-f"><span style={lbl}>Order stage</span><Sel label="Order stage" value={f.stage} onChange={v => set('stage', v)} options={STAGE_FILTER_OPTS} /></label>
+        <label className="kva-f"><span style={lbl}>Shipping method</span><Sel label="Shipping method" value={f.method} onChange={v => set('method', v)} options={[['', 'All Methods'], ...SHIPPING_METHOD_OPTS.map(m => [m, m])]} /></label>
+        <button onClick={clearAll} className="kva-clear" style={{ background: 'none', border: 'none', padding: '0 2px', fontSize: '13px', color: '#0066CC', cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', textUnderlineOffset: '2px', alignSelf: 'center' }}>Clear filters</button>
+      </div>
 
       {/* ── 2. Needs attention ── */}
       <div style={{ ...card, marginBottom: '22px' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '18px 22px 12px' }}>
-          <div style={{ fontSize: '17px', fontWeight: 600, color: '#1D1D1F', letterSpacing: '-.018em' }}>Needs attention</div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '17px', fontWeight: 600, color: '#1D1D1F', letterSpacing: '-.018em' }}>Needs attention</div>
+            <div style={{ fontSize: '12.5px', color: muted, marginTop: '3px', lineHeight: 1.4 }}>{asOf} · {filterNote}; order stage applies to the Sales Order cards; freight quotes follow the client only</div>
+          </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
             <span style={{ fontSize: '12.5px', color: muted }}>Each card opens the list behind it</span>
             <div className="kva-card-actions" />
@@ -1318,7 +1233,8 @@ function Dashboard({ navigate }) {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', padding: '0 22px 22px' }}>
           {attention.map(a => {
-            const t = TONES[a.tone] || TONES.grey;
+            // A count of 0 is nothing to act on, so it takes the quiet grey tone.
+            const t = TONES[a.n ? a.tone : 'grey'];
             return (
               <div key={a.k} onClick={() => navigate(a.to)} role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter') navigate(a.to); }}
                 style={{ background: t.bg, borderRadius: '14px', padding: '14px 16px', cursor: 'pointer', minWidth: 0 }}>
@@ -1334,97 +1250,99 @@ function Dashboard({ navigate }) {
       {/* ── 3. Headline numbers ── */}
       <div style={smallHead}>Headline numbers</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '14px', marginBottom: '22px' }}>
-        {/* The dark tile keeps its change figure readable with a lighter green and red. */}
         {tiles.map(t => (
           <div key={t.k} style={{ ...card, padding: '18px 20px', ...(t.dark ? { background: INK } : {}) }}>
             <div style={{ fontSize: '13px', color: t.dark ? '#B8BEC9' : muted, letterSpacing: '-.006em' }}>{t.k}</div>
             <div style={{ fontSize: '30px', fontWeight: 600, color: t.dark ? '#FFFFFF' : '#1D1D1F', letterSpacing: '-.03em', lineHeight: 1.05, margin: '10px 0 6px', fontVariantNumeric: 'tabular-nums' }}>{t.v}</div>
-            {t.extra && <div style={{ fontSize: '12px', fontWeight: 600, color: t.extra.up ? (t.dark ? '#6EE7A8' : '#1A7F45') : (t.dark ? '#FF9B8F' : '#C0392B'), marginBottom: '4px' }}>{t.extra.t}</div>}
+            {t.extra && <div style={{ fontSize: '12px', fontWeight: 600, color: t.extra.muted ? '#B8BEC9' : t.extra.up ? (t.dark ? '#6EE7A8' : '#1A7F45') : (t.dark ? '#FF9B8F' : '#C0392B'), marginBottom: '4px' }}>{t.extra.t}</div>}
             <div style={{ fontSize: '12px', color: t.dark ? '#B8BEC9' : muted, lineHeight: 1.35 }}>{t.def}</div>
           </div>
         ))}
       </div>
 
-      {/* ── 4-5. Pipeline (about 60%) beside the monthly chart (about 40%);
-             one column below 1180px (globals.css, .kva-row-a). ── */}
+      {/* ── 4-5. Pipeline (about 60%) beside the monthly chart (about 40%) ── */}
       <div className="kva-row-a" style={{ marginBottom: '22px' }}>
-      {/* ── 4. Open pipeline by stage ── */}
-      <div style={card}>
-        <CardHead title="Open pipeline by stage" sub={'Sales Orders · ' + usd0(d.openValue) + ' across ' + d.openCount + ' orders'} />
-        {d.stages.map(s => (
-          <div key={s.key} onClick={() => navigate('sales-orders')} style={{ display: 'grid', gridTemplateColumns: 'minmax(96px,130px) minmax(30px,1fr) auto minmax(24px,auto)', gap: '12px', alignItems: 'center', padding: '11px 22px', borderTop: rule, cursor: 'pointer' }}>
-            <div style={{ fontSize: '14.5px', color: s.count ? '#1D1D1F' : '#B0B0B2', minWidth: 0 }}>{s.label}</div>
-            <div style={{ height: '14px', background: '#EEF1F5', borderRadius: '7px', overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: (s.value / stageTotal * 100) + '%', background: '#0B5FD0', borderRadius: '7px' }} />
-            </div>
-            <div style={{ fontSize: '14px', color: muted, fontVariantNumeric: 'tabular-nums', textAlign: 'right', whiteSpace: 'nowrap' }}>{s.count ? usd0(s.value) : '—'}</div>
-            <div style={{ fontSize: '14px', fontWeight: s.count ? 600 : 400, color: s.count ? '#1D1D1F' : '#C0C0C2', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>{s.count}</div>
-          </div>
-        ))}
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(96px,130px) minmax(30px,1fr) auto minmax(24px,auto)', gap: '12px', alignItems: 'center', padding: '12px 22px', borderTop: '1px solid rgba(0,0,0,.12)' }}>
-          <div style={{ fontSize: '14.5px', fontWeight: 600, color: '#1D1D1F' }}>Total open</div>
-          <div />
-          <div style={{ fontSize: '14px', fontWeight: 600, color: '#1D1D1F', fontVariantNumeric: 'tabular-nums', textAlign: 'right', whiteSpace: 'nowrap' }}>{usd0(d.openValue)}</div>
-          <div style={{ fontSize: '14px', fontWeight: 600, color: '#1D1D1F', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>{d.openCount}</div>
-        </div>
-        <div style={{ padding: '10px 22px 14px', borderTop: rule, background: '#FAFAFB', fontSize: '13px', color: muted, lineHeight: 1.4 }}>
-          Completed, not in the total: Delivered and Invoiced · {d.completed.count} orders · {usd0(d.completed.value)}
-        </div>
-      </div>
-
-      {/* ── 5. Booked per month ── */}
-      <div style={card}>
-        <CardHead title="Booked per month" sub="Sales Order lines by order date, all statuses" />
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + d.months.length + ', minmax(0,1fr))', gap: '8px', alignItems: 'end', padding: '6px 22px 18px', height: '215px', boxSizing: 'border-box' }}>
-          {d.months.map(m => (
-            <div key={m.key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%', minWidth: 0 }}>
-              <div style={{ fontSize: '11.5px', fontWeight: 600, color: '#1D1D1F', fontVariantNumeric: 'tabular-nums', marginBottom: '4px', whiteSpace: 'nowrap' }}>{moneyCompact(m.value)}</div>
-              <div style={{ width: '100%', maxWidth: '56px', height: Math.max(m.value > 0 ? 3 : 0, m.value / maxMonth * 120) + 'px', background: m.current ? 'repeating-linear-gradient(45deg,#0A84FF 0 6px,#5AA9FF 6px 12px)' : '#0A84FF', borderRadius: '6px 6px 2px 2px', opacity: m.current ? .75 : .9 }} />
-              {/* Labels wrap rather than clip: on a phone each bar is about 45px wide. */}
-              <div style={{ fontSize: '11.5px', color: '#1D1D1F', marginTop: '6px', textAlign: 'center', lineHeight: 1.15 }}>{m.label}</div>
-              <div style={{ fontSize: '10px', color: muted, minHeight: '24px', textAlign: 'center', lineHeight: 1.15 }}>{m.current ? 'month to date' : ''}</div>
+        <div style={card}>
+          <CardHead title={!d.single ? 'Open pipeline by stage' : d.stageLabel + ' orders'}
+            sub={asOf + ' · Sales Orders · ' + usd0(d.pipeValue) + ' across ' + d.pipeCount + ' orders' + pipeNote + ' · ' + filterNote} />
+          {d.stages.map(s => (
+            <div key={s.key} onClick={() => navigate('sales-orders')} style={{ ...stageGrid, padding: '11px 22px', borderTop: rule, cursor: 'pointer' }}>
+              <div style={{ fontSize: '14.5px', color: s.count ? '#1D1D1F' : '#B0B0B2', minWidth: 0 }}>{s.label}</div>
+              <div style={{ height: '14px', background: '#EEF1F5', borderRadius: '7px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: (s.value / stageTotal * 100) + '%', background: '#0B5FD0', borderRadius: '7px' }} />
+              </div>
+              <div style={{ fontSize: '14px', color: muted, fontVariantNumeric: 'tabular-nums', textAlign: 'right', whiteSpace: 'nowrap' }}>{s.count ? usd0(s.value) : '—'}</div>
+              <div style={{ fontSize: '14px', fontWeight: s.count ? 600 : 400, color: s.count ? '#1D1D1F' : '#C0C0C2', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>{s.count}</div>
             </div>
           ))}
+          <div style={{ ...stageGrid, padding: '12px 22px', borderTop: '1px solid rgba(0,0,0,.12)' }}>
+            <div style={{ fontSize: '14.5px', fontWeight: 600, color: '#1D1D1F' }}>{!d.single ? 'Total open' : 'Total'}</div>
+            <div />
+            <div style={{ fontSize: '14px', fontWeight: 600, color: '#1D1D1F', fontVariantNumeric: 'tabular-nums', textAlign: 'right', whiteSpace: 'nowrap' }}>{usd0(d.pipeValue)}</div>
+            <div style={{ fontSize: '14px', fontWeight: 600, color: '#1D1D1F', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>{d.pipeCount}</div>
+          </div>
+          {!d.single && (
+            <div style={{ padding: '10px 22px 14px', borderTop: rule, background: '#FAFAFB', fontSize: '13px', color: muted, lineHeight: 1.4 }}>
+              Completed, not in the total: Delivered and Invoiced · {d.completed.count} orders · {usd0(d.completed.value)}
+            </div>
+          )}
+        </div>
+
+        <div style={card}>
+          <CardHead title="Booked per month"
+            sub={'Sales Order lines ' + bookedBy + '; grey bars are context outside the period' + (missingLine ? '. ' + missingLine : '')}
+            actions={<Sel label="Booked per month shows" value={metric} onChange={v => set('bookedMetric', v)} options={BOOKED_METRIC_OPTS} />} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + d.months.length + ', minmax(0,1fr))', gap: '8px', alignItems: 'end', padding: '6px 22px 18px', height: '215px', boxSizing: 'border-box' }}>
+            {d.months.map(m => (
+              <div key={m.key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%', minWidth: 0 }}>
+                <div style={{ fontSize: '11.5px', fontWeight: 600, color: m.inPeriod ? '#1D1D1F' : muted, fontVariantNumeric: 'tabular-nums', marginBottom: '4px', whiteSpace: 'nowrap' }}>{mTxt(m)}</div>
+                <div style={{ width: '100%', maxWidth: '56px', height: Math.max(mVal(m) > 0 ? 3 : 0, mVal(m) / maxM * 120) + 'px', background: !m.inPeriod ? '#C9CED6' : m.current ? 'repeating-linear-gradient(45deg,#0A84FF 0 6px,#5AA9FF 6px 12px)' : '#0A84FF', borderRadius: '6px 6px 2px 2px', opacity: m.current ? .75 : .9 }} />
+                <div style={{ fontSize: '11.5px', color: '#1D1D1F', marginTop: '6px', textAlign: 'center', lineHeight: 1.15 }}>{m.label}</div>
+                <div style={{ fontSize: '10px', color: muted, minHeight: '24px', textAlign: 'center', lineHeight: 1.15 }}>{m.current ? 'month to date' : ''}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
-      </div>
-
-      {/* ── 6-8. Three columns on a wide screen, wrapping to two and then one. ── */}
+      {/* ── 6-8. Three columns on a wide screen, wrapping to two and then one ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px,100%), 1fr))', gap: '22px', alignItems: 'start' }}>
 
         <div style={card}>
-          <CardHead title="Top clients this month" sub="Sales Orders booked since the 1st · margin excludes freight and duty" />
-          {d.topClients.length === 0 && <div style={{ padding: '4px 22px 20px', color: muted, fontSize: '14px' }}>No Sales Orders booked this month yet.</div>}
+          <CardHead title={'Top clients, ' + periodLabel}
+            sub={'Sales Orders ' + bookedBy + ' · margin excludes freight and duty' + (missingLine ? '. ' + missingLine : '')}
+            actions={<Sel label="Sort top clients" value={f.topSort} onChange={v => set('topSort', v)} options={TOP_SORT_OPTS} />} />
+          {d.topClients.length === 0 && <div style={{ padding: '4px 22px 20px', color: muted, fontSize: '14px' }}>No Sales Orders booked in this period.</div>}
           {d.topClients.map(c => (
-            <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 22px', borderTop: rule }}>
+            <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 22px', borderTop: rule }}>
               <div style={{ flex: 1, minWidth: 0, fontSize: '14px', color: '#1D1D1F', overflowWrap: 'anywhere' }}>{c.name}</div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: '#1D1D1F', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{usd0(c.rev)}</div>
-              <div style={{ width: '64px', textAlign: 'right', fontSize: '13px', color: c.margin == null ? '#B0B0B2' : (c.margin < 25 ? '#C2683A' : '#1A7F45'), fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{c.margin == null ? 'no cost' : pctTxt(c.margin)}</div>
+              <div style={{ fontSize: '13.5px', fontWeight: f.topSort === 'revenue' ? 700 : 500, color: '#1D1D1F', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{usd0(c.rev)}</div>
+              <div style={{ width: '58px', textAlign: 'right', fontSize: '12.5px', fontWeight: f.topSort === 'units' ? 700 : 400, color: f.topSort === 'units' ? '#1D1D1F' : muted, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{numCompact(c.units)} u</div>
+              <div style={{ width: '58px', textAlign: 'right', fontSize: '13px', fontWeight: f.topSort === 'margin' ? 700 : 400, color: c.margin == null ? '#B0B0B2' : (c.margin < 25 ? '#C2683A' : '#1A7F45'), fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{c.margin == null ? 'no cost' : pctTxt(c.margin)}</div>
             </div>
           ))}
         </div>
 
         <div style={card}>
-          <CardHead title="Production by factory" sub="Purchase Orders in production · late = past cargo ready date" />
+          <CardHead title="Production by factory" sub={asOf + ' · Purchase Orders in production · late = past cargo ready date · their own client, factory and shipping method apply; order stage does not'} />
           {d.byFactory.length === 0 && <div style={{ padding: '4px 22px 20px', color: muted, fontSize: '14px' }}>No Purchase Orders in production.</div>}
-          {d.byFactory.map(f => (
-            <div key={f.name} onClick={() => navigate('orders')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 22px', borderTop: rule, cursor: 'pointer' }}>
-              <div style={{ flex: 1, minWidth: 0, fontSize: '14px', color: '#1D1D1F', overflowWrap: 'anywhere' }}>{f.name}</div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: '#1D1D1F', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{f.count} PO{f.count === 1 ? '' : 's'}</div>
-              <div style={{ width: '64px', textAlign: 'right', fontSize: '13px', color: f.late ? '#D14343' : '#B0B0B2', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{f.late ? f.late + ' late' : 'on time'}</div>
+          {d.byFactory.map(x => (
+            <div key={x.name} onClick={() => navigate('orders')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 22px', borderTop: rule, cursor: 'pointer' }}>
+              <div style={{ flex: 1, minWidth: 0, fontSize: '14px', color: '#1D1D1F', overflowWrap: 'anywhere' }}>{x.name}</div>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#1D1D1F', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{x.count} PO{x.count === 1 ? '' : 's'}</div>
+              <div style={{ width: '64px', textAlign: 'right', fontSize: '13px', color: x.late ? '#D14343' : '#B0B0B2', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{x.late ? x.late + ' late' : 'on time'}</div>
             </div>
           ))}
         </div>
 
         <div style={card}>
-          <CardHead title="Arriving in the next 8 weeks" sub="Active shipments with an ETA in that window, soonest first" />
+          <CardHead title="Arriving in the next 8 weeks" sub={asOf + ' · active shipments, soonest first · client is the shipment’s own; factory and shipping method come from its linked Purchase Orders; order stage does not apply'} />
           {d.arriving.length === 0 && <div style={{ padding: '4px 22px 20px', color: muted, fontSize: '14px' }}>No active shipment has an ETA in the next 8 weeks.</div>}
           {d.arriving.map(s => (
             <div key={s.id} onClick={() => navigate('shipments')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 22px', borderTop: rule, cursor: 'pointer' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '14px', fontWeight: 500, color: '#1D1D1F', overflowWrap: 'anywhere' }}>{d.refOf(s)}</div>
-                <div style={{ fontSize: '12.5px', color: muted, marginTop: '2px', overflowWrap: 'anywhere' }}>{(s.client?.name || 'No client') + ' · ETA ' + fmtEta(s.estimated_arrival)}</div>
+                <div style={{ fontSize: '14px', fontWeight: 500, color: '#1D1D1F', overflowWrap: 'anywhere' }}>{refOf(s)}</div>
+                <div style={{ fontSize: '12.5px', color: muted, marginTop: '2px', overflowWrap: 'anywhere' }}>{(s.client?.name || 'No client') + ' · ETA ' + fmtDateShort(s.estimated_arrival)}</div>
               </div>
               <div style={{ fontSize: '14px', fontWeight: 500, color: '#1D1D1F', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{Math.max(0, daysFrom(s.estimated_arrival))}d</div>
             </div>

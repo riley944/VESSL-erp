@@ -748,6 +748,20 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 .kva-row-a{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:22px;align-items:start;}
 @media (max-width:1180px){ .kva-row-a{grid-template-columns:minmax(0,1fr);} }
 
+/* KUI Vessl Analytics filter bar. Controls sit in a wrapping row; on a phone
+   the bar stacks, every control is at least 44px tall and 16px text (so iOS
+   does not zoom), and nothing is wider than the screen. */
+.kva-f{display:flex;flex-direction:column;min-width:0;}
+.kva-ctl{height:38px;border:1px solid var(--line);border-radius:10px;padding:0 10px;font-family:inherit;font-size:13.5px;color:#1D1D1F;background:#fff;min-width:0;max-width:240px;box-sizing:border-box;}
+@media (max-width:720px){
+  .kva-filters{flex-direction:column;align-items:stretch !important;}
+  .kva-f{width:100%;}
+  .kva-ctl{height:auto;min-height:44px;font-size:16px;max-width:none;width:100%;}
+  .kva-card-actions .kva-ctl{width:auto;}
+  .kva-seg{min-height:44px;}
+  .kva-clear{min-height:44px;align-self:flex-start !important;}
+}
+
 /* Apple dashboard — responsive */
 @media (max-width:1000px){
   .db-apple-cols{grid-template-columns:1fr !important;}
