@@ -6024,7 +6024,7 @@ function Shipments({ onNewShipment, userEmail }) {
   // navigation, and kept across the deliberate remount that follows creating a
   // shipment, which is what the key on this component does. openId and the respond-*
   // fields stay plain below, being a row somebody opened and a form in progress.
-  const [ui, setUi] = usePageState('shipments', { view:'quotes', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'' });
+  const [ui, setUi] = usePageState('shipments', { view:'quotes', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'', client:'' });
   // qSel, shipFilter and search are ui.* now, in the page store above, and
   // QF_DEFAULT is at module scope above this component -- see the note there.
   const [quotes, setQuotes] = useState([]);
@@ -6355,11 +6355,33 @@ function Shipments({ onNewShipment, userEmail }) {
   // answered or withdrawn. This is the number on the toggle pill and the nav badge.
   const openDreqs = dreqs.filter(d => (d.status||'requested') === 'requested');
 
+  // ── THE CLIENT FILTER: what is shown and counted, never what is written ──
+  // One choice for the whole page, kept in usePageState so it survives leaving
+  // the page and resets on a refresh. The V lists below feed the tiles, the
+  // header line, the tab and button counts and the three lists. Everything that
+  // writes or resolves a reference -- award siblings, delivery-request matching
+  // -- keeps reading the full quotes, rows and dreqs.
+  //
+  // Each record's client is the one its card already shows: a freight quote or a
+  // delivery request its own; a shipment its first linked Purchase Order's
+  // client, falling back to the shipment's own. A record with no client appears
+  // only under All Clients.
+  const quoteClient = q => (q.client||{}).name || '';
+  const shipClient = sh => ((((sh.shipment_pos||[])[0]||{}).purchase_orders||{}).client||{}).name || (sh.companies||{}).name || '';
+  const dreqClient = d => coNames[d.client_company_id] || '';
+  const cSel = ui.client || '';
+  const quotesV = cSel ? quotes.filter(q => quoteClient(q) === cSel) : quotes;
+  const rowsV = cSel ? rows.filter(sh => shipClient(sh) === cSel) : rows;
+  const dreqsV = cSel ? dreqs.filter(d => dreqClient(d) === cSel) : dreqs;
+  const openDreqsV = dreqsV.filter(d => (d.status||'requested') === 'requested');
+  const clientChoices = [...new Set([...quotes.map(quoteClient), ...rows.map(shipClient), ...dreqs.map(dreqClient)].filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+
   const bidCount = id => bids.filter(b=>b.shipment_quote_id===id).length;
   const winnerOf = id => bids.find(b=>b.shipment_quote_id===id && b.selected);
   const TERMINAL = ['delivered','cancelled'];
-  const activeShips = rows.filter(s => !TERMINAL.includes((s.status||'').toLowerCase()) && !s.actual_arrival);
-  const doneShips = rows.filter(s => TERMINAL.includes((s.status||'').toLowerCase()) || s.actual_arrival);
+  const activeShips = rowsV.filter(s => !TERMINAL.includes((s.status||'').toLowerCase()) && !s.actual_arrival);
+  const doneShips = rowsV.filter(s => TERMINAL.includes((s.status||'').toLowerCase()) || s.actual_arrival);
   const arriving = activeShips.filter(s => { const d=etaDays(s.estimated_arrival); return d!==null && d>=0 && d<=14; });
   const overdueShips = activeShips.filter(s => { const d=etaDays(s.estimated_arrival); return d!==null && d<0; });
   // Every bucket keys on STATUS now. awarded was `!!winnerOf(q.id)` -- the bid
@@ -6375,12 +6397,12 @@ function Shipments({ onNewShipment, userEmail }) {
                   : q.status==='archived' ? 'archived'
                   : q.status==='awarded' ? 'awarded'
                   : 'draft';
-  const awaiting = quotes.filter(q => q.status==='sent' && bidCount(q.id)===0);
-  const bidsIn = quotes.filter(q => q.status==='sent' && bidCount(q.id)>0);
-  const awarded = quotes.filter(q => q.status==='awarded');
-  const drafts = quotes.filter(q => q.status==='draft');
-  const notSelected = quotes.filter(q => q.status==='not_selected');
-  const archivedQ = quotes.filter(q => q.status==='archived');
+  const awaiting = quotesV.filter(q => q.status==='sent' && bidCount(q.id)===0);
+  const bidsIn = quotesV.filter(q => q.status==='sent' && bidCount(q.id)>0);
+  const awarded = quotesV.filter(q => q.status==='awarded');
+  const drafts = quotesV.filter(q => q.status==='draft');
+  const notSelected = quotesV.filter(q => q.status==='not_selected');
+  const archivedQ = quotesV.filter(q => q.status==='archived');
   // The default hides resolved rows, so "is this list narrowed" cannot just ask
   // whether the selection is empty -- on this axis empty means MORE rows, not
   // fewer. Default and empty both read as unfiltered; anything else is a
@@ -6391,7 +6413,7 @@ function Shipments({ onNewShipment, userEmail }) {
   // Counts are live and come from the same buckets the tiles read, so a number in
   // the dropdown and a number on a tile cannot disagree.
   const quoteStatusOptions = [
-    { value:'',            label:'All statuses',  count:quotes.length },
+    { value:'',            label:'All statuses',  count:quotesV.length },
     { value:'draft',       label:'Draft',         color:'#B45309', bg:'#FEF3C7', count:drafts.length },
     { value:'awaiting',    label:'Awaiting bids', color:'#C2410C', bg:'#FFEDD5', count:awaiting.length },
     { value:'bidsin',      label:'Bids in',       color:'#15803D', bg:'#DCFCE7', count:bidsIn.length },
@@ -6419,7 +6441,7 @@ function Shipments({ onNewShipment, userEmail }) {
     // Membership, never a NOT. inSel reads an empty array as All.
     return inSel(ui.qSel, qKey(q));
   };
-  const shownQuotes = quotes.filter(matchQ);
+  const shownQuotes = quotesV.filter(matchQ);
   const matchS = (sp) => {
     if (ui.search) {
       const po = ((sp.shipment_pos||[])[0]||{}).purchase_orders||{};
@@ -6430,7 +6452,7 @@ function Shipments({ onNewShipment, userEmail }) {
     if (ui.shipFilter==='overdue') { const d=etaDays(sp.estimated_arrival); if(!(d!==null&&d<0&&!sp.actual_arrival)) return false; }
     return true;
   };
-  const baseShips = ui.tab==='active' ? activeShips : ui.tab==='delivered' ? doneShips : rows;
+  const baseShips = ui.tab==='active' ? activeShips : ui.tab==='delivered' ? doneShips : rowsV;
   const shownShips = baseShips.filter(matchS);
 
   // pulse tile helper
@@ -6451,7 +6473,7 @@ function Shipments({ onNewShipment, userEmail }) {
         <div>
           <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#0A84FF'}}/><span style={{fontSize:'11px',fontWeight:700,letterSpacing:'.12em',textTransform:'uppercase',color:'#86868B'}}>Freight &amp; Logistics</span></div>
           <div style={{fontSize:'32px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.032em',lineHeight:1.02}}>Shipments</div>
-          <div style={{fontSize:'14.5px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>{String(quotes.length)+' quotes \u00b7 '+String(activeShips.length)+' in motion'}</div>
+          <div style={{fontSize:'14.5px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>{String(quotesV.length)+' quotes \u00b7 '+String(activeShips.length)+' in motion'}</div>
         </div>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>
@@ -6480,11 +6502,22 @@ function Shipments({ onNewShipment, userEmail }) {
           {/* The pill counts OPEN requests, not all of them -- consistent with
               the other two counting what is live rather than what exists, and it
               is the number that should make somebody click. */}
-          {[['quotes','Freight Quotes',quotes.length],['shipments','Shipments',rows.length],['delivery','Delivery Requests',openDreqs.length]].map(([v,l,ct])=>(
+          {[['quotes','Freight Quotes',quotesV.length],['shipments','Shipments',rowsV.length],['delivery','Delivery Requests',openDreqsV.length]].map(([v,l,ct])=>(
             <button key={v} onClick={()=>{setUi('view', v); setUi('search','');}} style={{display:'inline-flex',alignItems:'center',gap:'8px',padding:'9px 18px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:ui.view===v?'#1D1D1F':'transparent',color:ui.view===v?'#fff':'#5A5A5E',boxShadow:ui.view===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
               {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 8px',background:ui.view===v?'rgba(255,255,255,.22)':'#DCDCE0',color:ui.view===v?'#fff':'#6A6A6E'}}>{ct}</span>
             </button>
           ))}
+        </div>
+        {/* THE CLIENT FILTER, for all three tabs at once. A native select, styled as
+            the pills beside it; on a phone it takes the full width at 44px. Clear
+            sits beside it whenever a client is chosen, so a narrowed page says so. */}
+        <div className="shp-client-wrap" style={{display:'flex',alignItems:'center',gap:'8px'}}>
+          <select className="shp-client" aria-label="Client" value={cSel} onChange={e=>setUi('client', e.target.value)}
+            style={{border:'none',borderRadius:'980px',padding:'9px 14px',fontSize:'13.5px',fontWeight:cSel?600:500,fontFamily:'inherit',color:'#1D1D1F',background:cSel?'#EAF3FE':'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.06)',cursor:'pointer',maxWidth:'260px'}}>
+            <option value="">All Clients</option>
+            {clientChoices.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+          {cSel && <button onClick={()=>setUi('client','')} style={{background:'none',border:'none',padding:'0 2px',fontSize:'13px',color:'#0066CC',cursor:'pointer',fontFamily:'inherit',textDecoration:'underline',textUnderlineOffset:'2px',whiteSpace:'nowrap'}}>Clear</button>}
         </div>
         {/* ~100px wider: maxWidth is what actually binds when the row has room, so
             the basis moves with it or the input keeps settling at its old preferred
@@ -6507,9 +6540,9 @@ function Shipments({ onNewShipment, userEmail }) {
                 is what separates the two readings -- on load it names the reason,
                 and once somebody has narrowed it deliberately the count alone is
                 the answer. */}
-            {shownQuotes.length !== quotes.length && (
+            {shownQuotes.length !== quotesV.length && (
               <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>
-                {shownQuotes.length+' of '+quotes.length}{(isDefaultQ && !ui.search) ? ' · resolved hidden' : ''}
+                {shownQuotes.length+' of '+quotesV.length}{(isDefaultQ && !ui.search) ? ' · resolved hidden' : ''}
               </span>
             )}
             <button onClick={()=>setShowBidImport(true)} style={{display:'inline-flex',alignItems:'center',gap:'6px',fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'1px dashed rgba(0,0,0,.18)',cursor:'pointer',background:'transparent',color:'#4A4A4E'}}>
@@ -6520,7 +6553,7 @@ function Shipments({ onNewShipment, userEmail }) {
         )}
         {ui.view==='shipments' && (
           <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
-            {[['active','In transit',activeShips.length],['delivered','Delivered',doneShips.length],['all','All',rows.length]].map(([val,label,ct])=>(
+            {[['active','In transit',activeShips.length],['delivered','Delivered',doneShips.length],['all','All',rowsV.length]].map(([val,label,ct])=>(
               <button key={val} onClick={()=>{setUi('tab', val); setUi('shipFilter','');}} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:ui.tab===val&&!ui.shipFilter?'#1D1D1F':'#fff',color:ui.tab===val&&!ui.shipFilter?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{label+' '+String(ct)}</button>
             ))}
             {ui.shipFilter && <button onClick={()=>setUi('shipFilter','')} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:'#1D1D1F',color:'#fff'}}>{(ui.shipFilter==='arriving'?'Arriving \u226414d':'Overdue')+' \u00d7'}</button>}
@@ -6678,7 +6711,7 @@ function Shipments({ onNewShipment, userEmail }) {
 
       {/* ══ DELIVERY REQUESTS — what the client asked for, and our answer ══ */}
       {ui.view==='delivery' && (
-        dreqs.length===0 ? (
+        dreqsV.length===0 ? (
           <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>
             <div style={{fontSize:32,marginBottom:12,opacity:.2}}>📅</div>
             <div style={{fontWeight:600,color:'#5A5A5E',marginBottom:6,fontSize:15}}>No delivery requests</div>
@@ -6686,7 +6719,7 @@ function Shipments({ onNewShipment, userEmail }) {
           </div>
         ) : (
           <div style={{display:'flex',flexDirection:'column',gap:'10px'}}>
-            {dreqs.map(d => {
+            {dreqsV.map(d => {
               const st = d.status || 'requested';
               const hit = matchRef(d.shipment_ref);
               // The shipment to describe: the one the ref named, or the first one

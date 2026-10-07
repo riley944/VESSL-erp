@@ -766,6 +766,13 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   .kva-clear{min-height:44px;align-self:flex-start !important;margin-left:0;}
 }
 
+/* Shipments page client filter: on a phone the dropdown takes its own full-width
+   row, 44px tall and 16px text, so iOS does not zoom and nothing scrolls sideways. */
+@media (max-width:640px){
+  .shp-client-wrap{flex:1 1 100%;}
+  .shp-client{flex:1;max-width:none !important;min-height:44px;font-size:16px !important;}
+}
+
 /* Apple dashboard — responsive */
 @media (max-width:1000px){
   .db-apple-cols{grid-template-columns:1fr !important;}
