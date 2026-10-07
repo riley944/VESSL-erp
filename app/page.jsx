@@ -1262,20 +1262,26 @@ function Dashboard({ navigate }) {
   const stageTotal = d.stages.reduce((a, s) => a + s.value, 0) || 1;
 
   const attention = [
-    { k: 'Shipments overdue', n: d.overdue.length, to: 'shipments', tone: d.overdue.length ? '#D14343' : null,
+    { k: 'Shipments overdue', n: d.overdue.length, to: 'shipments', tone: 'red',
       line: d.overdue.length ? 'Most overdue: ' + d.refOf(d.overdue[0]) + ', ' + Math.abs(daysFrom(d.overdue[0].estimated_arrival)) + ' days past ETA' : 'No active shipment is past its ETA' },
-    { k: 'Active shipments with no ETA', n: d.noEta.length, to: 'shipments', tone: d.noEta.length ? '#B45309' : null,
+    { k: 'Active shipments with no ETA', n: d.noEta.length, to: 'shipments', tone: 'amber',
       line: d.noEta.length ? 'Add an ETA so arrivals can be planned' : 'Every active shipment has an ETA' },
-    { k: 'Open Sales Orders past cancel date', n: d.soPastCancel, to: 'sales-orders', tone: d.soPastCancel ? '#D14343' : null,
+    { k: 'Open Sales Orders past cancel date', n: d.soPastCancel, to: 'sales-orders', tone: 'amber',
       line: 'Purchase Orders not yet shipped, past cancel date: ' + d.poPastCancel },
-    { k: 'Sales Orders past cargo ready date, not shipped', n: d.soPastCrd, to: 'sales-orders', tone: d.soPastCrd ? '#B45309' : null,
+    { k: 'Sales Orders past cargo ready date, not shipped', n: d.soPastCrd, to: 'sales-orders', tone: 'amber',
       line: 'Purchase Orders past cargo ready date, not shipped: ' + d.poPastCrd },
-    { k: 'Freight quotes awaiting bids', n: d.fqSent, to: 'shipments', tone: null,
+    { k: 'Freight quotes awaiting bids', n: d.fqSent, to: 'shipments', tone: 'grey',
       line: d.oldestSent ? 'Oldest sent ' + Math.abs(daysFrom(d.oldestSent.sent_at)) + ' days ago (' + d.oldestSent.quote_number + ')' : 'Nothing sent and waiting' },
   ];
 
+  // Soft filled cards, one palette per kind of problem: red for late goods,
+  // amber for dates and gaps, grey for things that are only waiting.
+  const TONES = { red: { bg: '#FDECEA', ink: '#8F1D14' }, amber: { bg: '#FFF3DC', ink: '#7A4700' }, grey: { bg: '#EEF1F5', ink: '#414A58' } };
+  const INK = '#14171F';
+  const smallHead = { fontSize: '13px', fontWeight: 600, color: muted, letterSpacing: '.02em', margin: '0 2px 10px' };
+
   const tiles = [
-    { k: 'Revenue booked this month', v: moneyCompact(d.bookedMTD),
+    { k: 'Revenue booked this month', v: moneyCompact(d.bookedMTD), dark: true,
       extra: d.bookedDelta == null ? null : { up: d.bookedDelta >= 0, t: (d.bookedDelta >= 0 ? '↑ ' : '↓ ') + Math.abs(Math.round(d.bookedDelta)) + '% vs ' + d.lastSameLabel },
       def: 'Sales Order lines ordered since the 1st (' + d.thisMonthCount + ' orders), by order date' },
     { k: 'Blended margin', v: d.blended == null ? '—' : pctTxt(d.blended),
@@ -1302,41 +1308,54 @@ function Dashboard({ navigate }) {
       <div className="kva-filters" />
 
       {/* ── 2. Needs attention ── */}
-      <div style={{ fontSize: '13px', fontWeight: 600, color: muted, letterSpacing: '.02em', margin: '0 2px 10px' }}>Needs attention</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '14px', marginBottom: '22px' }}>
-        {attention.map(a => (
-          <div key={a.k} onClick={() => navigate(a.to)} role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter') navigate(a.to); }}
-            style={{ ...card, padding: '16px 18px', cursor: 'pointer', borderTop: '3px solid ' + (a.tone || '#E5E5EA') }}>
-            <div style={{ fontSize: '12.5px', color: muted, letterSpacing: '-.006em', lineHeight: 1.3 }}>{a.k}</div>
-            <div style={{ fontSize: '28px', fontWeight: 600, color: a.n ? (a.tone || '#1D1D1F') : '#1D1D1F', letterSpacing: '-.026em', lineHeight: 1.1, margin: '8px 0 6px', fontVariantNumeric: 'tabular-nums' }}>{a.n}</div>
-            <div style={{ fontSize: '12px', color: muted, lineHeight: 1.35, overflowWrap: 'anywhere' }}>{a.line}</div>
+      <div style={{ ...card, marginBottom: '22px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '18px 22px 12px' }}>
+          <div style={{ fontSize: '17px', fontWeight: 600, color: '#1D1D1F', letterSpacing: '-.018em' }}>Needs attention</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
+            <span style={{ fontSize: '12.5px', color: muted }}>Each card opens the list behind it</span>
+            <div className="kva-card-actions" />
           </div>
-        ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', padding: '0 22px 22px' }}>
+          {attention.map(a => {
+            const t = TONES[a.tone] || TONES.grey;
+            return (
+              <div key={a.k} onClick={() => navigate(a.to)} role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter') navigate(a.to); }}
+                style={{ background: t.bg, borderRadius: '14px', padding: '14px 16px', cursor: 'pointer', minWidth: 0 }}>
+                <div style={{ fontSize: '12.5px', fontWeight: 600, color: t.ink, letterSpacing: '-.006em', lineHeight: 1.3 }}>{a.k}</div>
+                <div style={{ fontSize: '36px', fontWeight: 700, color: INK, letterSpacing: '-.03em', lineHeight: 1.05, margin: '8px 0 6px', fontVariantNumeric: 'tabular-nums' }}>{a.n}</div>
+                <div style={{ fontSize: '12px', color: t.ink, opacity: .85, lineHeight: 1.35, overflowWrap: 'anywhere' }}>{a.line}</div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* ── 3. Headline numbers ── */}
+      <div style={smallHead}>Headline numbers</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '14px', marginBottom: '22px' }}>
+        {/* The dark tile keeps its change figure readable with a lighter green and red. */}
         {tiles.map(t => (
-          <div key={t.k} style={{ ...card, padding: '18px 20px' }}>
-            <div style={{ fontSize: '13px', color: muted, letterSpacing: '-.006em' }}>{t.k}</div>
-            <div style={{ fontSize: '30px', fontWeight: 600, color: '#1D1D1F', letterSpacing: '-.03em', lineHeight: 1.05, margin: '10px 0 6px', fontVariantNumeric: 'tabular-nums' }}>{t.v}</div>
-            {t.extra && <div style={{ fontSize: '12px', fontWeight: 600, color: t.extra.up ? '#1A7F45' : '#C0392B', marginBottom: '4px' }}>{t.extra.t}</div>}
-            <div style={{ fontSize: '12px', color: muted, lineHeight: 1.35 }}>{t.def}</div>
+          <div key={t.k} style={{ ...card, padding: '18px 20px', ...(t.dark ? { background: INK } : {}) }}>
+            <div style={{ fontSize: '13px', color: t.dark ? '#B8BEC9' : muted, letterSpacing: '-.006em' }}>{t.k}</div>
+            <div style={{ fontSize: '30px', fontWeight: 600, color: t.dark ? '#FFFFFF' : '#1D1D1F', letterSpacing: '-.03em', lineHeight: 1.05, margin: '10px 0 6px', fontVariantNumeric: 'tabular-nums' }}>{t.v}</div>
+            {t.extra && <div style={{ fontSize: '12px', fontWeight: 600, color: t.extra.up ? (t.dark ? '#6EE7A8' : '#1A7F45') : (t.dark ? '#FF9B8F' : '#C0392B'), marginBottom: '4px' }}>{t.extra.t}</div>}
+            <div style={{ fontSize: '12px', color: t.dark ? '#B8BEC9' : muted, lineHeight: 1.35 }}>{t.def}</div>
           </div>
         ))}
       </div>
 
+      {/* ── 4-5. Pipeline (about 60%) beside the monthly chart (about 40%);
+             one column below 1180px (globals.css, .kva-row-a). ── */}
+      <div className="kva-row-a" style={{ marginBottom: '22px' }}>
       {/* ── 4. Open pipeline by stage ── */}
-      <div style={{ ...card, marginBottom: '22px' }}>
+      <div style={card}>
         <CardHead title="Open pipeline by stage" sub={'Sales Orders · ' + usd0(d.openValue) + ' across ' + d.openCount + ' orders'} />
         {d.stages.map(s => (
           <div key={s.key} onClick={() => navigate('sales-orders')} style={{ display: 'grid', gridTemplateColumns: 'minmax(96px,130px) minmax(30px,1fr) auto minmax(24px,auto)', gap: '12px', alignItems: 'center', padding: '11px 22px', borderTop: rule, cursor: 'pointer' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-              <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: s.count ? s.color : '#DADADC', flexShrink: 0 }} />
-              <span style={{ fontSize: '14.5px', color: s.count ? '#1D1D1F' : '#B0B0B2' }}>{s.label}</span>
-            </div>
-            <div style={{ height: '4px', background: '#F0F0F2', borderRadius: '2px', overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: (s.value / stageTotal * 100) + '%', background: s.color, opacity: .85 }} />
+            <div style={{ fontSize: '14.5px', color: s.count ? '#1D1D1F' : '#B0B0B2', minWidth: 0 }}>{s.label}</div>
+            <div style={{ height: '14px', background: '#EEF1F5', borderRadius: '7px', overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: (s.value / stageTotal * 100) + '%', background: '#0B5FD0', borderRadius: '7px' }} />
             </div>
             <div style={{ fontSize: '14px', color: muted, fontVariantNumeric: 'tabular-nums', textAlign: 'right', whiteSpace: 'nowrap' }}>{s.count ? usd0(s.value) : '—'}</div>
             <div style={{ fontSize: '14px', fontWeight: s.count ? 600 : 400, color: s.count ? '#1D1D1F' : '#C0C0C2', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>{s.count}</div>
@@ -1354,7 +1373,7 @@ function Dashboard({ navigate }) {
       </div>
 
       {/* ── 5. Booked per month ── */}
-      <div style={{ ...card, marginBottom: '22px' }}>
+      <div style={card}>
         <CardHead title="Booked per month" sub="Sales Order lines by order date, all statuses" />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + d.months.length + ', minmax(0,1fr))', gap: '8px', alignItems: 'end', padding: '6px 22px 18px', height: '215px', boxSizing: 'border-box' }}>
           {d.months.map(m => (
@@ -1369,8 +1388,10 @@ function Dashboard({ navigate }) {
         </div>
       </div>
 
-      {/* ── 6-8. Two columns that stack on narrow screens ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px,100%), 1fr))', gap: '22px', alignItems: 'start' }}>
+      </div>
+
+      {/* ── 6-8. Three columns on a wide screen, wrapping to two and then one. ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px,100%), 1fr))', gap: '22px', alignItems: 'start' }}>
 
         <div style={card}>
           <CardHead title="Top clients this month" sub="Sales Orders booked since the 1st · margin excludes freight and duty" />
