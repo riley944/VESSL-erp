@@ -523,6 +523,28 @@ const canSeeBanking = role => COMPANY_TAB_ROLES.includes(role);
 // three leaves #company-banking working for somebody who cannot see the link.
 const BANKING_PAGE = 'company-banking';
 
+// ── KUI Vessl Analytics access ───────────────────────────────────────────────
+// Only people whose staff_profiles row has can_see_analytics = true (script 109:
+// Riley, Steven, Matt) see the sidebar item or can render the page. Everything
+// else -- false, no row, no value, a failed lookup -- is "no". Like banking, this
+// is a positive test, and it is checked at the same gate: anyone else arriving
+// at #dashboard, or whose remembered last page is dashboard, resolves to their
+// normal landing page before the shell renders, so the page never mounts and
+// fetches nothing. The column itself can only be changed by a script run as
+// postgres; a trigger refuses changes from the app.
+const ANALYTICS_PAGE = 'dashboard';
+// DEVELOPMENT ONLY: http://localhost:3000/?view-as=no-analytics#dashboard shows
+// the app as a person without analytics access. Two locks, either enough on its
+// own. NODE_ENV is 'production' in every `next build` -- which is what Vercel
+// runs -- so the first test is false at build time and the whole expression is
+// removed from the production bundle. The hostname test means even a
+// development build served anywhere but this machine ignores the parameter.
+const devViewWithoutAnalytics = () =>
+  process.env.NODE_ENV !== 'production'
+  && typeof window !== 'undefined'
+  && ['localhost', '127.0.0.1'].includes(window.location.hostname)
+  && new URLSearchParams(window.location.search).get('view-as') === 'no-analytics';
+
 // ── Tab in the URL hash ───────────────────────────────────────────────────────
 // A refresh used to land back on Programs whatever you were looking at.
 //
@@ -675,7 +697,7 @@ const readStoreSet = (key, allowed) => {
 };
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, role=null, collapsed=false, onToggleRail=null }) {
+function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, role=null, canAnalytics=false, collapsed=false, onToggleRail=null }) {
   const links = [
     { id:'programs',           label:'Samples' },
     { id:'dashboard',          label:'KUI Vessl Analytics' },
@@ -696,7 +718,8 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, rol
     { id:'client-relations',   label:'Client Relations' },
   ];
   const activeFor = { 'sales-orders':['sales-orders','so-detail'], 'orders':['orders','order-detail'] };
-  const shownLinks = allowedPages ? links.filter(l => allowedPages.includes(l.id)) : links;
+  const roleLinks = allowedPages ? links.filter(l => allowedPages.includes(l.id)) : links;
+  const shownLinks = roleLinks.filter(l => l.id !== ANALYTICS_PAGE || canAnalytics);
   return (
     <aside className={'sidebar ' + (open?'sidebar--open':'')}>
       <div className="sb-brand">
@@ -10340,6 +10363,8 @@ export default function App() {
   const [recovery, setRecovery] = useState(false);
   const [role,      setRole]      = useState(null);
   const [roleReady, setRoleReady] = useState(false);
+  // can_see_analytics from the profile; false until the lookup says true.
+  const [canAnalytics, setCanAnalytics] = useState(false);
   // '' means "no stored name", which TopBar reads as "fall back to the email".
   // Not null: it is a string the whole way down, and one shape is easier to
   // reason about than two.
@@ -10407,7 +10432,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const email = user?.email;
-    if (!email) { setRole(null); setRoleReady(false); setHasProfile(null); return; }
+    if (!email) { setRole(null); setRoleReady(false); setHasProfile(null); setCanAnalytics(false); return; }
     (async () => {
       try {
         // ilike can only widen the match (_ and % are wildcards), never narrow
@@ -10419,12 +10444,22 @@ export default function App() {
         const { data } = await SB.from('staff_profiles').select('email,role,full_name').ilike('email', email);
         const row = (data||[]).find(r => (r.email||'').toLowerCase() === email.toLowerCase());
         if (!cancelled) { setRole(row ? row.role : null); setDisplayName(row ? (row.full_name||'') : ''); setHasProfile(!!row); }
+        // Analytics access, read on its own so the lookup above -- and the
+        // sign-out gate that depends on it -- is untouched. Any error, no row or
+        // no value reads as false.
+        let analytics = false;
+        try {
+          const { data: a, error: ae } = await SB.from('staff_profiles').select('email,can_see_analytics').ilike('email', email);
+          const arow = ae ? null : (a||[]).find(r => (r.email||'').toLowerCase() === email.toLowerCase());
+          analytics = !!arow && arow.can_see_analytics === true && !devViewWithoutAnalytics();
+        } catch (e) { analytics = false; }
+        if (!cancelled) setCanAnalytics(analytics);
       } catch(e) {
         // A THROWN QUERY IS NOT A MISSING ROW. Network trouble or an RLS change
         // would otherwise sign everybody out at once, which is a far worse
         // failure than the one this gate exists to prevent. hasProfile stays
         // null, the session survives, and the app behaves as it did before.
-        if (!cancelled) { setRole(null); setDisplayName(''); }
+        if (!cancelled) { setRole(null); setDisplayName(''); setCanAnalytics(false); }
       }
       if (!cancelled) setRoleReady(true);
     })();
@@ -10519,7 +10554,11 @@ export default function App() {
   // above would happily let #company-banking through. This one asks the positive
   // question instead, and sends anyone who cannot see the page back to the
   // default rather than leaving them on a blank screen.
-  const page = (rawAllowed === BANKING_PAGE && !canSeeBanking(role)) ? 'programs' : rawAllowed;
+  const pageAfterBanking = (rawAllowed === BANKING_PAGE && !canSeeBanking(role)) ? 'programs' : rawAllowed;
+  // THE ANALYTICS GATE, the same idea as banking's gate 2. Anyone without access who
+  // asks for it gets their normal landing page -- the first page a limited role
+  // allows, otherwise Samples -- and the hash writer below then records that.
+  const page = (pageAfterBanking === ANALYTICS_PAGE && !canAnalytics) ? (allowedPages ? allowedPages[0] : 'programs') : pageAfterBanking;
 
   // Adopt the hash on mount, once. An effect rather than a useState initializer
   // because this route is statically prerendered: the server has no window, so a
@@ -10595,7 +10634,7 @@ export default function App() {
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <div className={'sidebar-backdrop ' + (navOpen?'show':'')} onClick={()=>setNavOpen(false)} />
-      <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} allowedPages={allowedPages} role={role}
+      <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} allowedPages={allowedPages} role={role} canAnalytics={canAnalytics}
                collapsed={railCollapsed} onToggleRail={toggleRail} />
       <TopBar user={user} displayName={displayName} title="" taskOpen={taskPanelOpen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
       <TaskPanel open={taskPanelOpen} onClose={()=>setTaskPanelOpen(false)} userEmail={user?.email || ''} />
@@ -10617,7 +10656,9 @@ export default function App() {
           <div className="page-actions">{pageActions[page]}</div>
         </div>
         <div className="page-content" style={page==='dashboard'?{padding:0}:(page==='sales-orders'||page==='so-detail'||page==='order-detail')?{paddingTop:'24px'}:undefined}>
-          {page==='dashboard'        && <Dashboard navigate={navigate} />}
+          {/* canAnalytics again here, as banking does: the gate above already
+              turns 'dashboard' into a landing page for anyone without access. */}
+          {page==='dashboard' && canAnalytics && <Dashboard navigate={navigate} />}
           {page==='sales-orders'     && <SalesOrders navigate={navigate} />}
           {page==='so-detail'        && <SalesOrderDetail id={params.id} navigate={navigate} />}
           {page==='orders'           && <Orders navigate={navigate} />}
