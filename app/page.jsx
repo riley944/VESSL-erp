@@ -1123,7 +1123,7 @@ function Dashboard({ navigate }) {
   const INK = '#14171F';
   const TONES = { red: { bg: '#FDECEA', ink: '#8F1D14' }, amber: { bg: '#FFF3DC', ink: '#7A4700' }, grey: { bg: '#EEF1F5', ink: '#414A58' } };
   const smallHead = { fontSize: '13px', fontWeight: 600, color: muted, letterSpacing: '.02em', margin: '0 2px 10px' };
-  const lbl = { display: 'block', textAlign: 'center', fontSize: '10.5px', fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: muted, marginBottom: '5px' };
+  const lbl = { display: 'block', fontSize: '10.5px', fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: muted, marginBottom: '5px' };
   // The per-card slot on the right of each header holds the card's dropdown.
   const CardHead = ({ title, sub, actions }) => (
     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '18px 22px 12px' }}>
@@ -1163,7 +1163,9 @@ function Dashboard({ navigate }) {
 
   const tiles = [
     { k: 'Revenue booked, ' + periodLabel, v: moneyCompact(d.bookedRev), dark: true,
-      extra: d.bookedDelta == null ? { muted: true, t: 'No orders in ' + d.range.prevLabel + ' to compare with' } : { up: d.bookedDelta >= 0, t: (d.bookedDelta >= 0 ? '↑ ' : '↓ ') + Math.abs(Math.round(d.bookedDelta)) + '% vs ' + d.range.prevLabel },
+      // No comparison line when the range is open-ended (All, or a Custom range
+      // with one end): there is no earlier period of the same length.
+      extra: !d.range.prevFrom ? null : d.bookedDelta == null ? { muted: true, t: 'No orders in ' + d.range.prevLabel + ' to compare with' } : { up: d.bookedDelta >= 0, t: (d.bookedDelta >= 0 ? '↑ ' : '↓ ') + Math.abs(Math.round(d.bookedDelta)) + '% vs ' + d.range.prevLabel },
       def: 'Sales Order lines ' + bookedBy + ' (' + d.bookedCount + ' order' + (d.bookedCount === 1 ? '' : 's') + ')' + (missingLine ? '. ' + missingLine : '') },
     { k: 'Blended margin', v: d.blended == null ? '—' : pctTxt(d.blended),
       def: asOf + ' · ' + pipeWord + ' Sales Orders with a factory cost (' + d.costedCount + ' of ' + d.pipeCount + '); excludes freight and duty' },
@@ -1292,17 +1294,22 @@ function Dashboard({ navigate }) {
 
         <div style={card}>
           <CardHead title="Booked per month"
-            sub={'Sales Order lines ' + bookedBy + '; grey bars are context outside the period' + (missingLine ? '. ' + missingLine : '')}
+            sub={'Sales Order lines ' + bookedBy + (d.contextBars ? '; grey bars are context outside the period' : '') + (missingLine ? '. ' + missingLine : '')}
             actions={<Sel label="Booked per month shows" value={metric} onChange={v => set('bookedMetric', v)} options={BOOKED_METRIC_OPTS} />} />
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + d.months.length + ', minmax(0,1fr))', gap: '8px', alignItems: 'end', padding: '6px 22px 18px', height: '215px', boxSizing: 'border-box' }}>
+          {/* Each bar keeps at least 40px, enough for a value like $1.74M at 10.5px.
+              Seven months fit a phone; a longer span scrolls sideways inside this
+              chart only, never the page. */}
+          <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + d.months.length + ', minmax(40px,1fr))', gap: d.months.length > 6 ? '4px' : '8px', alignItems: 'end', padding: '6px 22px 18px', height: '215px', boxSizing: 'border-box', minWidth: 0 }}>
             {d.months.map(m => (
               <div key={m.key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%', minWidth: 0 }}>
-                <div style={{ fontSize: '11.5px', fontWeight: 600, color: m.inPeriod ? '#1D1D1F' : muted, fontVariantNumeric: 'tabular-nums', marginBottom: '4px', whiteSpace: 'nowrap' }}>{mTxt(m)}</div>
+                <div style={{ fontSize: d.months.length > 6 ? '10.5px' : '11.5px', fontWeight: 600, color: m.inPeriod ? '#1D1D1F' : muted, fontVariantNumeric: 'tabular-nums', marginBottom: '4px', whiteSpace: 'nowrap' }}>{mTxt(m)}</div>
                 <div style={{ width: '100%', maxWidth: '56px', height: Math.max(mVal(m) > 0 ? 3 : 0, mVal(m) / maxM * 120) + 'px', background: !m.inPeriod ? '#C9CED6' : m.current ? 'repeating-linear-gradient(45deg,#0A84FF 0 6px,#5AA9FF 6px 12px)' : '#0A84FF', borderRadius: '6px 6px 2px 2px', opacity: m.current ? .75 : .9 }} />
                 <div style={{ fontSize: '11.5px', color: '#1D1D1F', marginTop: '6px', textAlign: 'center', lineHeight: 1.15 }}>{m.label}</div>
                 <div style={{ fontSize: '10px', color: muted, minHeight: '24px', textAlign: 'center', lineHeight: 1.15 }}>{m.current ? 'month to date' : ''}</div>
               </div>
             ))}
+          </div>
           </div>
         </div>
       </div>
