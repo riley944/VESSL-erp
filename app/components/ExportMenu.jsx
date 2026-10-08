@@ -20,6 +20,9 @@ import { createPortal } from 'react-dom';
 // React -- stops at this component, so a card or row with its own click does
 // not open.
 //
+// ariaLabel names the button for a screen reader when two on one page share a
+// visible label (Shipments has a page Export and a tab Export).
+//
 // PORTALLED, so a card with overflow hidden cannot clip it. Options are at
 // least 44px tall at phone width (.xm-item in globals.css).
 export const EXPORT_FORMATS = [['xlsx', 'Excel (.xlsx)'], ['csv', 'CSV (.csv)'], ['pdf', 'PDF']];
@@ -29,7 +32,7 @@ export const ExportGlyph = () => (
   <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M3 13.5h10" /></svg>
 );
 
-export default function ExportMenu({ label = 'Export', busyLabel = 'Exporting…', iconOnly = false, className = 'export-btn', title, busy = false, disabled = false, onPick }) {
+export default function ExportMenu({ label = 'Export', busyLabel = 'Exporting…', iconOnly = false, className = 'export-btn', title, ariaLabel, busy = false, disabled = false, onPick }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
   const btn = useRef(null);
@@ -78,7 +81,7 @@ export default function ExportMenu({ label = 'Export', busyLabel = 'Exporting…
   return (
     <span className="xm" onClick={stop} onMouseDown={stop} onKeyDown={stop} style={{ display: 'inline-flex' }}>
       <button ref={btn} type="button" className={iconOnly ? 'xm-icon' : className} onClick={toggle} disabled={disabled || busy}
-        aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined} title={title} aria-label={iconOnly ? (title || label) : undefined}
+        aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined} title={title} aria-label={ariaLabel || (iconOnly ? (title || label) : undefined)}
         onKeyDown={e => { if (e.key === 'ArrowDown' && !open) { e.preventDefault(); toggle(); } if (e.key === 'Escape' && open) { e.preventDefault(); close(true); } }}>
         <ExportGlyph />{!iconOnly && (busy ? busyLabel : label)}
       </button>

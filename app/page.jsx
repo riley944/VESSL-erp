@@ -1248,7 +1248,7 @@ function Dashboard({ navigate, user, displayName = '' }) {
           </div>
           <button onClick={() => navigate('sales-orders')} style={{ background: '#0066CC', color: '#fff', border: 'none', borderRadius: '980px', padding: '9px 18px', fontSize: '14px', fontWeight: 500, letterSpacing: '-.01em', cursor: 'pointer' }}>View orders</button>
           <button type="button" className="export-pill" onClick={() => runExport('all')} disabled={!!exporting} title="Download every section as one Excel file">
-            <DownloadIcon />{exporting === 'all' ? 'Exporting…' : 'Export all'}
+            <DownloadIcon />{exporting === 'all' ? 'Exporting…' : 'Export'}
           </button>
         </div>
       </div>
@@ -6521,7 +6521,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>
           {onNewShipment && <button onClick={onNewShipment} style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
-          <ExportMenu label="Export all" className="export-pill" busy={exporting==='all'} disabled={!!exporting} title="Download Freight Quotes, Shipments and Delivery Requests" onPick={fmt => exportTab('all', fmt)} />
+          <ExportMenu label="Export" className="export-pill" busy={exporting==='all'} disabled={!!exporting} title="Export Freight Quotes, Shipments and Delivery Requests" ariaLabel="Export Freight Quotes, Shipments and Delivery Requests" onPick={fmt => exportTab('all', fmt)} />
         </div>
       </div>
 
@@ -6606,7 +6606,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
         {/* THIS TAB'S EXPORT: the rows on screen. A list's export, so the page
             pill, pushed to the row's end. */}
         <div className="shp-export-wrap">
-          <ExportMenu label="Export" className="export-pill" busy={exporting===ui.view} disabled={!!exporting} title={'Download '+TAB_TITLE[ui.view]} onPick={fmt => exportTab(ui.view, fmt)} />
+          <ExportMenu label="Export" className="export-pill" busy={exporting===ui.view} disabled={!!exporting} title={'Export '+TAB_TITLE[ui.view]} ariaLabel={'Export '+TAB_TITLE[ui.view]} onPick={fmt => exportTab(ui.view, fmt)} />
         </div>
       </div>
 
