@@ -773,9 +773,13 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 .kva-export:hover:not(:disabled){background:#F5F5F7;}
 .kva-export-all{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#0066CC;border:1px solid #0066CC;border-radius:980px;padding:8px 16px;font-family:inherit;font-size:14px;font-weight:500;letter-spacing:-.01em;white-space:nowrap;cursor:pointer;box-sizing:border-box;}
 .kva-export:disabled,.kva-export-all:disabled{opacity:.55;cursor:default;}
+/* The Shipments page uses the same two buttons; its tab Export sits at the end
+   of the controls row. */
+.shp-export-wrap{margin-left:auto;display:flex;}
 @media (max-width:720px){
   .kva-export{height:auto;min-height:44px;padding:0 14px;font-size:14px;}
   .kva-export-all{min-height:44px;}
+  .shp-export-wrap{margin-left:0;}
 }
 
 /* Shipments page client filter: on a phone the dropdown takes its own full-width

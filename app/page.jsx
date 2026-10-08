@@ -124,9 +124,11 @@ import { usePageState } from '@/lib/pageState';
 import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel } from '@/lib/shipmentStatus';
-import { QF_DEFAULT, shipmentsView } from '@/lib/shipmentsView';
+import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
 import { lclBidTotal, bidEffective } from '@/lib/freightBids';
-import { buildSheets, buildWorkbook, exportFileName, EXPORT_ALL } from '@/lib/analyticsExport';
+import { buildShipmentsSheets, shipmentsFileName, SHIPMENTS_ALL } from '@/lib/shipmentsExport';
+import { buildSheets, exportFileName, EXPORT_ALL } from '@/lib/analyticsExport';
+import { buildWorkbook } from '@/lib/workbook';
 import { buildAnalytics, filterOptions, figureWords, headlineTiles, attentionCards, shipmentRef, daysFromNow, ANALYTICS_DEFAULTS, PERIOD_OPTS, DATES_BY_OPTS, STAGE_FILTER_OPTS, BOOKED_METRIC_OPTS, TOP_SORT_OPTS } from '@/lib/analytics';
 // The RFQ sheet geometry and its builder, shared with app/api/rfq/send/route.js.
 // The row numbers are a wire format between the workbook this writes and the one
@@ -1106,6 +1108,11 @@ const usd0 = n => '$' + Math.round(n || 0).toLocaleString('en-US');
 const pctTxt = p => p == null ? '—' : (p >= 0 ? '' : '−') + Math.abs(p).toFixed(1) + '%';
 const numCompact = n => { const a = Math.abs(n || 0); return a >= 1e6 ? (n / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M' : a >= 1e4 ? Math.round(n / 1e3) + 'K' : Math.round(n || 0).toLocaleString('en-US'); };
 
+// The small download glyph on the Export buttons, here and on Shipments.
+const DownloadIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M3 13.5h10" /></svg>
+);
+
 function Dashboard({ navigate, user, displayName = '' }) {
   const [raw, setRaw] = useState(null);
   const [loadErr, setLoadErr] = useState('');
@@ -1166,9 +1173,6 @@ function Dashboard({ navigate, user, displayName = '' }) {
     }
     setExporting('');
   };
-  const DownloadIcon = () => (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M3 13.5h10" /></svg>
-  );
   const ExportBtn = ({ id, title }) => (
     <button type="button" className="kva-export" onClick={() => runExport(id)} disabled={!!exporting} title={'Download ' + title + ' as an Excel file'}>
       <DownloadIcon />{exporting === id ? 'Exporting…' : 'Export'}
@@ -5992,14 +5996,8 @@ const newQuoteNumber = () => 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase
 // absorbed into whichever branch happens to be last. Anything unrecognised falls
 // through to the raw value in muted grey -- visible and wrong, which is what you
 // want, rather than invisible and wrong.
-const RFQ_PILL = {
-  draft:        { label:'Draft',        color:'#B45309', bg:'#FEF3C7' },
-  sent:         { label:'Sent',         color:'#0A84FF', bg:'#EAF3FE' },
-  awarded:      { label:'Awarded',      color:'#15803D', bg:'#DCFCE7' },
-  not_selected: { label:'Not selected', color:'#86868B', bg:'#F2F2F4' },
-  archived:     { label:'Archived',     color:'#86868B', bg:'#F2F2F4' },
-};
-const rfqPill = st => RFQ_PILL[st] || { label:(st||'unknown'), color:'#86868B', bg:'#F2F2F4' };
+// RFQ_PILL and rfqPill live in lib/shipmentsView.js, so the export prints the
+// same status words the cards do.
 
 // ── THE FREIGHT QUOTE STATUS FILTER ──────────────────────────────────────────
 // Six pills and a Show-resolved toggle became one multi-select, the same shape
@@ -6025,7 +6023,7 @@ const rfqPill = st => RFQ_PILL[st] || { label:(st||'unknown'), color:'#86868B', 
 // body can ever get above it again. It is now imported from lib/shipmentsView.js,
 // which is module scope too, so the same holds.
 
-function Shipments({ onNewShipment, userEmail }) {
+function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
   // Delivery requests the client filed from the portal. Nothing in this app has
@@ -6057,6 +6055,8 @@ function Shipments({ onNewShipment, userEmail }) {
   const [rfqQuote, setRfqQuote] = useState(null);
   const [showBidImport, setShowBidImport] = useState(false);
   const [bidsQuote, setBidsQuote] = useState(null);
+  // Which export is being built: a tab id, 'all', or ''.
+  const [exporting, setExporting] = useState('');
 
   const reloadBids = async () => {
     const { data } = await SB.from('forwarder_bids').select('*').order('created_at',{ascending:false});
@@ -6417,6 +6417,33 @@ function Shipments({ onNewShipment, userEmail }) {
   const money0 = v => '$'+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:0});
   const reopen = (q) => openFreightSheet(q, (q.client||{}).name||'', (q.forwarder||{}).name||'');
 
+  // ── Export: downloads only ────────────────────────────────────────────────
+  // Built from V, the lists this render draws -- client, search, status filter
+  // and In transit / Delivered / All already applied -- so a sheet lists the rows
+  // on screen. For Export all, the other two tabs are the same view without the
+  // search, because switching tabs clears the search box. Test records stay in,
+  // as on the page. Anyone who can open this page can export.
+  const runExport = async (tab) => {
+    if (exporting) return;
+    setExporting(tab);
+    try {
+      const ExcelJS = await loadExcelJS();
+      const now = new Date();
+      const tabs = tab === 'all' ? SHIPMENTS_ALL : [tab];
+      const views = {};
+      tabs.forEach(t => { views[t] = t === ui.view ? V : shipmentsView({ quotes, rows, dreqs, bids, coNames }, { ...ui, search:'' }, now); });
+      const who = userEmail ? ((displayName||'').trim() ? displayName.trim()+' ('+userEmail+')' : userEmail) : '';
+      const ctx = { exportedAt: now, user: who, ui, bids, coNames, refOf: matchRef };
+      const wb = buildWorkbook(ExcelJS, buildShipmentsSheets(views, ctx, tabs));
+      const buf = await wb.xlsx.writeBuffer();
+      downloadFile(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), shipmentsFileName(tab === 'all' ? '' : tab, stampToday()));
+    } catch (e) {
+      alert('Could not build the export: '+((e && e.message) || e));
+    }
+    setExporting('');
+  };
+  const TAB_TITLE = { quotes:'Freight Quotes', shipments:'Shipments', delivery:'Delivery Requests' };
+
   // pulse tile helper
   const pulse = [
     { k:'In transit',    v:activeShips.length,  c:'#1D1D1F', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter',''); } , on: ui.view==='shipments'&&ui.shipFilter===''&&ui.tab==='active' },
@@ -6440,6 +6467,9 @@ function Shipments({ onNewShipment, userEmail }) {
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>
           {onNewShipment && <button onClick={onNewShipment} style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
+          <button type="button" className="kva-export-all" onClick={()=>runExport('all')} disabled={!!exporting} title="Download Freight Quotes, Shipments and Delivery Requests as one Excel file">
+            <DownloadIcon />{exporting==='all' ? 'Exporting…' : 'Export all'}
+          </button>
         </div>
       </div>
 
@@ -6521,6 +6551,13 @@ function Shipments({ onNewShipment, userEmail }) {
             {ui.shipFilter && <button onClick={()=>setUi('shipFilter','')} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:'#1D1D1F',color:'#fff'}}>{(ui.shipFilter==='arriving'?'Arriving \u226414d':'Overdue')+' \u00d7'}</button>}
           </div>
         )}
+        {/* THIS TAB'S EXPORT: the rows on screen, as an Excel file. The same
+            compact button as the Analytics cards, pushed to the row's end. */}
+        <div className="shp-export-wrap">
+          <button type="button" className="kva-export" onClick={()=>runExport(ui.view)} disabled={!!exporting} title={'Download '+TAB_TITLE[ui.view]+' as an Excel file'}>
+            <DownloadIcon />{exporting===ui.view ? 'Exporting…' : 'Export'}
+          </button>
+        </div>
       </div>
 
       {/* ══ FREIGHT QUOTES — card grid ══ */}
@@ -10649,7 +10686,7 @@ export default function App() {
           {page==='codes'            && <Codes canDeleteCodes={role !== 'limited_qc'} />}
           {page==='pricing'          && <Pricing />}
           {page==='programs'         && <Programs userEmail={user?.email||''} />}
-          {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} userEmail={user?.email||''} />}
+          {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} userEmail={user?.email||''} displayName={displayName} />}
           {page==='inventory'        && <Inventory />}
           {/* role and user are already in this scope for the gate and the header;
               onDisplayName is the shell's own setter, so saving a name in My Account
