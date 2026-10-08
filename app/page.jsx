@@ -126,6 +126,7 @@ import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel } from '@/lib/shipmentStatus';
 import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView } from '@/lib/ordersView';
+import { buildSoListSheets, buildSoRecordSheets, buildPoListSheets, buildPoRecordSheets, ordersListFileName, orderFileName, ordersCsvName, ordersPdfMeta, orderPdfMeta, orderRef } from '@/lib/ordersExport';
 import { lclBidTotal, bidEffective } from '@/lib/freightBids';
 import { buildShipmentsSheets, shipmentsFileName, SHIPMENTS_ALL, shipmentsCsvName, shipmentsPdfMeta, buildRecordSheets, recordFileName, recordPdfMeta } from '@/lib/shipmentsExport';
 import { sheetsToCsvFiles, sheetsToPdfHtml } from '@/lib/exportFormats';
@@ -331,9 +332,11 @@ function distinctClients(rows){
   const m={}; (rows||[]).forEach(p=>{ const c=poClient(p); if(c) m[c]=(m[c]||0)+1; });
   return Object.entries(m).sort((a,b)=>a[0].localeCompare(b[0]));
 }
-const PO_CARD_SELECT = 'id,order_number,client_po_number,status,production_pct,order_date,cargo_ready_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
+// Read-only additions for the export: the PO's terms, fees and notes, and each
+// line's quantity, prices, size and SKUs. The cards still read only what they did.
+const PO_CARD_SELECT = 'id,order_number,client_po_number,status,production_pct,order_date,cargo_ready_date,requested_ship_date,cancel_date,payment_terms,incoterm,shipping_method,currency,mold_fee,sample_fee,deposit_percent,notes,delivery_address,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(id,description,quantity,unit_price,size,product_sku,product_id,vpn,master_sku,pack_sku,baby_sku,carton_info,ci_value,retail_price,products(sku,name))';
 
-function OrderCard({ p, navigate, onStatus }){
+function OrderCard({ p, navigate, onStatus, exportIcon = null }){
   const client = poClient(p), factory = poFactory(p);
   const items = (p.purchase_order_items||[]);
   const itemCount = items.length;
@@ -347,7 +350,11 @@ function OrderCard({ p, navigate, onStatus }){
             <div className="po-card-kicker">Purchase Order</div>
             <div className="po-card-num">{p.client_po_number||p.order_number||'—'}</div>
           </div>
-          <Badge status={p.status} />
+          {/* The order's export icon, after its status; it stops its own clicks. */}
+          <div style={{display:'flex',alignItems:'center',gap:'4px',flexShrink:0}}>
+            <Badge status={p.status} />
+            {exportIcon}
+          </div>
         </div>
         <div className="po-card-parties">
           <span className="po-card-av" style={{background:companyColor(client||factory)}}>{initials(client||factory)}</span>
@@ -490,6 +497,15 @@ const allowedPagesFor = role =>
 // every link. A denylist would show it the bank account number; an allowlist
 // simply does not match, so a role nobody has heard of gets nothing.
 const COMPANY_TAB_ROLES = ['admin', 'staff'];
+// ── MONEY IN AN ORDER EXPORT ────────────────────────────────────────────────
+// The Sales and Purchase Order exports include prices, costs and margins only
+// for these roles. They are the roles that can open those pages today -- every
+// other role reaching them would be a change to allowedPagesFor -- and on those
+// pages admin and staff see every figure. Anyone else gets the same export with
+// every money column and row removed (withoutMoney in lib/ordersExport.js), so
+// widening page access later cannot widen what an export reveals by accident.
+const ORDER_MONEY_ROLES = ['admin', 'staff'];
+const canSeeOrderMoney = role => ORDER_MONEY_ROLES.includes(role);
 const canSeeBanking = role => COMPANY_TAB_ROLES.includes(role);
 // Used at THREE sites, and all three are needed. The sidebar link is only the
 // visible one; the page render stops a hash from mounting the component, and the
@@ -1761,7 +1777,7 @@ function Inventory() {
 }
 
 // ── Sales Orders ─────────────────────────────────────────────────────────────
-function SalesOrders({navigate}){
+function SalesOrders({navigate, role=null, user=null, displayName=''}){
   const [rows,setRows]=useState([]);
   const [loading,setLoading]=useState(true);
   // Search and the two membership filters survive going into an order and back. The
@@ -1791,12 +1807,31 @@ function SalesOrders({navigate}){
   };
   const setCrdF  =v=>{ setCrdFRaw(v);   writeStore(SO_CRD_KEY,  (v||[]).join(',')); };
   const [showCreate,setShowCreate]=useState(false);
-  const load=async()=>{ setLoading(true); const {data}=await SB.from('sales_orders').select('*,client:companies!client_company_id(id,name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(unit_price,quantity))),order_costs(amount,kind)').order('created_at',{ascending:false}); setRows(data||[]); setLoading(false); };
+  // Which export is being built: 'list', 'rec:'+id, or ''.
+  const [exporting,setExporting]=useState('');
+  // The lines carry what the export lists (description, SKU, size) and each linked
+  // PO its number, status and factory -- read-only additions to the same select.
+  const load=async()=>{ setLoading(true); const {data}=await SB.from('sales_orders').select('*,client:companies!client_company_id(id,name),sales_order_items(id,description,client_sku,size,quantity,client_price),sales_order_pos(purchase_orders(id,order_number,client_po_number,status,currency,factory:companies!factory_company_id(name),purchase_order_items(unit_price,quantity))),order_costs(id,amount,kind,note)').order('created_at',{ascending:false}); setRows(data||[]); setLoading(false); };
   useEffect(()=>{ load(); },[]);
   // The list, its order and its totals come from soListView in lib/ordersView.js,
   // which the export reads too, so the two cannot drift. No-CRD orders go last as
   // a group under a CRD sort; ticked sorts apply in tick order.
   const { clients, preCrd, shown, totals, totalUnits } = soListView(rows, ui, sortBy, crdF);
+
+  // ── Export: downloads only ────────────────────────────────────────────────
+  // The list exports exactly `shown`, in this order; one order exports the record
+  // its card shows. Money columns follow canSeeOrderMoney.
+  const exportCtx = () => ({ exportedAt: new Date(), user: exportUser(user, displayName), showMoney: canSeeOrderMoney(role) });
+  const exportList = fmt => startOrderExport(exporting, setExporting, 'list', fmt, () => {
+    const ctx = exportCtx(), day = stampToday(), view = { ui, sortBy, crdF, totals, totalUnits };
+    return { sheets: buildSoListSheets(shown, view, ctx), xlsxName: ordersListFileName('so', day),
+      csvName: (sh, t) => ordersCsvName('so', t, view, day), pdfMeta: ordersPdfMeta('so', ctx) };
+  });
+  const exportOne = (so, fmt) => startOrderExport(exporting, setExporting, 'rec:'+so.id, fmt, () => {
+    const ctx = exportCtx(), day = stampToday();
+    return { sheets: buildSoRecordSheets(so, ctx), xlsxName: orderFileName('so', so, day, 'xlsx'),
+      csvName: (sh, t, i) => orderFileName('so', so, day, 'csv', t, i), pdfMeta: orderPdfMeta('so', so, ctx) };
+  });
   const clientOptions = [
     { value:'', label:'All Clients' },
     ...clients.map(c=>({ value:c, label:c, color:companyColor(c) })),
@@ -1880,6 +1915,11 @@ function SalesOrders({navigate}){
         <FilterSelect multiple label="All Statuses" value={ui.statusF} onChange={v=>setUi('statusF', v)} options={statusOptions} />
         <FilterSelect multiple label="All CRD" value={crdF} onChange={setCrdF} options={crdOptions} />
         <FilterSelect multiple ordered label="Newest SO" value={sortBy} onChange={setSortBy} options={sortOptions} />
+        {/* THE LIST'S EXPORT, at the end of the controls row: the orders on screen,
+            filtered and sorted as shown. */}
+        <div className="shp-export-wrap">
+          <ExportMenu label="Export" className="export-pill" busy={exporting==='list'} disabled={!!exporting} title="Export Sales Orders" ariaLabel="Export Sales Orders" onPick={exportList} />
+        </div>
       </div>
 
       {/* Orders — distinct 2-col card grid */}
@@ -1907,7 +1947,12 @@ function SalesOrders({navigate}){
                         <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{so.client?.name||'Unknown'}</div>
                       </div>
                     </div>
-                    <Badge status={so.status} />
+                    {/* EXPORT THIS ORDER, at the end of the title line after its status.
+                        Its clicks stop here, so the card does not open. */}
+                    <div style={{display:'flex',alignItems:'center',gap:'4px',flexShrink:0}}>
+                      <Badge status={so.status} />
+                      <ExportMenu iconOnly title={'Export '+(orderRef(so)||'this order')} busy={exporting==='rec:'+so.id} disabled={!!exporting} onPick={fmt=>exportOne(so, fmt)} />
+                    </div>
                   </div>
                   {/* progress bar */}
                   <div style={{marginBottom:'14px'}}>
@@ -3349,7 +3394,7 @@ function CompanyBanking() {
 }
 
 // ── Orders List ───────────────────────────────────────────────────────────────
-function Orders({ navigate }) {
+function Orders({ navigate, role = null, user = null, displayName = '' }) {
   const [rows, setRows]     = useState([]);
   const [loading, setLoading] = useState(true);
   // What the user chose about this list -- search, the two filters, and which of the
@@ -3357,6 +3402,8 @@ function Orders({ navigate }) {
   // back does not throw it away. rows and loading stay plain useState on purpose,
   // because the page refetches on mount and stale rows would be a lie.
   const [ui, setUi] = usePageState('orders', { status:[], search:'', client:[], view:'list' });
+  // Which export is being built: 'list', 'rec:'+id, or ''.
+  const [exporting, setExporting] = useState('');
   const load = async () => {
     setLoading(true);
     let { data, error } = await SB.from('purchase_orders').select(PO_CARD_SELECT).order('created_at',{ascending:false});
@@ -3408,11 +3455,32 @@ function Orders({ navigate }) {
     await SB.from('purchase_orders').update({production_pct:pct,updated_at:new Date().toISOString()}).eq('id',pid);
   };
   // The list comes from poListView in lib/ordersView.js, which the export reads too.
-  const { shown } = poListView(rows, ui);
+  const { shown, onScreen, offBoard } = poListView(rows, ui);
+
+  // ── Export: downloads only ────────────────────────────────────────────────
+  // The list exports what the current view draws, in its order: the List, or the
+  // Production Board's cards column by column. Money follows canSeeOrderMoney.
+  const exportCtx = () => ({ exportedAt: new Date(), user: exportUser(user, displayName), showMoney: canSeeOrderMoney(role) });
+  const exportList = fmt => startOrderExport(exporting, setExporting, 'list', fmt, () => {
+    const ctx = exportCtx(), day = stampToday(), view = { ui, offBoard };
+    return { sheets: buildPoListSheets(onScreen, view, ctx), xlsxName: ordersListFileName('po', day),
+      csvName: (sh, t) => ordersCsvName('po', t, view, day), pdfMeta: ordersPdfMeta('po', ctx) };
+  });
+  const exportOne = (p, fmt) => startOrderExport(exporting, setExporting, 'rec:'+p.id, fmt, () => {
+    const ctx = exportCtx(), day = stampToday();
+    return { sheets: buildPoRecordSheets(p, ctx), xlsxName: orderFileName('po', p, day, 'xlsx'),
+      csvName: (sh, t, i) => orderFileName('po', p, day, 'csv', t, i), pdfMeta: orderPdfMeta('po', p, ctx) };
+  });
+  // A plain call, not a component made in here, so an open menu survives a re-render.
+  const exportIcon = p => (
+    <ExportMenu iconOnly title={'Export '+(orderRef(p)||'this order')} busy={exporting==='rec:'+p.id} disabled={!!exporting} onPick={fmt=>exportOne(p, fmt)} />
+  );
   return (
     <>
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'2px'}}>
         <div style={{flex:1}}><PoToolbar rows={rows} search={ui.search} setSearch={v=>setUi('search',v)} client={ui.client} setClient={v=>setUi('client',v)} status={ui.status} setStatus={v=>setUi('status',v)} /></div>
+        {/* THE LIST'S EXPORT, at the end of the controls row: what the current view shows. */}
+        <ExportMenu label="Export" className="export-pill" busy={exporting==='list'} disabled={!!exporting} title="Export Purchase Orders" ariaLabel="Export Purchase Orders" onPick={exportList} />
       </div>
       <div style={{display:'inline-flex',background:'#F2F2F6',borderRadius:'10px',padding:'3px',marginBottom:'16px'}}>
         {[['list','List'],['board','Production Board']].map(([v,l])=>(
@@ -3420,10 +3488,10 @@ function Orders({ navigate }) {
         ))}
       </div>
       {loading ? <div className="loading">Loading...</div> :
-        ui.view==='board' ? <ProductionBoard rows={shown} navigate={navigate} onStatus={setStat} onPct={setPct} />
+        ui.view==='board' ? <ProductionBoard rows={shown} navigate={navigate} onStatus={setStat} onPct={setPct} exportIcon={exportIcon} />
         : shown.length ? (
         <div className="order-card-grid">
-          {shown.map(p=><OrderCard key={p.id} p={p} navigate={navigate} onStatus={setStat} />)}
+          {shown.map(p=><OrderCard key={p.id} p={p} navigate={navigate} onStatus={setStat} exportIcon={exportIcon(p)} />)}
         </div>
       ) : <div className="section-card"><div className="empty"><h3>No orders</h3><p>No purchase orders match your search or filters.</p></div></div>}
       {shipAsk && <ConfirmModal title={shipAsk.title} message={shipAsk.message} confirmLabel={shipAsk.confirmLabel} danger={false} onConfirm={shipAsk.onConfirm} onCancel={()=>setShipAsk(null)} />}
@@ -3434,7 +3502,7 @@ function Orders({ navigate }) {
 // ── Production Board ──────────────────────────────────────────────────────────
 // PROD_COLUMNS lives in lib/ordersView.js: the board's columns decide which
 // POs the board view shows, and so what its export lists.
-function ProductionBoard({ rows, navigate, onStatus, onPct }) {
+function ProductionBoard({ rows, navigate, onStatus, onPct, exportIcon = null }) {
   const [dragId, setDragId] = useState(null);
   const [overCol, setOverCol] = useState(null);
   const byCol = {};
@@ -3470,7 +3538,10 @@ function ProductionBoard({ rows, navigate, onStatus, onPct }) {
                   return (
                     <div key={p.id} draggable onDragStart={()=>setDragId(p.id)} onDragEnd={()=>{setDragId(null);setOverCol(null);}} onClick={()=>navigate('order-detail',{id:p.id})}
                       style={{background:'#fff',borderRadius:'11px',padding:'12px 13px',cursor:'grab',boxShadow:'0 1px 2px rgba(0,0,0,.05),0 1px 3px rgba(0,0,0,.04)',border:'1px solid #EFEFF1',opacity:dragId===p.id?.5:1}}>
-                      <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{ref}</div>
+                      <div style={{display:'flex',alignItems:'center',gap:'4px',minWidth:0}}>
+                        <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1,minWidth:0}}>{ref}</div>
+                        {exportIcon && exportIcon(p)}
+                      </div>
                       <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'2px',marginBottom:'10px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{client}</div>
                       {/* % complete */}
                       <div style={{display:'flex',alignItems:'center',gap:'7px'}}>
@@ -4361,6 +4432,52 @@ const stampToday = () => {
   const d = new Date();
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 };
+// ── ORDER EXPORTS: open, build, deliver ─────────────────────────────────────
+// The Sales and Purchase Order pages share these. A PDF needs its window opened
+// inside the click, before anything is awaited, or a pop-up blocker stops it.
+// out: { sheets, xlsxName, csvName(sheet, table, i), pdfMeta } -- one set of
+// sheet descriptions, laid out as Excel, CSV files or a print document.
+const openExportWindow = () => {
+  const win = window.open('', '_blank');
+  if (!win) { alert('The PDF opens in a new window. Allow pop-ups for this site and try again.'); return null; }
+  win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Preparing the PDF\u2026</body>');
+  return win;
+};
+const exportUser = (user, displayName) => {
+  const email = user?.email || '';
+  return email ? ((displayName||'').trim() ? displayName.trim()+' ('+email+')' : email) : '';
+};
+async function deliverExport(fmt, out, win) {
+  if (fmt === 'xlsx') {
+    const ExcelJS = await loadExcelJS();
+    const buf = await buildWorkbook(ExcelJS, out.sheets).xlsx.writeBuffer();
+    downloadFile(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), out.xlsxName);
+  } else if (fmt === 'csv') {
+    const files = sheetsToCsvFiles(out.sheets, out.csvName);
+    for (let i = 0; i < files.length; i++) {
+      if (i) await new Promise(r => setTimeout(r, 400));
+      downloadFile(new Blob([files[i].text], { type:'text/csv;charset=utf-8' }), files[i].name);
+    }
+  } else if (fmt === 'pdf') {
+    const brand = await loadLetterhead();
+    win.document.open(); win.document.write(sheetsToPdfHtml(out.sheets, brand, out.pdfMeta)); win.document.close();
+    setTimeout(() => { try { win.focus(); win.print(); } catch (e) {} }, 900);
+  }
+}
+// One export at a time per page: key names what is being built (the list, or
+// 'rec:'+id), so its button can say so and every other one waits.
+const startOrderExport = (exporting, setExporting, key, fmt, build) => {
+  if (exporting) return;
+  let win = null;
+  if (fmt === 'pdf') { win = openExportWindow(); if (!win) return; }
+  setExporting(key);
+  (async () => {
+    try { await deliverExport(fmt, build(), win); }
+    catch (e) { if (win) { try { win.close(); } catch (x) {} } alert('Could not build the export: '+((e && e.message) || e)); }
+    setExporting('');
+  })();
+};
+
 const downloadFile = (blob, filename) => {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -10657,9 +10774,9 @@ export default function App() {
           {/* canAnalytics again here, as banking does: the gate above already
               turns 'dashboard' into a landing page for anyone without access. */}
           {page==='dashboard' && canAnalytics && <Dashboard navigate={navigate} user={user} displayName={displayName} />}
-          {page==='sales-orders'     && <SalesOrders navigate={navigate} />}
+          {page==='sales-orders'     && <SalesOrders navigate={navigate} role={role} user={user} displayName={displayName} />}
           {page==='so-detail'        && <SalesOrderDetail id={params.id} navigate={navigate} />}
-          {page==='orders'           && <Orders navigate={navigate} />}
+          {page==='orders'           && <Orders navigate={navigate} role={role} user={user} displayName={displayName} />}
           {page==='order-detail'     && <OrderDetail id={params.id} navigate={navigate} />}
           {page==='companies'        && <Companies onTypeChange={setCompanyType} createRequest={companyCreateReq} />}
           {page==='products'         && <Products navigate={navigate} canCreateProducts={role !== 'limited_qc'} userEmail={user?.email||''} />}
