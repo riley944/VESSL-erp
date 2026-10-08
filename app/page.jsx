@@ -1176,7 +1176,7 @@ function Dashboard({ navigate, user, displayName = '' }) {
     setExporting('');
   };
   const ExportBtn = ({ id, title }) => (
-    <button type="button" className="kva-export" onClick={() => runExport(id)} disabled={!!exporting} title={'Download ' + title + ' as an Excel file'}>
+    <button type="button" className="export-btn" onClick={() => runExport(id)} disabled={!!exporting} title={'Download ' + title + ' as an Excel file'}>
       <DownloadIcon />{exporting === id ? 'Exporting…' : 'Export'}
     </button>
   );
@@ -1247,7 +1247,7 @@ function Dashboard({ navigate, user, displayName = '' }) {
             })}
           </div>
           <button onClick={() => navigate('sales-orders')} style={{ background: '#0066CC', color: '#fff', border: 'none', borderRadius: '980px', padding: '9px 18px', fontSize: '14px', fontWeight: 500, letterSpacing: '-.01em', cursor: 'pointer' }}>View orders</button>
-          <button type="button" className="kva-export-all" onClick={() => runExport('all')} disabled={!!exporting} title="Download every section as one Excel file">
+          <button type="button" className="export-pill" onClick={() => runExport('all')} disabled={!!exporting} title="Download every section as one Excel file">
             <DownloadIcon />{exporting === 'all' ? 'Exporting…' : 'Export all'}
           </button>
         </div>
@@ -6521,7 +6521,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>
           {onNewShipment && <button onClick={onNewShipment} style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
-          <ExportMenu label="Export all" className="kva-export-all" busy={exporting==='all'} disabled={!!exporting} title="Download Freight Quotes, Shipments and Delivery Requests" onPick={fmt => exportTab('all', fmt)} />
+          <ExportMenu label="Export all" className="export-pill" busy={exporting==='all'} disabled={!!exporting} title="Download Freight Quotes, Shipments and Delivery Requests" onPick={fmt => exportTab('all', fmt)} />
         </div>
       </div>
 
@@ -6603,10 +6603,10 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             {ui.shipFilter && <button onClick={()=>setUi('shipFilter','')} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:'#1D1D1F',color:'#fff'}}>{(ui.shipFilter==='arriving'?'Arriving \u226414d':'Overdue')+' \u00d7'}</button>}
           </div>
         )}
-        {/* THIS TAB'S EXPORT: the rows on screen, as an Excel file. The same
-            compact button as the Analytics cards, pushed to the row's end. */}
+        {/* THIS TAB'S EXPORT: the rows on screen. A list's export, so the page
+            pill, pushed to the row's end. */}
         <div className="shp-export-wrap">
-          <ExportMenu label="Export" className="kva-export" busy={exporting===ui.view} disabled={!!exporting} title={'Download '+TAB_TITLE[ui.view]} onPick={fmt => exportTab(ui.view, fmt)} />
+          <ExportMenu label="Export" className="export-pill" busy={exporting===ui.view} disabled={!!exporting} title={'Download '+TAB_TITLE[ui.view]} onPick={fmt => exportTab(ui.view, fmt)} />
         </div>
       </div>
 

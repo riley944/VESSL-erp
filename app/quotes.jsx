@@ -1230,7 +1230,9 @@ function Platform({ session, newQuote = null }) {
             {myOpenTaskCount > 0 && <span style={S.taskBadge}>{myOpenTaskCount}</span>}
           </button>
           <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setShowSend(true)}><Send size={15} /> {isMobile ? "Send" : "Send to Client"}</button>
-          <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={exportCSV}><Download size={15} /> {isMobile ? "" : "Export"}</button>
+          {/* The app's export pill (.export-pill in globals.css). On a phone it keeps
+              its glyph-only form, at 44px, with the label for screen readers. */}
+          <button type="button" className="export-pill" onClick={exportCSV} title="Export quotes as CSV" aria-label="Export"><Download size={13} strokeWidth={2.2} />{isMobile ? "" : "Export"}</button>
           <button style={{ ...S.primaryBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), client: "", tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] })}>
             <Plus size={16} /> {isMobile ? "New" : "New Quote"}
           </button>

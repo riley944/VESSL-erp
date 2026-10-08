@@ -766,13 +766,21 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   .kva-clear{min-height:44px;align-self:flex-start !important;margin-left:0;}
 }
 
-/* KUI Vessl Analytics export buttons. Compact beside a card's dropdown on a
-   desktop (30px, 12px text); 44px tall at phone width. */
+/* EXPORT BUTTONS: ONE THEME, EVERY PAGE.
+   .export-pill  a page's or a list's export -- white, a 1px #0066CC outline,
+                 #0066CC text, pill ends, the small download glyph on the left.
+   .export-btn   the compact one, for a card or a section (30px, 12px text).
+   Both share one hover, one focus ring and one disabled look, and both are at
+   least 44px tall at phone width. The menus they open are .xm-menu / .xm-item
+   (ExportMenu and ExportButton). Named for what they are now -- they began on
+   KUI Vessl Analytics as .kva-export and .kva-export-all. */
 .kva-card-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
-.kva-export{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:#1D1D1F;font-family:inherit;font-size:12px;font-weight:500;white-space:nowrap;cursor:pointer;box-sizing:border-box;}
-.kva-export:hover:not(:disabled){background:#F5F5F7;}
-.kva-export-all{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#0066CC;border:1px solid #0066CC;border-radius:980px;padding:8px 16px;font-family:inherit;font-size:14px;font-weight:500;letter-spacing:-.01em;white-space:nowrap;cursor:pointer;box-sizing:border-box;}
-.kva-export:disabled,.kva-export-all:disabled{opacity:.55;cursor:default;}
+.export-btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:#1D1D1F;font-family:inherit;font-size:12px;font-weight:500;white-space:nowrap;cursor:pointer;box-sizing:border-box;}
+.export-btn:hover:not(:disabled),.export-btn[aria-expanded="true"]{background:#F5F5F7;}
+.export-pill{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#0066CC;border:1px solid #0066CC;border-radius:980px;padding:8px 16px;font-family:inherit;font-size:14px;font-weight:500;letter-spacing:-.01em;line-height:1.2;white-space:nowrap;cursor:pointer;box-sizing:border-box;}
+.export-pill:hover:not(:disabled),.export-pill[aria-expanded="true"]{background:#F0F6FF;}
+.export-btn:focus-visible,.export-pill:focus-visible{outline:2px solid #0A84FF;outline-offset:2px;}
+.export-btn:disabled,.export-pill:disabled{opacity:.55;cursor:default;}
 /* The export format menu (app/components/ExportMenu.jsx): Excel, CSV or PDF.
    Portalled to <body>; options 44px tall at phone width. .xm-icon is the
    per-record download glyph. */
@@ -793,8 +801,8 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
    of the controls row. */
 .shp-export-wrap{margin-left:auto;display:flex;}
 @media (max-width:720px){
-  .kva-export{height:auto;min-height:44px;padding:0 14px;font-size:14px;}
-  .kva-export-all{min-height:44px;}
+  .export-btn{height:auto;min-height:44px;padding:0 14px;font-size:14px;}
+  .export-pill{min-height:44px;}
   .shp-export-wrap{margin-left:0;}
 }
 

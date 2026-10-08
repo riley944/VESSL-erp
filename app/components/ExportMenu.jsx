@@ -24,11 +24,12 @@ import { createPortal } from 'react-dom';
 // least 44px tall at phone width (.xm-item in globals.css).
 export const EXPORT_FORMATS = [['xlsx', 'Excel (.xlsx)'], ['csv', 'CSV (.csv)'], ['pdf', 'PDF']];
 
-const Glyph = () => (
+// The small download glyph every export button leads with.
+export const ExportGlyph = () => (
   <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M3 13.5h10" /></svg>
 );
 
-export default function ExportMenu({ label = 'Export', busyLabel = 'Exporting…', iconOnly = false, className = 'kva-export', title, busy = false, disabled = false, onPick }) {
+export default function ExportMenu({ label = 'Export', busyLabel = 'Exporting…', iconOnly = false, className = 'export-btn', title, busy = false, disabled = false, onPick }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
   const btn = useRef(null);
@@ -79,7 +80,7 @@ export default function ExportMenu({ label = 'Export', busyLabel = 'Exporting…
       <button ref={btn} type="button" className={iconOnly ? 'xm-icon' : className} onClick={toggle} disabled={disabled || busy}
         aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined} title={title} aria-label={iconOnly ? (title || label) : undefined}
         onKeyDown={e => { if (e.key === 'ArrowDown' && !open) { e.preventDefault(); toggle(); } if (e.key === 'Escape' && open) { e.preventDefault(); close(true); } }}>
-        <Glyph />{!iconOnly && (busy ? busyLabel : label)}
+        <ExportGlyph />{!iconOnly && (busy ? busyLabel : label)}
       </button>
       {open && pos && typeof document !== 'undefined' && createPortal(
         <div ref={menu} id={id} role="menu" aria-label={(title || label) + ': choose a format'} className="xm-menu" onKeyDown={onMenuKey}
