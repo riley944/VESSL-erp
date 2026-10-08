@@ -125,6 +125,7 @@ import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel } from '@/lib/shipmentStatus';
 import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
+import { SO_STATUSES, SO_SM, alignStatus, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView } from '@/lib/ordersView';
 import { lclBidTotal, bidEffective } from '@/lib/freightBids';
 import { buildShipmentsSheets, shipmentsFileName, SHIPMENTS_ALL, shipmentsCsvName, shipmentsPdfMeta, buildRecordSheets, recordFileName, recordPdfMeta } from '@/lib/shipmentsExport';
 import { sheetsToCsvFiles, sheetsToPdfHtml } from '@/lib/exportFormats';
@@ -203,24 +204,8 @@ const fmtDateTime = s => { if (!s) return ''; const d=new Date(s); return d.toLo
 const timeAgo = s => { if(!s) return ''; const m=Math.round((Date.now()-new Date(s))/60000); if(m<2) return 'now'; if(m<60) return m+'m'; const h=Math.round(m/60); if(h<24) return h+'h'; const d=Math.round(h/24); if(d<7) return d+'d'; return fmtDate(s); };
 
 // ── Sales Orders constants ────────────────────────────────────────────────────
-const SO_STATUSES = ['received','confirmed','testing','in_production','shipped','delivered','invoiced','closed'];
-const SO_SM = {
-  received:     {label:'Received',     color:'#6366f1',bg:'#eef2ff'},
-  confirmed:    {label:'Confirmed',    color:'#3461e0',bg:'#eff6ff'},
-  in_production:{label:'In Production',color:'#d97706',bg:'#fffbeb'},
-  testing:      {label:'Testing',      color:'#db2777',bg:'#fdf2f8'},
-  shipped:      {label:'Shipped',      color:'#0891b2',bg:'#ecfeff'},
-  delivered:    {label:'Delivered',    color:'#059669',bg:'#ecfdf5'},
-  invoiced:     {label:'Invoiced',     color:'#7c3aed',bg:'#f5f3ff'},
-  closed:       {label:'Closed',       color:'#64748b',bg:'#f8fafc'},
-};
-// Map shipment/PO-specific statuses onto the aligned SO status set so every tag matches
-const STATUS_ALIAS = {
-  created:'confirmed', at_origin_port:'shipped', in_transit:'shipped',
-  at_transshipment:'shipped', at_destination_port:'shipped', customs:'shipped',
-  out_for_delivery:'shipped', cancelled:'closed', ready_to_ship:'in_production',
-};
-const alignStatus = s => STATUS_ALIAS[s] || s;
+// SO_STATUSES, SO_SM and alignStatus live in lib/ordersView.js, imported above,
+// with the Sales and Purchase Order list logic that reads them.
 const genSONum = (list=[]) => {
   const yr = new Date().getFullYear();
   const pfx = 'KUI-SO-'+yr+'-';
@@ -261,13 +246,8 @@ const grossSignColor = g => g>0?'#059669':g<0?'#dc2626':'#94a3b8';
 // The percentage, for the surfaces that show one. Null stays muted rather than
 // borrowing the sign of the dollars -- a tile reading em dash must not read red.
 const mgnSignColor = p => p===null?'#94a3b8':grossSignColor(p);
-const soMetrics = so => {
-  const rev = (so.sales_order_items||[]).reduce((a,i)=>a+(Number(i.quantity)||0)*(Number(i.client_price)||0),0);
-  const factoryCost = (so.sales_order_pos||[]).reduce((a,l)=>a+((l.purchase_orders?.purchase_order_items)||[]).reduce((b,i)=>b+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0),0);
-  const addlCost = (so.order_costs||[]).reduce((a,c)=>a+(Number(c.amount)||0),0);
-  const cost = factoryCost + addlCost;
-  return {rev, cost, factoryCost, addlCost, gross:rev-cost, mgn:rev>0?(rev-cost)/rev*100:null};
-};
+// soMetrics lives in lib/ordersView.js: the Sales Orders list and its export
+// work an order's revenue, cost and margin out the same way.
 
 // Auto-create shipment when a PO moves to shipped — callable from any component
 async function createShipmentForPO(poId) {
@@ -332,9 +312,7 @@ function Badge({ status }) {
 }
 
 // ── PO browsing helpers (search + client filter, shared by Orders & Dashboard) ──
-const poClient   = p => p.client?.name || '';
-const poFactory  = p => p.factory?.name || p.companies?.name || '';
-const poProducts = p => (p.purchase_order_items||[]).map(it=>it.products?.name||it.description||'').join(' ');
+// poClient, poFactory and poProducts live in lib/ordersView.js.
 // ── One membership test for every multi-select filter ────────────────────────
 // An EMPTY selection means no filtering, which is exactly the contract
 // FilterSelect already uses in multi mode -- there, All is the ABSENCE of a
@@ -348,18 +326,7 @@ const poProducts = p => (p.purchase_order_items||[]).map(it=>it.products?.name||
 // showing none.
 const inSel = (sel, v) => !Array.isArray(sel) || sel.length === 0 || sel.includes(v);
 
-function filterPOs(rows, { search, client, status }){
-  const s = (search||'').toLowerCase().trim();
-  return (rows||[]).filter(p=>{
-    if (!inSel(status, alignStatus(p.status))) return false;
-    if (!inSel(client, poClient(p))) return false;
-    if (s){
-      const hay = ((p.client_po_number||'')+' '+(p.order_number||'')+' '+poClient(p)+' '+poFactory(p)+' '+poProducts(p)).toLowerCase();
-      if (!hay.includes(s)) return false;
-    }
-    return true;
-  });
-}
+// filterPOs lives in lib/ordersView.js, with the Purchase Orders list's view.
 function distinctClients(rows){
   const m={}; (rows||[]).forEach(p=>{ const c=poClient(p); if(c) m[c]=(m[c]||0)+1; });
   return Object.entries(m).sort((a,b)=>a[0].localeCompare(b[0]));
@@ -1826,54 +1793,10 @@ function SalesOrders({navigate}){
   const [showCreate,setShowCreate]=useState(false);
   const load=async()=>{ setLoading(true); const {data}=await SB.from('sales_orders').select('*,client:companies!client_company_id(id,name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(purchase_order_items(unit_price,quantity))),order_costs(amount,kind)').order('created_at',{ascending:false}); setRows(data||[]); setLoading(false); };
   useEffect(()=>{ load(); },[]);
-  const clients=[...new Set(rows.map(r=>r.client?.name).filter(Boolean))].sort();
-  const preCrd=rows.filter(r=>{
-    if(!inSel(ui.statusF,r.status)) return false;
-    if(!inSel(ui.clientF,r.client?.name)) return false;
-    if(ui.search){ const q=ui.search.toLowerCase(); return (r.so_number||'').toLowerCase().includes(q)||(r.client_po_number||'').toLowerCase().includes(q)||(r.client?.name||'').toLowerCase().includes(q); }
-    return true;
-  });
-  const shownUnsorted=preCrd.filter(r=>inSel(crdF, r.cargo_ready_date ? 'has' : 'none'));
-
-  // NO-CRD ORDERS GO LAST AS A GROUP, never interleaved and never read as date
-  // zero. 26 of 68 sales orders have no CRD, so a comparator that treated a
-  // missing date as the epoch would pile them all at the front of "earliest
-  // first" -- the exact orders that cannot be earliest, in the slot that claims
-  // they are.
-  //
-  // Within that group the existing order is kept, which is what makes this
-  // stable: Array.prototype.sort is required to be stable, so returning 0 leaves
-  // the two rows as the fetch ordered them (created_at descending).
-  // ONE COMPARATOR PER KEY, applied in the order they were ticked: the first
-  // decides, and the next only speaks when the first calls it a tie.
-  //
-  // UNDATED LAST LIVES INSIDE THE CRD COMPARATOR, not outside the chain. So when
-  // a CRD sort is primary the no-CRD orders fall to the bottom of the whole list,
-  // and when it is a tie-breaker they fall to the bottom of each tie group. Both
-  // are the same rule -- a missing date never compares as a date -- rather than
-  // two rules that could disagree.
-  const CMP = {
-    newest:  (a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')),
-    oldest:  (a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')),
-    crd_asc: (a,b)=>{ const A=a.cargo_ready_date,B=b.cargo_ready_date;
-                      if(!A&&!B) return 0; if(!A) return 1; if(!B) return -1;
-                      return A.localeCompare(B); },
-    crd_desc:(a,b)=>{ const A=a.cargo_ready_date,B=b.cargo_ready_date;
-                      if(!A&&!B) return 0; if(!A) return 1; if(!B) return -1;
-                      return B.localeCompare(A); },
-  };
-  // Nothing ticked is Newest SO -- the same ordering the query already returns,
-  // so the default still sorts nothing.
-  const sortKeys = sortBy.length ? sortBy : ['newest'];
-  const shown = sortKeys.length===1 && sortKeys[0]==='newest' ? shownUnsorted
-              : [...shownUnsorted].sort((a,b)=>{
-                  for(const k of sortKeys){ const c=(CMP[k]||(()=>0))(a,b); if(c) return c; }
-                  return 0;
-                });
-
-  const totals=shown.reduce((a,so)=>{ const m=soMetrics(so); return {rev:a.rev+m.rev,cost:a.cost+m.cost,n:a.n+1}; },{rev:0,cost:0,n:0});
-  const totalMgn=totals.rev>0?(totals.rev-totals.cost)/totals.rev*100:null;
-  const totalUnits = shown.reduce((a,so)=>a+(so.sales_order_items||[]).reduce((b,i)=>b+(Number(i.quantity)||0),0),0);
+  // The list, its order and its totals come from soListView in lib/ordersView.js,
+  // which the export reads too, so the two cannot drift. No-CRD orders go last as
+  // a group under a CRD sort; ticked sorts apply in tick order.
+  const { clients, preCrd, shown, totals, totalUnits } = soListView(rows, ui, sortBy, crdF);
   const clientOptions = [
     { value:'', label:'All Clients' },
     ...clients.map(c=>({ value:c, label:c, color:companyColor(c) })),
@@ -3484,7 +3407,8 @@ function Orders({ navigate }) {
     setRows(prev=>prev.map(p=>p.id===pid?{...p,production_pct:pct}:p));
     await SB.from('purchase_orders').update({production_pct:pct,updated_at:new Date().toISOString()}).eq('id',pid);
   };
-  const shown = filterPOs(rows,{search:ui.search, client:ui.client, status:ui.status});
+  // The list comes from poListView in lib/ordersView.js, which the export reads too.
+  const { shown } = poListView(rows, ui);
   return (
     <>
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'2px'}}>
@@ -3508,13 +3432,8 @@ function Orders({ navigate }) {
 }
 
 // ── Production Board ──────────────────────────────────────────────────────────
-const PROD_COLUMNS = [
-  { key:'confirmed',      label:'Confirmed',      color:'#0071E3' },
-  { key:'sampling',       label:'Sampling',       color:'#AF52DE' },
-  { key:'sample_approved',label:'Sample Approved',color:'#5856D6' },
-  { key:'in_production',  label:'In Production',  color:'#FF9F0A' },
-  { key:'ready_to_ship',  label:'Ready to Ship',  color:'#34C759' },
-];
+// PROD_COLUMNS lives in lib/ordersView.js: the board's columns decide which
+// POs the board view shows, and so what its export lists.
 function ProductionBoard({ rows, navigate, onStatus, onPct }) {
   const [dragId, setDragId] = useState(null);
   const [overCol, setOverCol] = useState(null);
