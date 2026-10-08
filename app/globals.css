@@ -773,6 +773,22 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 .kva-export:hover:not(:disabled){background:#F5F5F7;}
 .kva-export-all{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#0066CC;border:1px solid #0066CC;border-radius:980px;padding:8px 16px;font-family:inherit;font-size:14px;font-weight:500;letter-spacing:-.01em;white-space:nowrap;cursor:pointer;box-sizing:border-box;}
 .kva-export:disabled,.kva-export-all:disabled{opacity:.55;cursor:default;}
+/* The export format menu (app/components/ExportMenu.jsx): Excel, CSV or PDF.
+   Portalled to <body>; options 44px tall at phone width. .xm-icon is the
+   per-record download glyph. */
+.xm-menu{z-index:4000;background:#fff;border-radius:12px;padding:6px;box-shadow:0 8px 28px rgba(0,0,0,.16),0 1px 3px rgba(0,0,0,.08);display:flex;flex-direction:column;gap:2px;box-sizing:border-box;}
+.xm-item{display:flex;align-items:center;min-height:34px;padding:0 12px;border:none;background:none;border-radius:8px;font-family:inherit;font-size:13px;font-weight:500;color:#1D1D1F;text-align:left;cursor:pointer;}
+.xm-item:hover,.xm-item:focus{background:#F2F2F6;outline:none;}
+.xm-item:focus-visible{box-shadow:inset 0 0 0 2px #0A84FF;}
+.xm-icon{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:none;border-radius:50%;background:none;color:#86868B;cursor:pointer;flex-shrink:0;}
+.xm-icon:hover:not(:disabled),.xm-icon[aria-expanded="true"]{background:#F2F2F6;color:#1D1D1F;}
+.xm-icon:focus-visible{outline:2px solid #0A84FF;outline-offset:1px;}
+.xm-icon:disabled{opacity:.45;cursor:default;}
+@media (max-width:720px){
+  .xm-item{min-height:44px;font-size:15px;}
+  .xm-icon{width:44px;height:44px;}
+}
+
 /* The Shipments page uses the same two buttons; its tab Export sits at the end
    of the controls row. */
 .shp-export-wrap{margin-left:auto;display:flex;}
