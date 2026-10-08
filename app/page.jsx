@@ -124,7 +124,7 @@ import { usePageState } from '@/lib/pageState';
 import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel } from '@/lib/shipmentStatus';
-import { buildAnalytics, filterOptions, ANALYTICS_DEFAULTS, PERIOD_OPTS, DATES_BY_OPTS, STAGE_FILTER_OPTS, BOOKED_METRIC_OPTS, TOP_SORT_OPTS } from '@/lib/analytics';
+import { buildAnalytics, filterOptions, figureWords, headlineTiles, attentionCards, shipmentRef, daysFromNow, ANALYTICS_DEFAULTS, PERIOD_OPTS, DATES_BY_OPTS, STAGE_FILTER_OPTS, BOOKED_METRIC_OPTS, TOP_SORT_OPTS } from '@/lib/analytics';
 // The RFQ sheet geometry and its builder, shared with app/api/rfq/send/route.js.
 // The row numbers are a wire format between the workbook this writes and the one
 // ImportBidsModal parses back -- a second copy would be a second chance to drift.
@@ -1162,48 +1162,24 @@ function Dashboard({ navigate }) {
       {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
     </select>
   );
-  const daysFrom = s => Math.round((new Date(s) - new Date()) / 86400000);
-  const refOf = s => s.shipment_number || s.container_no || s.shipment_pos?.[0]?.purchase_orders?.order_number || '—';
-  const missingLine = d.missingDate > 0 && f.datesBy !== 'order' ? d.missingDate + ' order' + (d.missingDate === 1 ? ' has' : 's have') + ' no ' + d.dateName + ' and ' + (d.missingDate === 1 ? 'is' : 'are') + ' not shown' : '';
+  // Days, references, labels, tiles and attention cards come from lib/analytics,
+  // which the export reads too, so a sheet says exactly what the page says.
+  const daysFrom = s => daysFromNow(s, d.now);
+  const refOf = shipmentRef;
+  const words = figureWords(d, f);
+  const { missingLine, chartUndatedLine, bookedBy, asOf } = words;
   const periodLabel = d.range.label;
-  const bookedBy = 'by ' + d.dateName + ', ' + periodLabel;
-  const asOf = 'As of today';
-  const pipeWord = !d.single ? 'open' : d.stageLabel;
   const pipeNote = !d.single ? '' : (f.stage === 'delivered' || f.stage === 'invoiced') ? ' — showing ' + d.stageLabel + ' orders, which are not open' : ' — ' + d.stageLabel + ' only';
-
-  const attention = [
-    { k: 'Shipments overdue', n: d.overdue.length, to: 'shipments', tone: 'red',
-      line: d.overdue.length ? 'Most overdue: ' + refOf(d.overdue[0]) + ', ' + Math.abs(daysFrom(d.overdue[0].estimated_arrival)) + ' days past ETA' : 'No active shipment is past its ETA' },
-    { k: 'Active shipments with no ETA', n: d.noEta.length, to: 'shipments', tone: 'amber',
-      line: d.noEta.length ? 'Add an ETA so arrivals can be planned' : 'Every active shipment has an ETA' },
-    { k: 'Open Sales Orders past cancel date', n: d.soPastCancel, to: 'sales-orders', tone: 'amber',
-      line: 'Purchase Orders not yet shipped, past cancel date: ' + d.poPastCancel },
-    { k: 'Sales Orders past cargo ready date, not shipped', n: d.soPastCrd, to: 'sales-orders', tone: 'amber',
-      line: 'Purchase Orders past cargo ready date, not shipped: ' + d.poPastCrd },
-    { k: 'Freight quotes awaiting bids', n: d.fqSent, to: 'shipments', tone: 'grey',
-      line: d.oldestSent ? 'Oldest sent ' + Math.abs(daysFrom(d.oldestSent.sent_at)) + ' days ago (' + d.oldestSent.quote_number + ')' : 'Nothing sent and waiting' },
-  ];
-
-  const tiles = [
-    { k: 'Revenue booked, ' + periodLabel, v: moneyCompact(d.bookedRev), dark: true,
-      // No comparison line when the range is open-ended (All, or a Custom range
-      // with one end): there is no earlier period of the same length.
-      extra: !d.range.prevFrom ? null : d.bookedDelta == null ? { muted: true, t: 'No orders in ' + d.range.prevLabel + ' to compare with' } : { up: d.bookedDelta >= 0, t: (d.bookedDelta >= 0 ? '↑ ' : '↓ ') + Math.abs(Math.round(d.bookedDelta)) + '% vs ' + d.range.prevLabel },
-      def: 'Sales Order lines ' + bookedBy + ' (' + d.bookedCount + ' order' + (d.bookedCount === 1 ? '' : 's') + ')' + (missingLine ? '. ' + missingLine : '') },
-    { k: 'Blended margin', v: d.blended == null ? '—' : pctTxt(d.blended),
-      def: asOf + ' · ' + pipeWord + ' Sales Orders with a factory cost (' + d.costedCount + ' of ' + d.pipeCount + '); excludes freight and duty' },
-    { k: !d.single ? 'Open pipeline value' : d.stageLabel + ' orders value', v: moneyCompact(d.pipeValue),
-      def: asOf + ' · ' + d.pipeCount + ' ' + (!d.single ? 'open Sales Orders: not closed, delivered or invoiced' : d.stageLabel + ' Sales Orders' + ((f.stage === 'delivered' || f.stage === 'invoiced') ? ', not open' : '')) },
-    { k: !d.single ? 'Units on open orders' : 'Units on ' + d.stageLabel + ' orders', v: fmtNum(d.pipeUnits),
-      def: asOf + ' · line quantities on the same ' + d.pipeCount + ' Sales Orders' },
-  ];
+  const attention = attentionCards(d);
+  const VALUE_TEXT = { usd: v => moneyCompact(v), pct: v => v == null ? '—' : pctTxt(v), int: v => fmtNum(v) };
+  const tiles = headlineTiles(d, f).map(t => ({ ...t, v: VALUE_TEXT[t.fmt](t.value) }));
 
   const metric = f.bookedMetric;
   const mVal = m => metric === 'units' ? m.units : metric === 'orders' ? m.orders : metric === 'margin' ? (m.margin == null ? 0 : Math.max(0, m.margin)) : m.revenue;
   const mTxt = m => metric === 'units' ? numCompact(m.units) : metric === 'orders' ? String(m.orders) : metric === 'margin' ? pctTxt(m.margin) : moneyCompact(m.revenue);
   const maxM = Math.max(1, ...d.months.map(mVal));
   const stageTotal = d.stages.reduce((a, s) => a + s.value, 0) || 1;
-  const filterNote = 'client, factory and shipping method apply';
+  const filterNote = words.filterNote;
   const stageGrid = { display: 'grid', gridTemplateColumns: 'minmax(96px,130px) minmax(30px,1fr) auto minmax(24px,auto)', gap: '12px', alignItems: 'center' };
 
   return (
@@ -1319,6 +1295,7 @@ function Dashboard({ navigate }) {
           <CardHead title="Booked per month"
             sub={'Sales Order lines ' + bookedBy + (d.contextBars ? '; grey bars are context outside the period' : '') + (missingLine ? '. ' + missingLine : '')}
             actions={<Sel label="Booked per month shows" value={metric} onChange={v => set('bookedMetric', v)} options={BOOKED_METRIC_OPTS} />} />
+          {chartUndatedLine && <div style={{ padding: '0 22px 6px', marginTop: '-4px', fontSize: '12.5px', color: muted, lineHeight: 1.4 }}>{chartUndatedLine}</div>}
           {/* Each bar keeps at least 40px, enough for a value like $1.74M at 10.5px.
               Seven months fit a phone; a longer span scrolls sideways inside this
               chart only, never the page. */}
