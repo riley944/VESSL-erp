@@ -124,6 +124,7 @@ import { usePageState } from '@/lib/pageState';
 import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel } from '@/lib/shipmentStatus';
+import { buildSheets, buildWorkbook, exportFileName, EXPORT_ALL } from '@/lib/analyticsExport';
 import { buildAnalytics, filterOptions, figureWords, headlineTiles, attentionCards, shipmentRef, daysFromNow, ANALYTICS_DEFAULTS, PERIOD_OPTS, DATES_BY_OPTS, STAGE_FILTER_OPTS, BOOKED_METRIC_OPTS, TOP_SORT_OPTS } from '@/lib/analytics';
 // The RFQ sheet geometry and its builder, shared with app/api/rfq/send/route.js.
 // The row numbers are a wire format between the workbook this writes and the one
@@ -1103,16 +1104,18 @@ const usd0 = n => '$' + Math.round(n || 0).toLocaleString('en-US');
 const pctTxt = p => p == null ? '—' : (p >= 0 ? '' : '−') + Math.abs(p).toFixed(1) + '%';
 const numCompact = n => { const a = Math.abs(n || 0); return a >= 1e6 ? (n / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M' : a >= 1e4 ? Math.round(n / 1e3) + 'K' : Math.round(n || 0).toLocaleString('en-US'); };
 
-function Dashboard({ navigate }) {
+function Dashboard({ navigate, user, displayName = '' }) {
   const [raw, setRaw] = useState(null);
   const [loadErr, setLoadErr] = useState('');
   const [f, set] = usePageState('analytics', ANALYTICS_DEFAULTS);
+  // Which export is being built: a section id, 'all', or ''.
+  const [exporting, setExporting] = useState('');
 
   useEffect(() => {
     (async () => {
       const [r1, r2, r3, r4] = await Promise.all([
         SB.from('sales_orders').select('id,so_number,client_po_number,status,order_date,cancel_date,cargo_ready_date,shipping_method,client_company_id,client:companies!client_company_id(name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(factory_company_id,purchase_order_items(quantity,unit_price))),order_costs(amount)'),
-        SB.from('purchase_orders').select('id,order_number,client_po_number,status,cancel_date,cargo_ready_date,shipping_method,client_company_id,factory_company_id,factory:companies!factory_company_id(name),client:companies!client_company_id(name)'),
+        SB.from('purchase_orders').select('id,order_number,client_po_number,status,cancel_date,cargo_ready_date,shipping_method,client_company_id,factory_company_id,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(quantity,unit_price)'),
         SB.from('shipments').select('id,shipment_number,container_no,status,estimated_arrival,actual_arrival,client_company_id,client:companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,status,factory_company_id,shipping_method))'),
         SB.from('shipment_quotes').select('id,quote_number,status,sent_at,client_company_id,client:companies!client_company_id(name)').eq('status', 'sent'),
       ]);
@@ -1140,6 +1143,36 @@ function Dashboard({ navigate }) {
   const onDate = (k, v) => { toCustom(); set(k, v); };
   const clearAll = () => ['period', 'from', 'to', 'datesBy', 'client', 'factory', 'stage', 'method'].forEach(k => set(k, ANALYTICS_DEFAULTS[k]));
 
+  // ── Export: downloads only ──────────────────────────────────────────────────
+  // The workbook is built from `d`, the result this render is drawing, with the
+  // filters, period, Dates By and card dropdowns in force -- no second query, so
+  // a sheet cannot disagree with the page. Anyone who can open this page can
+  // export; the buttons live only here.
+  const runExport = async (id) => {
+    if (exporting) return;
+    setExporting(id);
+    try {
+      const ExcelJS = await loadExcelJS();
+      const nameOf = (list, v) => (list.find(o => o[0] === v) || [])[1] || '';
+      const who = user?.email ? ((displayName || '').trim() ? displayName.trim() + ' (' + user.email + ')' : user.email) : '';
+      const ctx = { exportedAt: new Date(), user: who, clientName: nameOf(opts.clients, f.client), factoryName: nameOf(opts.factories, f.factory) };
+      const wb = buildWorkbook(ExcelJS, buildSheets(d, f, ctx, id === 'all' ? EXPORT_ALL : [id]));
+      const buf = await wb.xlsx.writeBuffer();
+      downloadFile(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), exportFileName(id === 'all' ? '' : id, stampToday()));
+    } catch (e) {
+      alert('Could not build the export: ' + ((e && e.message) || e));
+    }
+    setExporting('');
+  };
+  const DownloadIcon = () => (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M3 13.5h10" /></svg>
+  );
+  const ExportBtn = ({ id, title }) => (
+    <button type="button" className="kva-export" onClick={() => runExport(id)} disabled={!!exporting} title={'Download ' + title + ' as an Excel file'}>
+      <DownloadIcon />{exporting === id ? 'Exporting…' : 'Export'}
+    </button>
+  );
+
   const card = { background: '#fff', borderRadius: '20px', boxShadow: '0 1px 3px rgba(0,0,0,.04)', overflow: 'hidden', minWidth: 0 };
   const rule = '1px solid rgba(0,0,0,.06)';
   const muted = '#86868B';
@@ -1147,7 +1180,8 @@ function Dashboard({ navigate }) {
   const TONES = { red: { bg: '#FDECEA', ink: '#8F1D14' }, amber: { bg: '#FFF3DC', ink: '#7A4700' }, grey: { bg: '#EEF1F5', ink: '#414A58' } };
   const smallHead = { fontSize: '13px', fontWeight: 600, color: muted, letterSpacing: '.02em', margin: '0 2px 10px' };
   const lbl = { display: 'block', fontSize: '10.5px', fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: muted, marginBottom: '5px' };
-  // The per-card slot on the right of each header holds the card's dropdown.
+  // The per-card slot on the right of each header holds the card's dropdown and,
+  // to its right, the card's Export button.
   const CardHead = ({ title, sub, actions }) => (
     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '18px 22px 12px' }}>
       <div style={{ minWidth: 0, flex: '1 1 200px' }}>
@@ -1205,6 +1239,9 @@ function Dashboard({ navigate }) {
             })}
           </div>
           <button onClick={() => navigate('sales-orders')} style={{ background: '#0066CC', color: '#fff', border: 'none', borderRadius: '980px', padding: '9px 18px', fontSize: '14px', fontWeight: 500, letterSpacing: '-.01em', cursor: 'pointer' }}>View orders</button>
+          <button type="button" className="kva-export-all" onClick={() => runExport('all')} disabled={!!exporting} title="Download every section as one Excel file">
+            <DownloadIcon />{exporting === 'all' ? 'Exporting…' : 'Export all'}
+          </button>
         </div>
       </div>
 
@@ -1231,7 +1268,7 @@ function Dashboard({ navigate }) {
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
             <span style={{ fontSize: '12.5px', color: muted }}>Each card opens the list behind it</span>
-            <div className="kva-card-actions" />
+            <div className="kva-card-actions"><ExportBtn id="attention" title="Needs attention" /></div>
           </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', padding: '0 22px 22px' }}>
@@ -1251,7 +1288,10 @@ function Dashboard({ navigate }) {
       </div>
 
       {/* ── 3. Headline numbers ── */}
-      <div style={smallHead}>Headline numbers</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', margin: '0 2px 10px' }}>
+        <div style={{ ...smallHead, margin: 0 }}>Headline numbers</div>
+        <div className="kva-card-actions"><ExportBtn id="headline" title="Headline numbers" /></div>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '14px', marginBottom: '22px' }}>
         {tiles.map(t => (
           <div key={t.k} style={{ ...card, padding: '18px 20px', ...(t.dark ? { background: INK } : {}) }}>
@@ -1267,7 +1307,8 @@ function Dashboard({ navigate }) {
       <div className="kva-row-a" style={{ marginBottom: '22px' }}>
         <div style={card}>
           <CardHead title={!d.single ? 'Open pipeline by stage' : d.stageLabel + ' orders'}
-            sub={asOf + ' · Sales Orders · ' + usd0(d.pipeValue) + ' across ' + d.pipeCount + ' orders' + pipeNote + ' · ' + filterNote} />
+            sub={asOf + ' · Sales Orders · ' + usd0(d.pipeValue) + ' across ' + d.pipeCount + ' orders' + pipeNote + ' · ' + filterNote}
+            actions={<ExportBtn id="pipeline" title="Open pipeline by stage" />} />
           {d.stages.map(s => (
             <div key={s.key} onClick={() => navigate('sales-orders')} style={{ ...stageGrid, padding: '11px 22px', borderTop: rule, cursor: 'pointer' }}>
               <div style={{ fontSize: '14.5px', color: s.count ? '#1D1D1F' : '#B0B0B2', minWidth: 0 }}>{s.label}</div>
@@ -1294,7 +1335,7 @@ function Dashboard({ navigate }) {
         <div style={card}>
           <CardHead title="Booked per month"
             sub={'Sales Order lines ' + bookedBy + (d.contextBars ? '; grey bars are context outside the period' : '') + (missingLine ? '. ' + missingLine : '')}
-            actions={<Sel label="Booked per month shows" value={metric} onChange={v => set('bookedMetric', v)} options={BOOKED_METRIC_OPTS} />} />
+            actions={<><Sel label="Booked per month shows" value={metric} onChange={v => set('bookedMetric', v)} options={BOOKED_METRIC_OPTS} /><ExportBtn id="booked" title="Booked per month" /></>} />
           {chartUndatedLine && <div style={{ padding: '0 22px 6px', marginTop: '-4px', fontSize: '12.5px', color: muted, lineHeight: 1.4 }}>{chartUndatedLine}</div>}
           {/* Each bar keeps at least 40px, enough for a value like $1.74M at 10.5px.
               Seven months fit a phone; a longer span scrolls sideways inside this
@@ -1320,7 +1361,7 @@ function Dashboard({ navigate }) {
         <div style={card}>
           <CardHead title={'Top clients, ' + periodLabel}
             sub={'Sales Orders ' + bookedBy + ' · margin excludes freight and duty' + (missingLine ? '. ' + missingLine : '')}
-            actions={<Sel label="Sort top clients" value={f.topSort} onChange={v => set('topSort', v)} options={TOP_SORT_OPTS} />} />
+            actions={<><Sel label="Sort top clients" value={f.topSort} onChange={v => set('topSort', v)} options={TOP_SORT_OPTS} /><ExportBtn id="clients" title="Top clients" /></>} />
           {d.topClients.length === 0 && <div style={{ padding: '4px 22px 20px', color: muted, fontSize: '14px' }}>No Sales Orders booked in this period.</div>}
           {d.topClients.map(c => (
             <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 22px', borderTop: rule }}>
@@ -1333,7 +1374,8 @@ function Dashboard({ navigate }) {
         </div>
 
         <div style={card}>
-          <CardHead title="Production by factory" sub={asOf + ' · Purchase Orders in production · late = past cargo ready date · their own client, factory and shipping method apply; order stage does not'} />
+          <CardHead title="Production by factory" sub={asOf + ' · Purchase Orders in production · late = past cargo ready date · their own client, factory and shipping method apply; order stage does not'}
+            actions={<ExportBtn id="factory" title="Production by factory" />} />
           {d.byFactory.length === 0 && <div style={{ padding: '4px 22px 20px', color: muted, fontSize: '14px' }}>No Purchase Orders in production.</div>}
           {d.byFactory.map(x => (
             <div key={x.name} onClick={() => navigate('orders')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 22px', borderTop: rule, cursor: 'pointer' }}>
@@ -1345,7 +1387,8 @@ function Dashboard({ navigate }) {
         </div>
 
         <div style={card}>
-          <CardHead title="Arriving in the next 8 weeks" sub={asOf + ' · active shipments, soonest first · client is the shipment’s own; factory and shipping method come from its linked Purchase Orders; order stage does not apply'} />
+          <CardHead title="Arriving in the next 8 weeks" sub={asOf + ' · active shipments, soonest first · client is the shipment’s own; factory and shipping method come from its linked Purchase Orders; order stage does not apply'}
+            actions={<ExportBtn id="arrivals" title="Arriving in the next 8 weeks" />} />
           {d.arriving.length === 0 && <div style={{ padding: '4px 22px 20px', color: muted, fontSize: '14px' }}>No active shipment has an ETA in the next 8 weeks.</div>}
           {d.arriving.map(s => (
             <div key={s.id} onClick={() => navigate('shipments')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 22px', borderTop: rule, cursor: 'pointer' }}>
@@ -10668,7 +10711,7 @@ export default function App() {
         <div className="page-content" style={page==='dashboard'?{padding:0}:(page==='sales-orders'||page==='so-detail'||page==='order-detail')?{paddingTop:'24px'}:undefined}>
           {/* canAnalytics again here, as banking does: the gate above already
               turns 'dashboard' into a landing page for anyone without access. */}
-          {page==='dashboard' && canAnalytics && <Dashboard navigate={navigate} />}
+          {page==='dashboard' && canAnalytics && <Dashboard navigate={navigate} user={user} displayName={displayName} />}
           {page==='sales-orders'     && <SalesOrders navigate={navigate} />}
           {page==='so-detail'        && <SalesOrderDetail id={params.id} navigate={navigate} />}
           {page==='orders'           && <Orders navigate={navigate} />}
