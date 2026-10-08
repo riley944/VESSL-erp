@@ -124,6 +124,8 @@ import { usePageState } from '@/lib/pageState';
 import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel } from '@/lib/shipmentStatus';
+import { QF_DEFAULT, shipmentsView } from '@/lib/shipmentsView';
+import { lclBidTotal, bidEffective } from '@/lib/freightBids';
 import { buildSheets, buildWorkbook, exportFileName, EXPORT_ALL } from '@/lib/analyticsExport';
 import { buildAnalytics, filterOptions, figureWords, headlineTiles, attentionCards, shipmentRef, daysFromNow, ANALYTICS_DEFAULTS, PERIOD_OPTS, DATES_BY_OPTS, STAGE_FILTER_OPTS, BOOKED_METRIC_OPTS, TOP_SORT_OPTS } from '@/lib/analytics';
 // The RFQ sheet geometry and its builder, shared with app/api/rfq/send/route.js.
@@ -6020,8 +6022,8 @@ const rfqPill = st => RFQ_PILL[st] || { label:(st||'unknown'), color:'#86868B', 
 // render, which reached Kristy as "Application error: a client-side exception"
 // and reached the console as 'q', the minifier's name for it. The constant
 // depends on nothing in the component, so at module scope no reordering of the
-// body can ever get above it again.
-const QF_DEFAULT = ['draft','awaiting','bidsin','awarded'];
+// body can ever get above it again. It is now imported from lib/shipmentsView.js,
+// which is module scope too, so the same holds.
 
 function Shipments({ onNewShipment, userEmail }) {
   const [rows, setRows]   = useState([]);
@@ -6386,49 +6388,13 @@ function Shipments({ onNewShipment, userEmail }) {
   // delivery request its own; a shipment its first linked Purchase Order's
   // client, falling back to the shipment's own. A record with no client appears
   // only under All Clients.
-  const quoteClient = q => (q.client||{}).name || '';
-  const shipClient = sh => ((((sh.shipment_pos||[])[0]||{}).purchase_orders||{}).client||{}).name || (sh.companies||{}).name || '';
-  const dreqClient = d => coNames[d.client_company_id] || '';
-  const cSel = ui.client || '';
-  const quotesV = cSel ? quotes.filter(q => quoteClient(q) === cSel) : quotes;
-  const rowsV = cSel ? rows.filter(sh => shipClient(sh) === cSel) : rows;
-  const dreqsV = cSel ? dreqs.filter(d => dreqClient(d) === cSel) : dreqs;
-  const openDreqsV = dreqsV.filter(d => (d.status||'requested') === 'requested');
-  const clientChoices = [...new Set([...quotes.map(quoteClient), ...rows.map(shipClient), ...dreqs.map(dreqClient)].filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b));
-
-  const bidCount = id => bids.filter(b=>b.shipment_quote_id===id).length;
-  const winnerOf = id => bids.find(b=>b.shipment_quote_id===id && b.selected);
-  const TERMINAL = ['delivered','cancelled'];
-  const activeShips = rowsV.filter(s => !TERMINAL.includes((s.status||'').toLowerCase()) && !s.actual_arrival);
-  const doneShips = rowsV.filter(s => TERMINAL.includes((s.status||'').toLowerCase()) || s.actual_arrival);
-  const arriving = activeShips.filter(s => { const d=etaDays(s.estimated_arrival); return d!==null && d>=0 && d<=14; });
-  const overdueShips = activeShips.filter(s => { const d=etaDays(s.estimated_arrival); return d!==null && d<0; });
-  // Every bucket keys on STATUS now. awarded was `!!winnerOf(q.id)` -- the bid
-  // flag -- which made "we picked this forwarder's bid" and "this forwarder won
-  // the shipment" the same fact; a not-selected RFQ carrying a selected bid would
-  // have counted as awarded. drafts was `status!=='sent'`, which script 43 made
-  // untenable: archived and not_selected would both have landed in the Draft tile.
-  // ONE bucket per quote, decided in one place. Awaiting and Bids in are the two
-  // derived halves of 'sent' -- the split the pills already drew -- so this is the
-  // only function that knows a sent RFQ is really two states.
-  const qKey = q => q.status==='sent' ? (bidCount(q.id)===0 ? 'awaiting' : 'bidsin')
-                  : q.status==='not_selected' ? 'notselected'
-                  : q.status==='archived' ? 'archived'
-                  : q.status==='awarded' ? 'awarded'
-                  : 'draft';
-  const awaiting = quotesV.filter(q => q.status==='sent' && bidCount(q.id)===0);
-  const bidsIn = quotesV.filter(q => q.status==='sent' && bidCount(q.id)>0);
-  const awarded = quotesV.filter(q => q.status==='awarded');
-  const drafts = quotesV.filter(q => q.status==='draft');
-  const notSelected = quotesV.filter(q => q.status==='not_selected');
-  const archivedQ = quotesV.filter(q => q.status==='archived');
-  // The default hides resolved rows, so "is this list narrowed" cannot just ask
-  // whether the selection is empty -- on this axis empty means MORE rows, not
-  // fewer. Default and empty both read as unfiltered; anything else is a
-  // deliberate narrowing. Same rule as Testing's isDefaultCat.
-  const isDefaultQ = ui.qSel.length === 0
-    || (ui.qSel.length === QF_DEFAULT.length && QF_DEFAULT.every(v => ui.qSel.includes(v)));
+  // These lists and counts come from shipmentsView in lib/shipmentsView.js --
+  // the client filter, search, status filter, tabs and tiles -- so the page and
+  // its Excel export read the very same lists.
+  const V = shipmentsView({ quotes, rows, dreqs, bids, coNames }, ui, new Date());
+  const { cSel, quotesV, rowsV, dreqsV, openDreqsV, clientChoices, bidCount, winnerOf,
+    activeShips, doneShips, arriving, overdueShips, awaiting, bidsIn, awarded, drafts, notSelected, archivedQ,
+    isDefaultQ, shownQuotes, shownShips } = V;
 
   // Counts are live and come from the same buckets the tiles read, so a number in
   // the dropdown and a number on a tile cannot disagree.
@@ -6450,30 +6416,6 @@ function Shipments({ onNewShipment, userEmail }) {
   const fd = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); };
   const money0 = v => '$'+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:0});
   const reopen = (q) => openFreightSheet(q, (q.client||{}).name||'', (q.forwarder||{}).name||'');
-
-  // ── filtering ──
-  const norm = t => (t||'').toLowerCase();
-  const matchQ = (q) => {
-    if (ui.search) {
-      const hay = norm(q.quote_number)+' '+norm((q.client||{}).name)+' '+norm(q.origin)+' '+norm(q.destination)+' '+norm((winnerOf(q.id)||{}).forwarder_name);
-      if (!hay.includes(norm(ui.search))) return false;
-    }
-    // Membership, never a NOT. inSel reads an empty array as All.
-    return inSel(ui.qSel, qKey(q));
-  };
-  const shownQuotes = quotesV.filter(matchQ);
-  const matchS = (sp) => {
-    if (ui.search) {
-      const po = ((sp.shipment_pos||[])[0]||{}).purchase_orders||{};
-      const hay = norm(sp.shipment_number)+' '+norm(po.client_po_number)+' '+norm(po.order_number)+' '+norm((po.client||{}).name)+' '+norm((sp.companies||{}).name)+' '+norm(sp.vessel_name)+' '+norm(sp.container_no);
-      if (!hay.includes(norm(ui.search))) return false;
-    }
-    if (ui.shipFilter==='arriving') { const d=etaDays(sp.estimated_arrival); if(!(d!==null&&d>=0&&d<=14&&!sp.actual_arrival)) return false; }
-    if (ui.shipFilter==='overdue') { const d=etaDays(sp.estimated_arrival); if(!(d!==null&&d<0&&!sp.actual_arrival)) return false; }
-    return true;
-  };
-  const baseShips = ui.tab==='active' ? activeShips : ui.tab==='delivered' ? doneShips : rowsV;
-  const shownShips = baseShips.filter(matchS);
 
   // pulse tile helper
   const pulse = [
@@ -6933,23 +6875,8 @@ const FQ_WORD = { border:'none', borderRadius:'980px', padding:'6px', fontSize:'
 const FQ_ICON = { background:'none', border:'none', cursor:'pointer', padding:'3px', width:'20px', height:'20px',
   boxSizing:'border-box', borderRadius:'6px', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 };
 
-// An LCL bid is ONE all-in total for the shipment, kept as rates.LCL.total --
-// entered by hand, or read from B22 of a returned LCL sheet. null when a bid
-// carries no such total; it is never derived from a partial sum.
-function lclBidTotal(b) {
-  const t = Number(b && b.rates && b.rates.LCL && b.rates.LCL.total);
-  return isFinite(t) && t > 0 ? t : null;
-}
-
-function bidEffective(b, containerType) {
-  if (Number(b.effective_per_container) > 0) return Number(b.effective_per_container);
-  const rates = b.rates || {};
-  const r = rates[containerType] || {};
-  const ocean = Number(r.ocean)||0, origin = Number(r.origin)||0;
-  const dest = Number(b.dest_total)||0;
-  const total = ocean + origin + dest;
-  return total > 0 ? total : (Number(b.all_in_per_container)||0);
-}
+// lclBidTotal and bidEffective live in lib/freightBids.js, imported above, so the
+// Shipments export reads a bid's amount exactly as these cards do.
 
 function ForwarderRFQModal({ quote, onClose, onSent }) {
   // markDirty on the recipient radios: the chosen contact renders as row styling
