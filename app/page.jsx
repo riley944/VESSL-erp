@@ -126,7 +126,9 @@ import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel } from '@/lib/shipmentStatus';
 import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
 import { lclBidTotal, bidEffective } from '@/lib/freightBids';
-import { buildShipmentsSheets, shipmentsFileName, SHIPMENTS_ALL } from '@/lib/shipmentsExport';
+import { buildShipmentsSheets, shipmentsFileName, SHIPMENTS_ALL, shipmentsCsvName, shipmentsPdfMeta, buildRecordSheets, recordFileName, recordPdfMeta } from '@/lib/shipmentsExport';
+import { sheetsToCsvFiles, sheetsToPdfHtml } from '@/lib/exportFormats';
+import ExportMenu from './components/ExportMenu';
 import { buildSheets, exportFileName, EXPORT_ALL } from '@/lib/analyticsExport';
 import { buildWorkbook } from '@/lib/workbook';
 import { buildAnalytics, filterOptions, figureWords, headlineTiles, attentionCards, shipmentRef, daysFromNow, ANALYTICS_DEFAULTS, PERIOD_OPTS, DATES_BY_OPTS, STAGE_FILTER_OPTS, BOOKED_METRIC_OPTS, TOP_SORT_OPTS } from '@/lib/analytics';
@@ -6064,7 +6066,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   };
   const reload = async () => {
     const { data } = await SB.from('shipments')
-      .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,client:companies!client_company_id(name)))')
+      .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,factory_company_id,client:companies!client_company_id(name)))')
       .order('created_at',{ascending:false});
     setRows(data||[]); setLoading(false);
   };
@@ -6423,25 +6425,77 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   // on screen. For Export all, the other two tabs are the same view without the
   // search, because switching tabs clears the search box. Test records stay in,
   // as on the page. Anyone who can open this page can export.
-  const runExport = async (tab) => {
+  // THREE FORMATS FROM ONE DESCRIPTION. Excel, CSV and PDF are all made from the
+  // sheets lib/shipmentsExport.js builds, so they cannot disagree. A PDF opens a
+  // print window, which has to be opened inside the click itself or a pop-up
+  // blocker stops it -- so pickFormat opens it before anything is awaited.
+  const pickFormat = (key, fmt, build) => {
     if (exporting) return;
-    setExporting(tab);
+    let win = null;
+    if (fmt === 'pdf') {
+      win = window.open('', '_blank');
+      if (!win) { alert('The PDF opens in a new window. Allow pop-ups for this site and try again.'); return; }
+      win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Preparing the PDF\u2026</body>');
+    }
+    deliver(key, fmt, build, win);
+  };
+  const deliver = async (key, fmt, build, win) => {
+    setExporting(key);
     try {
-      const ExcelJS = await loadExcelJS();
       const now = new Date();
-      const tabs = tab === 'all' ? SHIPMENTS_ALL : [tab];
-      const views = {};
-      tabs.forEach(t => { views[t] = t === ui.view ? V : shipmentsView({ quotes, rows, dreqs, bids, coNames }, { ...ui, search:'' }, now); });
       const who = userEmail ? ((displayName||'').trim() ? displayName.trim()+' ('+userEmail+')' : userEmail) : '';
-      const ctx = { exportedAt: now, user: who, ui, bids, coNames, refOf: matchRef };
-      const wb = buildWorkbook(ExcelJS, buildShipmentsSheets(views, ctx, tabs));
-      const buf = await wb.xlsx.writeBuffer();
-      downloadFile(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), shipmentsFileName(tab === 'all' ? '' : tab, stampToday()));
+      const ctx = { exportedAt: now, user: who, ui, V, bids, coNames, refOf: matchRef };
+      const out = build(ctx, now);
+      if (fmt === 'xlsx') {
+        const ExcelJS = await loadExcelJS();
+        const buf = await buildWorkbook(ExcelJS, out.sheets).xlsx.writeBuffer();
+        downloadFile(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), out.xlsxName);
+      } else if (fmt === 'csv') {
+        // One file per table, one after another; a short gap so the browser
+        // takes each download as its own.
+        const files = sheetsToCsvFiles(out.sheets, out.csvName);
+        for (let i = 0; i < files.length; i++) {
+          if (i) await new Promise(r => setTimeout(r, 400));
+          downloadFile(new Blob([files[i].text], { type:'text/csv;charset=utf-8' }), files[i].name);
+        }
+      } else if (fmt === 'pdf') {
+        const brand = await loadLetterhead();
+        const html = sheetsToPdfHtml(out.sheets, brand, out.pdfMeta);
+        win.document.open(); win.document.write(html); win.document.close();
+        // As the freight sheet: the document paginates itself once its fonts land.
+        setTimeout(() => { try { win.focus(); win.print(); } catch (e) {} }, 900);
+      }
     } catch (e) {
+      if (win) { try { win.close(); } catch (x) {} }
       alert('Could not build the export: '+((e && e.message) || e));
     }
     setExporting('');
   };
+  // A tab, or 'all'. Built from V, the lists this render draws -- client, search,
+  // status filter and In transit / Delivered / All already applied -- so a sheet
+  // lists the rows on screen. For Export all, the other two tabs are the same
+  // view without the search, because switching tabs clears the search box. Test
+  // records stay in, as on the page. Anyone who can open this page can export.
+  const exportTab = (tab, fmt) => pickFormat(tab, fmt, (ctx, now) => {
+    const tabs = tab === 'all' ? SHIPMENTS_ALL : [tab];
+    const views = {};
+    tabs.forEach(t => { views[t] = t === ui.view ? V : shipmentsView({ quotes, rows, dreqs, bids, coNames }, { ...ui, search:'' }, now); });
+    const day = stampToday();
+    return { sheets: buildShipmentsSheets(views, ctx, tabs), xlsxName: shipmentsFileName(tab === 'all' ? '' : tab, day),
+      csvName: (sh, t) => shipmentsCsvName(t, ui, day), pdfMeta: shipmentsPdfMeta(tab === 'all' ? '' : tab, ctx) };
+  });
+  // One record, from its card's download icon.
+  const exportRecord = (kind, rec, fmt) => pickFormat('rec:'+rec.id, fmt, (ctx) => {
+    const day = stampToday();
+    return { sheets: buildRecordSheets(kind, rec, ctx), xlsxName: recordFileName(kind, rec, day, 'xlsx'),
+      csvName: (sh, t, i) => recordFileName(kind, rec, day, 'csv', t, i), pdfMeta: recordPdfMeta(kind, rec, ctx) };
+  });
+  // A plain call, not a component defined in here: a component made inside the
+  // render is a new type every render, which would remount -- and close -- an
+  // open menu whenever the page re-renders.
+  const recordExport = (kind, rec, what) => (
+    <ExportMenu iconOnly title={'Export this '+what} busy={exporting==='rec:'+rec.id} disabled={!!exporting} onPick={fmt => exportRecord(kind, rec, fmt)} />
+  );
   const TAB_TITLE = { quotes:'Freight Quotes', shipments:'Shipments', delivery:'Delivery Requests' };
 
   // pulse tile helper
@@ -6467,9 +6521,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>
           {onNewShipment && <button onClick={onNewShipment} style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
-          <button type="button" className="kva-export-all" onClick={()=>runExport('all')} disabled={!!exporting} title="Download Freight Quotes, Shipments and Delivery Requests as one Excel file">
-            <DownloadIcon />{exporting==='all' ? 'Exporting…' : 'Export all'}
-          </button>
+          <ExportMenu label="Export all" className="kva-export-all" busy={exporting==='all'} disabled={!!exporting} title="Download Freight Quotes, Shipments and Delivery Requests" onPick={fmt => exportTab('all', fmt)} />
         </div>
       </div>
 
@@ -6554,9 +6606,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
         {/* THIS TAB'S EXPORT: the rows on screen, as an Excel file. The same
             compact button as the Analytics cards, pushed to the row's end. */}
         <div className="shp-export-wrap">
-          <button type="button" className="kva-export" onClick={()=>runExport(ui.view)} disabled={!!exporting} title={'Download '+TAB_TITLE[ui.view]+' as an Excel file'}>
-            <DownloadIcon />{exporting===ui.view ? 'Exporting…' : 'Export'}
-          </button>
+          <ExportMenu label="Export" className="kva-export" busy={exporting===ui.view} disabled={!!exporting} title={'Download '+TAB_TITLE[ui.view]} onPick={fmt => exportTab(ui.view, fmt)} />
         </div>
       </div>
 
@@ -6581,9 +6631,17 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
               <div key={q.id} style={{background:'#fff',borderRadius:'18px',padding:'18px 19px 14px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',display:'flex',flexDirection:'column',gap:'12px',minWidth:0}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'10px'}}>
                   <span style={{fontFamily:'var(--mono)',fontSize:'13px',fontWeight:700,color:'#1D1D1F'}}>{q.quote_number}</span>
+                  {/* EXPORT THIS QUOTE sits at the end of the title line, after the
+                      status -- the same place on every record on this page, and away
+                      from the action row's archive, delete and outcome buttons. The
+                      Sheet icon below is a different thing: the printable request for
+                      the forwarder. */}
+                  <span style={{display:'inline-flex',alignItems:'center',gap:'6px'}}>
                   {(()=>{ const pill = rfqPill(q.status); return (
                     <span style={{fontSize:'10.5px',fontWeight:700,borderRadius:'980px',padding:'3px 10px',color:pill.color,background:pill.bg,textTransform:'uppercase',letterSpacing:'.04em',whiteSpace:'nowrap'}}>{pill.label}</span>
                   ); })()}
+                  {recordExport('quote', q, 'quote')}
+                  </span>
                 </div>
                 <div>
                   <div style={{fontSize:'15px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.014em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{(q.client||{}).name||'\u2014'}</div>
@@ -6756,6 +6814,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                             </span>
                           : <span title="Matches no sales order number and no shipment number" style={{fontSize:'11px',fontWeight:600,borderRadius:'20px',padding:'2px 8px',background:'#F2F2F4',color:'#8A8A8E'}}>unmatched ref</span>}
                         <span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'2px 9px',textTransform:'uppercase',letterSpacing:'.03em',color:tone[0],background:tone[1]}}>{st}</span>
+                        {recordExport('delivery', d, 'delivery request')}
                       </div>
                       <div style={{fontSize:'12.5px',color:'#5A5A5E',marginTop:'5px',lineHeight:1.6}}>
                         {coNames[d.client_company_id]||'Unknown client'}
@@ -6829,7 +6888,10 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             return (
               <div key={s.id} onClick={()=>setOpenId(s.id)} className="ship-manifest-row" style={{display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'16px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',cursor:'pointer',transition:'.12s',alignItems:'center'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
               <div style={{minWidth:0}}>
-                <div style={{fontFamily:'var(--mono)',fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{ref}</div>
+                <div style={{display:'flex',alignItems:'center',gap:'4px',minWidth:0}}>
+                  <div style={{fontFamily:'var(--mono)',fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',minWidth:0}}>{ref}</div>
+                  {recordExport('shipment', s, 'shipment')}
+                </div>
                 <div style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{clientName}</div>
               </div>
               <div style={{minWidth:0}}>
