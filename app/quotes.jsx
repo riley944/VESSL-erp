@@ -31,6 +31,8 @@ import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey, storedQtyToMap as
 // The tier cost helpers live in lib/tierCost.js so page.jsx reads the SAME ones.
 // They were duplicated by hand there and had drifted; see that file for what broke.
 import { tierFreight, activeFreight, moldPerUnit, effectiveQty, tierTotalCost, sizedTierSummary, tierHasSizeMold, tierMoldFee } from "@/lib/tierCost";
+// Reading a tier's per-size figures, and the HTS rate, the same way on every screen.
+import { isBagMode, sizeCostFields, sizeCostFrom, sizeCostToRow, rateFromRows, htsRateFor } from "@/lib/quoteTiers";
 import { BANK_FIELDS } from "@/lib/bankFields";
 import { CodeModal } from "@/app/components/CodeModal";
 // HtsField used to live in this file. It moved to app/components so the Edit
@@ -259,21 +261,17 @@ function fmtStamp(iso) {
 // applies" rather than "nothing to calculate from". Those are different answers.
 //
 // 4dp rather than freight's 3: duty on a low-value unit loses real cents at 3.
-// One rate or none, from whatever library rows carry a code. Several rows agreeing on
-// a single rate is still unambiguous; several disagreeing is not.
-function rateFromRows(rows) {
-  const rated = (rows || []).filter((r) => r.total_duty != null);
-  const distinct = [...new Set(rated.map((r) => Number(r.total_duty)))];
-  return distinct.length === 1 ? distinct[0] : null;
-}
+// One rate or none: rateFromRows, in lib/quoteTiers, shared with every reader.
 function computeDuty(exw, rate) {
   if (rate == null) return "";
   const e = Number(exw);
   if (exw === "" || exw == null || !isFinite(e) || e <= 0) return "";
   return String(+(e * rate / 100).toFixed(4));
 }
-function suggestClientPriceForTier(t, moldFee) {
-  const c = tierTotalCost(t, moldFee);
+// dutyRate: the quote's HTS rate (percent) or null. It matters only on a Bag tier
+// where a size has an EXW of its own -- see tierTotalCost.
+function suggestClientPriceForTier(t, moldFee, dutyRate = null) {
+  const c = tierTotalCost(t, moldFee, dutyRate);
   if (!c) return "";
   const m = suggestedMarkup(c);
   return roundToPricePoint(c * (1 + m / 100), true);
@@ -284,8 +282,8 @@ function suggestClientPrice(landed) {
   const m = suggestedMarkup(c);
   return roundToPricePoint(c * (1 + m / 100), true);
 }
-function tierMargin(t, client, moldFee) {
-  const total = typeof t === "object" && t !== null ? tierTotalCost(t, moldFee) : (Number(t) || 0);
+function tierMargin(t, client, moldFee, dutyRate = null) {
+  const total = typeof t === "object" && t !== null ? tierTotalCost(t, moldFee, dutyRate) : (Number(t) || 0);
   const p = Number(client) || 0;
   if (p <= 0) return 0;
   return ((p - total) / p) * 100;
@@ -341,14 +339,8 @@ function TotalCell({ value, label }) {
     </div>
   );
 }
-// THE FULL PER-SIZE TABLE IS FOR BAGS ONLY. With Bag ticked -- alone or beside
-// another scale, in which case the whole table follows Bag -- each size row carries
-// its own EXW, freight, duty and price, and the tier row greys to totals. With any
-// other scale a size row carries a quantity and a client price and nothing else,
-// and the tier row works as it always has.
-function isBagMode(scales) {
-  return toScaleList(scales).includes("bag");
-}
+// THE FULL PER-SIZE TABLE IS FOR BAGS ONLY: isBagMode, in lib/quoteTiers. With Bag
+// ticked the tier row greys to totals; with any other scale it works as it always has.
 // What the size mix on a non-Bag tier bills to, and the blended unit price behind
 // it, from the size rows' own prices -- typed, or the tier's plus the old
 // adjustment. Built from the sizes carrying both a quantity and a price, so it can
@@ -594,61 +586,9 @@ function qtyMapToRow(map, scales) {
   });
   return out.length ? out : null;
 }
-// ── Per-size costs inside a tier ─────────────────────────────────────────────
-// A FOURTH PAIR, same rule as the boxed note above: sizeCostFrom and sizeCostToRow
-// must agree exactly. Stored on the tier as [{scale,size,landed,freightAir,
-// freightOcean,duty,dutyManual,client,mold}] -- now only landed, client and mold
-// are read or written; freight and duty are the tier's. SPARSE twice over: a size appears only when
-// something was typed for it, and carries only the fields that were. Everything
-// absent falls back to the tier at the point of use (sizeUnit in lib/tierCost),
-// never here -- filling gaps at load would freeze today's tier figure into the size
-// and stop it following later edits.
-//
-// A new key, so there is no scale-less legacy shape to attribute: a record without
-// a scale is not one this code wrote, and is dropped.
-//
-// Outside Bag mode a size holds a client price and nothing else, so both sides read
-// and write only that field there: a cost typed while Bag was ticked cannot ride
-// along, unseen, on a quote that no longer shows it.
-// mold is the size's own one-time mold fee, in dollars -- not per unit like the rest.
-// No freight or duty: those are entered once on the tier and every size pays them.
-const SIZE_COST_FIELDS = ["landed", "client", "mold"];
-const sizeCostFields = (scales) => (isBagMode(scales) ? SIZE_COST_FIELDS : ["client"]);
-function sizeCostFrom(v, scales) {
-  const map = {};
-  const fields = sizeCostFields(scales);
-  (Array.isArray(v) ? v : []).forEach((d) => {
-    if (!d || d.size == null || d.scale == null) return;
-    const cell = {};
-    fields.forEach((k) => {
-      if (d[k] === "" || d[k] == null) return;
-      const n = Number(d[k]);
-      if (isFinite(n)) cell[k] = String(n);
-    });
-    if (!Object.keys(cell).length) return;
-    map[sizeKey(String(d.scale), String(d.size))] = cell;
-  });
-  return map;
-}
-// Null when no size carries anything, so formToRow can leave the key off and a
-// tier nobody split by size writes exactly the keys it always has.
-function sizeCostToRow(map, scales) {
-  const out = [];
-  const fields = sizeCostFields(scales);
-  sizesForSelection(scales).forEach((e) => {
-    const cell = (map || {})[e.key];
-    if (!cell) return;
-    const rec = { scale: e.scale, size: e.size };
-    fields.forEach((k) => {
-      if (cell[k] === "" || cell[k] == null) return;
-      const n = Number(cell[k]);
-      if (isFinite(n)) rec[k] = n;
-    });
-    if (Object.keys(rec).length === 2) return;
-    out.push(rec);
-  });
-  return out.length ? out : null;
-}
+// ── Per-size figures inside a tier ───────────────────────────────────────────
+// sizeCostFrom and sizeCostToRow live in lib/quoteTiers, so every screen that reads
+// a stored tier reads it through the same pair the form saves with.
 function rowToForm(r) {
   // Read FIRST: both the deltas and every tier's quantities need it to attribute
   // legacy scale-less entries, so it cannot be computed at the return.
@@ -814,11 +754,11 @@ function moldFeeText(q) {
   if (fees.every((v) => v === fees[0])) return "$" + fmt(fees[0]);
   return tiers.map((t, i) => (fees[i] > 0 ? "$" + fmt(fees[i]) + " at " + effectiveQty(t).toLocaleString() : null)).filter(Boolean).join(" · ");
 }
-function quoteSummary(q) {
+function quoteSummary(q, dutyRate = null) {
   const tiers = q.tiers || [];
   if (!tiers.length) return { count: 0, minClient: null, maxClient: null, avgMargin: 0, method: null };
   const prices = tiers.map((t) => Number(t.client) || 0).filter((p) => p > 0);
-  const margins = tiers.map((t) => tierMargin(t, t.client, q.moldFee)).filter((m) => m !== 0);
+  const margins = tiers.map((t) => tierMargin(t, t.client, q.moldFee, dutyRate)).filter((m) => m !== 0);
   // ship lives on the tier, so a quote only has one method when every tier agrees.
   // A tier with no ship key counts as ocean -- the same default activeFreight uses,
   // so the column can never disagree with the freight the tier is actually costed on.
@@ -839,6 +779,10 @@ const ALL = "__all_clients__";
 // ---------- main platform ----------
 function Platform({ session, newQuote = null }) {
   const userEmail = session?.user?.email || "unknown";
+  // The HTS rate each quote's duty is worked out at, for the card, the detail view,
+  // the printed quote and the CSV -- the same rate the form uses, from the same list.
+  const { codes: htsCodes } = useHtsCodes();
+  const rateOf = (q) => htsRateFor(q.hts, htsCodes);
   const isMobile = useIsMobile();
   const lastSaveRef = useRef(0);
   const [quotes, setQuotes] = useState([]);
@@ -1307,8 +1251,8 @@ function Platform({ session, newQuote = null }) {
     quotes.forEach((q) => {
       const tiers = q.tiers && q.tiers.length ? q.tiers : [{}];
       tiers.forEach((t) => {
-        const m = tierMargin(t, t.client, q.moldFee);
-        lines.push([q.sku,q.quoteDate,q.product,q.client,q.clientContact,q.factory,q.country,q.hts,t.qty,t.landed,(t.ship||"ocean")==="air"?"Air":"Ocean",activeFreight(t)||"",tierMoldFee(t, q.moldFee)||"",tierTotalCost(t, q.moldFee)||"",t.client,m ? m.toFixed(1) : "",fmtStamp(q.updatedAt),q.updatedBy,(q.notes||"").replace(/\n/g," ")]
+        const m = tierMargin(t, t.client, q.moldFee, rateOf(q));
+        lines.push([q.sku,q.quoteDate,q.product,q.client,q.clientContact,q.factory,q.country,q.hts,t.qty,t.landed,(t.ship||"ocean")==="air"?"Air":"Ocean",activeFreight(t)||"",tierMoldFee(t, q.moldFee)||"",tierTotalCost(t, q.moldFee, rateOf(q))||"",t.client,m ? m.toFixed(1) : "",fmtStamp(q.updatedAt),q.updatedBy,(q.notes||"").replace(/\n/g," ")]
           .map((v) => `"${String(v ?? "").replace(/"/g,'""')}"`).join(","));
       });
     });
@@ -1562,7 +1506,7 @@ function Platform({ session, newQuote = null }) {
           )}
 
           {!(loading && quotes.length === 0) && shownQuotes.map((q) => {
-            const sum = quoteSummary(q);
+            const sum = quoteSummary(q, rateOf(q));
             const open = expanded === q.id;
             const priceRange = sum.minClient == null ? "—"
               // Client PRICE range across tiers -- per-unit on both ends, so it
@@ -1669,7 +1613,7 @@ function Platform({ session, newQuote = null }) {
                   )}
                 </div>
                 )}
-                {open && <ExpandedDetail q={q} tasks={tasks.filter((t) => t.quote_id === q.id)} onAddTask={addTask} onToggleTask={toggleTask} onDeleteTask={deleteTask} userEmail={userEmail} staff={staff} isMobile={isMobile} onEdit={() => setEditing(q)} onDuplicate={() => duplicateQuote(q)} onDelete={() => { if (confirm("Delete this quote?")) removeQuote(q.id); }} />}
+                {open && <ExpandedDetail q={q} dutyRate={rateOf(q)} tasks={tasks.filter((t) => t.quote_id === q.id)} onAddTask={addTask} onToggleTask={toggleTask} onDeleteTask={deleteTask} userEmail={userEmail} staff={staff} isMobile={isMobile} onEdit={() => setEditing(q)} onDuplicate={() => duplicateQuote(q)} onDelete={() => { if (confirm("Delete this quote?")) removeQuote(q.id); }} />}
               </div>
             );
           })}
@@ -2211,7 +2155,7 @@ function ContainerPackout({ q, cbmPerCarton }) {
   );
 }
 
-function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, userEmail, staff = [], isMobile = false, onEdit, onDuplicate, onDelete }) {
+function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTask, onDeleteTask, userEmail, staff = [], isMobile = false, onEdit, onDuplicate, onDelete }) {
   const [taskText, setTaskText] = useState("");
   const [taskWho, setTaskWho] = useState(TEAM[0].email);
   const [assigning, setAssigning] = useState(false);
@@ -2270,8 +2214,8 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
         {isMobile ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {(q.tiers || []).map((t, i) => {
-              const m = tierMargin(t, t.client, q.moldFee);
-              const total = tierTotalCost(t, q.moldFee);
+              const m = tierMargin(t, t.client, q.moldFee, dutyRate);
+              const total = tierTotalCost(t, q.moldFee, dutyRate);
               const mpu = moldPerUnit(tierMoldFee(t, q.moldFee), effectiveQty(t));
               const pair = (label, value, strong) => (
                 <div style={{ minWidth: 0 }}>
@@ -2305,8 +2249,8 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
             <div style={{ flex: 0.8, textAlign: "right" }}>Margin</div>
           </div>
           {(q.tiers || []).map((t, i) => {
-            const m = tierMargin(t, t.client, q.moldFee);
-            const total = tierTotalCost(t, q.moldFee);
+            const m = tierMargin(t, t.client, q.moldFee, dutyRate);
+            const total = tierTotalCost(t, q.moldFee, dutyRate);
             // Same divisor tierTotalCost just used, or this caption contradicts the
             // number it is captioning on any tier carrying a size mix.
             const mpu = moldPerUnit(tierMoldFee(t, q.moldFee), effectiveQty(t));
@@ -2409,7 +2353,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
         )}
         <MarkWonButton q={q} userEmail={userEmail} staff={staff} />
         <FreightQuoteButton q={q} cbmPerCarton={cbm} />
-        <button style={S.printBtn} onClick={() => { printQuote(q).catch(e => console.error('print failed:', e)); }}><Printer size={15} /> Print this quote</button>
+        <button style={S.printBtn} onClick={() => { printQuote(q, dutyRate).catch(e => console.error('print failed:', e)); }}><Printer size={15} /> Print this quote</button>
       </div>
     </div>
   );
@@ -2470,15 +2414,15 @@ function TasksPanel({ tasks, userEmail, onToggle, onDelete, onClose, onJump }) {
 // survives a popup blocker while the user gesture is still on the stack, and an
 // await hands the stack back -- so opening it after the logo fetch would get the
 // print window blocked. Same order generate() and genSO use, for the same reason.
-async function printQuote(q) {
+async function printQuote(q, dutyRate = null) {
   const w = window.open("", "_blank");
   if (w) w.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Generating quote sheet…</body>');
   const logoImg = await kuLogoDataUri();
   const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const cbm = (Number(q.cartonL) * Number(q.cartonW) * Number(q.cartonH)) / 1000000;
   const tierRows = (q.tiers || []).map((t, idx) => {
-    const m = tierMargin(t, t.client, q.moldFee);
-    const total = tierTotalCost(t, q.moldFee);
+    const m = tierMargin(t, t.client, q.moldFee, dutyRate);
+    const total = tierTotalCost(t, q.moldFee, dutyRate);
     const af = activeFreight(t);
     // effectiveQty, not t.qty -- the SAME divisor tierTotalCost used one line above.
     // On a tier with a size mix these disagreed, so this caption could claim a mold
@@ -3560,7 +3504,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
     setF((p) => {
       const tiers = p.tiers.map((t, idx) => {
         if (idx !== i) return t;
-        return { ...t, client: suggestClientPriceForTier(t, p.moldFee) };
+        return { ...t, client: suggestClientPriceForTier(t, p.moldFee, dutyRate.rate) };
       });
       return { ...p, tiers };
     });
@@ -4233,7 +4177,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                 <div style={{ width: TIER_DEL_W, flexShrink: 0 }} />
               </div>
               {f.tiers.map((t, i) => {
-                const m = tierMargin(t, t.client, f.moldFee);
+                const m = tierMargin(t, t.client, f.moldFee, dutyRate.rate);
                 // One row per size, each with its own EXW, freight, duty and client
                 // price -- typed, or falling back to the tier's (the price to the
                 // tier's plus the old quote-level adjustment). All of it belongs to
@@ -4251,13 +4195,13 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                 // Outside Bag mode, with a mix entered the tier has one real margin
                 // rather than a band: the blended price's, as it always was.
                 const mix = bagMode ? null : sizeMixFor(sizeRows);
-                const mixMargin = mix ? tierMargin(t, mix.blended, f.moldFee) : null;
+                const mixMargin = mix ? tierMargin(t, mix.blended, f.moldFee, dutyRate.rate) : null;
                 // Before that, the margin cell shows the band the size rows span when
                 // they differ from the tier's own -- a priced or adjusted size -- and
                 // the tier's single margin when they do not.
                 const band = sizeMarginBand(sizeRows, m);
                 const ship = t.ship || "ocean";
-                const total = tierTotalCost(t, f.moldFee);
+                const total = tierTotalCost(t, f.moldFee, dutyRate.rate);
                 // One input, two homes. Switching Method swaps which key it reads and
                 // writes; the other mode's figure is left in place, so flipping Air to
                 // Ocean hides the air number rather than destroying it, and flipping
