@@ -4108,7 +4108,11 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                 scrolls a little further sideways instead. */}
             <div style={{ ...S.tierEditTable, minWidth: 860 + (sizeEntries.length ? SIZE_LABEL_W + 8 : 0) }}>
               <div style={S.tierEditHead}>
-                {sizeEntries.length > 0 && <div style={S.sizeGutter} />}
+                {/* The gutter's heading. Inherits the row's heading type, and sits
+                    left rather than centred so it starts where the size labels under
+                    it start. "SIZING" is ~48px at 11px/600 with this letter-spacing,
+                    inside the 60px gutter, so no column moves. */}
+                {sizeEntries.length > 0 && <div style={{ ...S.sizeGutter, textAlign: "left", whiteSpace: "nowrap" }}>Sizing</div>}
                 {/* One freight column for both methods — it cannot name a method,
                     because it sits above every tier and each tier has its own ship.
                     The freed width goes to the three cells that gained content:
