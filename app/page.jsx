@@ -4522,6 +4522,11 @@ const foldFactoryName = n => FACTORY_ALIASES[String(n || '').trim().toLowerCase(
 function Companies({ onTypeChange, createRequest = 0 }) {
   const TYPE_LABELS = { client:'Clients', factory:'Factories', carrier:'Carriers', freight_forwarder:'Freight Forwarders' };
   const TYPE_KEYS = Object.keys(TYPE_LABELS);
+  // WHAT THE CLIENTS TAB SAYS ON SCREEN: "Companies". Wording only -- the stored
+  // type is still 'client', the Type field still reads Client, and TYPE_LABELS
+  // still names the export file and sheet. The other three tabs say what they did.
+  const TAB_TEXT = { ...TYPE_LABELS, client:'Companies' };
+  const TAB_ONE  = { client:'company', factory:'factory', carrier:'carrier', freight_forwarder:'freight forwarder' };
   // Which type tab and what was typed, kept across navigation. openId and showCreate
   // stay plain below -- an expanded row and an open modal are not choices about the
   // view, and restoring them would put something on screen nobody asked for.
@@ -4838,7 +4843,7 @@ function Companies({ onTypeChange, createRequest = 0 }) {
       <div className="co-tabs">
         {TYPE_KEYS.map((t,i) => (
           <button key={t} className={'co-tab' + (i===ui.tab?' active':'')} onClick={()=>setUi('tab', i)}>
-            {TYPE_LABELS[t]}
+            {TAB_TEXT[t]}
           </button>
         ))}
       </div>
@@ -4847,9 +4852,9 @@ function Companies({ onTypeChange, createRequest = 0 }) {
       <div className="co-toolbar">
         <div className="co-search-wrap">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input className="co-search" placeholder={'Search ' + TYPE_LABELS[TYPE_KEYS[ui.tab]].toLowerCase() + '…'} value={ui.search} onChange={e=>setUi('search', e.target.value)} />
+          <input className="co-search" placeholder={'Search ' + TAB_TEXT[TYPE_KEYS[ui.tab]].toLowerCase() + '…'} value={ui.search} onChange={e=>setUi('search', e.target.value)} />
         </div>
-        <span style={{fontSize:12,color:'var(--muted)',fontFamily:'var(--mono)'}}>{shown.length} {shown.length===1 ? TYPE_KEYS[ui.tab].replace(/_/g,' ') : TYPE_LABELS[TYPE_KEYS[ui.tab]].toLowerCase()}</span>
+        <span style={{fontSize:12,color:'var(--muted)',fontFamily:'var(--mono)'}}>{shown.length} {shown.length===1 ? TAB_ONE[TYPE_KEYS[ui.tab]] : TAB_TEXT[TYPE_KEYS[ui.tab]].toLowerCase()}</span>
         {/* ── EXPORT, ONE PER CATEGORY ──────────────────────────────────────
             A third flex child on the existing toolbar row -- co-toolbar is a
             flex with a 14px gap, the search box takes flex:1 up to 340px and
@@ -4865,14 +4870,14 @@ function Companies({ onTypeChange, createRequest = 0 }) {
             toggle rather than one per list. */}
         <ExportButton count={shown.length} busy={exporting}
                       onXlsx={exportXlsx} onCsv={exportCsv} align="left"
-                      note={shown.length + ' ' + (shown.length === 1 ? 'row' : 'rows') + ', as searched'} />
+                      note={shown.length + ' ' + (typeKey === 'client' ? (shown.length === 1 ? 'company' : 'companies') : (shown.length === 1 ? 'row' : 'rows')) + ', as searched'} />
       </div>
 
       {/* ── Grid ── */}
       {loading ? <div className="loading">Loading…</div> : shown.length === 0 ? (
         <div className="empty">
           <div className="ico">🏢</div>
-          <h3>{ui.search ? 'No matches' : 'No ' + TYPE_LABELS[TYPE_KEYS[ui.tab]].toLowerCase() + ' yet'}</h3>
+          <h3>{ui.search ? 'No matches' : 'No ' + TAB_TEXT[TYPE_KEYS[ui.tab]].toLowerCase() + ' yet'}</h3>
           <p>{ui.search ? 'Try a different search.' : 'Add your first to get started.'}</p>
         </div>
       ) : (
@@ -4937,7 +4942,7 @@ function Companies({ onTypeChange, createRequest = 0 }) {
       {/* initialType is the open tab, so + New Factory opens as a factory. The
           Type select stays changeable, and the landing logic below still moves
           the tab when somebody changes it. */}
-      {showCreate && <CreateCompanyModal initialType={TYPE_KEYS[ui.tab]} onClose={()=>setShowCreate(false)} onCreated={(type)=>{
+      {showCreate && <CreateCompanyModal initialType={TYPE_KEYS[ui.tab]} noun={TYPE_KEYS[ui.tab] === 'client' ? 'Company' : undefined} onClose={()=>setShowCreate(false)} onCreated={(type)=>{
         setShowCreate(false);
         const i = TYPE_KEYS.indexOf(type);
         if (i !== -1 && i !== ui.tab) { setUi('tab', i); }
@@ -10547,7 +10552,7 @@ export default function App() {
     // Companies. The press is handed to Companies rather than opening a modal
     // here, so the list the company lands in is the one that refreshes.
     companies: <button className="btn btn-dark" onClick={()=>setCompanyCreateReq(n=>n+1)}>
-                 + New {(COMPANY_TYPES.find(([k])=>k===companyType)||[null,'Company'])[1]}
+                 + New {companyType === 'client' ? 'Company' : (COMPANY_TYPES.find(([k])=>k===companyType)||[null,'Company'])[1]}
                </button>,
     // products has no action. The key is absent rather than set to null, because
     // pageActions[page] is rendered directly and an absent key gives undefined,

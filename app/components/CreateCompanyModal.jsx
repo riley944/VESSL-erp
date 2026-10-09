@@ -37,7 +37,10 @@ export const COMPANY_TYPES = [
   ['freight_forwarder', 'Freight Forwarder'],
 ];
 
-export function CreateCompanyModal({ onClose, onCreated, initialType }) {
+// noun replaces the type's word in the title, the name label, the save button and
+// the required-name alert -- the Companies page's Clients tab passes "Company".
+// The Type field still shows the type itself, which is what gets stored.
+export function CreateCompanyModal({ onClose, onCreated, initialType, noun }) {
   // Plain form, every field an input or select. No click-driven setters at all.
   const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   // initialType lets a host open this already set to what it is asking for -- the
@@ -58,8 +61,9 @@ export function CreateCompanyModal({ onClose, onCreated, initialType }) {
   // Factory -- read from form.type on every render rather than from initialType,
   // which only seeds it. An empty or unknown type says Company, as it always did.
   const typeLabel = (COMPANY_TYPES.find(([v]) => v === form.type) || [null, 'Company'])[1];
+  const word = noun && form.type === initialType ? noun : typeLabel;
   const submit = async () => {
-    if (!form.name) { alert(typeLabel + ' name required'); return; }
+    if (!form.name) { alert(word + ' name required'); return; }
     // ── A CARRIER'S TRACKING PAGE, AND ITS NAME IN ANY CASE ─────────────────
     // companies.tracking_url (script 85) is the carrier tracking page with
     // {number} where the number goes, and the database refuses any other shape,
@@ -114,10 +118,10 @@ export function CreateCompanyModal({ onClose, onCreated, initialType }) {
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box">
-        <div className="modal-head"><h3>New {typeLabel}</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
+        <div className="modal-head"><h3>New {word}</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
           <div className="form-row-2">
-            <div><label>{typeLabel} Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
+            <div><label>{word} Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
             <div><label>Type</label>{typeFixed
               ? <input className="form-input" value={typeLabel} readOnly tabIndex={-1} data-noguard aria-label="Type" style={{background:'var(--bg)',color:'var(--muted)',cursor:'default'}} />
               : <select className="form-select" value={form.type} onChange={e=>f('type')(e.target.value)}>{COMPANY_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>}</div>
@@ -144,7 +148,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType }) {
             <div><label>Email</label><input type="email" className="form-input" value={form.cemail} onChange={e=>f('cemail')(e.target.value)} /></div>
           </div>
         </div>
-        <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={submit}>Save {typeLabel}</button></div>
+        <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={submit}>Save {word}</button></div>
       </div>
     </div>
   );
