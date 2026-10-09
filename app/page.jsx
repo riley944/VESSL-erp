@@ -21,6 +21,9 @@ import { SizeGrid, sizesForSelection, toScaleList, skuToken, storedQtyToMap } fr
 // The SAME cost model the quote editor uses. This page carried a hand-written copy
 // that had drifted on both the mold divisor and the duty term; see lib/tierCost.js.
 import { tierTotalCost } from '@/lib/tierCost';
+// A stored tier read the way the quote editor reads it: size maps by sizeKey, each
+// size's own figures, and the price rule for a size (lib/quoteTiers).
+import { tierFromRow, tierIsSized, sizeQuotedPrice } from '@/lib/quoteTiers';
 import { BANK_FIELDS, BANK_KEYS, hasAnyBankDetail } from '@/lib/bankFields';
 
 // ── Prefilling an order grid from a quote tier ───────────────────────────────
@@ -2337,7 +2340,9 @@ function QuotePickerModal({ onPick, onClose, priceField='client' }){
       // clientPrice is carried separately from price because priceOf() falls back to
       // landed, and per-size deltas are only meaningful against the client price.
       sizeScales:toScaleList(q.size_scale), sizeDeltas:q.size_price_deltas||[],
-      clientPrice:t.client!=null?String(t.client):''
+      clientPrice:t.client!=null?String(t.client):'',
+      // Each size's own client price, if the quote gives it one.
+      sizeCost:t.sizeCost||null
     });
     onClose();
   };
@@ -2555,22 +2560,20 @@ function CreateSOModal({onClose,onCreated}){
     });
     return m;
   };
-  // Mirror of CreatePOModal's seedPrices, with two differences: the SO base is the
-  // tier's CLIENT price (the PO base is landed/EXW), and the quote's per-size deltas
-  // ride on top. What gets stored is an absolute price per size, never a delta -- the
-  // save path and SizeGrid both work in absolutes, so nothing downstream needs to
-  // know a delta was involved. No client price means nothing to seed from: leave the
-  // boxes blank and let SizeGrid's fallbackPrice carry the arithmetic.
-  const seedSizePrices=(scales,basePrice,deltas)=>{
-    const base=Number(basePrice);
-    if(basePrice===''||basePrice==null||!(base>0)) return {};
+  // Each size's price as the quote has it: the size's own client price when it has
+  // one, otherwise the tier price plus the old per-size adjustment -- sizeQuotedPrice,
+  // which goes through sizeUnit, so this is the quote editor's rule and not a copy
+  // of it. What gets stored is an absolute price per size, never a delta. With no
+  // tier price and no price of its own a size is left blank, as it always was, and
+  // SizeGrid's fallbackPrice carries the arithmetic. A price at or below zero is not
+  // a price and is left blank too.
+  // tier is the STORED tier (or {client, sizeCost} from the picker).
+  const seedSizePrices=(scales,tier,deltas)=>{
+    const t=tierFromRow(tier,scales);
     const dm=deltaMap(deltas,scales);
     return sizesForSelection(scales).reduce((a,e)=>{
-      const s=e.key;
-      const p=base+(dm[s]||0);
-      // A discount steeper than the price itself is not a price -- leave it blank
-      // and fall back, the same way quotes.jsx refuses to show such a size.
-      return p>0?{...a,[s]:String(p)}:a;
+      const p=sizeQuotedPrice(t,e.key,dm[e.key]);
+      return p!=null&&p>0?{...a,[e.key]:String(p)}:a;
     },{});
   };
   const applyQuote=(q,tIdx)=>{
@@ -2579,7 +2582,7 @@ function CreateSOModal({onClose,onCreated}){
     const noPrice=!tier.client||Number(tier.client)===0;
     const scale=toScaleList(q.size_scale);
     const price=tier.client?String(tier.client):'';
-    setItems([{desc:q.product||'',sku:q.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:q.id,tierIdx:tIdx,noPrice,sizeScales:scale,sizeQty:seedQtyFromTier(tier, scale),sizePrice:seedSizePrices(scale,price,q.size_price_deltas)}]);
+    setItems([{desc:q.product||'',sku:q.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:q.id,tierIdx:tIdx,noPrice,sizeScales:scale,sizeQty:seedQtyFromTier(tier, scale),sizePrice:seedSizePrices(scale,tier,q.size_price_deltas)}]);
     if(q.client&&!form.clientId){const m=clients.find(c=>(c.name||'').toLowerCase()===q.client.toLowerCase());if(m)setForm(prev=>({...prev,clientId:m.id,shipTo:(m.shipping_address&&!prev.shipTo)?m.shipping_address:prev.shipTo}));}
   };
   const pickTier=i=>{
@@ -2599,13 +2602,13 @@ function CreateSOModal({onClose,onCreated}){
         const scaleSame = prev[0] && (prev[0].sizeScales||[]).join(',')===scale.join(',');
         const prevTier = prev[0] ? (ts[prev[0].tierIdx] || null) : null;
         const keptQty = scaleSame ? reseedQty(prev[0].sizeQty, prevTier, tier, scale) : seedQtyFromTier(tier, scale);
-        return [{desc:picked.product||'',sku:picked.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:picked.id,tierIdx:i,noPrice,sizeScales:scale,sizeQty:keptQty,sizePrice:seedSizePrices(scale,price,picked.size_price_deltas)}];
+        return [{desc:picked.product||'',sku:picked.sku||'',qty:tier.qty?String(tier.qty):'',price,quoteId:picked.id,tierIdx:i,noPrice,sizeScales:scale,sizeQty:keptQty,sizePrice:seedSizePrices(scale,tier,picked.size_price_deltas)}];
       });
     }
   };
   const addExtraItem=()=>setShowPicker(true);
   const [showPicker,setShowPicker]=useState(false);
-  const onPickItem=(li)=>setItems(prev=>[...prev,{desc:li.desc,sku:li.sku,qty:li.qty,price:li.price,quoteId:li.quoteId,tierIdx:0,noPrice:!li.price,sizeScales:toScaleList(li.sizeScales),sizeQty:{},sizePrice:seedSizePrices(toScaleList(li.sizeScales),li.clientPrice,li.sizeDeltas)}]);
+  const onPickItem=(li)=>setItems(prev=>[...prev,{desc:li.desc,sku:li.sku,qty:li.qty,price:li.price,quoteId:li.quoteId,tierIdx:0,noPrice:!li.price,sizeScales:toScaleList(li.sizeScales),sizeQty:{},sizePrice:seedSizePrices(toScaleList(li.sizeScales),{client:li.clientPrice,sizeCost:li.sizeCost},li.sizeDeltas)}]);
   // markDirty: the linked-PO tick is a styled div, not a checkbox, so toggling it
   // changes no control value and the snapshot cannot see it.
   const togglePO=pid=>{ markDirty(); setLinkedPOIds(prev=>prev.includes(pid)?prev.filter(x=>x!==pid):[...prev,pid]); };
@@ -2705,9 +2708,13 @@ function CreateSOModal({onClose,onCreated}){
       }catch(e){}
     }
     if(linkedPOIds.length) await SB.from('sales_order_pos').insert(linkedPOIds.map(pid=>({sales_order_id:so.id,purchase_order_id:pid})));
+    // NOT FOR A SIZED TIER. A size row's client_price is that size's price, and a
+    // sized tier's own price is only the fallback for sizes without one -- writing a
+    // size's price into it would reprice every other size on the quote. So the
+    // write-back is skipped for a per-size order row and for a tier with a size mix.
     for(const it of toIns){
-      if(it._quoteId&&Number(it.client_price)>0){
-        try{const {data:q}=await SB.from('quotes').select('tiers').eq('id',it._quoteId).single();if(q){const ts=Array.isArray(q.tiers)?[...q.tiers]:(q.tiers?JSON.parse(q.tiers):[]);if(ts[it._tierIdx]&&(!Number(ts[it._tierIdx].client)||Number(ts[it._tierIdx].client)===0)){ts[it._tierIdx]={...ts[it._tierIdx],client:it.client_price};await SB.from('quotes').update({tiers:ts}).eq('id',it._quoteId);}}}catch(e){}
+      if(it._quoteId&&Number(it.client_price)>0&&it.size==null){
+        try{const {data:q}=await SB.from('quotes').select('tiers,size_scale').eq('id',it._quoteId).single();if(q){const ts=Array.isArray(q.tiers)?[...q.tiers]:(q.tiers?JSON.parse(q.tiers):[]);if(ts[it._tierIdx]&&!tierIsSized(tierFromRow(ts[it._tierIdx],q.size_scale))&&(!Number(ts[it._tierIdx].client)||Number(ts[it._tierIdx].client)===0)){ts[it._tierIdx]={...ts[it._tierIdx],client:it.client_price};await SB.from('quotes').update({tiers:ts}).eq('id',it._quoteId);}}}catch(e){}
       }
     }
     // ── PROGRAMS ────────────────────────────────────────────────────────────
