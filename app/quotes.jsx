@@ -178,31 +178,67 @@ const SIZE_LABEL_W = 60;
 // THE TIER TABLE'S COLUMNS, defined once for the header, the tier row and every
 // size row, so the three cannot drift apart cell by cell.
 //
-// minWidth 0 on every cell is what makes the flex shares exact. Left at its
-// default (auto), a cell refuses to shrink below its content, so a cell whose
-// content is wider than its share grows and pushes every column to its right.
-// The tier row's cells hold content -- the Air/Ocean toggles, a dollar total --
-// that the size row's same cells do not, so the two rows resolved to different
-// x positions from the Method column on. With minWidth 0 each cell is exactly
-// its share of the same width in every row, whatever is inside it.
-// mold exists only in Bag mode, between Duty and Total Cost: the last cost before
-// the total it feeds.
+// Each cell is its flex share of the row, but never less than its floor (min). The
+// floors are what keep text whole: each is the widest thing the column must show
+// without clipping, measured in Spline Sans at the sizes used here, plus the box's
+// padding and border, plus ~17px where the box is an <input type="number"> --
+// Chrome lays out the spin buttons whether or not they are showing, which is what
+// cut "$ ocean" to "$ ocear". The governing content, column by column:
 //
-// mold is 1.2 so its box holds "99,999.99" with room over: at the table's minimum
-// a unit of flex is ~87px, so the box is ~105px less 20px of padding and border,
-// ~85px for text that needs ~56. Freight and Duty keep their width: on a size row
-// they are empty now, but the tier row above still holds both inputs, with build.
-const TIER_FLEX = { qty: 1.0, exw: 1.0, method: 0.8, freight: 1.5, duty: 1.0, mold: 1.2, total: 1.1, client: 1.3, margin: 0.8 };
-// What the Mold Fee column adds to the table's minimum: its share at the width the
-// other columns already get (742px over 8.5 units = ~87.3px at the 928 minimum with
-// sizes), 1.2 x 87.3 = 105, plus one 8px gap, so turning Bag on never squeezes the
-// columns it did not add.
-const MOLD_COL_W = 113;
-const tierCol = (k) => ({ flex: TIER_FLEX[k], minWidth: 0 });
+//   qty      76  typed "50000" (40) + spin 17 + padding/border 20
+//   exw      90  a greyed total, "$18,436.00" (65) + 20; "$ EXW" needs only 76
+//   method   92  FIXED: two toggles, "Ocean" (34) + border 2 + 8 air, each 44, gap 3
+//   freight 134  "$ ocean" (48) + spin 17 + 20 = 85, gap 3, build 44
+//   duty    110  "28.4% each" (70) + spin 17 + 20
+//   mold     84  a greyed total, "$9,449.00" (59) + 20; typed "99999.99" needs 71
+//   total    90  a greyed total, as exw
+//   client  120  typed "12.50" (31) + spin 17 + 20 = 68, gap 4, auto 46
+//   margin   96  greyed "OVERALL" caption (42) + 20, after the 30px centring pad
+//
+// Every cell keeps minWidth set, so its CONTENT can never widen it: content-driven
+// widths are what put the tier row and the size rows out of line before. A floor
+// is the same number in all three rows, so where one binds it binds everywhere and
+// the columns still line up exactly. Method is a fixed width, not a share, so the
+// toggles always get the same room and never shrink.
+//
+// mold exists only in Bag mode, between Duty and Total Cost: the last cost before
+// the total it feeds. The flex values only share out what is left over the floors.
+const TIER_COLS = {
+  qty:     { flex: 1.0, min: 76 },
+  exw:     { flex: 1.0, min: 90 },
+  method:  { width: 92 },
+  freight: { flex: 1.5, min: 134 },
+  duty:    { flex: 1.0, min: 110 },
+  mold:    { flex: 1.2, min: 84 },
+  total:   { flex: 1.1, min: 90 },
+  client:  { flex: 1.3, min: 120 },
+  margin:  { flex: 0.8, min: 96 },
+};
+const tierCol = (k) => {
+  const c = TIER_COLS[k];
+  return c.width ? { width: c.width, flexShrink: 0, flexGrow: 0, minWidth: c.width } : { flex: c.flex, minWidth: c.min };
+};
 // The delete-tier slot at the end of every row. flexShrink 0, or the empty slot on
 // a size row could give up width the tier row's button slot keeps.
 const TIER_DEL_W = 30;
 const MARGIN_GUTTER_PAD = 30;  // px of paddingLeft; moves the centre right by half
+// The table's minimum width, from the same numbers the cells use, so it is exactly
+// the width at which every floor binds: below it a phone scrolls sideways rather
+// than letting a row overflow its own box. Header, tier and size rows all share it.
+const TIER_ROW_GAP = 8;     // S.tierEditRow / tierEditHead / tierSizeRow gap
+const TIER_ROW_PAD_X = 12;  // their horizontal padding, each side
+function tierTableMin(sized, bag) {
+  const keys = Object.keys(TIER_COLS).filter((k) => k !== "mold" || bag);
+  const cells = keys.map((k) => TIER_COLS[k].width || TIER_COLS[k].min);
+  if (sized) cells.push(SIZE_LABEL_W);
+  cells.push(TIER_DEL_W);
+  return cells.reduce((a, v) => a + v, 0) + TIER_ROW_GAP * (cells.length - 1) + TIER_ROW_PAD_X * 2 + 2;  // 2: the table's border
+}
+// The quote form's modal. 1200 rather than the shared 1100: in Bag mode the tier
+// table's floors come to 1088px, and at 1100 the form's inner width (less 26px
+// padding each side and the body's ~17px scrollbar) is ~1029, so it scrolled
+// sideways. At 1200 it is ~1129, with ~41px over the floors.
+const QUOTE_FORM_MAX_W = 1200;
 function stamp() { return new Date().toISOString(); }
 function fmtStamp(iso) {
   if (!iso) return "—";
@@ -3798,7 +3834,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
             onCreated={onFactoryCreated} />
         </div>
       )}
-      <div ref={cardRef} style={S.modal} onClick={(e) => e.stopPropagation()}>
+      <div ref={cardRef} style={{ ...S.modal, maxWidth: QUOTE_FORM_MAX_W }} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
             <h2 style={S.modalTitle}>{initial.id ? "Edit Quote" : "New Quote"}</h2>
@@ -4137,7 +4173,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
             {/* The gutter is added to the minimum, not taken from it, so on a phone
                 the columns keep the widths they have without sizes and the table
                 scrolls a little further sideways instead. */}
-            <div style={{ ...S.tierEditTable, minWidth: 860 + (sizeEntries.length ? SIZE_LABEL_W + 8 : 0) + (bagMode ? MOLD_COL_W : 0) }}>
+            <div style={{ ...S.tierEditTable, minWidth: tierTableMin(sizeEntries.length > 0, bagMode) }}>
               <div style={S.tierEditHead}>
                 {/* The gutter's heading. Inherits the row's heading type, and sits
                     left rather than centred so it starts where the size labels under
@@ -4774,7 +4810,7 @@ const S = {
   saveFactoryRow: { display: "flex", gap: 8, alignItems: "center" },
   primaryBtnSm: { background: "#101d3d", color: "#ffffff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600 },
   ghostBtnSm: { background: "transparent", color: "#6a7488", border: "1px solid #e7eaf0", borderRadius: 9, padding: "9px 14px", fontSize: 13, fontWeight: 600 },
-  shipToggle: { flex: 1, minWidth: 0, overflow: "hidden", whiteSpace: "nowrap", background: "#ffffff", border: "1px solid #e7eaf0", color: "#6a7488", borderRadius: 7, padding: "7px 0", fontSize: 11.5, fontWeight: 600 },
+  shipToggle: { flex: 1, whiteSpace: "nowrap", background: "#ffffff", border: "1px solid #e7eaf0", color: "#6a7488", borderRadius: 7, padding: "7px 0", fontSize: 11.5, fontWeight: 600 },
   shipOn: { background: "#eef1f6", color: "#0f1729", borderColor: "#eef1f6" },
   methodTag: { fontSize: 11, fontWeight: 600, color: "#3461e0", background: "#eef1f6", borderRadius: 12, padding: "2px 9px" },
   printBtn: { display: "inline-flex", alignItems: "center", gap: 7, background: "#ffffff", border: "1px solid #cdd5e2", color: "#3461e0", borderRadius: 10, padding: "9px 16px", fontSize: 13.5, fontWeight: 600 },
