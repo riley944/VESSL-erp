@@ -30,12 +30,21 @@ import { useDirtyGuard } from '@/app/components/ModalGuard';
 // and the + New button), and a second copy there is how the two drifted apart
 // once already. Singular on purpose: it names one company's type. The Companies
 // tabs keep their own plural list, which titles a tab rather than a company.
+//
+// 'client' DISPLAYS AS "Company" -- in a Type field only. The stored value is
+// still 'client'. Wording that names the company rather than its type (this
+// window's title, name label and Save button when the quote form opens it to add
+// a client) keeps "Client" through TYPE_NOUN below.
 export const COMPANY_TYPES = [
-  ['client',            'Client'],
+  ['client',            'Company'],
   ['factory',           'Factory'],
   ['carrier',           'Carrier'],
   ['freight_forwarder', 'Freight Forwarder'],
 ];
+
+// What the title, name label, Save button and required-name alert call a company
+// of each type, where that differs from its Type label above.
+const TYPE_NOUN = { client: 'Client' };
 
 // noun replaces the type's word in the title, the name label, the save button and
 // the required-name alert -- the Companies page's Clients tab passes "Company".
@@ -61,7 +70,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun }) {
   // Factory -- read from form.type on every render rather than from initialType,
   // which only seeds it. An empty or unknown type says Company, as it always did.
   const typeLabel = (COMPANY_TYPES.find(([v]) => v === form.type) || [null, 'Company'])[1];
-  const word = noun && form.type === initialType ? noun : typeLabel;
+  const word = noun && form.type === initialType ? noun : (TYPE_NOUN[form.type] || typeLabel);
   const submit = async () => {
     if (!form.name) { alert(word + ' name required'); return; }
     // ── A CARRIER'S TRACKING PAGE, AND ITS NAME IN ANY CASE ─────────────────
