@@ -167,6 +167,14 @@ const AUTO_BTN_GAP = 4;  // px, matches the flex gap in that cell
 // hit min-width:auto and widen the cell, which would break the mirroring. One
 // constant used by the header, the tier row and the size row, so the three can
 // never drift apart again -- change it here or not at all.
+// THE SIZE-LABEL GUTTER. On a quote with sizes, every row of the tier table --
+// header, tier row, size rows -- starts with this many px, so the size label (S,
+// Adult L) sits in it and each size's boxes start at the same x, and run the same
+// width, as the tier's boxes above. Empty on the header and tier row; it has to be
+// there too, or the flex shares to its right would differ row to row. 60 holds the
+// longest qualified label sizesForSelection makes ("Adult XL", "Youth XL") at
+// 11px/600; anything longer truncates with the full label in its title.
+const SIZE_LABEL_W = 60;
 const MARGIN_GUTTER_PAD = 30;  // px of paddingLeft; moves the centre right by half
 function stamp() { return new Date().toISOString(); }
 function fmtStamp(iso) {
@@ -4095,8 +4103,12 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
               </div>
             </label>
             <div style={S.tierScroll}>
-            <div style={{ ...S.tierEditTable, minWidth: 860 }}>
+            {/* The gutter is added to the minimum, not taken from it, so on a phone
+                the columns keep the widths they have without sizes and the table
+                scrolls a little further sideways instead. */}
+            <div style={{ ...S.tierEditTable, minWidth: 860 + (sizeEntries.length ? SIZE_LABEL_W + 8 : 0) }}>
               <div style={S.tierEditHead}>
+                {sizeEntries.length > 0 && <div style={S.sizeGutter} />}
                 {/* One freight column for both methods — it cannot name a method,
                     because it sits above every tier and each tier has its own ship.
                     The freed width goes to the three cells that gained content:
@@ -4176,6 +4188,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                 return (
                   <React.Fragment key={i}>
                   <div style={{ ...S.tierEditRow, ...(greyed ? S.tierEditRowGreyed : {}) }}>
+                    {sizeEntries.length > 0 && <div style={S.sizeGutter} />}
                     <div style={{ flex: 1.0 }}>{!greyed
                       ? <input style={S.tierInput} type="number" value={t.qty ?? ""} onChange={(e) => setTier(i, "qty", e.target.value)} placeholder="Qty" />
                       : <TotalCell value={sizeTotal.toLocaleString()} label="total qty" />}</div>
@@ -4327,69 +4340,25 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                       {f.tiers.length > 1 && <button style={S.tierDel} onClick={() => removeTier(i)}><X size={14} /></button>}
                     </div>
                   </div>
-                  {/* Flex widths mirror the row above, so each size's EXW, freight,
-                      duty and client price sit under the tier's own. A blank box falls
-                      back to the tier's figure, which it shows as its placeholder. */}
-                  {/* Keyed and read by r.key, captioned by r.label. On an Adult+Youth
-                      tier that is two distinct rows reading "Adult L" and "Youth L"
-                      over keys 'adult|L' and 'youth|L' -- which is the whole point,
-                      since keying on "L" would have merged them into one box. */}
+                  {/* EVERY CELL HERE IS THE TIER ROW'S CELL, SAME FLEX AND SAME
+                      INSIDE: the label sits in the gutter, so each box starts at the
+                      same x and runs the same width as the tier's box above it --
+                      Freight leaves the build button's width empty on its right,
+                      Client Price carries its own auto in the same slot. A blank box
+                      falls back to the tier's figure, shown as its placeholder.
+                      Keyed and read by r.key, captioned by r.label: on Adult+Youth
+                      that is "Adult L" and "Youth L" over 'adult|L' and 'youth|L',
+                      which keying on "L" would have merged into one box. */}
                   {sizeRows.map((r) => (
                     <div key={r.key} style={S.tierSizeRow}>
-                      {/* minWidth 0 turns off this cell's automatic minimum size.
-                          Neither child can shrink now, so 12 + 58 + 6 + 64 = 140px
-                          of content sits in a 109.2px cell; left to itself the cell
-                          would grow to 140 to contain it, and being flex-grow it
-                          would take that back out of the columns to its right --
-                          this row alone, so the size rows would stop lining up with
-                          the tier row and the header. minWidth 0 holds the cell at
-                          its share and lets the content spill instead, to the right,
-                          where every size row has an empty spacer under EXW COST.
-                          This is the holding position, not the answer: the modal
-                          needs to reach ~1362px for 140px to fit honestly. */}
-                      <div style={{ flex: 1.0, minWidth: 0, display: "flex", alignItems: "center", gap: 6, paddingLeft: 12 }}>
-                        {/* THE LABEL SHARES THIS CELL WITH THE INPUT, and S.tierInput
-                            asks for width 100%, so without flexShrink 0 the span is
-                            squeezed to its MIN-CONTENT width -- the longest single
-                            word. "Adult S" then breaks after "Adult" while "2XL" and
-                            "3T" survive, because a one-word label has no space to
-                            break at. nowrap and flexShrink together are what hold it:
-                            either alone leaves the other failure reachable.
-                            minWidth 52 fits "Adult 2XL", the longest qualified label
-                            sizesForSelection produces, at 12px/600 -- and being a
-                            floor rather than a fixed width it also lines the quantity
-                            boxes up with each other, which minWidth 24 only managed
-                            for short labels. */}
-                        <span style={{ ...S.tierSizeCell, color: "#8a93a5", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0, minWidth: 52, textAlign: "left" }}>{r.label}</span>
-                        {/* 40px, overriding the width 100% that S.tierInput carries.
-                            100% meant "whatever the label leaves", which is how a
-                            longer label made a smaller box -- the two shared the cell
-                            and only the input could give.
-                            width 40 was never what rendered. An input is a flex item
-                            here, so it carried flex-shrink 1, and the cell only has
-                            91.2px for label + gap + input: a 52px label left 39.2,
-                            "Adult 2XL" at ~58px left 33.2. Minus 14px of padding and
-                            2px of border that is 17-23px of content, three digits at
-                            best -- which is the clipping, and it was never one width
-                            but a different one per label. flexShrink 0 is the fix;
-                            raising the number alone would have been given straight
-                            back. 64px holds six digits (45px of text at 12.5px, plus
-                            the 16px the box costs) with a little over half a digit
-                            spare. See the note on the cell for what that overflows. */}
-                        <input
-                          style={{ ...S.tierInput, padding: "5px 7px", fontSize: 12.5, textAlign: "center", width: 64, flexShrink: 0 }}
-                          type="text"
-                          inputMode="numeric"
-                          placeholder="0"
+                      <span style={S.sizeLabel} title={r.label}>{r.label}</span>
+                      <div style={{ flex: 1.0, minWidth: 0 }}>
+                        <input style={S.sizeCostInput} type="text" inputMode="numeric" placeholder="0"
                           aria-label={"Quantity for size " + r.label}
                           value={(t.sizeQty || {})[r.key] ?? ""}
-                          onChange={(e) => setSizeQty(i, r.key, e.target.value)}
-                        />
+                          onChange={(e) => setSizeQty(i, r.key, e.target.value)} />
                       </div>
-                      {/* paddingLeft 32 clears the quantity cell's overspill -- see the
-                          note on that cell: label and box run ~31px past their share,
-                          into this column, which used to be an empty spacer. */}
-                      <div style={{ flex: 1.0, paddingLeft: 32, boxSizing: "border-box", minWidth: 0 }}>
+                      <div style={{ flex: 1.0, minWidth: 0 }}>
                         <input style={S.sizeCostInput} type="text" inputMode="decimal" aria-label={"EXW for size " + r.label}
                           value={r.own.landed ?? ""} onChange={(e) => setSizeCost(i, r.key, "landed", e.target.value)}
                           placeholder={placeholderOf(Number(t.landed) || 0, "$ EXW")} />
@@ -4432,7 +4401,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                       {/* Per unit, like the tier's own Total Cost: EXW, freight and
                           duty, the tier's mold over the whole tier, and this size's
                           plate over this size. */}
-                      <div style={{ flex: 1.1, textAlign: "center", ...S.tierSizeCell }}>{r.cost ? `$${fmtUnit(r.cost)}` : "—"}</div>
+                      <div style={{ flex: 1.1, textAlign: "center", minWidth: 0, ...S.tierSizeCell }}>{r.cost ? `$${fmtUnit(r.cost)}` : "—"}</div>
                       <div style={{ flex: 1.3, display: "flex", gap: AUTO_BTN_GAP, minWidth: 0 }}>
                         <input style={S.sizeCostInput} type="text" inputMode="decimal" aria-label={"Client price for size " + r.label}
                           value={r.own.client ?? ""} onChange={(e) => setSizeCost(i, r.key, "client", e.target.value)}
@@ -4455,7 +4424,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                       quantities, not a fault against any single size. */}
                   {sizeRows.some((r) => r.plateIdle) && (
                     <div style={{ ...S.tierSizeRow, paddingTop: 2, paddingBottom: 6 }}>
-                      <div style={{ flex: 1, paddingLeft: 12, fontSize: 11, color: "#b0763a", lineHeight: 1.35 }}>
+                      <div style={{ flex: 1, fontSize: 11, color: "#b0763a", lineHeight: 1.35 }}>
                         Plate fee entered for {sizeRows.filter((r) => r.plateIdle).map((r) => r.label).join(", ")} — not in the cost above until that size has a quantity.
                       </div>
                     </div>
@@ -4465,7 +4434,9 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                       when there is one -- exactly as the single quote-level fee was,
                       and a tier saved before the move shows that fee here. */}
                   <div style={{ ...S.tierSizeRow, alignItems: "center" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 12, minWidth: 0 }}>
+                    {/* Starts at the row's own padding, the left edge the size labels
+                        share, rather than indented past it. */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                       <span style={{ ...S.tierSizeCell, fontWeight: 600, whiteSpace: "nowrap" }}>Mold / tooling</span>
                       <input
                         style={{ ...S.tierInput, padding: "5px 7px", fontSize: 12.5, width: 110, flexShrink: 0 }}
@@ -4706,7 +4677,10 @@ const S = {
   // not-for-typing. The Air/Ocean toggles and build stay live on it.
   tierEditRowGreyed: { background: "#f3f5f8" },
   // The per-size boxes: a size row's quantity box scaled to the column it sits in.
-  sizeCostInput: { border: "1px solid #e7eaf0", background: "#ffffff", borderRadius: 8, padding: "5px 7px", fontSize: 12.5, color: "#0f1729", width: "100%", minWidth: 0, textAlign: "right" },
+  // Left-aligned, text and placeholder, like the tier row's own boxes above them.
+  sizeCostInput: { border: "1px solid #e7eaf0", background: "#ffffff", borderRadius: 8, padding: "5px 7px", fontSize: 12.5, color: "#0f1729", width: "100%", minWidth: 0, textAlign: "left" },
+  sizeGutter: { width: SIZE_LABEL_W, flexShrink: 0 },
+  sizeLabel: { width: SIZE_LABEL_W, flexShrink: 0, alignSelf: "center", fontSize: 11, fontWeight: 600, color: "#8a93a5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   tierSizeCell: { fontSize: 12, fontVariantNumeric: "tabular-nums", color: "#6a7488", alignSelf: "center" },
   tierInput: { border: "1px solid #e7eaf0", background: "#ffffff", borderRadius: 8, padding: "8px 9px", fontSize: 13.5, color: "#0f1729", width: "100%" },
   // Stands in for the tier's Qty input once the size rows own the number. Dashed and
