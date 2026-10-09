@@ -30,7 +30,7 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey, storedQtyToMap as qtyMapFrom } from "@/app/components/SizeGrid";
 // The tier cost helpers live in lib/tierCost.js so page.jsx reads the SAME ones.
 // They were duplicated by hand there and had drifted; see that file for what broke.
-import { tierFreight, tierDuty, activeFreight, moldPerUnit, effectiveQty, tierTotalCost, platePerUnit } from "@/lib/tierCost";
+import { tierFreight, tierDuty, activeFreight, moldPerUnit, effectiveQty, tierTotalCost, platePerUnit, tierMold } from "@/lib/tierCost";
 import { BANK_FIELDS } from "@/lib/bankFields";
 import { CodeModal } from "@/app/components/CodeModal";
 // HtsField used to live in this file. It moved to app/components so the Edit
@@ -555,7 +555,11 @@ function rowToForm(r) {
     // tiers, and duty_only is already sitting in that jsonb as a dead key nobody
     // reads; a second one would outlive its purpose the same way.
     const legacyFreight = (t.duty == null || t.duty === "") && (air !== "" || ocean !== "");
-    return { qty: t.qty ?? "", landed: t.landed ?? "", ship, freightAir: air, freightOcean: ocean, client: t.client ?? "", fb: Array.isArray(t.fb) ? t.fb : null, duty_only: t.duty_only || false, duty: t.duty ?? "", dutyManual: !!t.dutyManual, dutyLegacy: legacyFreight, sizeQty: qtyMapFrom(t.sizeQty, scales) };
+    // A tier saved before the mold fee moved onto the tier has no `mold` key, and
+    // shows the quote's fee in its box -- the fee it has always been costed on.
+    // Saving writes it to the tier; nothing writes it before then.
+    const mold = Object.prototype.hasOwnProperty.call(t, "mold") ? (t.mold ?? "") : (r.mold_fee ?? "");
+    return { qty: t.qty ?? "", landed: t.landed ?? "", ship, freightAir: air, freightOcean: ocean, client: t.client ?? "", fb: Array.isArray(t.fb) ? t.fb : null, duty_only: t.duty_only || false, duty: t.duty ?? "", dutyManual: !!t.dutyManual, dutyLegacy: legacyFreight, sizeQty: qtyMapFrom(t.sizeQty, scales), mold };
   });
   return {
     id: r.id,
@@ -599,6 +603,11 @@ function formToRow(f) {
       // overwrite it.
       duty: t.duty === "" || t.duty == null ? null : Number(t.duty),
       dutyManual: !!t.dutyManual,
+      // ALWAYS written, null when blank. tierMold reads the key's presence: a tier
+      // that has it uses it, blank meaning no mold, and only a tier that never had
+      // it falls back to mold_fee. Leaving it off when blank would hand a cleared
+      // tier the quote's fee again on the next load.
+      mold: t.mold === "" || t.mold == null ? null : Number(t.mold),
     };
     // Named 'sizeQty' still, and read back by qtyMapFrom under that same name. The
     // SHAPE changed from {size:qty} to [{scale,size,qty}]; the key did not, so a
@@ -622,6 +631,9 @@ function formToRow(f) {
     carton_h: num(f.cartonH), carton_weight: num(f.cartonWeight),
     landed: num(first.landed), freight_duty: num(first.ship === "air" ? first.freightAir : first.freightOcean),
     freight_duty_updated_at: f.freightDutyUpdatedAt || null, freight_duty_updated_by: f.freightDutyUpdatedBy || null,
+    // mold_fee is no longer edited here -- each tier carries its own -- and is
+    // written back exactly as it was loaded. It stays because tiers saved before
+    // the move fall back to it, and the Products page and the PO prefill read it.
     mold_fee: num(f.moldFee), sample_fee: num(f.sampleFee),
     tiers: tiers,
     updated_at: stamp(), updated_by: f.updatedBy || null,
@@ -646,7 +658,7 @@ const BLANK = {
   unitsPerCarton: "", cartonL: "", cartonW: "", cartonH: "", cartonWeight: "",
   freightDutyUpdatedAt: "", freightDutyUpdatedBy: "",
   moldFee: "", sampleFee: "",
-  tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }],
+  tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "", mold: "" }],
 };
 
 // ============================================================
@@ -669,6 +681,19 @@ export default function Quotes({ session: erpSession, newQuote = null }) {
 }
 
 // ---------- tier calc helpers ----------
+// The mold line under the tiers, on screen and on the printed quote. One amount
+// when every tier carries the same fee -- which is every quote saved before the fee
+// moved onto the tier -- so those read exactly as they did. When tiers differ, one
+// amount per tier that has a fee, named by its quantity. Null when there is none.
+// Returns text with the dollar sign in it, for both JSX and the print template.
+function moldFeeText(q) {
+  const tiers = q.tiers || [];
+  if (!tiers.length) return Number(q.moldFee) > 0 ? "$" + fmt(q.moldFee) : null;
+  const fees = tiers.map((t) => tierMold(t, q.moldFee));
+  if (!fees.some((v) => v > 0)) return null;
+  if (fees.every((v) => v === fees[0])) return "$" + fmt(fees[0]);
+  return tiers.map((t, i) => (fees[i] > 0 ? "$" + fmt(fees[i]) + " at " + effectiveQty(t).toLocaleString() : null)).filter(Boolean).join(" · ");
+}
 function quoteSummary(q) {
   const tiers = q.tiers || [];
   if (!tiers.length) return { count: 0, minClient: null, maxClient: null, avgMargin: 0, method: null };
@@ -727,7 +752,7 @@ function Platform({ session, newQuote = null }) {
   // Keyed on that object, so a later visit to this page without one opens nothing.
   useEffect(() => {
     if (!newQuote) return;
-    setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), sku: newQuote.sku || "", product: newQuote.product || "", client: newQuote.client || "", tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] });
+    setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), sku: newQuote.sku || "", product: newQuote.product || "", client: newQuote.client || "", tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "", mold: "" }] });
   }, [newQuote]);
 
   const loadTasks = useCallback(async () => {
@@ -1157,13 +1182,13 @@ function Platform({ session, newQuote = null }) {
   }, [quotes, ui.activeClient]);
 
   const exportCSV = () => {
-    const cols = ["SKU","Date","Product","Client","Client Contact","Factory","Country","HTS","Tier Qty","EXW Cost","Method","Freight+Duty","Total Cost","Client Price","Margin %","Updated","Updated By","Notes"];
+    const cols = ["SKU","Date","Product","Client","Client Contact","Factory","Country","HTS","Tier Qty","EXW Cost","Method","Freight+Duty","Mold Fee","Total Cost","Client Price","Margin %","Updated","Updated By","Notes"];
     const lines = [cols.join(",")];
     quotes.forEach((q) => {
       const tiers = q.tiers && q.tiers.length ? q.tiers : [{}];
       tiers.forEach((t) => {
         const m = tierMargin(t, t.client, q.moldFee);
-        lines.push([q.sku,q.quoteDate,q.product,q.client,q.clientContact,q.factory,q.country,q.hts,t.qty,t.landed,(t.ship||"ocean")==="air"?"Air":"Ocean",activeFreight(t)||"",tierTotalCost(t, q.moldFee)||"",t.client,m ? m.toFixed(1) : "",fmtStamp(q.updatedAt),q.updatedBy,(q.notes||"").replace(/\n/g," ")]
+        lines.push([q.sku,q.quoteDate,q.product,q.client,q.clientContact,q.factory,q.country,q.hts,t.qty,t.landed,(t.ship||"ocean")==="air"?"Air":"Ocean",activeFreight(t)||"",tierMold(t, q.moldFee)||"",tierTotalCost(t, q.moldFee)||"",t.client,m ? m.toFixed(1) : "",fmtStamp(q.updatedAt),q.updatedBy,(q.notes||"").replace(/\n/g," ")]
           .map((v) => `"${String(v ?? "").replace(/"/g,'""')}"`).join(","));
       });
     });
@@ -1233,7 +1258,7 @@ function Platform({ session, newQuote = null }) {
           {/* The app's export pill (.export-pill in globals.css). On a phone it keeps
               its glyph-only form, at 44px, with the label for screen readers. */}
           <button type="button" className="export-pill" onClick={exportCSV} title="Export quotes as CSV" aria-label="Export"><Download size={13} strokeWidth={2.2} />{isMobile ? "" : "Export"}</button>
-          <button style={{ ...S.primaryBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), client: "", tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] })}>
+          <button style={{ ...S.primaryBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), client: "", tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "", mold: "" }] })}>
             <Plus size={16} /> {isMobile ? "New" : "New Quote"}
           </button>
         </div>
@@ -2125,7 +2150,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
             {(q.tiers || []).map((t, i) => {
               const m = tierMargin(t, t.client, q.moldFee);
               const total = tierTotalCost(t, q.moldFee);
-              const mpu = moldPerUnit(q.moldFee, effectiveQty(t));
+              const mpu = moldPerUnit(tierMold(t, q.moldFee), effectiveQty(t));
               const pair = (label, value, strong) => (
                 <div style={{ minWidth: 0 }}>
                   <div style={S.detailLabel}>{label}</div>
@@ -2162,7 +2187,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
             const total = tierTotalCost(t, q.moldFee);
             // Same divisor tierTotalCost just used, or this caption contradicts the
             // number it is captioning on any tier carrying a size mix.
-            const mpu = moldPerUnit(q.moldFee, effectiveQty(t));
+            const mpu = moldPerUnit(tierMold(t, q.moldFee), effectiveQty(t));
             return (
               <div key={i} style={S.tierBodyRow}>
                 <div style={{ flex: 1, fontWeight: 600, color: "#0f1729" }}>{t.qty ? Number(t.qty).toLocaleString() : "—"}</div>
@@ -2185,9 +2210,9 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
           {(!q.tiers || q.tiers.length === 0) && <div style={{ ...S.tierBodyRow, color: "#6a7488", justifyContent: "center" }}>No tiers entered.</div>}
         </div>
         )}
-        {(Number(q.moldFee) > 0 || Number(q.sampleFee) > 0) && (
+        {(moldFeeText(q) || Number(q.sampleFee) > 0) && (
           <div style={S.feeNote}>
-            {Number(q.moldFee) > 0 && <span>Mold/tooling fee: <b>${fmt(q.moldFee)}</b> <span style={{ color: "#6a7488" }}>(amortized into total cost per unit)</span></span>}
+            {moldFeeText(q) && <span>Mold/tooling fee: <b>{moldFeeText(q)}</b> <span style={{ color: "#6a7488" }}>(amortized into total cost per unit)</span></span>}
             {Number(q.sampleFee) > 0 && <span>Sample fee: <b>${fmt(q.sampleFee)}</b> <span style={{ color: "#6a7488" }}>(not included in total cost)</span></span>}
           </div>
         )}
@@ -2338,7 +2363,7 @@ async function printQuote(q) {
     // share the total beside it had not used, on a document that goes to the client.
     // The on-screen detail view at the top of this file already had it right; the
     // printed copy of the same row did not.
-    const mpu = moldPerUnit(q.moldFee, effectiveQty(t));
+    const mpu = moldPerUnit(tierMold(t, q.moldFee), effectiveQty(t));
     return `<tr${idx % 2 ? ' class="alt"' : ''}>
       <td class="qty">${t.qty ? Number(t.qty).toLocaleString() : "—"}</td>
       <td class="r">${t.landed ? "$" + fmtUnit(t.landed) : "—"}</td>
@@ -2350,8 +2375,8 @@ async function printQuote(q) {
     </tr>`;
   }).join("");
   const row = (label, val) => val ? `<div class="kv"><span>${esc(label)}</span><b>${esc(val)}</b></div>` : "";
-  const feeLine = (Number(q.moldFee) > 0 || Number(q.sampleFee) > 0)
-    ? `<div class="fees">${Number(q.moldFee) > 0 ? `<div>Mold / tooling fee: <b>$${fmt(q.moldFee)}</b> <span>(amortized into total cost per unit)</span></div>` : ""}${Number(q.sampleFee) > 0 ? `<div>Sample fee: <b>$${fmt(q.sampleFee)}</b> <span>(not included in total cost)</span></div>` : ""}</div>`
+  const feeLine = (moldFeeText(q) || Number(q.sampleFee) > 0)
+    ? `<div class="fees">${moldFeeText(q) ? `<div>Mold / tooling fee: <b>${moldFeeText(q)}</b> <span>(amortized into total cost per unit)</span></div>` : ""}${Number(q.sampleFee) > 0 ? `<div>Sample fee: <b>$${fmt(q.sampleFee)}</b> <span>(not included in total cost)</span></div>` : ""}</div>`
     : "";
   const fdStamp = q.freightDutyUpdatedAt ? `<div class="stamp">Freight &amp; duty last updated ${esc(fmtStamp(q.freightDutyUpdatedAt))}${q.freightDutyUpdatedBy ? " by " + esc(q.freightDutyUpdatedBy) : ""}</div>` : "";
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>KUI Quote — ${esc(q.sku || q.product || "")}</title>
@@ -2948,7 +2973,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
   // while f.product still equals this exactly; the moment somebody edits the
   // name, it stops matching and the name is theirs.
   const lastFilledRef = useRef('');
-  const [f, setF] = useState(() => ({ ...initial, tiers: (initial.tiers && initial.tiers.length ? initial.tiers.map((t) => ({ ...t })) : [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }]) }));
+  const [f, setF] = useState(() => ({ ...initial, tiers: (initial.tiers && initial.tiers.length ? initial.tiers.map((t) => ({ ...t })) : [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "", mold: "" }]) }));
   const [fbTier, setFbTier] = useState(null); // index of tier whose freight builder is open
   // showClientSug went with the suggestion list; the picker owns its own open
   // state. savingContact went with the save-to-library button below it.
@@ -3374,10 +3399,10 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
   };
   // duty starts blank on a new tier and stays blank until an EXW is typed -- there is
   // nothing to take a percentage of yet.
-  const addTier = (qty = "") => setF((p) => ({ ...p, tiers: [...p.tiers, { qty, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "", duty: "", dutyManual: false }] }));
+  const addTier = (qty = "") => setF((p) => ({ ...p, tiers: [...p.tiers, { qty, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "", duty: "", dutyManual: false, mold: "" }] }));
   const addPresets = () => setF((p) => {
     const have = new Set(p.tiers.map((t) => Number(t.qty)));
-    const additions = PRESET_QTYS.filter((q) => !have.has(q)).map((q) => ({ qty: q, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "", duty: "", dutyManual: false }));
+    const additions = PRESET_QTYS.filter((q) => !have.has(q)).map((q) => ({ qty: q, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "", duty: "", dutyManual: false, mold: "" }));
     return { ...p, tiers: [...p.tiers, ...additions] };
   });
   const removeTier = (i) => setF((p) => ({ ...p, tiers: p.tiers.filter((_, idx) => idx !== i) }));
@@ -4329,6 +4354,30 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                       </div>
                     </div>
                   )}
+                  {/* THE TIER'S OWN MOLD FEE. One box per tier, so Add tier adds
+                      another. It is spread over this tier's quantity -- the size mix
+                      when there is one -- exactly as the single quote-level fee was,
+                      and a tier saved before the move shows that fee here. */}
+                  <div style={{ ...S.tierSizeRow, alignItems: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 12, minWidth: 0 }}>
+                      <span style={{ ...S.tierSizeCell, fontWeight: 600, whiteSpace: "nowrap" }}>Mold / tooling</span>
+                      <input
+                        style={{ ...S.tierInput, padding: "5px 7px", fontSize: 12.5, width: 110, flexShrink: 0 }}
+                        type="number"
+                        aria-label={"Mold / tooling fee for tier " + (i + 1)}
+                        value={t.mold ?? ""}
+                        onChange={(e) => setTier(i, "mold", e.target.value)}
+                        placeholder="$ one-time"
+                      />
+                      {Number(t.mold) > 0 && (
+                        <span style={{ ...S.tierSizeCell, whiteSpace: "nowrap" }}>
+                          {effectiveQty(t) > 0
+                            ? `$${fmtUnit(moldPerUnit(t.mold, effectiveQty(t)))}/unit over ${effectiveQty(t).toLocaleString()} units, in the total cost`
+                            : "in the total cost once this tier has a quantity"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                   </React.Fragment>
                 );
               })}
@@ -4349,15 +4398,6 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                   setFbTier(null);
                 }}
               />
-            )}
-            <label style={{ ...S.field, marginTop: 14, maxWidth: 320 }}>
-              <span style={S.fieldLabel}>Mold / Tooling Fee <span style={{ color: "#6a7488", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>(amortized per unit into total cost)</span></span>
-              <div style={{ position: "relative" }}>
-                <input style={S.input} type="number" value={f.moldFee ?? ""} onChange={set("moldFee")} placeholder="$ one-time mold cost" />
-              </div>
-            </label>
-            {Number(f.moldFee) > 0 && (
-              <div style={{ fontSize: 12, color: "#6a7488", marginTop: 6 }}>Divided across each tier's quantity and added to that tier's total cost (e.g. ${fmt(f.moldFee)} ÷ 1,000 units = ${fmt(moldPerUnit(f.moldFee, 1000))}/unit).</div>
             )}
           </div>
 
