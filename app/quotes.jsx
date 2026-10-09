@@ -30,7 +30,7 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey, storedQtyToMap as qtyMapFrom } from "@/app/components/SizeGrid";
 // The tier cost helpers live in lib/tierCost.js so page.jsx reads the SAME ones.
 // They were duplicated by hand there and had drifted; see that file for what broke.
-import { tierFreight, tierDuty, activeFreight, moldPerUnit, effectiveQty, tierTotalCost, sizedTierSummary } from "@/lib/tierCost";
+import { tierFreight, tierDuty, activeFreight, moldPerUnit, effectiveQty, tierTotalCost, sizedTierSummary, tierHasSizeMold, tierMoldFee } from "@/lib/tierCost";
 import { BANK_FIELDS } from "@/lib/bankFields";
 import { CodeModal } from "@/app/components/CodeModal";
 // HtsField used to live in this file. It moved to app/components so the Edit
@@ -185,7 +185,13 @@ const SIZE_LABEL_W = 60;
 // that the size row's same cells do not, so the two rows resolved to different
 // x positions from the Method column on. With minWidth 0 each cell is exactly
 // its share of the same width in every row, whatever is inside it.
-const TIER_FLEX = { qty: 1.0, exw: 1.0, method: 0.8, freight: 1.5, duty: 1.0, total: 1.1, client: 1.3, margin: 0.8 };
+// mold exists only in Bag mode, between Duty and Total Cost: the last cost before
+// the total it feeds.
+const TIER_FLEX = { qty: 1.0, exw: 1.0, method: 0.8, freight: 1.5, duty: 1.0, mold: 0.9, total: 1.1, client: 1.3, margin: 0.8 };
+// What the Mold Fee column adds to the table's minimum: its share at the width the
+// other columns already get (about 86px per unit of flex at the 860 minimum), plus
+// one gap, so turning Bag on never squeezes the columns it did not add.
+const MOLD_COL_W = 86;
 const tierCol = (k) => ({ flex: TIER_FLEX[k], minWidth: 0 });
 // The delete-tier slot at the end of every row. flexShrink 0, or the empty slot on
 // a size row could give up width the tier row's button slot keeps.
@@ -264,6 +270,7 @@ function sizeRowsFor(t, rows, entries, deltaMap, plateMap) {
       // The state the muted note under the rows is for: a fee was entered and is
       // contributing nothing, because nothing of this size is being made yet.
       plateIdle: plateFee > 0 && r.qty <= 0,
+      moldIdle: r.moldFee > 0 && r.qty <= 0,
     };
   });
 }
@@ -548,7 +555,7 @@ function qtyMapToRow(map, scales) {
 // ── Per-size costs inside a tier ─────────────────────────────────────────────
 // A FOURTH PAIR, same rule as the boxed note above: sizeCostFrom and sizeCostToRow
 // must agree exactly. Stored on the tier as [{scale,size,landed,freightAir,
-// freightOcean,duty,dutyManual,client}], SPARSE twice over: a size appears only when
+// freightOcean,duty,dutyManual,client,mold}], SPARSE twice over: a size appears only when
 // something was typed for it, and carries only the fields that were. Everything
 // absent falls back to the tier at the point of use (sizeUnit in lib/tierCost),
 // never here -- filling gaps at load would freeze today's tier figure into the size
@@ -560,7 +567,8 @@ function qtyMapToRow(map, scales) {
 // Outside Bag mode a size holds a client price and nothing else, so both sides read
 // and write only that field there: a cost typed while Bag was ticked cannot ride
 // along, unseen, on a quote that no longer shows it.
-const SIZE_COST_FIELDS = ["landed", "freightAir", "freightOcean", "duty", "client"];
+// mold is the size's own one-time mold fee, in dollars -- not per unit like the rest.
+const SIZE_COST_FIELDS = ["landed", "freightAir", "freightOcean", "duty", "client", "mold"];
 const sizeCostFields = (scales) => (isBagMode(scales) ? SIZE_COST_FIELDS : ["client"]);
 function sizeCostFrom(v, scales) {
   const map = {};
@@ -752,11 +760,17 @@ export default function Quotes({ session: erpSession, newQuote = null }) {
 }
 
 // ---------- tier calc helpers ----------
-// The mold line under the tiers, on screen and on the printed quote: the quote's
-// one fee. Null when there is none. Returns text with the dollar sign in it, for
-// both JSX and the print template.
+// The mold line under the tiers, on screen and on the printed quote. The quote's one
+// fee, unless a tier carries per-size mold fees (Bag): then each tier's total, one
+// amount if they agree, otherwise one per tier named by its quantity. Null when
+// there is none. Returns text with the dollar sign in it, for JSX and the print.
 function moldFeeText(q) {
-  return Number(q.moldFee) > 0 ? "$" + fmt(q.moldFee) : null;
+  const tiers = q.tiers || [];
+  if (!tiers.some(tierHasSizeMold)) return Number(q.moldFee) > 0 ? "$" + fmt(q.moldFee) : null;
+  const fees = tiers.map((t) => tierMoldFee(t, q.moldFee));
+  if (!fees.some((v) => v > 0)) return null;
+  if (fees.every((v) => v === fees[0])) return "$" + fmt(fees[0]);
+  return tiers.map((t, i) => (fees[i] > 0 ? "$" + fmt(fees[i]) + " at " + effectiveQty(t).toLocaleString() : null)).filter(Boolean).join(" · ");
 }
 function quoteSummary(q) {
   const tiers = q.tiers || [];
@@ -1252,7 +1266,7 @@ function Platform({ session, newQuote = null }) {
       const tiers = q.tiers && q.tiers.length ? q.tiers : [{}];
       tiers.forEach((t) => {
         const m = tierMargin(t, t.client, q.moldFee);
-        lines.push([q.sku,q.quoteDate,q.product,q.client,q.clientContact,q.factory,q.country,q.hts,t.qty,t.landed,(t.ship||"ocean")==="air"?"Air":"Ocean",activeFreight(t)||"",Number(q.moldFee)||"",tierTotalCost(t, q.moldFee)||"",t.client,m ? m.toFixed(1) : "",fmtStamp(q.updatedAt),q.updatedBy,(q.notes||"").replace(/\n/g," ")]
+        lines.push([q.sku,q.quoteDate,q.product,q.client,q.clientContact,q.factory,q.country,q.hts,t.qty,t.landed,(t.ship||"ocean")==="air"?"Air":"Ocean",activeFreight(t)||"",tierMoldFee(t, q.moldFee)||"",tierTotalCost(t, q.moldFee)||"",t.client,m ? m.toFixed(1) : "",fmtStamp(q.updatedAt),q.updatedBy,(q.notes||"").replace(/\n/g," ")]
           .map((v) => `"${String(v ?? "").replace(/"/g,'""')}"`).join(","));
       });
     });
@@ -2216,7 +2230,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
             {(q.tiers || []).map((t, i) => {
               const m = tierMargin(t, t.client, q.moldFee);
               const total = tierTotalCost(t, q.moldFee);
-              const mpu = moldPerUnit(q.moldFee, effectiveQty(t));
+              const mpu = moldPerUnit(tierMoldFee(t, q.moldFee), effectiveQty(t));
               const pair = (label, value, strong) => (
                 <div style={{ minWidth: 0 }}>
                   <div style={S.detailLabel}>{label}</div>
@@ -2253,7 +2267,7 @@ function ExpandedDetail({ q, tasks = [], onAddTask, onToggleTask, onDeleteTask, 
             const total = tierTotalCost(t, q.moldFee);
             // Same divisor tierTotalCost just used, or this caption contradicts the
             // number it is captioning on any tier carrying a size mix.
-            const mpu = moldPerUnit(q.moldFee, effectiveQty(t));
+            const mpu = moldPerUnit(tierMoldFee(t, q.moldFee), effectiveQty(t));
             return (
               <div key={i} style={S.tierBodyRow}>
                 <div style={{ flex: 1, fontWeight: 600, color: "#0f1729" }}>{t.qty ? Number(t.qty).toLocaleString() : "—"}</div>
@@ -2429,7 +2443,7 @@ async function printQuote(q) {
     // share the total beside it had not used, on a document that goes to the client.
     // The on-screen detail view at the top of this file already had it right; the
     // printed copy of the same row did not.
-    const mpu = moldPerUnit(q.moldFee, effectiveQty(t));
+    const mpu = moldPerUnit(tierMoldFee(t, q.moldFee), effectiveQty(t));
     return `<tr${idx % 2 ? ' class="alt"' : ''}>
       <td class="qty">${t.qty ? Number(t.qty).toLocaleString() : "—"}</td>
       <td class="r">${t.landed ? "$" + fmtUnit(t.landed) : "—"}</td>
@@ -4145,7 +4159,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
             {/* The gutter is added to the minimum, not taken from it, so on a phone
                 the columns keep the widths they have without sizes and the table
                 scrolls a little further sideways instead. */}
-            <div style={{ ...S.tierEditTable, minWidth: 860 + (sizeEntries.length ? SIZE_LABEL_W + 8 : 0) }}>
+            <div style={{ ...S.tierEditTable, minWidth: 860 + (sizeEntries.length ? SIZE_LABEL_W + 8 : 0) + (bagMode ? MOLD_COL_W : 0) }}>
               <div style={S.tierEditHead}>
                 {/* The gutter's heading. Inherits the row's heading type, and sits
                     left rather than centred so it starts where the size labels under
@@ -4176,6 +4190,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                     on the cell. Half the button reads correct. */}
                 <div style={{ ...tierCol("freight"), textAlign: "center", paddingRight: 24, boxSizing: "border-box" }}>Freight</div>
                 <div style={{ ...tierCol("duty"), textAlign: "center" }}>Duty</div>
+                {bagMode && <div style={{ ...tierCol("mold"), textAlign: "center" }}>Mold Fee</div>}
                 {/* Header and value cell are both flex 1.1 and both centred, so the
                     boxes agree exactly -- verified, not assumed. What is off is the
                     TEXT: this row is uppercase with letterSpacing .05em, which adds a
@@ -4358,6 +4373,18 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                       )}
                       </>)}
                     </div>
+                    {/* Bag mode's mold: no box on the tier, the fees are the sizes'.
+                        Greyed, their total in the cost. Otherwise what is typed so
+                        far, or the quote's old fee where no size has one yet. */}
+                    {bagMode && (
+                      <div style={{ ...tierCol("mold"), textAlign: "center", alignSelf: "center", ...S.tierSizeCell }}>
+                        {greyed
+                          ? <TotalCell value={"$" + fmt(sized.totals.mold)} label="total mold" />
+                          : tierHasSizeMold(t)
+                            ? "$" + fmt(sizeRows.reduce((a, r) => a + r.moldFee, 0))
+                            : Number(f.moldFee) > 0 ? <span title="The quote's mold fee, from before mold was per size">${fmt(f.moldFee)} quote</span> : "—"}
+                      </div>
+                    )}
                     {/* fmtUnit, not fmt. This is a PER-UNIT figure -- EXW plus
                         freight plus duty plus the mold share, all of which are
                         rendered at up to 5dp in the cells feeding it -- so fmt's
@@ -4456,6 +4483,17 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                           </button>
                         )}
                       </div> : <div style={tierCol("duty")} />}
+                      {/* One-time, in dollars, spread over this size's quantity in
+                          this tier. Blank is no mold for this size -- unless no size
+                          in the tier has one, in which case the quote's old fee, if
+                          any, is still spread over the whole tier. */}
+                      {bagMode && (
+                        <div style={tierCol("mold")}>
+                          <input style={S.sizeCostInput} type="text" inputMode="decimal" aria-label={"Mold fee for size " + r.label}
+                            value={r.own.mold ?? ""} onChange={(e) => setSizeCost(i, r.key, "mold", e.target.value)}
+                            placeholder="$ one-time" />
+                        </div>
+                      )}
                       {/* Bag mode: per unit, like the tier's own Total Cost -- EXW,
                           freight and duty, the mold over the whole tier, and this
                           size's plate over this size. Otherwise the tier's own total,
@@ -4483,10 +4521,11 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                       number sits in its box looking applied and is not. One line for
                       all such sizes rather than one per row: it is a prompt to enter
                       quantities, not a fault against any single size. */}
-                  {sizeRows.some((r) => r.plateIdle) && (
+                  {sizeRows.some((r) => r.plateIdle || r.moldIdle) && (
                     <div style={{ ...S.tierSizeRow, paddingTop: 2, paddingBottom: 6 }}>
                       <div style={{ flex: 1, fontSize: 11, color: "#b0763a", lineHeight: 1.35 }}>
-                        Plate fee entered for {sizeRows.filter((r) => r.plateIdle).map((r) => r.label).join(", ")} — not in the cost above until that size has a quantity.
+                        {sizeRows.some((r) => r.plateIdle) && <div>Plate fee entered for {sizeRows.filter((r) => r.plateIdle).map((r) => r.label).join(", ")} — not in the cost above until that size has a quantity.</div>}
+                        {sizeRows.some((r) => r.moldIdle) && <div>Mold fee entered for {sizeRows.filter((r) => r.moldIdle).map((r) => r.label).join(", ")} — not in the cost above until that size has a quantity.</div>}
                       </div>
                     </div>
                   )}
@@ -4499,7 +4538,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
               <button style={S.addTierBtn} onClick={() => addTier()}><Plus size={14} /> Add tier</button>
               <button style={S.presetBtn} onClick={addPresets}>+ Preset qtys (500 / 1k / 2.5k / 5k)</button>
             </div>
-            <div style={S.tierHint}>Total Cost = EXW + Freight/Duty (auto). Client price auto-suggests from KUI margin logic off total cost — tap "auto," then adjust. Margin turns amber below 25%. Tap Σ to build the freight number from its real cost legs. With Bag sizes, each size row takes its own EXW, freight, duty and client price — a blank box uses the tier's figure, shown faintly in it — and once any size has a quantity the tier row turns grey and shows dollar totals. With other sizes, each size row takes a quantity and its own client price. Swipe sideways to see all columns.</div>
+            <div style={S.tierHint}>Total Cost = EXW + Freight/Duty (auto). Client price auto-suggests from KUI margin logic off total cost — tap "auto," then adjust. Margin turns amber below 25%. Tap Σ to build the freight number from its real cost legs. With Bag sizes, each size row takes its own EXW, freight, duty, mold fee and client price — a blank box uses the tier's figure, shown faintly in it — and once any size has a quantity the tier row turns grey and shows dollar totals. With other sizes, each size row takes a quantity and its own client price. Swipe sideways to see all columns.</div>
             {fbTier != null && f.tiers[fbTier] && (
               <FreightBuilder
                 tier={f.tiers[fbTier]}
@@ -4523,6 +4562,12 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                 }}
               />
             )}
+            {/* In Bag mode the mold is per size, in the table, and there is no
+                quote-level box. A Bag quote saved before that can still carry a
+                quote fee: it keeps costing exactly as it did -- over each tier
+                where no size has a fee of its own -- and this line says so, with a
+                way to drop it, rather than leaving a fee nobody can see. */}
+            {!bagMode ? (<>
             <label style={{ ...S.field, marginTop: 14, maxWidth: 320 }}>
               <span style={S.fieldLabel}>Mold / Tooling Fee <span style={{ color: "#6a7488", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>(amortized per unit into total cost)</span></span>
               <div style={{ position: "relative" }}>
@@ -4531,6 +4576,13 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
             </label>
             {Number(f.moldFee) > 0 && (
               <div style={{ fontSize: 12, color: "#6a7488", marginTop: 6 }}>Divided across each tier's quantity and added to that tier's total cost (e.g. ${fmt(f.moldFee)} ÷ 1,000 units = ${fmt(moldPerUnit(f.moldFee, 1000))}/unit).</div>
+            )}
+            </>) : Number(f.moldFee) > 0 && (
+              <div style={{ fontSize: 12, color: "#b0763a", marginTop: 12, lineHeight: 1.45 }}>
+                This quote has a ${fmt(f.moldFee)} quote-level mold fee from before mold fees were per size. It is still spread over each tier where no size has a mold fee of its own.{" "}
+                <button type="button" onClick={() => { markDirty(); setF((p) => ({ ...p, moldFee: "" })); }}
+                  style={{ fontSize: 12, fontWeight: 600, color: "#3461e0", background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline" }}>Remove it</button>
+              </div>
             )}
           </div>
 
