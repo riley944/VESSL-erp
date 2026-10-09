@@ -175,6 +175,21 @@ const AUTO_BTN_GAP = 4;  // px, matches the flex gap in that cell
 // longest qualified label sizesForSelection makes ("Adult XL", "Youth XL") at
 // 11px/600; anything longer truncates with the full label in its title.
 const SIZE_LABEL_W = 60;
+// THE TIER TABLE'S COLUMNS, defined once for the header, the tier row and every
+// size row, so the three cannot drift apart cell by cell.
+//
+// minWidth 0 on every cell is what makes the flex shares exact. Left at its
+// default (auto), a cell refuses to shrink below its content, so a cell whose
+// content is wider than its share grows and pushes every column to its right.
+// The tier row's cells hold content -- the Air/Ocean toggles, a dollar total --
+// that the size row's same cells do not, so the two rows resolved to different
+// x positions from the Method column on. With minWidth 0 each cell is exactly
+// its share of the same width in every row, whatever is inside it.
+const TIER_FLEX = { qty: 1.0, exw: 1.0, method: 0.8, freight: 1.5, duty: 1.0, total: 1.1, client: 1.3, margin: 0.8 };
+const tierCol = (k) => ({ flex: TIER_FLEX[k], minWidth: 0 });
+// The delete-tier slot at the end of every row. flexShrink 0, or the empty slot on
+// a size row could give up width the tier row's button slot keeps.
+const TIER_DEL_W = 30;
 const MARGIN_GUTTER_PAD = 30;  // px of paddingLeft; moves the centre right by half
 function stamp() { return new Date().toISOString(); }
 function fmtStamp(iso) {
@@ -4121,11 +4136,11 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                     alignment -- numbers stay right, inputs stay left -- because a
                     heading labels a column while a figure has to line up with the
                     figures above and below it. */}
-                <div style={{ flex: 1.0, textAlign: "center" }}>Quantity</div>
-                <div style={{ flex: 1.0, textAlign: "center" }}>EXW Cost</div>
+                <div style={{ ...tierCol("qty"), textAlign: "center" }}>Quantity</div>
+                <div style={{ ...tierCol("exw"), textAlign: "center" }}>EXW Cost</div>
                 {/* Method gives up 0.2 to Freight. It holds two fixed-width toggles
                     that never grow, so it was the only column with width to spare. */}
-                <div style={{ flex: 0.8, textAlign: "center" }}>Method</div>
+                <div style={{ ...tierCol("method"), textAlign: "center" }}>Method</div>
                 {/* The widest cell in the row: an input whose placeholder runs to
                     "$ ocean" AND the build button beside it, sharing one flex box.
                     paddingRight subtracts the button from the centring so the word
@@ -4135,8 +4150,8 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                     button is geometrically right and visually wrong when the label
                     is wider than the box it names, because the eye then centres it
                     on the cell. Half the button reads correct. */}
-                <div style={{ flex: 1.5, textAlign: "center", paddingRight: 24, boxSizing: "border-box" }}>Freight</div>
-                <div style={{ flex: 1.0, textAlign: "center" }}>Duty</div>
+                <div style={{ ...tierCol("freight"), textAlign: "center", paddingRight: 24, boxSizing: "border-box" }}>Freight</div>
+                <div style={{ ...tierCol("duty"), textAlign: "center" }}>Duty</div>
                 {/* Header and value cell are both flex 1.1 and both centred, so the
                     boxes agree exactly -- verified, not assumed. What is off is the
                     TEXT: this row is uppercase with letterSpacing .05em, which adds a
@@ -4144,14 +4159,14 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                     of the word, so every header in this row sits about half a space
                     left of true. It only shows here because this is the one column
                     whose value is also centred and directly beneath. */}
-                <div style={{ flex: 1.1, textAlign: "center", paddingLeft: 6, boxSizing: "border-box" }}>Total Cost</div>
+                <div style={{ ...tierCol("total"), textAlign: "center", paddingLeft: 6, boxSizing: "border-box" }}>Total Cost</div>
                 {/* Nudged by eye, not derived. Subtracting the whole button
                     (AUTO_BTN_W + AUTO_BTN_GAP = 50) over-corrected and left the words
                     sitting off the left edge of the box; half of it reads centred.
                     The full subtraction is geometrically right and visually wrong --
                     "Client Price" is wider than the box it labels, so it cannot sit
                     inside it and the eye centres it on the whole cell instead. */}
-                <div style={{ flex: 1.3, textAlign: "center", paddingRight: 25, boxSizing: "border-box" }}>Client Price</div>
+                <div style={{ ...tierCol("client"), textAlign: "center", paddingRight: 25, boxSizing: "border-box" }}>Client Price</div>
                 {/* CENTRED, and the two value cells below are centred to match --
                     tier row and size row both. Right-aligning them made the title
                     and the number share a right EDGE, which is not the same as
@@ -4161,8 +4176,8 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                     ~12px without closing it. Centring both puts every value, however
                     long, on the same axis as the word above it -- which is what
                     Total Cost already does. */}
-                <div style={{ flex: 0.8, textAlign: "center", paddingLeft: MARGIN_GUTTER_PAD, boxSizing: "border-box" }}>Margin</div>
-                <div style={{ width: 30 }} />
+                <div style={{ ...tierCol("margin"), textAlign: "center", paddingLeft: MARGIN_GUTTER_PAD, boxSizing: "border-box" }}>Margin</div>
+                <div style={{ width: TIER_DEL_W, flexShrink: 0 }} />
               </div>
               {f.tiers.map((t, i) => {
                 const m = tierMargin(t, t.client, f.moldFee);
@@ -4193,17 +4208,17 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                   <React.Fragment key={i}>
                   <div style={{ ...S.tierEditRow, ...(greyed ? S.tierEditRowGreyed : {}) }}>
                     {sizeEntries.length > 0 && <div style={S.sizeGutter} />}
-                    <div style={{ flex: 1.0 }}>{!greyed
+                    <div style={tierCol("qty")}>{!greyed
                       ? <input style={S.tierInput} type="number" value={t.qty ?? ""} onChange={(e) => setTier(i, "qty", e.target.value)} placeholder="Qty" />
                       : <TotalCell value={sizeTotal.toLocaleString()} label="total qty" />}</div>
-                    <div style={{ flex: 1.0 }}>{!greyed
+                    <div style={tierCol("exw")}>{!greyed
                       ? <input style={S.tierInput} type="number" value={t.landed ?? ""} onChange={(e) => setTier(i, "landed", e.target.value)} placeholder="$ EXW" />
                       : <TotalCell value={"$" + fmt(sized.totals.exw)} label="total EXW" />}</div>
-                    <div style={{ flex: 0.8, display: "flex", gap: 3, alignItems: "center" }}>
+                    <div style={{ ...tierCol("method"), display: "flex", gap: 3, alignItems: "center" }}>
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "air" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "air")}>Air</button>
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "ocean" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "ocean")}>Ocean</button>
                     </div>
-                    <div style={{ flex: 1.5, display: "flex", gap: FB_BTN_GAP }}>
+                    <div style={{ ...tierCol("freight"), display: "flex", gap: FB_BTN_GAP }}>
                       {!greyed
                         ? <input style={S.tierInput} type="number" value={t[freightKey] ?? ""} onChange={(e) => setTier(i, freightKey, e.target.value)} placeholder={ship === "air" ? "$ air" : "$ ocean"} />
                         : <div style={{ flex: 1, minWidth: 0 }}><TotalCell value={"$" + fmt(sized.totals.freight)} label="total freight" /></div>}
@@ -4217,7 +4232,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                         manual on the first keystroke so a later EXW edit leaves it
                         alone. The hint is terse because the column is flex 1.0; the
                         sentence lives on the title, like the eFiling button. */}
-                    <div style={{ flex: 1.0, display: "flex", flexDirection: "column", gap: 2 }}>
+                    <div style={{ ...tierCol("duty"), display: "flex", flexDirection: "column", gap: 2 }}>
                       {greyed ? <TotalCell value={"$" + fmt(sized.totals.duty)} label="total duty" /> : (<>
                       {/* THE OTHER HALF OF THE CLEAR. setTier drops dutyManual the
                           moment the box goes empty but deliberately leaves it empty,
@@ -4320,12 +4335,12 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                         (fmtUnit in tierRows) already did this; the editor was the
                         odd one out, so all three now agree. */}
                     {greyed
-                      ? <div style={{ flex: 1.1 }}><TotalCell value={"$" + fmt(sized.totals.cost)} label="total cost" /></div>
-                      : <div style={{ flex: 1.1, textAlign: "center", alignSelf: "center", ...S.num, fontWeight: 600, color: "#0f1729" }}>{total ? `$${fmtUnit(total)}` : "—"}</div>}
+                      ? <div style={tierCol("total")}><TotalCell value={"$" + fmt(sized.totals.cost)} label="total cost" /></div>
+                      : <div style={{ ...tierCol("total"), textAlign: "center", alignSelf: "center", ...S.num, fontWeight: 600, color: "#0f1729" }}>{total ? `$${fmtUnit(total)}` : "—"}</div>}
                     {/* Column, not a row: the mix line sits under both the input and the
                         auto button. The base price stays typed — the per-size prices are
                         derived from it, so deriving it back would be circular. */}
-                    <div style={{ flex: 1.3, display: "flex", flexDirection: "column", gap: 3 }}>
+                    <div style={{ ...tierCol("client"), display: "flex", flexDirection: "column", gap: 3 }}>
                       {greyed
                         ? <TotalCell value={"$" + fmt(sized.totals.client)} label="total client" />
                         : <div style={{ display: "flex", gap: AUTO_BTN_GAP }}>
@@ -4335,12 +4350,12 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                     </div>
                     {/* Centred to share a centreline with the MARGIN header, not a
                         right edge. See the note on that header. */}
-                    <div style={{ flex: 0.8, textAlign: "center", paddingLeft: MARGIN_GUTTER_PAD, boxSizing: "border-box", ...S.num, alignSelf: "center" }}>
+                    <div style={{ ...tierCol("margin"), textAlign: "center", paddingLeft: MARGIN_GUTTER_PAD, boxSizing: "border-box", ...S.num, alignSelf: "center" }}>
                       {greyed
                         ? (sized.totals.margin == null ? <TotalCell value="—" label="overall" /> : <TotalCell value={<span style={{ color: sized.totals.margin < 25 ? "#c2683a" : "#3f7d5a" }}>{sized.totals.margin.toFixed(0)}%</span>} label="overall" />)
                         : <span style={{ color: (band ? band.low : m) && (band ? band.low : m) < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{band ? (band.low.toFixed(0) === band.high.toFixed(0) ? band.low.toFixed(0) + "%" : band.low.toFixed(0) + "-" + band.high.toFixed(0) + "%") : (m ? m.toFixed(0) + "%" : "—")}</span>}
                     </div>
-                    <div style={{ width: 30, alignSelf: "center", textAlign: "center" }}>
+                    <div style={{ width: TIER_DEL_W, flexShrink: 0, alignSelf: "center", textAlign: "center" }}>
                       {f.tiers.length > 1 && <button style={S.tierDel} onClick={() => removeTier(i)}><X size={14} /></button>}
                     </div>
                   </div>
@@ -4356,13 +4371,13 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                   {sizeRows.map((r) => (
                     <div key={r.key} style={S.tierSizeRow}>
                       <span style={S.sizeLabel} title={r.label}>{r.label}</span>
-                      <div style={{ flex: 1.0, minWidth: 0 }}>
+                      <div style={tierCol("qty")}>
                         <input style={S.sizeCostInput} type="text" inputMode="numeric" placeholder="0"
                           aria-label={"Quantity for size " + r.label}
                           value={(t.sizeQty || {})[r.key] ?? ""}
                           onChange={(e) => setSizeQty(i, r.key, e.target.value)} />
                       </div>
-                      <div style={{ flex: 1.0, minWidth: 0 }}>
+                      <div style={tierCol("exw")}>
                         <input style={S.sizeCostInput} type="text" inputMode="decimal" aria-label={"EXW for size " + r.label}
                           value={r.own.landed ?? ""} onChange={(e) => setSizeCost(i, r.key, "landed", e.target.value)}
                           placeholder={placeholderOf(Number(t.landed) || 0, "$ EXW")} />
@@ -4373,20 +4388,22 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                           here rightward sat at a slightly different x on a size row
                           than on the tier above it. Width-only, no content -- the
                           method is the tier's, one shipment one way. */}
-                      <div style={{ flex: 0.8 }} />
+                      <div style={tierCol("method")} />
                       {/* Freight: 1.5, same correction as Method. Reads and writes the
                           key for the tier's method, as the tier's own box does, so
                           flipping Air/Ocean hides a size's other figure rather than
                           erasing it. */}
-                      <div style={{ flex: 1.5, paddingRight: FB_BTN_W + FB_BTN_GAP, boxSizing: "border-box", minWidth: 0 }}>
+                      <div style={{ ...tierCol("freight"), display: "flex", gap: FB_BTN_GAP }}>
                         <input style={S.sizeCostInput} type="text" inputMode="decimal" aria-label={"Freight for size " + r.label}
                           value={r.own[freightKey] ?? ""} onChange={(e) => setSizeCost(i, r.key, freightKey, e.target.value)}
                           placeholder={placeholderOf(tierFreight(t), ship === "air" ? "$ air" : "$ ocean")} />
+                        {/* Where the tier row has its build button: same width, same gap. */}
+                        <div style={{ width: FB_BTN_W, flexShrink: 0 }} />
                       </div>
                       {/* Duty follows this size's EXW at the HTS rate, the same rule
                           as the tier: typing over it is an override, clearing it hands
                           it back to the rate once focus leaves. */}
-                      <div style={{ flex: 1.0, display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                      <div style={{ ...tierCol("duty"), display: "flex", flexDirection: "column", gap: 2 }}>
                         <input style={S.sizeCostInput} type="text" inputMode="decimal" aria-label={"Duty for size " + r.label}
                           value={r.own.duty ?? ""} onChange={(e) => setSizeCost(i, r.key, "duty", e.target.value)}
                           onBlur={() => refillSizeDuty(i, r.key)}
@@ -4405,19 +4422,21 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                       {/* Per unit, like the tier's own Total Cost: EXW, freight and
                           duty, the tier's mold over the whole tier, and this size's
                           plate over this size. */}
-                      <div style={{ flex: 1.1, textAlign: "center", minWidth: 0, ...S.tierSizeCell }}>{r.cost ? `$${fmtUnit(r.cost)}` : "—"}</div>
-                      <div style={{ flex: 1.3, display: "flex", gap: AUTO_BTN_GAP, minWidth: 0 }}>
+                      <div style={{ ...tierCol("total"), textAlign: "center", ...S.tierSizeCell }}>{r.cost ? `$${fmtUnit(r.cost)}` : "—"}</div>
+                      <div style={{ ...tierCol("client"), display: "flex", flexDirection: "column", gap: 3 }}>
+                        <div style={{ display: "flex", gap: AUTO_BTN_GAP }}>
                         <input style={S.sizeCostInput} type="text" inputMode="decimal" aria-label={"Client price for size " + r.label}
                           value={r.own.client ?? ""} onChange={(e) => setSizeCost(i, r.key, "client", e.target.value)}
                           placeholder={r.price == null ? "$" : fmt(r.price)} />
-                        <button style={{ ...S.autoBtn, fontSize: 10.5 }} title="Suggest from margin logic, off this size's cost" onClick={() => autoFillSizeClient(i, r.key, r.cost)}>auto</button>
+                        <button style={S.autoBtn} title="Suggest from margin logic, off this size's cost" onClick={() => autoFillSizeClient(i, r.key, r.cost)}>auto</button>
+                        </div>
                       </div>
                       {/* Same centring as the tier row above and the header, so a
                           size-row margin sits on the same axis as both. */}
-                      <div style={{ flex: 0.8, textAlign: "center", paddingLeft: MARGIN_GUTTER_PAD, boxSizing: "border-box", ...S.tierSizeCell }}>
+                      <div style={{ ...tierCol("margin"), textAlign: "center", paddingLeft: MARGIN_GUTTER_PAD, boxSizing: "border-box", ...S.tierSizeCell }}>
                         {r.margin == null ? "—" : <span title={r.plate > 0 ? "Includes $" + fmtUnit(r.plate) + " of plate fee, being $" + fmt(r.plateFee) + " over " + r.qty.toLocaleString() + " units of this size" : undefined} style={{ color: r.margin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{r.margin.toFixed(0)}%{r.plate > 0 && <span style={{ fontWeight: 400, color: "#6a7488" }}> ·p</span>}</span>}
                       </div>
-                      <div style={{ width: 30 }} />
+                      <div style={{ width: TIER_DEL_W, flexShrink: 0 }} />
                     </div>
                   ))}
                   {/* NO SILENT CONTROLS. A plate fee entered against a size with no
@@ -4682,16 +4701,16 @@ const S = {
   tierEditRowGreyed: { background: "#f3f5f8" },
   // The per-size boxes: a size row's quantity box scaled to the column it sits in.
   // Left-aligned, text and placeholder, like the tier row's own boxes above them.
-  sizeCostInput: { border: "1px solid #e7eaf0", background: "#ffffff", borderRadius: 8, padding: "5px 7px", fontSize: 12.5, color: "#0f1729", width: "100%", minWidth: 0, textAlign: "left" },
+  sizeCostInput: { border: "1px solid #e7eaf0", background: "#ffffff", borderRadius: 8, padding: "5px 9px", fontSize: 12.5, color: "#0f1729", width: "100%", minWidth: 0, textAlign: "left" },
   sizeGutter: { width: SIZE_LABEL_W, flexShrink: 0 },
   sizeLabel: { width: SIZE_LABEL_W, flexShrink: 0, alignSelf: "center", fontSize: 11, fontWeight: 600, color: "#8a93a5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   tierSizeCell: { fontSize: 12, fontVariantNumeric: "tabular-nums", color: "#6a7488", alignSelf: "center" },
-  tierInput: { border: "1px solid #e7eaf0", background: "#ffffff", borderRadius: 8, padding: "8px 9px", fontSize: 13.5, color: "#0f1729", width: "100%" },
+  tierInput: { border: "1px solid #e7eaf0", background: "#ffffff", borderRadius: 8, padding: "8px 9px", fontSize: 13.5, color: "#0f1729", width: "100%", minWidth: 0 },
   // Stands in for the tier's Qty input once the size rows own the number. Dashed and
   // tinted so it reads as derived rather than as a dead input — the same treatment
   // .qty-from-sizes gives the sized line items on the order side.
-  qtyFromSizes: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1, padding: "6px 9px", background: "#fafbfd", border: "1px dashed #e7eaf0", borderRadius: 8 },
-  qfsV: { fontSize: 13, fontWeight: 600, color: "#0f1729", lineHeight: 1.2, fontVariantNumeric: "tabular-nums" },
+  qtyFromSizes: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1, padding: "6px 9px", background: "#fafbfd", border: "1px dashed #e7eaf0", borderRadius: 8, minWidth: 0 },
+  qfsV: { fontSize: 13, fontWeight: 600, color: "#0f1729", lineHeight: 1.2, fontVariantNumeric: "tabular-nums", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   qfsK: { fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em", color: "#9aa3b5", fontWeight: 600 },
   tierMixLine: { fontSize: 11, color: "#9aa3b5", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
   // width pinned, not content-sized: the Client Price header pads itself by
@@ -4728,7 +4747,7 @@ const S = {
   saveFactoryRow: { display: "flex", gap: 8, alignItems: "center" },
   primaryBtnSm: { background: "#101d3d", color: "#ffffff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600 },
   ghostBtnSm: { background: "transparent", color: "#6a7488", border: "1px solid #e7eaf0", borderRadius: 9, padding: "9px 14px", fontSize: 13, fontWeight: 600 },
-  shipToggle: { flex: 1, background: "#ffffff", border: "1px solid #e7eaf0", color: "#6a7488", borderRadius: 7, padding: "7px 0", fontSize: 11.5, fontWeight: 600 },
+  shipToggle: { flex: 1, minWidth: 0, overflow: "hidden", whiteSpace: "nowrap", background: "#ffffff", border: "1px solid #e7eaf0", color: "#6a7488", borderRadius: 7, padding: "7px 0", fontSize: 11.5, fontWeight: 600 },
   shipOn: { background: "#eef1f6", color: "#0f1729", borderColor: "#eef1f6" },
   methodTag: { fontSize: 11, fontWeight: 600, color: "#3461e0", background: "#eef1f6", borderRadius: 12, padding: "2px 9px" },
   printBtn: { display: "inline-flex", alignItems: "center", gap: 7, background: "#ffffff", border: "1px solid #cdd5e2", color: "#3461e0", borderRadius: 10, padding: "9px 16px", fontSize: 13.5, fontWeight: 600 },
