@@ -348,6 +348,12 @@ async function kuLogoDataUri() {
 // tier. Stored as an array of records, non-zero entries only ([{size,delta}]); held
 // in form state as a keyed map of STRINGS ({"2XL":"1.5"}) because coercing to Number
 // on each keystroke makes "1.50" untypeable, the same reason SizeGrid holds strings.
+//
+// NO LONGER EDITED. The adjustment row is gone: a size row in each tier takes its
+// own client price instead. The column is still read, because a size with no price
+// of its own is priced at the tier's plus its adjustment (sizeUnit in tierCost) --
+// that is what keeps a quote saved before the change pricing as it did -- and still
+// written back as loaded, pruned only when its scale is unticked.
 // ┌───────────────────────────────────────────────────────────────────────────┐
 // │ THESE FOUR FUNCTIONS ARE TWO PAIRS, AND EACH PAIR MUST AGREE EXACTLY.     │
 // │                                                                           │
@@ -3031,7 +3037,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
   };
   // Warn only -- the user may be part-way through stripping the suffix off the SKU.
   const sizeClash = (f.sizeScales || []).length > 0 && skuLooksSized(f.sku);
-  // Computed once per render: the control, the delta row and every tier's size rows
+  // Computed once per render: the control, the plate and carton rows and every tier's size rows
   // all have to agree about what is selected and how each size is labelled.
   const sizeEntries = sizesForSelection(f.sizeScales);
 
@@ -3062,17 +3068,6 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
       // has already had.
       return { ...p, sizeScales: next, sizeDeltas: keep(p.sizeDeltas), sizePlateFees: keep(p.sizePlateFees), sizeCartons: keep(p.sizeCartons), tiers: p.tiers.map((t) => ({ ...t, sizeQty: keep(t.sizeQty), sizeCost: keep(t.sizeCost) })) };
     });
-  };
-  // Deltas can be negative, so SizeGrid's digit-only strip is wrong here. Keep one
-  // leading '-' and one '.', reject everything else. Blank means zero.
-  const setSizeDelta = (key, raw) => {
-    let s = String(raw).replace(/[^0-9.-]/g, "");
-    const neg = s.startsWith("-");
-    s = s.replace(/-/g, "");
-    const dot = s.indexOf(".");
-    if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, "");
-    if (neg) s = "-" + s;
-    setF((p) => ({ ...p, sizeDeltas: { ...(p.sizeDeltas || {}), [key]: s } }));
   };
   // A plate fee is a cost and cannot be negative, so unlike the delta above this
   // strips the minus as well. One dot, digits, nothing else. Blank means none.
@@ -3822,39 +3817,10 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
               </div>
               {sizeClash && <span style={S.tierHint}>SKU already ends in a size — with a scale set too, order lines would double it (…-Large-S).</span>}
             </div>
-            {/* Spans the whole form row: S.formGrid is auto-fit minmax(150px,1fr),
-                which otherwise crushes the size inputs into one narrow column. */}
-            {sizeEntries.length > 0 && (
-              <label style={{ ...S.field, gridColumn: "1 / -1" }}>
-                <span style={S.fieldLabel}>Per-size price adjustment</span>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {sizeEntries.map((e) => (
-                    // a div, not a label: the caption sits above its own input already
-                    <div key={e.key} style={{ display: "flex", flexDirection: "column", gap: 3, width: 74 }}>
-                      {/* e.label, not e.size: on Adult+Youth this reads "Adult L" so
-                          the two L boxes are not two identical captions. */}
-                      <span style={{ fontSize: 11, color: "#6a7488", fontWeight: 600, textAlign: "center" }}>{e.label}</span>
-                      <input
-                        style={{ ...S.tierInput, textAlign: "right" }}
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        aria-label={"Price adjustment for size " + e.label}
-                        value={(f.sizeDeltas || {})[e.key] ?? ""}
-                        onChange={(ev) => setSizeDelta(e.key, ev.target.value)}
-                      />
-                    </div>
-                  ))}
-                </div>
-                <span style={S.tierHint}>+/- on the client price, applied across every tier. Blank is no adjustment. Negative lowers the price for that size.</span>
-              </label>
-            )}
-            {/* PLATE FEES, a second row on the same grid rather than a second input
-                inside each delta box. They are different kinds of number -- one is a
-                price adjustment the client pays, the other a one-time cost we carry
-                -- and stacking them in one cell would invite reading a fee as a
-                delta. Same widths and the same e.label captions, so the two rows
-                line up column for column and a size can be read down. */}
+            {/* PLATE FEES. Spans the whole form row: S.formGrid is auto-fit
+                minmax(150px,1fr), which otherwise crushes the size inputs into one
+                narrow column. The same e.label captions as the size rows in the
+                tiers, so a size reads the same everywhere. */}
             {sizeEntries.length > 0 && (
               <label style={{ ...S.field, gridColumn: "1 / -1" }}>
                 <span style={S.fieldLabel}>Per-size plate fee (one-time)</span>
