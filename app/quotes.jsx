@@ -30,7 +30,7 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey, storedQtyToMap as qtyMapFrom } from "@/app/components/SizeGrid";
 // The tier cost helpers live in lib/tierCost.js so page.jsx reads the SAME ones.
 // They were duplicated by hand there and had drifted; see that file for what broke.
-import { tierFreight, tierDuty, activeFreight, moldPerUnit, effectiveQty, tierTotalCost, sizedTierSummary, tierHasSizeMold, tierMoldFee } from "@/lib/tierCost";
+import { tierFreight, activeFreight, moldPerUnit, effectiveQty, tierTotalCost, sizedTierSummary, tierHasSizeMold, tierMoldFee } from "@/lib/tierCost";
 import { BANK_FIELDS } from "@/lib/bankFields";
 import { CodeModal } from "@/app/components/CodeModal";
 // HtsField used to live in this file. It moved to app/components so the Edit
@@ -187,11 +187,17 @@ const SIZE_LABEL_W = 60;
 // its share of the same width in every row, whatever is inside it.
 // mold exists only in Bag mode, between Duty and Total Cost: the last cost before
 // the total it feeds.
-const TIER_FLEX = { qty: 1.0, exw: 1.0, method: 0.8, freight: 1.5, duty: 1.0, mold: 0.9, total: 1.1, client: 1.3, margin: 0.8 };
+//
+// mold is 1.2 so its box holds "99,999.99" with room over: at the table's minimum
+// a unit of flex is ~87px, so the box is ~105px less 20px of padding and border,
+// ~85px for text that needs ~56. Freight and Duty keep their width: on a size row
+// they are empty now, but the tier row above still holds both inputs, with build.
+const TIER_FLEX = { qty: 1.0, exw: 1.0, method: 0.8, freight: 1.5, duty: 1.0, mold: 1.2, total: 1.1, client: 1.3, margin: 0.8 };
 // What the Mold Fee column adds to the table's minimum: its share at the width the
-// other columns already get (about 86px per unit of flex at the 860 minimum), plus
-// one gap, so turning Bag on never squeezes the columns it did not add.
-const MOLD_COL_W = 86;
+// other columns already get (742px over 8.5 units = ~87.3px at the 928 minimum with
+// sizes), 1.2 x 87.3 = 105, plus one 8px gap, so turning Bag on never squeezes the
+// columns it did not add.
+const MOLD_COL_W = 113;
 const tierCol = (k) => ({ flex: TIER_FLEX[k], minWidth: 0 });
 // The delete-tier slot at the end of every row. flexShrink 0, or the empty slot on
 // a size row could give up width the tier row's button slot keeps.
@@ -555,7 +561,8 @@ function qtyMapToRow(map, scales) {
 // ── Per-size costs inside a tier ─────────────────────────────────────────────
 // A FOURTH PAIR, same rule as the boxed note above: sizeCostFrom and sizeCostToRow
 // must agree exactly. Stored on the tier as [{scale,size,landed,freightAir,
-// freightOcean,duty,dutyManual,client,mold}], SPARSE twice over: a size appears only when
+// freightOcean,duty,dutyManual,client,mold}] -- now only landed, client and mold
+// are read or written; freight and duty are the tier's. SPARSE twice over: a size appears only when
 // something was typed for it, and carries only the fields that were. Everything
 // absent falls back to the tier at the point of use (sizeUnit in lib/tierCost),
 // never here -- filling gaps at load would freeze today's tier figure into the size
@@ -568,7 +575,8 @@ function qtyMapToRow(map, scales) {
 // and write only that field there: a cost typed while Bag was ticked cannot ride
 // along, unseen, on a quote that no longer shows it.
 // mold is the size's own one-time mold fee, in dollars -- not per unit like the rest.
-const SIZE_COST_FIELDS = ["landed", "freightAir", "freightOcean", "duty", "client", "mold"];
+// No freight or duty: those are entered once on the tier and every size pays them.
+const SIZE_COST_FIELDS = ["landed", "client", "mold"];
 const sizeCostFields = (scales) => (isBagMode(scales) ? SIZE_COST_FIELDS : ["client"]);
 function sizeCostFrom(v, scales) {
   const map = {};
@@ -582,7 +590,6 @@ function sizeCostFrom(v, scales) {
       if (isFinite(n)) cell[k] = String(n);
     });
     if (!Object.keys(cell).length) return;
-    if (d.dutyManual && cell.duty != null) cell.dutyManual = true;
     map[sizeKey(String(d.scale), String(d.size))] = cell;
   });
   return map;
@@ -602,7 +609,6 @@ function sizeCostToRow(map, scales) {
       if (isFinite(n)) rec[k] = n;
     });
     if (Object.keys(rec).length === 2) return;
-    if (cell.dutyManual && rec.duty != null) rec.dutyManual = true;
     out.push(rec);
   });
   return out.length ? out : null;
@@ -3122,8 +3128,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
         Object.keys(m).forEach((k) => {
           const cell = {};
           fields.forEach((x) => { if (m[k][x] !== "" && m[k][x] != null) cell[x] = m[k][x]; });
-          if (fields.includes("duty") && m[k].dutyManual) cell.dutyManual = true;
-          if (Object.keys(cell).some((x) => x !== "dutyManual")) out[k] = cell;
+          if (Object.keys(cell).length) out[k] = cell;
         });
         return out;
       };
@@ -3168,15 +3173,14 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
   // back to the tier (sizeUnit in lib/tierCost). A cell left with nothing typed is
   // dropped, so a size nobody touched writes nothing.
   //
-  // Duty follows the tier's rule, per size: typing EXW recomputes this size's duty
-  // at the HTS rate unless the duty was typed over, and typing over it is the
-  // override. With no rate the size's duty is left alone and falls back to the
-  // tier's.
+  // No duty is stored on a size. One with its own EXW pays the HTS rate on it,
+  // worked out at the point of use (sizeUnit), so it follows every EXW edit and
+  // every change of code without a setter having to remember to.
   const editSizeCell = (i, key, fn) => setF((p) => ({ ...p, tiers: p.tiers.map((t, idx) => {
     if (idx !== i) return t;
     const cell = fn({ ...((t.sizeCost || {})[key] || {}) });
     const next = { ...(t.sizeCost || {}) };
-    if (Object.keys(cell).some((k) => k !== "dutyManual" && cell[k] !== "" && cell[k] != null)) next[key] = cell; else delete next[key];
+    if (Object.keys(cell).some((k) => cell[k] !== "" && cell[k] != null)) next[key] = cell; else delete next[key];
     return { ...t, sizeCost: next };
   }) }));
   const setSizeCost = (i, key, field, raw) => {
@@ -3186,11 +3190,6 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
     if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, "");
     editSizeCell(i, key, (cell) => {
       if (s === "") delete cell[field]; else cell[field] = s;
-      if (field === "duty") cell.dutyManual = s !== "";
-      if (field === "landed" && !cell.dutyManual && dutyRate.rate != null) {
-        const d = s === "" ? "" : computeDuty(s, dutyRate.rate);
-        if (d === "") delete cell.duty; else cell.duty = d;
-      }
       return cell;
     });
   };
@@ -3202,16 +3201,6 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
       if (val === "" || val == null) delete cell[field]; else cell[field] = String(val);
       return cell;
     });
-  };
-  // The size's half of the tier's blur refill: a duty cleared by hand on a size with
-  // its own EXW goes back to the rate once focus leaves. Only such a size can be in
-  // that state -- typing its EXW fills the duty -- so tabbing past fills nothing.
-  const refillSizeDuty = (i, key) => {
-    const cell = ((f.tiers[i] || {}).sizeCost || {})[key] || {};
-    if (cell.dutyManual || (cell.duty !== "" && cell.duty != null)) return;
-    if (cell.landed === "" || cell.landed == null || dutyRate.rate == null) return;
-    const v = computeDuty(cell.landed, dutyRate.rate);
-    if (v !== "") setSizeCostAuto(i, key, "duty", v);
   };
   // "auto" on a size: the tier's margin logic, off this size's cost per unit --
   // mold share and plate included, as the tier's auto includes the mold.
@@ -3514,24 +3503,13 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
   const pickHts = (code, extra) => {
     markDirty();
     const rate = rateFromRows((extra ? htsCodes.concat(extra) : htsCodes).filter((c) => c.code === code));
-    const sizeDuty = (cell) => (cell.landed !== "" && cell.landed != null ? computeDuty(cell.landed, rate) : "");
+    // A size with its own EXW pays the rate on it, worked out live, so a new rate
+    // moves it with nothing to rewrite -- but it has moved, so it counts here.
+    const ownExw = (t) => Object.values(t.sizeCost || {}).some((c) => c.landed !== "" && c.landed != null);
     const moved = (f.tiers || []).some((t) => t.dutyManual || String(t.duty ?? "") !== computeDuty(t.landed, rate)
-      || Object.values(t.sizeCost || {}).some((c) => c.dutyManual || String(c.duty ?? "") !== sizeDuty(c)));
-    // Sizes too, by the same rule: every override cleared, and a size with its own
-    // EXW recomputed at the new rate. One without falls back to the tier's duty.
-    const rehts = (sc) => {
-      const out = {};
-      Object.keys(sc || {}).forEach((k) => {
-        const cell = { ...sc[k] };
-        delete cell.dutyManual;
-        const d = sizeDuty(cell);
-        if (d === "") delete cell.duty; else cell.duty = d;
-        if (Object.keys(cell).length) out[k] = cell;
-      });
-      return out;
-    };
+      || (rate !== dutyRate.rate && ownExw(t)));
     if (moved) flashDuty(code ? "Duty recalculated for the new code." : "Duty cleared — no code, so no rate to apply.");
-    return setF((p) => ({ ...p, hts: code || "", tiers: p.tiers.map((t) => ({ ...t, dutyManual: false, duty: computeDuty(t.landed, rate), sizeCost: rehts(t.sizeCost) })) }));
+    return setF((p) => ({ ...p, hts: code || "", tiers: p.tiers.map((t) => ({ ...t, dutyManual: false, duty: computeDuty(t.landed, rate) })) }));
   };
   // "+ Add code" from inside the picker. The seeded value is whatever was typed
   // into the filter, so a code someone was hunting for is pre-filled.
@@ -4224,7 +4202,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                 // price -- typed, or falling back to the tier's (the price to the
                 // tier's plus the old quote-level adjustment). All of it belongs to
                 // this tier alone.
-                const sized = sizedTierSummary(t, sizeEntries, f.moldFee, f.sizePlateFees, f.sizeDeltas);
+                const sized = sizedTierSummary(t, sizeEntries, f.moldFee, f.sizePlateFees, f.sizeDeltas, dutyRate.rate);
                 const sizeRows = sizeRowsFor(t, sized.rows, sizeEntries, f.sizeDeltas, f.sizePlateFees);
                 const sizeTotal = sizeQtyTotal(t, f.sizeScales);
                 // IN BAG MODE THE TOP ROW GREYS OUT ONCE ANY SIZE HAS A QUANTITY --
@@ -4249,6 +4227,11 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                 // Ocean hides the air number rather than destroying it, and flipping
                 // back brings it straight into view again.
                 const freightKey = ship === "air" ? "freightAir" : "freightOcean";
+                // A greyed tier on the HTS rate charges each size the rate on that
+                // size's own EXW, so no single per-unit figure is its duty. The box
+                // is left empty with the rule as its placeholder; typing in it is a
+                // flat per-unit override for every size, as on any tier.
+                const dutyBySize = greyed && dutyRate.rate != null && !t.dutyManual;
                 return (
                   <React.Fragment key={i}>
                   <div style={{ ...S.tierEditRow, ...(greyed ? S.tierEditRowGreyed : {}) }}>
@@ -4265,14 +4248,16 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "air" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "air")}>Air</button>
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "ocean" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "ocean")}>Ocean</button>
                     </div>
-                    <div style={{ ...tierCol("freight"), display: "flex", gap: FB_BTN_GAP }}>
-                      {!greyed
-                        ? <input style={S.tierInput} type="number" value={t[freightKey] ?? ""} onChange={(e) => setTier(i, freightKey, e.target.value)} placeholder={ship === "air" ? "$ air" : "$ ocean"} />
-                        : <div style={{ flex: 1, minWidth: 0 }}><TotalCell value={"$" + fmt(sized.totals.freight)} label="total freight" /></div>}
-                      {/* On a greyed tier, build applies to every size: onApply below
-                          sets the tier's freight and clears each size's own, so every
-                          size falls back to the built figure. */}
-                      <button type="button" onClick={() => setFbTier(i)} title={greyed ? "Build one freight number from its cost legs and apply it to every size in this tier" : "Build the freight & duty number from its cost legs — containers, warehousing, trucking, duty"} style={{ flexShrink: 0, width: FB_BTN_W, padding: 0, borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, letterSpacing: ".02em", cursor: "pointer", background: (t.fb && t.fb.length) ? "#2f6df6" : "#e7edfd", color: (t.fb && t.fb.length) ? "#fff" : "#3551c4", whiteSpace: "nowrap" }}>build</button>
+                    {/* FREIGHT STAYS AN INPUT ON A GREYED TIER. It is entered once, per
+                        unit, and every size pays it, so it is the tier's to edit even
+                        when the rest of the row only adds the sizes up -- the caption
+                        says so, beside cells that are dollar totals. */}
+                    <div style={{ ...tierCol("freight"), display: "flex", flexDirection: "column", gap: 2 }}>
+                      <div style={{ display: "flex", gap: FB_BTN_GAP }}>
+                        <input style={S.tierInput} type="number" value={t[freightKey] ?? ""} onChange={(e) => setTier(i, freightKey, e.target.value)} placeholder={ship === "air" ? "$ air" : "$ ocean"} title={greyed ? "Freight per unit, paid by every size in this tier" : undefined} />
+                        <button type="button" onClick={() => setFbTier(i)} title={greyed ? "Build the freight per unit from its cost legs; every size in this tier pays it" : "Build the freight & duty number from its cost legs — containers, warehousing, trucking, duty"} style={{ flexShrink: 0, width: FB_BTN_W, padding: 0, borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, letterSpacing: ".02em", cursor: "pointer", background: (t.fb && t.fb.length) ? "#2f6df6" : "#e7edfd", color: (t.fb && t.fb.length) ? "#fff" : "#3551c4", whiteSpace: "nowrap" }}>build</button>
+                      </div>
+                      {greyed && <span style={S.perUnitCap}>per unit · all sizes</span>}
                     </div>
                     {/* Computed from the HTS code where that is unambiguous, typed
                         otherwise, and typing always wins -- setTier flags the tier
@@ -4280,7 +4265,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                         alone. The hint is terse because the column is flex 1.0; the
                         sentence lives on the title, like the eFiling button. */}
                     <div style={{ ...tierCol("duty"), display: "flex", flexDirection: "column", gap: 2 }}>
-                      {greyed ? <TotalCell value={"$" + fmt(sized.totals.duty)} label="total duty" /> : (<>
+                      {/* Editable on a greyed tier too, for the reason freight is. */}
                       {/* THE OTHER HALF OF THE CLEAR. setTier drops dutyManual the
                           moment the box goes empty but deliberately leaves it empty,
                           so nothing rewrites the field under a live cursor. This puts
@@ -4289,7 +4274,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                           never overwritten.
                           setTierAuto, not setTier: this is the library's number, so it
                           must not re-raise the override flag the clear just lowered. */}
-                      <input style={S.tierInput} type="number" value={t.duty ?? ""} onChange={(e) => setTier(i, "duty", e.target.value)}
+                      <input style={S.tierInput} type="number" value={dutyBySize ? "" : (t.duty ?? "")} onChange={(e) => setTier(i, "duty", e.target.value)}
                         onBlur={() => {
                           // Consume the arming flag whatever happens next, so it can
                           // never survive into an unrelated later blur.
@@ -4301,7 +4286,9 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                           const v = computeDuty(t.landed, dutyRate.rate);
                           if (v !== "") setTierAuto(i, "duty", v);       // "" means no EXW
                         }}
-                        placeholder="$ duty" title={dutyRate.full || "Duty per unit. Set an HTS code with a rate and this fills itself."} />
+                        placeholder={dutyBySize ? dutyRate.rate + "% each" : "$ duty"}
+                        title={dutyBySize ? "Each size pays " + dutyRate.rate + "% of its own EXW. Type a figure here to charge every size that much per unit instead." : (dutyRate.full || "Duty per unit. Set an HTS code with a rate and this fills itself.")} />
+                      {greyed && <span style={S.perUnitCap}>{dutyBySize ? "per unit · on each size's EXW" : "per unit · all sizes"}</span>}
                       {/* Fires when a duty has landed on a tier whose freight was written
                           before duty was a separate box. Deliberately NOT an attempt to
                           detect duty inside freight: measuring the 19 such tiers put 3
@@ -4362,7 +4349,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                           would apply nothing. setTierAuto, NOT setTier: accepting the
                           library's number is not overriding it, so the tier keeps
                           tracking EXW and the chip still reads the bare rate after. */}
-                      {!dutyRate.reason && dutyRate.rate != null && !t.dutyManual
+                      {!greyed && !dutyRate.reason && dutyRate.rate != null && !t.dutyManual
                         && (t.duty === "" || t.duty == null)
                         && t.landed !== "" && t.landed != null && Number(t.landed) > 0 && (
                         <button type="button" onClick={() => setTierAuto(i, "duty", computeDuty(t.landed, dutyRate.rate))}
@@ -4371,7 +4358,6 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                           Apply {dutyRate.rate}%
                         </button>
                       )}
-                      </>)}
                     </div>
                     {/* Bag mode's mold: no box on the tier, the fees are the sizes'.
                         Greyed, their total in the cost. Otherwise what is typed so
@@ -4422,12 +4408,12 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                     </div>
                   </div>
                   {/* EVERY CELL HERE IS THE TIER ROW'S CELL, SAME FLEX AND SAME
-                      INSIDE. Bag mode fills EXW, Freight and Duty; any other scale
-                      leaves them empty, and a size is a quantity and a price. The
-                      label sits in the gutter, so each box starts at the
-                      same x and runs the same width as the tier's box above it --
-                      Freight leaves the build button's width empty on its right,
-                      Client Price carries its own auto in the same slot. A blank box
+                      INSIDE. Bag mode fills EXW and Mold Fee; any other scale leaves
+                      EXW empty, and a size is a quantity and a price. Freight and
+                      Duty are always empty here. The label sits in the gutter, so
+                      each box starts at the same x and runs the same width as the
+                      tier's box above it -- Client Price carries its own auto in the
+                      same slot. A blank box
                       falls back to the tier's figure, shown as its placeholder.
                       Keyed and read by r.key, captioned by r.label: on Adult+Youth
                       that is "Adult L" and "Youth L" over 'adult|L' and 'youth|L',
@@ -4453,36 +4439,12 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                           than on the tier above it. Width-only, no content -- the
                           method is the tier's, one shipment one way. */}
                       <div style={tierCol("method")} />
-                      {/* Freight: 1.5, same correction as Method. Reads and writes the
-                          key for the tier's method, as the tier's own box does, so
-                          flipping Air/Ocean hides a size's other figure rather than
-                          erasing it. */}
-                      {bagMode ? <div style={{ ...tierCol("freight"), display: "flex", gap: FB_BTN_GAP }}>
-                        <input style={S.sizeCostInput} type="text" inputMode="decimal" aria-label={"Freight for size " + r.label}
-                          value={r.own[freightKey] ?? ""} onChange={(e) => setSizeCost(i, r.key, freightKey, e.target.value)}
-                          placeholder={placeholderOf(tierFreight(t), ship === "air" ? "$ air" : "$ ocean")} />
-                        {/* Where the tier row has its build button: same width, same gap. */}
-                        <div style={{ width: FB_BTN_W, flexShrink: 0 }} />
-                      </div> : <div style={tierCol("freight")} />}
-                      {/* Duty follows this size's EXW at the HTS rate, the same rule
-                          as the tier: typing over it is an override, clearing it hands
-                          it back to the rate once focus leaves. */}
-                      {bagMode ? <div style={{ ...tierCol("duty"), display: "flex", flexDirection: "column", gap: 2 }}>
-                        <input style={S.sizeCostInput} type="text" inputMode="decimal" aria-label={"Duty for size " + r.label}
-                          value={r.own.duty ?? ""} onChange={(e) => setSizeCost(i, r.key, "duty", e.target.value)}
-                          onBlur={() => refillSizeDuty(i, r.key)}
-                          placeholder={placeholderOf(tierDuty(t), "$ duty")} />
-                        {/* The tier's Apply chip, per size: offered only where this
-                            size has an EXW to take a rate of and no duty yet. */}
-                        {!dutyRate.reason && dutyRate.rate != null && !(r.own.duty !== "" && r.own.duty != null)
-                          && !(r.duty > 0) && r.landed > 0 && (
-                          <button type="button" onClick={() => setSizeCostAuto(i, r.key, "duty", computeDuty(r.landed, dutyRate.rate))}
-                            title={"Sets this size's duty to " + computeDuty(r.landed, dutyRate.rate) + ", being " + dutyRate.rate + "% of its EXW."}
-                            style={{ alignSelf: "flex-start", fontSize: 9.5, fontWeight: 600, color: "#3461e0", background: "#eef1f6", border: "none", borderRadius: 4, padding: "1px 5px", lineHeight: 1.3, cursor: "pointer" }}>
-                            Apply {dutyRate.rate}%
-                          </button>
-                        )}
-                      </div> : <div style={tierCol("duty")} />}
+                      {/* Freight and Duty: spacers, the same width as the tier's cells.
+                          Both are the tier's, entered on its row, and every size pays
+                          them -- duty as the rate on the size's own EXW where it has
+                          one (sizeUnit in lib/tierCost). */}
+                      <div style={tierCol("freight")} />
+                      <div style={tierCol("duty")} />
                       {/* One-time, in dollars, spread over this size's quantity in
                           this tier. Blank is no mold for this size -- unless no size
                           in the tier has one, in which case the quote's old fee, if
@@ -4491,11 +4453,11 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
                         <div style={tierCol("mold")}>
                           <input style={S.sizeCostInput} type="text" inputMode="decimal" aria-label={"Mold fee for size " + r.label}
                             value={r.own.mold ?? ""} onChange={(e) => setSizeCost(i, r.key, "mold", e.target.value)}
-                            placeholder="$ one-time" />
+                            placeholder="$ mold" />
                         </div>
                       )}
-                      {/* Bag mode: per unit, like the tier's own Total Cost -- EXW,
-                          freight and duty, the mold over the whole tier, and this
+                      {/* Bag mode: per unit, like the tier's own Total Cost -- EXW, the
+                          tier's freight, duty, the mold, and this
                           size's plate over this size. Otherwise the tier's own total,
                           as it always showed; the plate still reaches the margin. */}
                       <div style={{ ...tierCol("total"), textAlign: "center", ...S.tierSizeCell }}>{bagMode ? (r.cost ? `$${fmtUnit(r.cost)}` : "—") : (total ? `$${fmt(total)}` : "—")}</div>
@@ -4538,26 +4500,15 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
               <button style={S.addTierBtn} onClick={() => addTier()}><Plus size={14} /> Add tier</button>
               <button style={S.presetBtn} onClick={addPresets}>+ Preset qtys (500 / 1k / 2.5k / 5k)</button>
             </div>
-            <div style={S.tierHint}>Total Cost = EXW + Freight/Duty (auto). Client price auto-suggests from KUI margin logic off total cost — tap "auto," then adjust. Margin turns amber below 25%. Tap Σ to build the freight number from its real cost legs. With Bag sizes, each size row takes its own EXW, freight, duty, mold fee and client price — a blank box uses the tier's figure, shown faintly in it — and once any size has a quantity the tier row turns grey and shows dollar totals. With other sizes, each size row takes a quantity and its own client price. Swipe sideways to see all columns.</div>
+            <div style={S.tierHint}>Total Cost = EXW + Freight/Duty (auto). Client price auto-suggests from KUI margin logic off total cost — tap "auto," then adjust. Margin turns amber below 25%. Tap Σ to build the freight number from its real cost legs. With Bag sizes, each size row takes its own EXW, mold fee and client price — a blank box uses the tier's figure, shown faintly in it — while freight and duty are entered once per unit on the tier row for every size. Once any size has a quantity the tier row turns grey and shows dollar totals; its freight and duty stay editable, per unit. With other sizes, each size row takes a quantity and its own client price. Swipe sideways to see all columns.</div>
             {fbTier != null && f.tiers[fbTier] && (
               <FreightBuilder
                 tier={f.tiers[fbTier]}
                 form={f}
                 onClose={() => setFbTier(null)}
                 onApply={(totalPerUnit, legs) => {
-                  // Applies to every size: each size's own freight is cleared, both
-                  // methods, as the tier's air figure is, so all of them fall back
-                  // to the figure just built.
-                  const noFreight = (sc) => {
-                    const out = {};
-                    Object.keys(sc || {}).forEach((k) => {
-                      const cell = { ...sc[k] };
-                      delete cell.freightAir; delete cell.freightOcean;
-                      if (Object.keys(cell).some((x) => x !== "dutyManual")) out[k] = cell;
-                    });
-                    return out;
-                  };
-                  setF((p) => ({ ...p, tiers: p.tiers.map((x, idx) => idx === fbTier ? { ...x, ship: "ocean", freightAir: "", freightOcean: totalPerUnit.toFixed(3), fb: legs, duty_only: false, sizeCost: noFreight(x.sizeCost) } : x) }));
+                  // The tier's freight, which every size pays.
+                  setF((p) => ({ ...p, tiers: p.tiers.map((x, idx) => idx === fbTier ? { ...x, ship: "ocean", freightAir: "", freightOcean: totalPerUnit.toFixed(3), fb: legs, duty_only: false } : x) }));
                   setFbTier(null);
                 }}
               />
@@ -4785,6 +4736,9 @@ const S = {
   qtyFromSizes: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1, padding: "6px 9px", background: "#fafbfd", border: "1px dashed #e7eaf0", borderRadius: 8, minWidth: 0 },
   qfsV: { fontSize: 13, fontWeight: 600, color: "#0f1729", lineHeight: 1.2, fontVariantNumeric: "tabular-nums", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   qfsK: { fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em", color: "#9aa3b5", fontWeight: 600 },
+  // Under a greyed tier's Freight and Duty: the same small caps as a total's caption,
+  // so the row reads as one, saying these two are inputs, per unit.
+  perUnitCap: { fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em", color: "#3551c4", fontWeight: 600, lineHeight: 1.25 },
   tierMixLine: { fontSize: 11, color: "#9aa3b5", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
   // width pinned, not content-sized: the Client Price header pads itself by
   // AUTO_BTN_W to centre over the input alone. See the note beside that constant.
