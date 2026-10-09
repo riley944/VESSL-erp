@@ -20,10 +20,12 @@ import { FilterSelect } from '@/app/components/FilterSelect';
 import { SizeGrid, sizesForSelection, toScaleList, skuToken, storedQtyToMap } from '@/app/components/SizeGrid';
 // The SAME cost model the quote editor uses. This page carried a hand-written copy
 // that had drifted on both the mold divisor and the duty term; see lib/tierCost.js.
-import { tierTotalCost, tierHasSizeMold, tierMoldFee } from '@/lib/tierCost';
+import { tierTotalCost, tierHasSizeMold, tierMoldFee, effectiveQty } from '@/lib/tierCost';
 // A stored tier read the way the quote editor reads it: size maps by sizeKey, each
 // size's own figures, and the price rule for a size (lib/quoteTiers).
-import { tierFromRow, tierIsSized, sizeQuotedPrice, isBagMode } from '@/lib/quoteTiers';
+import { tierFromRow, tierIsSized, sizeQuotedPrice, isBagMode, htsRateFor } from '@/lib/quoteTiers';
+// The active HTS code list, for the duty a Bag size pays on its own EXW.
+import { useHtsCodes } from '@/app/components/HtsField';
 import { BANK_FIELDS, BANK_KEYS, hasAnyBankDetail } from '@/lib/bankFields';
 
 // ── Prefilling an order grid from a quote tier ───────────────────────────────
@@ -5199,6 +5201,7 @@ function SortTh({ col, label, sort, onSort, style }) {
 // the API regardless. Locking that down is an RLS change, deliberately not made here.
 function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   const [quotes, setQuotes] = useState([]);
+  const { codes: htsCodes } = useHtsCodes();
   const [loading, setLoading] = useState(true);
   // WHAT THE USER CHOSE ABOUT THIS LIST, in the page store so that opening a product
   // and coming back does not throw it away. Everything else here stays plain
@@ -5368,10 +5371,16 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   // the average. quotes.jsx returns 0 in the same case, which is right for its own
   // screen and wrong here. The cost is a fact and is shared; that is a presentation
   // choice and is not.
-  const tierMargin = (t,mold)=>{ const total=tierTotalCost(t,mold); const p=Number(t.client)||0; return p<=0?null:((p-total)/p)*100; };
+  //
+  // THE TIER GOES THROUGH tierFromRow FIRST. The row stores a tier's size mix as a
+  // list, and tierTotalCost reads a map keyed by size: handed the list it found a
+  // quantity of 0, so every sized tier here was costed WITHOUT its mold. tierFromRow
+  // is the conversion the quote editor loads with, and the quote's HTS rate is the
+  // one the editor uses for a size's own duty.
+  const tierMargin = (t,mold,scales,rate)=>{ const total=tierTotalCost(tierFromRow(t,scales),mold,rate); const p=Number(t.client)||0; return p<=0?null:((p-total)/p)*100; };
   const clientPrices = q => tiersOf(q).map(t=>Number(t.client)||0).filter(Boolean);
   const priceRange = q => { const p=clientPrices(q); if(!p.length) return null; const lo=Math.min(...p),hi=Math.max(...p); return lo===hi?money(lo):`${money(lo)} – ${money(hi)}`; };
-  const avgMargin = q => { const ms=tiersOf(q).map(t=>tierMargin(t,q.mold_fee)).filter(v=>v!=null); return ms.length?Math.round(ms.reduce((a,b)=>a+b,0)/ms.length):null; };
+  const avgMargin = q => { const rate=htsRateFor(q.hts,htsCodes); const ms=tiersOf(q).map(t=>tierMargin(t,q.mold_fee,q.size_scale,rate)).filter(v=>v!=null); return ms.length?Math.round(ms.reduce((a,b)=>a+b,0)/ms.length):null; };
 
   // PRODUCTS NO QUOTE REACHES get a row of their own. The table used to be built from
   // quotes alone, so a product that was ordered but never quoted -- LHS-184's parent,
@@ -5982,7 +5991,18 @@ function ProductDetailModal({quote:initQ, userEmail='', onClose, onCreatePO, pro
                 <div></div>
               </div>
               <span className="form-section-label">Pricing Tiers</span>
-              {tiers.map((t,i)=>(
+              {tiers.map((t,i)=>tierIsSized(tierFromRow(t,q.size_scale)) ? (
+                // A TIER WITH SIZES IS NOT EDITED HERE. Its sizes carry their own
+                // quantities and, on a Bag quote, their own EXW, price and mold, and
+                // these boxes know nothing of them -- changing the tier's EXW or price
+                // here would quietly reprice every size that falls back to it. Shown,
+                // and saved back exactly as it was loaded.
+                <div key={i} style={{background:'var(--line-2)',borderRadius:'8px',padding:'12px',marginBottom:'10px'}}>
+                  <div style={{fontSize:'11px',fontWeight:700,color:'var(--muted)',marginBottom:'6px'}}>{'Tier '+(i+1)+' · by size'}</div>
+                  <div style={{fontSize:'12.5px',color:'var(--ink)'}}>{(effectiveQty(tierFromRow(t,q.size_scale))||0).toLocaleString()} units across sizes{Number(t.client)>0?' · '+money(t.client):''}</div>
+                  <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>This tier is priced by size. Edit it in Quotes.</div>
+                </div>
+              ) : (
                 <div key={i} style={{background:'var(--line-2)',borderRadius:'8px',padding:'12px',marginBottom:'10px'}}>
                   <div style={{fontSize:'11px',fontWeight:700,color:'var(--muted)',marginBottom:'8px'}}>{'Tier '+(i+1)}</div>
                   <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
