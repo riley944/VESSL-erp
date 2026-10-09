@@ -138,7 +138,7 @@ import { sheetsToCsvFiles, sheetsToPdfHtml } from '@/lib/exportFormats';
 import ExportMenu from './components/ExportMenu';
 import { buildSheets, exportFileName, EXPORT_ALL } from '@/lib/analyticsExport';
 import { buildWorkbook } from '@/lib/workbook';
-import { buildAnalytics, filterOptions, figureWords, headlineTiles, attentionCards, shipmentRef, daysFromNow, ANALYTICS_DEFAULTS, PERIOD_OPTS, DATES_BY_OPTS, STAGE_FILTER_OPTS, BOOKED_METRIC_OPTS, TOP_SORT_OPTS } from '@/lib/analytics';
+import { buildAnalytics, filterOptions, figureWords, headlineTiles, shipmentRef, daysFromNow, ANALYTICS_DEFAULTS, PERIOD_OPTS, DATES_BY_OPTS, STAGE_FILTER_OPTS, BOOKED_METRIC_OPTS, TOP_SORT_OPTS } from '@/lib/analytics';
 // The RFQ sheet geometry and its builder, shared with app/api/rfq/send/route.js.
 // The row numbers are a wire format between the workbook this writes and the one
 // ImportBidsModal parses back -- a second copy would be a second chance to drift.
@@ -1113,15 +1113,14 @@ function Dashboard({ navigate, user, displayName = '' }) {
 
   useEffect(() => {
     (async () => {
-      const [r1, r2, r3, r4] = await Promise.all([
+      const [r1, r2, r3] = await Promise.all([
         SB.from('sales_orders').select('id,so_number,client_po_number,status,order_date,cancel_date,cargo_ready_date,shipping_method,client_company_id,client:companies!client_company_id(name),sales_order_items(quantity,client_price),sales_order_pos(purchase_orders(factory_company_id,purchase_order_items(quantity,unit_price))),order_costs(amount)'),
         SB.from('purchase_orders').select('id,order_number,client_po_number,status,cancel_date,cargo_ready_date,shipping_method,client_company_id,factory_company_id,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(quantity,unit_price)'),
         SB.from('shipments').select('id,shipment_number,container_no,status,estimated_arrival,actual_arrival,client_company_id,client:companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,status,factory_company_id,shipping_method))'),
-        SB.from('shipment_quotes').select('id,quote_number,status,sent_at,client_company_id,client:companies!client_company_id(name)').eq('status', 'sent'),
       ]);
-      const err = r1.error || r2.error || r3.error || r4.error;
+      const err = r1.error || r2.error || r3.error;
       if (err) { setLoadErr(err.message || String(err)); return; }
-      setRaw({ sos: r1.data || [], pos: r2.data || [], ships: r3.data || [], fqs: r4.data || [] });
+      setRaw({ sos: r1.data || [], pos: r2.data || [], ships: r3.data || [] });
     })();
   }, []);
 
@@ -1174,7 +1173,6 @@ function Dashboard({ navigate, user, displayName = '' }) {
   const rule = '1px solid rgba(0,0,0,.06)';
   const muted = '#86868B';
   const INK = '#14171F';
-  const TONES = { red: { bg: '#FDECEA', ink: '#8F1D14' }, amber: { bg: '#FFF3DC', ink: '#7A4700' }, grey: { bg: '#EEF1F5', ink: '#414A58' } };
   const smallHead = { fontSize: '13px', fontWeight: 600, color: muted, letterSpacing: '.02em', margin: '0 2px 10px' };
   const lbl = { display: 'block', fontSize: '10.5px', fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: muted, marginBottom: '5px' };
   // The per-card slot on the right of each header holds the card's dropdown and,
@@ -1193,7 +1191,7 @@ function Dashboard({ navigate, user, displayName = '' }) {
       {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
     </select>
   );
-  // Days, references, labels, tiles and attention cards come from lib/analytics,
+  // Days, references, labels and tiles come from lib/analytics,
   // which the export reads too, so a sheet says exactly what the page says.
   const daysFrom = s => daysFromNow(s, d.now);
   const refOf = shipmentRef;
@@ -1201,7 +1199,6 @@ function Dashboard({ navigate, user, displayName = '' }) {
   const { missingLine, chartUndatedLine, bookedBy, asOf } = words;
   const periodLabel = d.range.label;
   const pipeNote = !d.single ? '' : (f.stage === 'delivered' || f.stage === 'invoiced') ? ' — showing ' + d.stageLabel + ' orders, which are not open' : ' — ' + d.stageLabel + ' only';
-  const attention = attentionCards(d);
   const VALUE_TEXT = { usd: v => moneyCompact(v), pct: v => v == null ? '—' : pctTxt(v), int: v => fmtNum(v) };
   const tiles = headlineTiles(d, f).map(t => ({ ...t, v: VALUE_TEXT[t.fmt](t.value) }));
 
@@ -1254,34 +1251,6 @@ function Dashboard({ navigate, user, displayName = '' }) {
         {/* Bottom-aligned with the controls and the same 38px tall, so its text sits
             level with theirs rather than with the labels above them. */}
         <button onClick={clearAll} className="kva-clear" style={{ background: 'none', border: 'none', padding: '0 2px', height: '38px', display: 'inline-flex', alignItems: 'center', alignSelf: 'flex-end', whiteSpace: 'nowrap', fontSize: '13px', color: '#0066CC', cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', textUnderlineOffset: '2px' }}>Clear filters</button>
-      </div>
-
-      {/* ── 2. Needs attention ── */}
-      <div style={{ ...card, marginBottom: '22px' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '18px 22px 12px' }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: '17px', fontWeight: 600, color: '#1D1D1F', letterSpacing: '-.018em' }}>Needs attention</div>
-            <div style={{ fontSize: '12.5px', color: muted, marginTop: '3px', lineHeight: 1.4 }}>{asOf} · {filterNote}; order stage applies to the Sales Order cards; freight quotes follow the client only</div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
-            <span style={{ fontSize: '12.5px', color: muted }}>Each card opens the list behind it</span>
-            <div className="kva-card-actions"><ExportBtn id="attention" title="Needs attention" /></div>
-          </div>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', padding: '0 22px 22px' }}>
-          {attention.map(a => {
-            // A count of 0 is nothing to act on, so it takes the quiet grey tone.
-            const t = TONES[a.n ? a.tone : 'grey'];
-            return (
-              <div key={a.k} onClick={() => navigate(a.to)} role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter') navigate(a.to); }}
-                style={{ background: t.bg, borderRadius: '14px', padding: '14px 16px', cursor: 'pointer', minWidth: 0 }}>
-                <div style={{ fontSize: '12.5px', fontWeight: 600, color: t.ink, letterSpacing: '-.006em', lineHeight: 1.3 }}>{a.k}</div>
-                <div style={{ fontSize: '36px', fontWeight: 700, color: INK, letterSpacing: '-.03em', lineHeight: 1.05, margin: '8px 0 6px', fontVariantNumeric: 'tabular-nums' }}>{a.n}</div>
-                <div style={{ fontSize: '12px', color: t.ink, opacity: .85, lineHeight: 1.35, overflowWrap: 'anywhere' }}>{a.line}</div>
-              </div>
-            );
-          })}
-        </div>
       </div>
 
       {/* ── 3. Headline numbers ── */}
