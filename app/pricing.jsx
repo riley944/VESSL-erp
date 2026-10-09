@@ -3,6 +3,8 @@ import React, { useState, useEffect } from "react";
 import { SB } from "@/lib/supabase";
 import { SBQ } from "@/lib/supabaseQuotes";
 import { useDirtyGuard } from '@/app/components/ModalGuard';
+import { effectiveQty } from '@/lib/tierCost';
+import { tierFromRow } from '@/lib/quoteTiers';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const money = (n, d=2) => (n==null||isNaN(n)) ? '—' : '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
@@ -31,14 +33,16 @@ function cbmPerUnitOf(q) {
   if (L<=0||W<=0||H<=0||upc<=0) return 0;
   return ((L*W*H)/1000000)/upc;
 }
-// Pick the tier closest to a quantity
+// Pick the tier closest to a quantity. A tier with a size mix is matched on the
+// mix's total -- the quote editor stops maintaining the tier's own qty once a size
+// has a number, so on such a tier t.qty is blank or stale.
 function tierFor(q, units) {
   let tiers=[]; try { tiers = Array.isArray(q?.tiers)?q.tiers:(q?.tiers?JSON.parse(q.tiers):[]); } catch(e) { tiers=[]; }
   if (!tiers.length) return null;
   const u=Number(units)||0;
   if (!u) return tiers[0];
   let best=tiers[0], bestD=Infinity;
-  tiers.forEach(t=>{ const d=Math.abs((Number(t.qty)||0)-u); if(d<bestD){bestD=d;best=t;} });
+  tiers.forEach(t=>{ const d=Math.abs(effectiveQty(tierFromRow(t,q.size_scale))-u); if(d<bestD){bestD=d;best=t;} });
   return best;
 }
 function quotedFreightOf(t) {
