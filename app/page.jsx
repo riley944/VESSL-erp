@@ -20,10 +20,10 @@ import { FilterSelect } from '@/app/components/FilterSelect';
 import { SizeGrid, sizesForSelection, toScaleList, skuToken, storedQtyToMap } from '@/app/components/SizeGrid';
 // The SAME cost model the quote editor uses. This page carried a hand-written copy
 // that had drifted on both the mold divisor and the duty term; see lib/tierCost.js.
-import { tierTotalCost } from '@/lib/tierCost';
+import { tierTotalCost, tierHasSizeMold, tierMoldFee } from '@/lib/tierCost';
 // A stored tier read the way the quote editor reads it: size maps by sizeKey, each
 // size's own figures, and the price rule for a size (lib/quoteTiers).
-import { tierFromRow, tierIsSized, sizeQuotedPrice } from '@/lib/quoteTiers';
+import { tierFromRow, tierIsSized, sizeQuotedPrice, isBagMode } from '@/lib/quoteTiers';
 import { BANK_FIELDS, BANK_KEYS, hasAnyBankDetail } from '@/lib/bankFields';
 
 // ── Prefilling an order grid from a quote tier ───────────────────────────────
@@ -7930,6 +7930,18 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   // typing and only an upcharge gets edited. Blank price leaves the boxes blank.
   const seedPrices = (scales, price) => (price !== '' && price != null)
     ? sizesForSelection(scales).reduce((a,e)=>({...a,[e.key]:String(price)}),{}) : {};
+  // From a quote tier: in Bag mode a size with its own EXW is bought at it, and
+  // every other size at the tier's EXW (price). Any other scale has no per-size
+  // cost, so every size is the tier's, as seedPrices always gave.
+  const seedPricesFromTier = (scales, tier, price) => {
+    if (!isBagMode(scales)) return seedPrices(scales, price);
+    const own = tierFromRow(tier, scales).sizeCost;
+    return sizesForSelection(scales).reduce((a,e)=>{
+      const v = (own[e.key]||{}).landed;
+      const p = v!=null && v!=='' ? v : price;
+      return p!=='' && p!=null ? {...a,[e.key]:String(p)} : a;
+    },{});
+  };
   // Seeds only what a newly ticked scale brings in, leaving prices already typed
   // for a scale that stays selected exactly where they are.
   const setSizeScales = (i,next) => setItems(prev=>prev.map((it,idx)=>{
@@ -8032,7 +8044,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       pallet: (matchClient&&matchClient.pallet_info)?matchClient.pallet_info:prev.pallet,
       delivery_address: (matchClient&&matchClient.shipping_address&&!prev.delivery_address)?matchClient.shipping_address:prev.delivery_address,
       inco: q.country?'FOB '+q.country:prev.inco,
-      mold: q.mold_fee!=null?String(q.mold_fee):prev.mold,
+      // A Bag tier with mold fees of its own carries their total -- the sizes this
+      // tier is making, as its cost counts them; otherwise the quote's one fee.
+      mold: tierHasSizeMold(tierFromRow(t, q.size_scale)) ? String(tierMoldFee(tierFromRow(t, q.size_scale), q.mold_fee)) : (q.mold_fee!=null?String(q.mold_fee):prev.mold),
       sample: q.sample_fee!=null?String(q.sample_fee):prev.sample,
       notes: prev.notes || (q.notes||''),
     }));
@@ -8055,7 +8069,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
       // Carried across a tier change rather than recomputed: cartons do not vary by
       // tier, and recomputing would overwrite anything typed since.
       const cartonSeed = qScale.length ? '' : (sameQuote ? (cur.carton||'') : (cartonSummary(q.units_per_carton, q.carton_l, q.carton_w, q.carton_h, q.carton_weight) || ''));
-      return [{ prodId: productIdForQuote(q), desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: qPrice, ci:'', carton: cartonSeed, sizeCartons: q.size_cartons||[], qCartonL: q.carton_l, qCartonW: q.carton_w, qCartonH: q.carton_h, sizeScales: qScale, sizeQty: seeded, sizePrice: seedPrices(qScale,qPrice), quoteId: q.id, tierIdx: ti }];
+      return [{ prodId: productIdForQuote(q), desc: q.product||'', qty: t.qty!=null?String(t.qty):'', price: qPrice, ci:'', carton: cartonSeed, sizeCartons: q.size_cartons||[], qCartonL: q.carton_l, qCartonW: q.carton_w, qCartonH: q.carton_h, sizeScales: qScale, sizeQty: seeded, sizePrice: seedPricesFromTier(qScale,t,qPrice), quoteId: q.id, tierIdx: ti }];
     });
   };
   const pickTier = ti => { if(picked) applyQuote(picked, ti); };
@@ -8067,7 +8081,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     const xPrice = t.landed!=null?String(t.landed):'';
     // Matched too. This line comes from a quote just as items[0] does; leaving it
     // blank was why a multi-line PO could only ever carry one resolved product.
-    const newItem = { prodId:productIdForQuote(q), desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:xPrice, ci:'', carton: xScale.length ? '' : (cartonSummary(q.units_per_carton, q.carton_l, q.carton_w, q.carton_h, q.carton_weight) || ''), sizeCartons: q.size_cartons||[], qCartonL: q.carton_l, qCartonW: q.carton_w, qCartonH: q.carton_h, sizeScales:xScale, sizeQty:seedQtyFromTier(t, xScale), sizePrice:seedPrices(xScale,xPrice), quoteId:q.id, tierIdx:ti };
+    const newItem = { prodId:productIdForQuote(q), desc:q.product||'', qty:t.qty!=null?String(t.qty):'', price:xPrice, ci:'', carton: xScale.length ? '' : (cartonSummary(q.units_per_carton, q.carton_l, q.carton_w, q.carton_h, q.carton_weight) || ''), sizeCartons: q.size_cartons||[], qCartonL: q.carton_l, qCartonW: q.carton_w, qCartonH: q.carton_h, sizeScales:xScale, sizeQty:seedQtyFromTier(t, xScale), sizePrice:seedPricesFromTier(xScale,t,xPrice), quoteId:q.id, tierIdx:ti };
     setItems(prev=>[...prev, newItem]);
     // If no client set yet on this PO, pull it from this quote's client
     if (!form.clientId && q.client) {
