@@ -3780,7 +3780,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
           <ContactPickModal
             company={pickContact.company}
             contacts={pickContact.contacts}
-            noun={pickContact.kind === 'client' ? 'This client' : 'This factory'}
+            noun={pickContact.kind === 'client' ? 'This company' : 'This factory'}
             onPick={(contact) => {
               if (pickContact.kind === 'client') applyClient(pickContact.company, contact);
               else applyFactory(pickContact.company, contact);
@@ -3801,6 +3801,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
         <div onClick={(e) => e.stopPropagation()}>
           <CreateCompanyModal
             initialType="client"
+            noun="Company"
             onClose={() => setAddingClient(null)}
             onCreated={onClientCreated} />
         </div>
@@ -4050,7 +4051,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
             )}
           </FormSection>
 
-          <FormSection icon={<Building2 size={15} />} title="Client / Vendor Info">
+          <FormSection icon={<Building2 size={15} />} title="Company / Vendor Info">
             {/* The Create PLM program tick and its owner picker stood here. A
                 card is opened from the quote card now, by the green button, and
                 from nowhere else -- so this form asks nothing about PLM and the
@@ -4081,13 +4082,13 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
             <CompanySelect value={f.client} companies={clientCompanies}
               onPick={onPickClient}
               onAddNew={(seed) => setAddingClient({ name: seed || "" })}
-              label="Client" placeholder="Select a client"
-              emptyNoun="clients" addLabel="Add new client"
+              label="Company" placeholder="Select a company"
+              emptyNoun="companies" addLabel="Add new company"
               fieldStyle={S.field}
               labelStyle={S.fieldLabel} inputStyle={S.input} />
             {/* All four stay editable after a fill, and none is required. */}
             <Field label="Contact" k="clientContact" placeholder="Buyer name" f={f} set={set} />
-            <Field label="Email" k="clientEmail" placeholder="email@client.com" f={f} set={set} />
+            <Field label="Email" k="clientEmail" placeholder="email@company.com" f={f} set={set} />
             </div>
             <div style={{ gridColumn: "1 / -1", display: "grid", gap: 12,
                           gridTemplateColumns: "minmax(0, 1.15fr) minmax(0, 1.15fr) minmax(0, 2.7fr)" }}>

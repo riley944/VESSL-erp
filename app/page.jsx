@@ -309,11 +309,12 @@ const TEAM = [
   { name:'Carmela', email:'carmela@kinguniversal.com' },
 ];
 
-function Badge({ status }) {
+// label, when given, replaces the words only -- the colour still follows status.
+function Badge({ status, label }) {
   const a = alignStatus(status);
   const m = SO_SM[a] || {label:(status||'—').replace(/_/g,' '),color:'#64748b',bg:'#f8fafc'};
   return <span style={{display:'inline-flex',alignItems:'center',gap:'5px',padding:'3px 10px',borderRadius:'20px',fontSize:'11px',fontWeight:700,letterSpacing:'.03em',textTransform:'uppercase',background:m.bg,color:m.color,whiteSpace:'nowrap'}}>
-    <span style={{width:'6px',height:'6px',borderRadius:'50%',background:m.color}} />{m.label}
+    <span style={{width:'6px',height:'6px',borderRadius:'50%',background:m.color}} />{label || m.label}
   </span>;
 }
 
@@ -5086,7 +5087,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
         <div className="modal-body">
           {!edit ? (
             <>
-              <div style={{display:'flex',gap:'8px',marginBottom:'18px'}}><Badge status={co.type} /></div>
+              <div style={{display:'flex',gap:'8px',marginBottom:'18px'}}><Badge status={co.type} label={co.type==='client' ? 'Company' : undefined} /></div>
               <div className="detail-grid" style={{gridTemplateColumns:'1fr',gap:'0'}}>
                 {[['Email',co.email],['Phone',co.phone],['Website',co.website],['Billing Address',co.billing_address],['Shipping Address',co.shipping_address],...(co.type==='client'?[['Vendor #',co.vendor_number],['Pallet info',co.pallet_info]]:[]),...(co.type==='carrier'?[['Tracking URL',co.tracking_url]]:[])].map(([l,v])=>(
                   <div key={l} style={{display:'flex',justifyContent:'space-between',gap:'16px',padding:'11px 0',borderBottom:'1px solid var(--line-2)'}}>
