@@ -32,7 +32,7 @@ import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey, storedQtyToMap as
 // They were duplicated by hand there and had drifted; see that file for what broke.
 import { tierFreight, activeFreight, moldPerUnit, effectiveQty, tierTotalCost, sizedTierSummary, tierHasSizeMold, tierMoldFee } from "@/lib/tierCost";
 // Reading a tier's per-size figures, and the HTS rate, the same way on every screen.
-import { isBagMode, sizeCostFields, sizeCostFrom, sizeCostToRow, rateFromRows, htsRateFor } from "@/lib/quoteTiers";
+import { isBagMode, sizeCostFields, sizeCostFrom, sizeCostToRow, rateFromRows, htsRateFor, sizeLines } from "@/lib/quoteTiers";
 import { BANK_FIELDS } from "@/lib/bankFields";
 import { CodeModal } from "@/app/components/CodeModal";
 // HtsField used to live in this file. It moved to app/components so the Edit
@@ -754,6 +754,22 @@ function moldFeeText(q) {
   if (fees.every((v) => v === fees[0])) return "$" + fmt(fees[0]);
   return tiers.map((t, i) => (fees[i] > 0 ? "$" + fmt(fees[i]) + " at " + effectiveQty(t).toLocaleString() : null)).filter(Boolean).join(" · ");
 }
+// A tier's quantity on every screen that shows one: the size mix once any size
+// carries a number -- the editor's Quantity box stops being maintained then -- and
+// the tier's own box otherwise. Null when there is neither.
+function tierQtyShown(t) {
+  const n = effectiveQty(t);
+  return n > 0 ? n : null;
+}
+// One size, as the detail view, the printed quotes and the CSV list it under a
+// tier: its quantity and price, and -- only where asked, never on a printed quote --
+// its own EXW and mold fee. Plain text; callers escape it for HTML.
+function sizeLineText(l, withCosts) {
+  let s = l.label + " " + l.qty.toLocaleString() + " @ " + (l.price != null ? "$" + fmtUnit(l.price) : "—");
+  if (withCosts && l.exw != null) s += " · EXW $" + fmtUnit(l.exw);
+  if (withCosts && l.mold != null) s += " · mold $" + fmt(l.mold);
+  return s;
+}
 function quoteSummary(q, dutyRate = null) {
   const tiers = q.tiers || [];
   if (!tiers.length) return { count: 0, minClient: null, maxClient: null, avgMargin: 0, method: null };
@@ -1246,13 +1262,17 @@ function Platform({ session, newQuote = null }) {
   }, [quotes, ui.activeClient]);
 
   const exportCSV = () => {
-    const cols = ["SKU","Date","Product","Client","Client Contact","Factory","Country","HTS","Tier Qty","EXW Cost","Method","Freight+Duty","Mold Fee","Total Cost","Client Price","Margin %","Updated","Updated By","Notes"];
+    const cols = ["SKU","Date","Product","Client","Client Contact","Factory","Country","HTS","Tier Qty","EXW Cost","Method","Freight+Duty","Mold Fee","Total Cost","Client Price","Margin %","Sizes","Updated","Updated By","Notes"];
     const lines = [cols.join(",")];
     quotes.forEach((q) => {
       const tiers = q.tiers && q.tiers.length ? q.tiers : [{}];
       tiers.forEach((t) => {
         const m = tierMargin(t, t.client, q.moldFee, rateOf(q));
-        lines.push([q.sku,q.quoteDate,q.product,q.client,q.clientContact,q.factory,q.country,q.hts,t.qty,t.landed,(t.ship||"ocean")==="air"?"Air":"Ocean",activeFreight(t)||"",tierMoldFee(t, q.moldFee)||"",tierTotalCost(t, q.moldFee, rateOf(q))||"",t.client,m ? m.toFixed(1) : "",fmtStamp(q.updatedAt),q.updatedBy,(q.notes||"").replace(/\n/g," ")]
+        // Only where a size differs from the tier -- its own price, adjustment, EXW
+        // or mold -- so a sized tier priced flat reads as it always did.
+        const sz = t.sizeQty ? sizeLines(t, q.sizeScales, q.sizeDeltas) : { differs: false, lines: [] };
+        const sizesText = sz.differs ? sz.lines.map((l) => sizeLineText(l, true)).join("; ") : "";
+        lines.push([q.sku,q.quoteDate,q.product,q.client,q.clientContact,q.factory,q.country,q.hts,t.sizeQty ? (tierQtyShown(t) ?? "") : t.qty,t.landed,(t.ship||"ocean")==="air"?"Air":"Ocean",activeFreight(t)||"",tierMoldFee(t, q.moldFee)||"",tierTotalCost(t, q.moldFee, rateOf(q))||"",t.client,m ? m.toFixed(1) : "",sizesText,fmtStamp(q.updatedAt),q.updatedBy,(q.notes||"").replace(/\n/g," ")]
           .map((v) => `"${String(v ?? "").replace(/"/g,'""')}"`).join(","));
       });
     });
@@ -2217,6 +2237,7 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
               const m = tierMargin(t, t.client, q.moldFee, dutyRate);
               const total = tierTotalCost(t, q.moldFee, dutyRate);
               const mpu = moldPerUnit(tierMoldFee(t, q.moldFee), effectiveQty(t));
+              const sz = sizeLines(t, q.sizeScales, q.sizeDeltas);
               const pair = (label, value, strong) => (
                 <div style={{ minWidth: 0 }}>
                   <div style={S.detailLabel}>{label}</div>
@@ -2225,13 +2246,14 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
               );
               return (
                 <div key={i} style={{ ...S.tierTable, padding: "10px 12px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 14px" }}>
-                  {pair("Quantity", t.qty ? Number(t.qty).toLocaleString() : "—", true)}
+                  {pair("Quantity", tierQtyShown(t) ? tierQtyShown(t).toLocaleString() : "—", true)}
                   {pair("EXW Cost", t.landed ? `$${fmtUnit(t.landed)}` : "—")}
                   {pair("Method", <span style={S.methodTag}>{(t.ship || "ocean") === "air" ? "Air" : "Ocean"}</span>)}
                   {pair("Freight + Duty", activeFreight(t) ? `$${fmtUnit(activeFreight(t))}` : "—")}
                   {pair("Total Cost", <>{total ? `$${fmtUnit(total)}` : "—"}{mpu > 0 && <div style={{ fontSize: 10.5, color: "#6a7488", fontWeight: 500 }}>incl. ${fmtUnit(mpu)} mold</div>}</>, true)}
                   {pair("Client Price", t.client ? `$${fmtUnit(t.client)}` : "—", true)}
                   {pair("Margin", <span style={{ color: m && m < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{m ? m.toFixed(0) + "%" : "—"}</span>)}
+                  {sz.differs && <div style={{ gridColumn: "1 / -1", ...S.sizeDetailLine }}>{sz.lines.map((l) => sizeLineText(l, true)).join(" · ")}</div>}
                 </div>
               );
             })}
@@ -2254,9 +2276,12 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
             // Same divisor tierTotalCost just used, or this caption contradicts the
             // number it is captioning on any tier carrying a size mix.
             const mpu = moldPerUnit(tierMoldFee(t, q.moldFee), effectiveQty(t));
+            // The sizes, under the tier, only where one differs from the tier's figures.
+            const sz = sizeLines(t, q.sizeScales, q.sizeDeltas);
             return (
-              <div key={i} style={S.tierBodyRow}>
-                <div style={{ flex: 1, fontWeight: 600, color: "#0f1729" }}>{t.qty ? Number(t.qty).toLocaleString() : "—"}</div>
+              <React.Fragment key={i}>
+              <div style={S.tierBodyRow}>
+                <div style={{ flex: 1, fontWeight: 600, color: "#0f1729" }}>{tierQtyShown(t) ? tierQtyShown(t).toLocaleString() : "—"}</div>
                 <div style={{ flex: 1, textAlign: "right", ...S.num }}>{t.landed ? `$${fmtUnit(t.landed)}` : "—"}</div>
                 <div style={{ flex: 0.8, textAlign: "center", ...S.num }}>
                   <span style={S.methodTag}>{(t.ship || "ocean") === "air" ? "Air" : "Ocean"}</span>
@@ -2271,6 +2296,8 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
                   <span style={{ color: m && m < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{m ? m.toFixed(0) + "%" : "—"}</span>
                 </div>
               </div>
+              {sz.differs && <div style={{ ...S.tierBodyRow, borderTop: "1px dashed #eef1f6", paddingTop: 6, paddingBottom: 8, ...S.sizeDetailLine }}>{sz.lines.map((l) => sizeLineText(l, true)).join(" · ")}</div>}
+              </React.Fragment>
             );
           })}
           {(!q.tiers || q.tiers.length === 0) && <div style={{ ...S.tierBodyRow, color: "#6a7488", justifyContent: "center" }}>No tiers entered.</div>}
@@ -2430,15 +2457,19 @@ async function printQuote(q, dutyRate = null) {
     // The on-screen detail view at the top of this file already had it right; the
     // printed copy of the same row did not.
     const mpu = moldPerUnit(tierMoldFee(t, q.moldFee), effectiveQty(t));
+    // Per size, the client price and nothing else: this sheet shows no per-size
+    // cost, so a size's own EXW or mold stays off it.
+    const sz = sizeLines(t, q.sizeScales, q.sizeDeltas);
+    const sizeRow = sz.differs ? `<tr${idx % 2 ? ' class="alt"' : ''}><td colspan="7" class="sizes">${esc(sz.lines.map((l) => sizeLineText(l, false)).join(" · "))}</td></tr>` : "";
     return `<tr${idx % 2 ? ' class="alt"' : ''}>
-      <td class="qty">${t.qty ? Number(t.qty).toLocaleString() : "—"}</td>
+      <td class="qty">${tierQtyShown(t) ? tierQtyShown(t).toLocaleString() : "—"}</td>
       <td class="r">${t.landed ? "$" + fmtUnit(t.landed) : "—"}</td>
       <td class="c"><span class="method">${(t.ship || "ocean") === "air" ? "Air" : "Ocean"}</span></td>
       <td class="r">${af ? "$" + fmtUnit(af) : "—"}</td>
       <td class="r">${total ? "$" + fmtUnit(total) : "—"}${mpu > 0 ? `<div style="font-size:9px;color:#6a7488;font-weight:500">incl. $${fmtUnit(mpu)} mold</div>` : ""}</td>
       <td class="r price">${t.client ? "$" + fmtUnit(t.client) : "—"}</td>
       <td class="r">${m ? m.toFixed(0) + "%" : "—"}</td>
-    </tr>`;
+    </tr>${sizeRow}`;
   }).join("");
   const row = (label, val) => val ? `<div class="kv"><span>${esc(label)}</span><b>${esc(val)}</b></div>` : "";
   const feeLine = (moldFeeText(q) || Number(q.sampleFee) > 0)
@@ -2477,6 +2508,7 @@ async function printQuote(q, dutyRate = null) {
     td.r { text-align: right; font-variant-numeric: tabular-nums; }
     td.c { text-align: center; }
     td.price { font-weight: 700; color: #1f2937; }
+    td.sizes { font-size: 11px; color: #4b5563; padding-top: 0; font-variant-numeric: tabular-nums; }
     .method { background: #eef2f8; color: #3d5680; border-radius: 11px; padding: 2px 9px; font-size: 10.5px; font-weight: 600; }
     .stamp { font-size: 10.5px; color: #6e7681; margin-top: 9px; font-style: italic; }
     .fees { margin-top: 12px; font-size: 12px; color: #1f2937; display: flex; flex-direction: column; gap: 4px; }
@@ -2564,12 +2596,18 @@ function bankBlock(settings) {
 function printClientSheet(clientName, quotesArr, settings, vendor, logoImg) {
   const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const productBlocks = quotesArr.map((q) => {
+    // Quantity from the size mix where there is one. Per size, the price only --
+    // the one figure this sheet has ever shown -- and only where a size's price
+    // differs from the tier's.
     const rows = (q.tiers || [])
-      .filter((t) => t.qty && t.client)
-      .map((t) => `<tr>
-        <td class="qty">${Number(t.qty).toLocaleString()}</td>
+      .filter((t) => tierQtyShown(t) && t.client)
+      .map((t) => {
+        const sz = sizeLines(t, q.sizeScales, q.sizeDeltas);
+        return `<tr>
+        <td class="qty">${tierQtyShown(t).toLocaleString()}</td>
         <td class="r price">$${fmtUnit(t.client)}</td>
-      </tr>`).join("");
+      </tr>${sz.differs ? `<tr><td colspan="2" class="sizes">${esc(sz.lines.map((l) => sizeLineText(l, false)).join(" · "))}</td></tr>` : ""}`;
+      }).join("");
     if (!rows) return "";
     return `
       <div class="product">
@@ -2612,6 +2650,7 @@ function printClientSheet(clientName, quotesArr, settings, vendor, logoImg) {
     td.qty { font-weight: 600; font-family: 'Fraunces', serif; font-size: 15px; }
     td.r { text-align: right; font-variant-numeric: tabular-nums; }
     td.price { font-weight: 700; font-size: 14px; color: #1f2937; }
+    td.sizes { font-size: 11px; color: #4b5563; padding-top: 0; font-variant-numeric: tabular-nums; }
     .foot { margin-top: 40px; padding-top: 14px; border-top: 1px solid #e7ddca; font-size: 10px; color: #b3a488; }
     .terms { font-size: 11px; color: #8b949e; margin-top: 6px; line-height: 1.5; }
   </style></head><body>
@@ -4719,6 +4758,8 @@ const S = {
   // Under a greyed tier's Freight and Duty: the same small caps as a total's caption,
   // so the row reads as one, saying these two are inputs, per unit.
   perUnitCap: { fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em", color: "#3551c4", fontWeight: 600, lineHeight: 1.25 },
+  // A tier's sizes, listed under it in the detail view where one differs.
+  sizeDetailLine: { fontSize: 11.5, color: "#6a7488", fontVariantNumeric: "tabular-nums", lineHeight: 1.45 },
   tierMixLine: { fontSize: 11, color: "#9aa3b5", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
   // width pinned, not content-sized: the Client Price header pads itself by
   // AUTO_BTN_W to centre over the input alone. See the note beside that constant.
