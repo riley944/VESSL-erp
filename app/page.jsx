@@ -529,6 +529,15 @@ const BANKING_PAGE = 'company-banking';
 // fetches nothing. The column itself can only be changed by a script run as
 // postgres; a trigger refuses changes from the app.
 const ANALYTICS_PAGE = 'dashboard';
+
+// ── Pricing: hidden for now ──────────────────────────────────────────────────
+// ONE SWITCH. false hides the Pricing page from everybody: no sidebar link, and a
+// hash or a remembered last page naming it resolves to the normal landing page
+// before the shell renders, so the page never mounts. app/pricing.jsx and its
+// tables are untouched. Set this to true to bring the page back exactly as it
+// was. Nothing else in the app links to it or imports from it.
+const PRICING_ENABLED = false;
+const PRICING_PAGE = 'pricing';
 // DEVELOPMENT ONLY: http://localhost:3000/?view-as=no-analytics#dashboard shows
 // the app as a person without analytics access. Two locks, either enough on its
 // own. NODE_ENV is 'production' in every `next build` -- which is what Vercel
@@ -702,7 +711,7 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, rol
     { id:'companies',          label:'Companies' },
     { id:'products',           label:'Products' },
     { id:'testing',            label:'Testing' },
-    { id:'pricing',            label:'Pricing' },
+    ...(PRICING_ENABLED ? [{ id:PRICING_PAGE, label:'Pricing' }] : []),
     { id:'shipments',          label:'Shipments' },
     { id:'inventory',          label:'Inventory' },
     { id:'quotes',             label:'Quotes' },
@@ -10689,7 +10698,9 @@ export default function App() {
   // THE ANALYTICS GATE, the same idea as banking's gate 2. Anyone without access who
   // asks for it gets their normal landing page -- the first page a limited role
   // allows, otherwise Samples -- and the hash writer below then records that.
-  const page = (pageAfterBanking === ANALYTICS_PAGE && !canAnalytics) ? (allowedPages ? allowedPages[0] : 'programs') : pageAfterBanking;
+  const pageAfterAnalytics = (pageAfterBanking === ANALYTICS_PAGE && !canAnalytics) ? (allowedPages ? allowedPages[0] : 'programs') : pageAfterBanking;
+  // Pricing, while PRICING_ENABLED is false: the same landing page as above, for everyone.
+  const page = (pageAfterAnalytics === PRICING_PAGE && !PRICING_ENABLED) ? (allowedPages ? allowedPages[0] : 'programs') : pageAfterAnalytics;
 
   // Adopt the hash on mount, once. An effect rather than a useState initializer
   // because this route is statically prerendered: the server has no window, so a
@@ -10798,7 +10809,7 @@ export default function App() {
           {page==='products'         && <Products navigate={navigate} canCreateProducts={role !== 'limited_qc'} userEmail={user?.email||''} />}
           {page==='testing'          && <Testing userEmail={user?.email||''} />}
           {page==='codes'            && <Codes canDeleteCodes={role !== 'limited_qc'} />}
-          {page==='pricing'          && <Pricing />}
+          {page===PRICING_PAGE && PRICING_ENABLED && <Pricing />}
           {page==='programs'         && <Programs userEmail={user?.email||''} />}
           {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} userEmail={user?.email||''} displayName={displayName} />}
           {page==='inventory'        && <Inventory />}
