@@ -777,13 +777,18 @@ const sampleTypeOptions = (types, current) => {
 const cleanTypeLabel = v => String(v || '').replace(/\s+/g, ' ').trim();
 
 // ── WHO SENT THE PACKAGE (script 112) ───────────────────────────────────────
-// program_sample_rounds.sent_by -- us (KUI) or them, NULL for Not set, which is
-// what every round saved before 112 reads. Anything else, and a value read
-// before the column exists (undefined), is Not set too. The files say
-// Us (KUI) or Them; the card says Sent by us or Sent by them.
-const SENT_BY_OPTS = [['us', 'Us (KUI)'], ['them', 'Them']];
+// program_sample_rounds.sent_by and sent_by_2 -- us or them, NULL for Not set,
+// which is what every round saved before 112 reads. Anything else, and a value
+// read before the column exists (undefined), is Not set too.
+//
+// STORED us IS KUI AND STORED them IS THE LAB -- the testing lab the sample went
+// to or came from, NOT the factory and NOT the client. Only the words changed
+// (12 Oct); the stored values did not, so scripts 112 and 113 still read us and
+// them. The dropdowns and the files say KUI or Lab; the card says Sent by KUI or
+// Sent by Lab.
+const SENT_BY_OPTS = [['us', 'KUI'], ['them', 'Lab']];
 const sentByLabel = v => (SENT_BY_OPTS.find(([k]) => k === v) || [null, ''])[1];
-const sentByWords = v => (v === 'us' || v === 'them') ? 'Sent by ' + v : '';
+const sentByWords = v => sentByLabel(v) ? 'Sent by ' + sentByLabel(v) : '';
 
 // ── TWO PACKAGES A ROUND (script 113) ───────────────────────────────────────
 // Package 1 is sent_by, carrier and tracking_number; package 2 is sent_by_2,
@@ -799,7 +804,7 @@ const packagesOf = x => [
 const pkgShips = k => !!(k.carrier || k.number);
 const pkgAny = k => !!sentByWords(k.sentBy) || pkgShips(k);
 const hasShipment = x => packagesOf(x).some(pkgShips);
-// "Sent by us · FedEx 1Z…" -- the entry line's words for one package. A carrier
+// "Sent by KUI · FedEx 1Z…" -- the entry line's words for one package. A carrier
 // alone reads FedEx, a number alone "tracking 1Z…".
 const pkgText = k => [sentByWords(k.sentBy),
   k.carrier && k.number ? k.carrier + ' ' + k.number : k.carrier || (k.number ? 'tracking ' + k.number : '')]
@@ -815,7 +820,7 @@ const pkgText = k => [sentByWords(k.sentBy),
 // entry line only. A carrier alone reads "· FedEx", a number alone "· tracking
 // 1Z…" so a bare number is not left unlabelled. The Sampling row and the board's
 // Latest round column leave it off, because the Sample tracking row beside them
-// already says it. Who sent it comes first -- "· Sent by us · FedEx 1Z…" -- and
+// already says it. Who sent it comes first -- "· Sent by KUI · FedEx 1Z…" -- and
 // a second package follows the first in the same words (script 113).
 const roundText = (x, withTracking = false) => {
   if (!x) return null;
@@ -833,10 +838,10 @@ const roundText = (x, withTracking = false) => {
 // shipment on the HIGHEST round that records one -- a carrier or a number -- so
 // it is always the newest shipment somebody recorded, and a round saved with
 // neither does not blank the one before it. "FedEx · 1Z… · round 3".
-// Who sent it leads when that round says -- "Sent by us · FedEx · 1Z… · round 3".
+// Who sent it leads when that round says -- "Sent by KUI · FedEx · 1Z… · round 3".
 // TWO PACKAGES (script 113). A round counts when EITHER package has a carrier or
 // a number, and the row then shows every package of that round with anything
-// set, in order -- "Sent by them · FedEx · 1Z… · Sent by us · UPS · 1Z… · round 3".
+// set, in order -- "Sent by Lab · FedEx · 1Z… · Sent by KUI · UPS · 1Z… · round 3".
 // A round with only a Sent by names no shipment, so it is not the one picked.
 const pkgCardText = k => [sentByWords(k.sentBy), k.carrier, k.number].filter(Boolean).join(' · ');
 // ── THE SOURCE QUOTE (script 104) ───────────────────────────────────────────
@@ -1430,7 +1435,8 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
       )}
       {/* Two packages, each a row of Sent by, carrier and number in the order
           the entry line reads them, one under the other with no caption (script
-          113) -- the aria-labels say first and second package. Sent by is a dash for Not set (script 112), Us (KUI) or Them.
+          113) -- the aria-labels say first and second package. Sent by is a
+          dash for Not set (script 112), KUI or Lab, in black like Carrier.
           The carrier is picked from the list; the number is free text, as it is
           on the label. Both rows are optional. */}
       {['', '2'].map(slot => (
@@ -1441,7 +1447,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
               <select data-noguard value={f['sentBy' + slot]} disabled={busy}
                 aria-label={slot ? 'Sent by, second package' : 'Sent by, first package'}
                 onChange={e=>set({ ...f, ['sentBy' + slot]: e.target.value })}
-                style={{...inp,cursor:busy?'default':'pointer',color:f['sentBy' + slot]?'#1D1D1F':'#86868B'}}>
+                style={{...inp,cursor:busy?'default':'pointer'}}>
                 <option value="">—</option>
                 {SENT_BY_OPTS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
               </select>
