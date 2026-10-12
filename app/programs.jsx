@@ -2669,6 +2669,8 @@ const TT_LBL = { fontSize:'10px', fontWeight:600, textTransform:'uppercase', let
 const TT_HEAD = { fontSize:'11px', fontWeight:600, letterSpacing:'.08em', textTransform:'uppercase',
                   color:'#86868B', marginBottom:'6px' };
 const TT_NONE = 'None recorded';
+// Whose name the card header shows as owner while the Testing tab is open.
+const TESTING_OWNER_EMAIL = 'jenn@kinguniversal.com';
 // The Testing page's pill colours for an expiry: past, inside the window, and
 // clear of it.
 const EXPIRY_TONE = {
@@ -2783,7 +2785,7 @@ function TestingTab({ r, canOpenTesting = false }) {
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(118px,1fr))',gap:'8px'}}>
         {tile('eFiling', EFILING_LABEL[efKey], efKey === 'filed' ? fmtDate(p.efiled_date) : null,
               efKey === 'undecided' ? '#A0A0A4' : null)}
-        {tile('Latest test report', testDate ? fmtDate(testDate) : TT_NONE, manual ? 'manual' : null,
+        {tile('Test report', testDate ? fmtDate(testDate) : TT_NONE, manual ? 'manual' : null,
               testDate ? null : '#A0A0A4')}
         {tile('Days to expiry', days === null ? '—' : String(days),
               tone ? EXPIRY_TONE[tone].label : (expiryNote === TT_NONE ? TT_NONE : 'No expiry recorded'),
@@ -3238,6 +3240,21 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
           reassignment note. data-noguard because it saves the moment it
           changes -- there is nothing unsaved for the close guard to protect. */}
       <div style={{display:'flex',alignItems:'center',gap:'10px',marginTop:'14px',flexWrap:'wrap'}}>
+        {/* ON THE TESTING TAB THE OWNER READS JENN MOORE (12 Oct) -- testing is
+            hers -- fixed and read-only, in the select's shape. Display only: the
+            card's owner_id is not read or written here, and the Sampling and Card
+            tabs keep the working select. Her name comes from the staff list by
+            email, "Jenn Moore" if she is not in it. */}
+        {tab === 'testing' ? (
+          <span aria-label="Testing owner"
+            style={{border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'8px 12px',fontSize:'13px',
+                    fontFamily:'inherit',background:'#fff',color:'#1D1D1F',lineHeight:'normal'}}>
+            {(() => {
+              const j = staff.find(s => String(s.email || '').toLowerCase() === TESTING_OWNER_EMAIL);
+              return (j && j.full_name) || 'Jenn Moore';
+            })()}
+          </span>
+        ) : (
         <select data-noguard value={r.owner_id || ''} disabled={busy} aria-label="Owner"
           onChange={e=>onOwner(r, e.target.value)}
           style={{border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'8px 12px',fontSize:'13px',
@@ -3246,6 +3263,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
           <option value="">Unowned</option>
           {staff.map(s => <option key={s.id} value={s.id}>{s.full_name || s.email}</option>)}
         </select>
+        )}
         {r.since && (
           <span style={{fontSize:'12.5px',color:r.stale?'#8a5a00':'#86868B'}}>
             {r.days === 0 ? 'Moved to ' + stageLabel(r.stage) + ' today'
