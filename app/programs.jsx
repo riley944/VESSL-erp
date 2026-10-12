@@ -594,50 +594,36 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
         <div style={{fontSize:'11.5px',color:'#A0A0A4',lineHeight:1.5,marginBottom:'9px'}}>{subtitle}</div>
       )}
 
-      <textarea data-noguard value={text} onChange={e=>setText(e.target.value)} rows={compact ? 1 : 2}
-        placeholder={compact ? 'Add a note on this round' : 'Add a note — you can edit or delete your own notes later'}
-        style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 11px',
-                fontSize:'13px',fontFamily:'inherit',outline:'none',resize:'vertical',
-                background:'#fff',boxSizing:'border-box'}} />
-      <div style={{display:'flex',alignItems:'center',gap:'10px',marginTop:'7px'}}>
-        <button onClick={add} disabled={busy || !text.trim()}
-          style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 14px',border:'none',
-                  fontFamily:'inherit',cursor:busy||!text.trim()?'default':'pointer',
-                  background:text.trim()?'#1D1D1F':'#E5E5EA',color:text.trim()?'#fff':'#A0A0A4'}}>
-          {busy ? 'Adding…' : 'Add note'}
-        </button>
-        {err && <span style={{fontSize:'11.5px',color:'var(--hot)'}}>{err}</span>}
-      </div>
-
-      {notes === null ? (
-        <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'12px'}}>Reading notes…</div>
-      ) : (() => {
+      {/* SAVED NOTES FIRST, THEN THE BOX (12 Oct). Top to bottom: the label, the
+          notes as listed (newest first, as load() orders them), any folded other
+          stages, then the box and Add note. With nothing saved yet the box sits
+          straight under the label, and the empty-state and Reading notes lines
+          go under the box. On a round, the Edit form's Save, Cancel and Delete
+          row stays below all of this -- SampleRounds renders it after the panel. */}
+      {(() => {
         // This stage's notes, and notes with no stage; everything else is folded.
-        const here  = stageScoped ? notes.filter(n => !n.stage || n.stage === stage) : notes;
-        const other = stageScoped ? notes.filter(n => n.stage && n.stage !== stage) : [];
+        const here  = !notes ? [] : stageScoped ? notes.filter(n => !n.stage || n.stage === stage) : notes;
+        const other = !notes ? [] : stageScoped ? notes.filter(n => n.stage && n.stage !== stage) : [];
         const link = (label, onClick) => (
           <button onClick={onClick}
             style={{background:'none',border:'none',padding:0,fontSize:'11px',fontWeight:500,color:'#A0A0A4',
                     cursor:'pointer',fontFamily:'inherit',textDecoration:'underline',textUnderlineOffset:'2px'}}>{label}</button>
         );
+        const above = here.length > 0 || other.length > 0;
         return (
           <>
-            {here.length === 0 ? (
-              <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'12px'}}>
-                {other.length ? 'No notes in this stage.' : 'No notes yet.'}
-              </div>
-            ) : (
-              <div style={{marginTop:'12px',display:'flex',flexDirection:'column',gap:'9px'}}>
+            {here.length > 0 && (
+              <div style={{display:'flex',flexDirection:'column',gap:'9px'}}>
                 {here.map(renderNote)}
               </div>
             )}
             {other.length > 0 && !showOther && (
-              <div style={{marginTop:'12px',fontSize:'11.5px',color:'#B0B0B4'}}>
+              <div style={{marginTop:here.length ? '12px' : 0,fontSize:'11.5px',color:'#B0B0B4'}}>
                 {other.length} note{other.length === 1 ? '' : 's'} in other stages · {link('Show all', () => setShowOther(true))}
               </div>
             )}
             {other.length > 0 && showOther && (
-              <div style={{marginTop:'14px'}}>
+              <div style={{marginTop:here.length ? '14px' : 0}}>
                 <div style={{display:'flex',alignItems:'baseline',gap:'8px'}}>
                   <span style={{fontSize:'11px',fontWeight:600,color:'#B0B0B4',textTransform:'uppercase',letterSpacing:'.06em'}}>
                     Other stages · {other.length}
@@ -653,6 +639,29 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            <textarea data-noguard value={text} onChange={e=>setText(e.target.value)} rows={compact ? 1 : 2}
+              placeholder={compact ? 'Add a note on this round' : 'Add a note — you can edit or delete your own notes later'}
+              style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 11px',
+                      fontSize:'13px',fontFamily:'inherit',outline:'none',resize:'vertical',
+                      background:'#fff',boxSizing:'border-box',display:'block',marginTop:above ? '12px' : 0}} />
+            <div style={{display:'flex',alignItems:'center',gap:'10px',marginTop:'7px'}}>
+              <button onClick={add} disabled={busy || !text.trim()}
+                style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 14px',border:'none',
+                        fontFamily:'inherit',cursor:busy||!text.trim()?'default':'pointer',
+                        background:text.trim()?'#1D1D1F':'#E5E5EA',color:text.trim()?'#fff':'#A0A0A4'}}>
+                {busy ? 'Adding…' : 'Add note'}
+              </button>
+              {err && <span style={{fontSize:'11.5px',color:'var(--hot)'}}>{err}</span>}
+            </div>
+
+            {notes === null ? (
+              <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'12px'}}>Reading notes…</div>
+            ) : here.length === 0 && (
+              <div style={{fontSize:'12px',color:'#A0A0A4',marginTop:'12px'}}>
+                {other.length ? 'No notes in this stage.' : 'No notes yet.'}
               </div>
             )}
           </>
