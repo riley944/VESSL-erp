@@ -785,6 +785,26 @@ const SENT_BY_OPTS = [['us', 'Us (KUI)'], ['them', 'Them']];
 const sentByLabel = v => (SENT_BY_OPTS.find(([k]) => k === v) || [null, ''])[1];
 const sentByWords = v => (v === 'us' || v === 'them') ? 'Sent by ' + v : '';
 
+// ── TWO PACKAGES A ROUND (script 113) ───────────────────────────────────────
+// Package 1 is sent_by, carrier and tracking_number; package 2 is sent_by_2,
+// carrier_2 and tracking_number_2, the same three again. Either may be empty,
+// and a column read before its script ran (undefined) is empty too. Every
+// reader goes through packagesOf, so the two are always shown in order.
+const packagesOf = x => [
+  { sentBy: x.sent_by,   carrier: x.carrier || '',   number: x.tracking_number || '' },
+  { sentBy: x.sent_by_2, carrier: x.carrier_2 || '', number: x.tracking_number_2 || '' },
+];
+// A package names a shipment when it has a carrier or a number; it is worth
+// showing when it has that or a Sent by.
+const pkgShips = k => !!(k.carrier || k.number);
+const pkgAny = k => !!sentByWords(k.sentBy) || pkgShips(k);
+const hasShipment = x => packagesOf(x).some(pkgShips);
+// "Sent by us · FedEx 1Z…" -- the entry line's words for one package. A carrier
+// alone reads FedEx, a number alone "tracking 1Z…".
+const pkgText = k => [sentByWords(k.sentBy),
+  k.carrier && k.number ? k.carrier + ' ' + k.number : k.carrier || (k.number ? 'tracking ' + k.number : '')]
+  .filter(Boolean).join(' · ');
+
 // ── ONE ROUND IN ONE LINE ───────────────────────────────────────────────────
 // "Round 2 · Pre-Production Sample · sent Jan 1, 2026 · due back Oct 1, 2026".
 // Only the parts somebody set, so a round saved with a due date alone does not
@@ -795,18 +815,15 @@ const sentByWords = v => (v === 'us' || v === 'them') ? 'Sent by ' + v : '';
 // entry line only. A carrier alone reads "· FedEx", a number alone "· tracking
 // 1Z…" so a bare number is not left unlabelled. The Sampling row and the board's
 // Latest round column leave it off, because the Sample tracking row beside them
-// already says it. Who sent it comes first -- "· Sent by us · FedEx 1Z…".
+// already says it. Who sent it comes first -- "· Sent by us · FedEx 1Z…" -- and
+// a second package follows the first in the same words (script 113).
 const roundText = (x, withTracking = false) => {
   if (!x) return null;
   const parts = ['Round ' + x.round];
   if (x.sample_type) parts.push(sampleTypeLabel(x.sample_type));
   if (x.sent_date) parts.push('sent ' + fmt(x.sent_date));
   if (DUE_BACK_ON && x.due_back) parts.push('due back ' + fmt(x.due_back));
-  if (withTracking && sentByWords(x.sent_by)) parts.push(sentByWords(x.sent_by));
-  if (withTracking && (x.carrier || x.tracking_number)) {
-    parts.push(x.carrier && x.tracking_number ? x.carrier + ' ' + x.tracking_number
-             : x.carrier || 'tracking ' + x.tracking_number);
-  }
+  if (withTracking) packagesOf(x).filter(pkgAny).forEach(k => parts.push(pkgText(k)));
   return parts.join(' · ');
 };
 
@@ -817,9 +834,11 @@ const roundText = (x, withTracking = false) => {
 // it is always the newest shipment somebody recorded, and a round saved with
 // neither does not blank the one before it. "FedEx · 1Z… · round 3".
 // Who sent it leads when that round says -- "Sent by us · FedEx · 1Z… · round 3".
-// A round with Sent by and no carrier or number names no shipment, so it is not
-// the round this row picks.
-const shipLine = x => [x.carrier, x.tracking_number].filter(Boolean).join(' · ');
+// TWO PACKAGES (script 113). A round counts when EITHER package has a carrier or
+// a number, and the row then shows every package of that round with anything
+// set, in order -- "Sent by them · FedEx · 1Z… · Sent by us · UPS · 1Z… · round 3".
+// A round with only a Sent by names no shipment, so it is not the one picked.
+const pkgCardText = k => [sentByWords(k.sentBy), k.carrier, k.number].filter(Boolean).join(' · ');
 // ── THE SOURCE QUOTE (script 104) ───────────────────────────────────────────
 // The quote a card was created from, as { code, url } or null. The url is the
 // Quotes page's own deep link (?quote=id), which opens the quote's client and
@@ -837,13 +856,20 @@ function QuoteLinkValue({ link }) {
       style={{color:'#0A84FF',textDecoration:'underline',textUnderlineOffset:'2px',fontFamily:'var(--mono)'}}>{link.code}</a>
   );
 }
-// The shipment a Card row names, with its link -- null when the row names none.
-// url is null too when trackingUrl cannot tell whose number it is, and then the
-// number is plain text everywhere.
-const shipOf = (x, withRound, carriers) => (x && shipLine(x)) ? {
-  sentBy: sentByWords(x.sent_by), carrier: x.carrier || '', number: x.tracking_number || '', round: withRound ? x.round : null,
-  url: trackingUrl(x.carrier, x.tracking_number, carriers),
-} : null;
+// The shipment a Card row names, with its links -- null when the row names none.
+// Each package's url comes from its own carrier, and is null when trackingUrl
+// cannot tell whose number it is; that number is then plain text everywhere.
+// url on the whole is the first package's link that exists -- a workbook cell
+// or a PDF value carries one link, and the screen links each number.
+const shipOf = (x, withRound, carriers) => {
+  if (!x || !hasShipment(x)) return null;
+  const packages = packagesOf(x).filter(pkgAny).map(k => ({
+    sentBy: sentByWords(k.sentBy), carrier: k.carrier, number: k.number,
+    url: k.number ? trackingUrl(k.carrier, k.number, carriers) : null,
+  }));
+  return { packages, round: withRound ? x.round : null,
+           url: (packages.find(k => k.url) || {}).url || null };
+};
 
 // ── A TRACKING NUMBER, LINKED WHEN IT CAN BE ────────────────────────────────
 // A new tab, noopener, and the click stops here so it never opens or closes
@@ -856,24 +882,31 @@ function TrackingLink({ number, url }) {
       style={{color:'#0A84FF',textDecoration:'underline',textUnderlineOffset:'2px'}}>{number}</a>
   );
 }
-// "FedEx · 1Z… · round 3" with the number linked -- the Card rows' words.
+// "FedEx · 1Z… · round 3" with each number linked -- the Card rows' words.
 const ShipValue = ({ ship }) => (
   <>
-    {ship.sentBy ? ship.sentBy + ' · ' : ''}
-    {ship.carrier}{ship.carrier && ship.number ? ' · ' : ''}
-    {ship.number ? <TrackingLink number={ship.number} url={ship.url} /> : null}
+    {ship.packages.map((k, i) => (
+      <span key={i}>
+        {i ? ' · ' : ''}{k.sentBy ? k.sentBy + (k.carrier || k.number ? ' · ' : '') : ''}
+        {k.carrier}{k.carrier && k.number ? ' · ' : ''}
+        {k.number ? <TrackingLink number={k.number} url={k.url} /> : null}
+      </span>
+    ))}
     {ship.round ? ' · round ' + ship.round : ''}
   </>
 );
-const trackedRound = r => [...(r.rounds || [])].sort((a, b) => b.round - a.round).find(y => shipLine(y)) || null;
+const trackedRound = r => [...(r.rounds || [])].sort((a, b) => b.round - a.round).find(hasShipment) || null;
 const sampleTracking = r => {
   const hit = trackedRound(r);
-  return hit ? [sentByWords(hit.sent_by), shipLine(hit)].filter(Boolean).join(' · ') + ' · round ' + hit.round : 'Not recorded';
+  return hit ? packagesOf(hit).filter(pkgAny).map(pkgCardText).join(' · ') + ' · round ' + hit.round : 'Not recorded';
 };
 
-// Every round column the board reads but sent_by, which load() adds and drops
-// again if the database refuses it (script 112 not yet run).
+// Every round column the board reads but the Sent by and second-package ones,
+// which load() adds and drops again if the database refuses them (script 112
+// or 113 not yet run).
 const ROUND_SELECT = 'id,program_id,stage,round,sample_type,master_sample,sent_date,due_back,carrier,tracking_number,comment,created_by,created_at,updated_by,updated_at';
+const ROUND_SELECT_112 = ',sent_by';
+const ROUND_SELECT_113 = ',sent_by_2,carrier_2,tracking_number_2';
 
 // A date the database will take and a person meant. A date input passes
 // through 0002 and 0020 while the year is typed, and one saved mid-typing is a
@@ -935,7 +968,9 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   // worked in Sampling or Revision, prefilled with the card's value, and it is
   // written only when it changed. Every round form shows the same card value.
   // note is the new-round form only -- saved as the round's first round note.
-  const blank = { type: '', sent: '', due: '', sentBy: '', carrier: '', tracking: '', lab: r.testing_lab || '', note: '' };
+  // sentBy2, carrier2 and tracking2 are package 2 (script 113).
+  const blank = { type: '', sent: '', due: '', sentBy: '', carrier: '', tracking: '',
+                  sentBy2: '', carrier2: '', tracking2: '', lab: r.testing_lab || '', note: '' };
   const [form, setForm] = useState(blank);
   const [editId, setEditId] = useState(null);
   const [edit, setEdit] = useState(blank);
@@ -969,7 +1004,9 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   };
   // A note alone makes a round too -- somebody who wrote what was sent meant it
   // to be saved. The edit form has no note field, so it reads as empty there.
-  const hasAny = f => f.type || f.sent || (DUE_BACK_ON && f.due) || f.sentBy || f.carrier.trim() || f.tracking.trim() || (f.note || '').trim();
+  const pkg2Any = f => !!(f.sentBy2 || f.carrier2.trim() || f.tracking2.trim());
+  const hasAny = f => f.type || f.sent || (DUE_BACK_ON && f.due) || f.sentBy || f.carrier.trim() || f.tracking.trim()
+                   || pkg2Any(f) || (f.note || '').trim();
   const datesOk = f => okDate(f.sent) && okDate(f.due);
   // master_sample and comment are not written -- an edit leaves whatever an old
   // round held in them exactly as it was.
@@ -978,14 +1015,20 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   // sent_by is written only while the board found the column (script 112) --
   // before it is run, leaving it out lets every other field still save, and
   // sentByBlocked below refuses a save that would drop a Sent by somebody chose.
+  // Package 2 likewise, on script 113 -- written only while the board found its
+  // three columns, and pkg2Blocked refuses a save that would drop any of them.
   const values = f => ({
     sample_type: f.type || null, sent_date: f.sent || null,
     ...(DUE_BACK_ON ? { due_back: f.due || null } : {}),
     ...(r.sentByLive ? { sent_by: f.sentBy || null } : {}),
     carrier: f.carrier.trim() || null, tracking_number: f.tracking.trim() || null,
+    ...(r.pkg2Live ? { sent_by_2: f.sentBy2 || null, carrier_2: f.carrier2.trim() || null,
+                       tracking_number_2: f.tracking2.trim() || null } : {}),
   });
   const SENT_BY_NOT_YET = 'Sent by cannot be saved yet: the database does not have it (script 112 has not been run). Set Sent by back to — to save the rest.';
   const sentByBlocked = f => !r.sentByLive && !!f.sentBy;
+  const PKG2_NOT_YET = 'Package 2 cannot be saved yet: the database does not have it (script 113 has not been run). Clear the Package 2 row to save the rest.';
+  const pkg2Blocked = f => !r.pkg2Live && pkg2Any(f);
   const unchanged = (x, f) => {
     const v = values(f);
     return (f.round === undefined || f.round === x.round)
@@ -993,7 +1036,10 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         && (!DUE_BACK_ON || v.due_back === (x.due_back || null))
         && (f.sentBy || null) === (x.sent_by || null)
         && v.tracking_number === (x.tracking_number || null)
-        && (v.carrier || '').toLowerCase() === (x.carrier || '').toLowerCase();
+        && (v.carrier || '').toLowerCase() === (x.carrier || '').toLowerCase()
+        && (f.sentBy2 || null) === (x.sent_by_2 || null)
+        && (f.tracking2.trim() || null) === (x.tracking_number_2 || null)
+        && f.carrier2.trim().toLowerCase() === (x.carrier_2 || '').toLowerCase();
   };
   // The lab is compared trimmed, as it is stored.
   const labChanged = f => f.lab.trim() !== (r.testing_lab || '');
@@ -1032,6 +1078,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     if (!withRound && !withLab) return;
     if (withRound && !datesOk(form)) { setErr('Check the dates — each needs a full year from 2000 on.'); return; }
     if (withRound && sentByBlocked(form)) { setErr(SENT_BY_NOT_YET); return; }
+    if (withRound && pkg2Blocked(form)) { setErr(PKG2_NOT_YET); return; }
     // Said plainly here rather than left to the unique constraint's error.
     if (withRound && used.has(chosen)) {
       setErr('Round ' + chosen + ' is already saved on this card. Pick another number with the arrows.');
@@ -1083,7 +1130,8 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     setEditId(x.id); setErr('');
     setEdit({ round: x.round, type: x.sample_type || '',
               sent: x.sent_date || '', due: x.due_back || '', sentBy: x.sent_by || '', carrier: x.carrier || '',
-              tracking: x.tracking_number || '', lab: r.testing_lab || '' });
+              tracking: x.tracking_number || '', sentBy2: x.sent_by_2 || '', carrier2: x.carrier_2 || '',
+              tracking2: x.tracking_number_2 || '', lab: r.testing_lab || '' });
   };
 
   // Asked once, and there is no undo -- the round row is gone. ITS NOTES ARE NOT
@@ -1138,6 +1186,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   const saveEdit = async x => {
     if (!datesOk(edit)) { setErr('Check the dates — each needs a full year from 2000 on.'); return; }
     if (sentByBlocked(edit)) { setErr(SENT_BY_NOT_YET); return; }
+    if (pkg2Blocked(edit)) { setErr(PKG2_NOT_YET); return; }
     const renumbered = edit.round !== x.round;
     // The same plain words as the new-round form, before the unique constraint
     // would refuse it.
@@ -1209,8 +1258,11 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   // matching a carrier in another case (Fedex) selects that carrier and is not
   // counted as a change.
   const activeCarriers = [...(r.carriers || [])].sort((a, b) => a.name.localeCompare(b.name));
-  const [addFor, setAddFor] = useState(null);   // 'form' | 'edit' | null
-  const pick = (which, name) => (which === 'form' ? setForm : setEdit)(f => ({ ...f, carrier: name }));
+  // addFor is the form AND the package -- form, edit, form2 or edit2 -- so the
+  // carrier made through + Add new carrier… lands in the row that asked.
+  const [addFor, setAddFor] = useState(null);   // 'form' | 'edit' | 'form2' | 'edit2' | null
+  const pick = (tag, name) => (tag.startsWith('form') ? setForm : setEdit)(f =>
+    ({ ...f, [tag.endsWith('2') ? 'carrier2' : 'carrier']: name }));
   // The company form reports the row it saved, always a carrier -- it opens
   // with the type fixed to Carrier -- and that carrier is selected.
   const onCarrierCreated = async (type, co) => {
@@ -1220,26 +1272,30 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     pick(which, co.name);
     if (onTouched) await onTouched();
   };
-  const carrierSelect = (f, which) => {
-    const hit = findCarrier(activeCarriers, f.carrier);
-    const unlisted = f.carrier.trim() && !hit;
+  // slot is '' for package 1 and '2' for package 2.
+  const carrierSelect = (f, which, slot = '') => {
+    const tag = which + slot;
+    const val = f['carrier' + slot];
+    const hit = findCarrier(activeCarriers, val);
+    const unlisted = val.trim() && !hit;
     return (
       <>
-        <select data-noguard value={hit ? hit.name : f.carrier} disabled={busy} aria-label="Carrier"
+        <select data-noguard value={hit ? hit.name : val} disabled={busy}
+          aria-label={slot ? 'Carrier, package 2' : 'Carrier'}
           onChange={e => {
-            if (e.target.value === '__add__') { setAddFor(which); return; }
-            pick(which, e.target.value);
+            if (e.target.value === '__add__') { setAddFor(tag); return; }
+            pick(tag, e.target.value);
           }}
           style={{...inp,cursor:busy?'default':'pointer'}}>
           <option value="">—</option>
           {activeCarriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-          {unlisted && <option value={f.carrier}>{f.carrier} (not in list)</option>}
+          {unlisted && <option value={val}>{val} (not in list)</option>}
           <option value="__add__">+ Add new carrier…</option>
         </select>
         {/* THE NEW COMPANY FORM, set to Carrier. It is a modal of its own and
             marks its own card, so this card's close guard leaves its fields
             alone; the wrapper stops its clicks reaching the card behind. */}
-        {addFor === which && (
+        {addFor === tag && (
           <div onClick={e => e.stopPropagation()}>
             <CreateCompanyModal initialType="carrier"
               onClose={() => setAddFor(null)} onCreated={onCarrierCreated} />
@@ -1372,30 +1428,38 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
             onChange={e=>set({ ...f, due: e.target.value })} />
         </div>
       )}
-      {/* Sent by, carrier and number on one row, in the order the entry line
-          reads them. Sent by is a dash for Not set (script 112), Us (KUI) or
-          Them. The carrier is picked from the list; the number is free text, as
-          it is on the label. */}
-      <div style={{gridColumn:'1 / -1',display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr) minmax(0,2fr)',gap:'14px'}}>
-        <div>
-          <span style={lbl}>Sent by</span>
-          <select data-noguard value={f.sentBy} disabled={busy} aria-label="Sent by"
-            onChange={e=>set({ ...f, sentBy: e.target.value })}
-            style={{...inp,cursor:busy?'default':'pointer',color:f.sentBy?'#1D1D1F':'#86868B'}}>
-            <option value="">—</option>
-            {SENT_BY_OPTS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-          </select>
+      {/* Two packages, each a row of Sent by, carrier and number in the order
+          the entry line reads them, captioned Package 1 and Package 2 (script
+          113). Sent by is a dash for Not set (script 112), Us (KUI) or Them.
+          The carrier is picked from the list; the number is free text, as it is
+          on the label. Both rows are optional. */}
+      {['', '2'].map(slot => (
+        <div key={slot || '1'} style={{gridColumn:'1 / -1'}}>
+          <span style={{...lbl,color:'#1D1D1F',marginBottom:'6px'}}>Package {slot || '1'}</span>
+          <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr) minmax(0,2fr)',gap:'14px'}}>
+            <div>
+              <span style={lbl}>Sent by</span>
+              <select data-noguard value={f['sentBy' + slot]} disabled={busy}
+                aria-label={slot ? 'Sent by, package 2' : 'Sent by'}
+                onChange={e=>set({ ...f, ['sentBy' + slot]: e.target.value })}
+                style={{...inp,cursor:busy?'default':'pointer',color:f['sentBy' + slot]?'#1D1D1F':'#86868B'}}>
+                <option value="">—</option>
+                {SENT_BY_OPTS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+              </select>
+            </div>
+            <div>
+              <span style={lbl}>Carrier</span>
+              {carrierSelect(f, which, slot)}
+            </div>
+            <div>
+              <span style={lbl}>Tracking #</span>
+              <input data-noguard value={f['tracking' + slot]} disabled={busy} style={inp}
+                aria-label={slot ? 'Tracking number, package 2' : 'Tracking number'}
+                placeholder="Optional" onChange={e=>set({ ...f, ['tracking' + slot]: e.target.value })} />
+            </div>
+          </div>
         </div>
-        <div>
-          <span style={lbl}>Carrier</span>
-          {carrierSelect(f, which)}
-        </div>
-        <div>
-          <span style={lbl}>Tracking #</span>
-          <input data-noguard value={f.tracking} disabled={busy} style={inp} aria-label="Tracking number"
-            placeholder="Optional" onChange={e=>set({ ...f, tracking: e.target.value })} />
-        </div>
-      </div>
+      ))}
       {/* The CARD'S lab, not this round's -- the caption says so, because a field
           inside a round form reads as part of the round otherwise. */}
       <div style={{gridColumn:'1 / -1'}}>
@@ -1429,14 +1493,18 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
             <span style={{fontSize:'13px',fontWeight:500,color:'#1D1D1F'}}>
               {/* The round in words, then its shipment with the number linked --
                   the same order roundText(x, true) writes in text. Who sent it
-                  leads the shipment, and says nothing when not set. */}
+                  leads each package, and says nothing when not set. Each package
+                  with anything set, in order, its number linked through its own
+                  carrier (script 113). */}
               {roundText(x)}
-              {sentByWords(x.sent_by) && <> · {sentByWords(x.sent_by)}</>}
-              {(x.carrier || x.tracking_number) && (
-                <> · {x.carrier ? x.carrier + (x.tracking_number ? ' ' : '') : 'tracking '}
-                  {x.tracking_number ? <TrackingLink number={x.tracking_number}
-                                         url={trackingUrl(x.carrier, x.tracking_number, r.carriers)} /> : null}</>
-              )}
+              {packagesOf(x).filter(pkgAny).map((k, i) => (
+                <span key={i}>
+                  {' · '}{sentByWords(k.sentBy)}{sentByWords(k.sentBy) && pkgShips(k) ? ' · ' : ''}
+                  {pkgShips(k) && <>{k.carrier ? k.carrier + (k.number ? ' ' : '') : 'tracking '}
+                    {k.number ? <TrackingLink number={k.number}
+                                  url={trackingUrl(k.carrier, k.number, r.carriers)} /> : null}</>}
+                </span>
+              ))}
               {isLatestLate && <span style={{color:'#FF375F'}}> · overdue {daysSince(x.due_back)} day{daysSince(x.due_back) === 1 ? '' : 's'}</span>}
             </span>
           )}
@@ -2289,6 +2357,11 @@ const workingRounds = (r, staff) => [...(r.rounds || [])].sort((a, b) => a.round
   carrier: x.carrier || '',
   tracking: x.tracking_number || '',
   trackingUrl: trackingUrl(x.carrier, x.tracking_number, r.carriers),
+  // Package 2 (script 113), its link from its own carrier.
+  sentBy2: sentByLabel(x.sent_by_2),
+  carrier2: x.carrier_2 || '',
+  tracking2: x.tracking_number_2 || '',
+  trackingUrl2: x.tracking_number_2 ? trackingUrl(x.carrier_2, x.tracking_number_2, r.carriers) : null,
   savedBy: staffName(staff, x.created_by) || 'unknown',
   savedAt: x.created_at || null,
   editedBy: x.updated_at ? (staffName(staff, x.updated_by) || 'unknown') : '',
@@ -2305,7 +2378,8 @@ const cellText = v => (v && typeof v === 'object' && 'text' in v ? v.text : v);
 const styleLinks = ws => ws.eachRow(row => row.eachCell(c => {
   if (c.value && typeof c.value === 'object' && c.value.hyperlink) c.font = LINK_FONT;
 }));
-const ROUND_COLS = ['Round', 'Sample type', 'Sent', 'Due back', 'Sent by', 'Carrier', 'Tracking #', 'Saved by', 'Saved at', 'Edited by', 'Edited at']
+const ROUND_COLS = ['Round', 'Sample type', 'Sent', 'Due back', 'Sent by', 'Carrier', 'Tracking #',
+                    'Sent by 2', 'Carrier 2', 'Tracking # 2', 'Saved by', 'Saved at', 'Edited by', 'Edited at']
   .filter(h => DUE_BACK_ON || h !== 'Due back');
 const ROUND_NOTE_COLS = ['Round', 'Author', 'Date', 'Edited', 'Note'];
 // Every task on a stage that is on the board, in ladder order, stages with no
@@ -2412,10 +2486,11 @@ const buildBoardTables = (cards, staff, cardNotes, generalNotes, roundNotes = []
   const rounds = {
     name: 'Rounds',
     cols: [['SKU'], ['Client'], ['Round', 'num'], ['Sample type'], ['Sent', 'date'], ['Due back', 'date'],
-           ['Sent by'], ['Carrier'], ['Tracking #'], ['Saved by'], ['Saved at', 'stamp'], ['Edited by'], ['Edited at', 'stamp']]
+           ['Sent by'], ['Carrier'], ['Tracking #'], ['Sent by 2'], ['Carrier 2'], ['Tracking # 2'], ['Saved by'], ['Saved at', 'stamp'], ['Edited by'], ['Edited at', 'stamp']]
       .filter(([h]) => DUE_BACK_ON || h !== 'Due back'),
     rows: list.flatMap(r => workingRounds(r, staff).map(x => [
       ...key(r), Number(x.round), x.type, x.sent, ...(DUE_BACK_ON ? [x.due] : []), x.sentBy, x.carrier, linkCell(x.tracking, x.trackingUrl),
+      x.sentBy2, x.carrier2, linkCell(x.tracking2, x.trackingUrl2),
       x.savedBy, x.savedAt, x.editedBy, x.editedAt,
     ])),
   };
@@ -2509,7 +2584,9 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, roundNotes = [], logo })
         ? '<table style="width:100%;border-collapse:collapse;">'
           +'<tr><th style="'+th+'">Round</th><th style="'+th+'">Sample type</th><th style="'+th+'">Sent</th>'
           +(DUE_BACK_ON ? '<th style="'+th+'">Due back</th>' : '')
-          +'<th style="'+th+'">Sent by</th><th style="'+th+'">Carrier</th><th style="'+th+'">Tracking #</th><th style="'+th+'">Saved</th></tr>'
+          +'<th style="'+th+'">Sent by</th><th style="'+th+'">Carrier</th><th style="'+th+'">Tracking #</th>'
+          +'<th style="'+th+'">Sent by 2</th><th style="'+th+'">Carrier 2</th><th style="'+th+'">Tracking # 2</th>'
+          +'<th style="'+th+'">Saved</th></tr>'
           +rounds.map(x => '<tr>'
             +'<td style="'+td+'">'+docEsc(x.round)+'</td>'
             +'<td style="'+td+'">'+docEsc(x.type)+'</td>'
@@ -2520,6 +2597,11 @@ const buildWorkingDoc = ({ r, factoryName, staff, card, roundNotes = [], logo })
             +'<td style="'+td+'">'+(x.trackingUrl
               ? '<a href="'+docEsc(x.trackingUrl)+'" style="color:#0563c1;">'+docEsc(x.tracking)+'</a>'
               : docEsc(x.tracking))+'</td>'
+            +'<td style="'+td+'">'+docEsc(x.sentBy2)+'</td>'
+            +'<td style="'+td+'">'+docEsc(x.carrier2)+'</td>'
+            +'<td style="'+td+'">'+(x.trackingUrl2
+              ? '<a href="'+docEsc(x.trackingUrl2)+'" style="color:#0563c1;">'+docEsc(x.tracking2)+'</a>'
+              : docEsc(x.tracking2))+'</td>'
             +'<td style="'+td+'">'+docEsc(x.savedBy + ' · ' + stampText(x.savedAt))
               +(x.editedAt ? '<br>'+docEsc('edited ' + x.editedBy + ' · ' + stampText(x.editedAt)) : '')+'</td>'
           +'</tr>').join('')
@@ -2660,7 +2742,8 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         rs.addRow(ROUND_COLS);
         workingRounds(r, staff).forEach(x => rs.addRow([Number(x.round), x.type, excelDate(x.sent),
           ...(DUE_BACK_ON ? [excelDate(x.due)] : []),
-          x.sentBy, x.carrier, linkCell(x.tracking, x.trackingUrl), x.savedBy, excelDate(x.savedAt), x.editedBy,
+          x.sentBy, x.carrier, linkCell(x.tracking, x.trackingUrl),
+          x.sentBy2, x.carrier2, linkCell(x.tracking2, x.trackingUrl2), x.savedBy, excelDate(x.savedAt), x.editedBy,
           excelDate(x.editedAt)]));
         styleLinks(rs);
         rs.getRow(1).font = { bold: true };
@@ -2670,6 +2753,7 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         ['Sent', 'Due back'].forEach(h => { const c = ROUND_COLS.indexOf(h) + 1; if (c) rs.getColumn(c).numFmt = 'yyyy-mm-dd'; });
         ['Saved at', 'Edited at'].forEach(h => { const c = ROUND_COLS.indexOf(h) + 1; if (c) rs.getColumn(c).numFmt = 'yyyy-mm-dd hh:mm'; });
         const RW = { 'Round': 8, 'Sample type': 26, 'Sent': 12, 'Due back': 12, 'Sent by': 11, 'Carrier': 14, 'Tracking #': 24,
+                     'Sent by 2': 11, 'Carrier 2': 14, 'Tracking # 2': 24,
                      'Saved by': 22, 'Saved at': 17, 'Edited by': 22, 'Edited at': 17 };
         ROUND_COLS.forEach((h, i) => { rs.getColumn(i + 1).width = RW[h] || 14; });
 
@@ -2776,7 +2860,8 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
         lines.push('');
         lines.push(ROUND_COLS.map(cell).join(','));
         workingRounds(r, staff).forEach(x => lines.push(
-          [x.round, x.type, x.sent || '', ...(DUE_BACK_ON ? [x.due || ''] : []), x.sentBy, x.carrier, x.tracking, x.savedBy, stampText(x.savedAt),
+          [x.round, x.type, x.sent || '', ...(DUE_BACK_ON ? [x.due || ''] : []), x.sentBy, x.carrier, x.tracking,
+           x.sentBy2, x.carrier2, x.tracking2, x.savedBy, stampText(x.savedAt),
            x.editedBy, x.editedAt ? stampText(x.editedAt) : ''].map(cell).join(',')));
         lines.push('');
         lines.push(ROUND_NOTE_COLS.map(cell).join(','));
@@ -3242,6 +3327,8 @@ export default function Programs({ userEmail }) {
   const [carriers, setCarriers] = useState([]);
   // Whether the last load found program_sample_rounds.sent_by (script 112).
   const [sentByLive, setSentByLive] = useState(false);
+  // And program_sample_rounds.sent_by_2, carrier_2, tracking_number_2 (script 113).
+  const [pkg2Live, setPkg2Live] = useState(false);
   const [sampleTypes, setSampleTypes] = useState([]);
 
   // QUIET AFTER THE FIRST READ. loading starts true and only the first load
@@ -3304,7 +3391,7 @@ export default function Programs({ userEmail }) {
         // pill and the Stalled and Overdue samples tiles read the latest one's
         // due back, so they have to arrive with the board.
         SB.from('program_sample_rounds')
-          .select(ROUND_SELECT + ',sent_by')
+          .select(ROUND_SELECT + ROUND_SELECT_112 + ROUND_SELECT_113)
           .order('round', { ascending:false }),
         // THE CARRIERS ARE COMPANIES of type carrier (script 85), with the tracking
         // page pattern on companies.tracking_url. They are managed on Companies ->
@@ -3314,11 +3401,17 @@ export default function Programs({ userEmail }) {
         // on a retired type still reads its label.
         SB.from('sample_types').select('key,label,active,sort_order,created_at'),
       ]);
-      // SENT BY BEFORE SCRIPT 112. Naming a column that is not there fails the
-      // whole read, so a refusal that names sent_by is read again without it and
-      // every round reads Not set. Any other error is reported as before.
-      let sr = srTry, live = true;
-      if (srTry.error && /sent_by/.test(srTry.error.message || '')) {
+      // BEFORE SCRIPTS 112 AND 113. Naming a column that is not there fails the
+      // whole read, so a refusal that names one of them is read again without
+      // package 2's columns, then without sent_by too, and what is missing reads
+      // Not set. Any other error is reported as before.
+      const missingCol = res => !!res.error && /sent_by|carrier_2|tracking_number_2/.test(res.error.message || '');
+      let sr = srTry, live = true, live2 = true;
+      if (missingCol(sr)) {
+        live2 = false;
+        sr = await SB.from('program_sample_rounds').select(ROUND_SELECT + ROUND_SELECT_112).order('round', { ascending:false });
+      }
+      if (missingCol(sr)) {
         live = false;
         sr = await SB.from('program_sample_rounds').select(ROUND_SELECT).order('round', { ascending:false });
       }
@@ -3330,6 +3423,7 @@ export default function Programs({ userEmail }) {
       setRounds((sr.data || []).reduce((m, x) => { (m[x.program_id] = m[x.program_id] || []).push(x); return m; }, {}));
       setCarriers(pc.data || []);
       setSentByLive(live);
+      setPkg2Live(live2);
       setLiveSampleTypes(stp.data || []);
       setSampleTypes(stp.data || []);
       setNoteCounts((nt.data || []).reduce((m, n) => { m[n.program_id] = (m[n.program_id] || 0) + 1; return m; }, {}));
@@ -3439,8 +3533,9 @@ export default function Programs({ userEmail }) {
                rounds: rounds[r.id] || [],
                // The same array on every card -- the links and the dropdown read it.
                carriers,
-               // Whether a round save may write sent_by (script 112).
-               sentByLive,
+               // Whether a round save may write sent_by (script 112), and
+               // package 2 (script 113).
+               sentByLive, pkg2Live,
                // Likewise the sample types, for the round form's dropdown.
                sampleTypes,
                factoryName: factoryOfQuotes(buckets.quotes[k] || []),
@@ -3456,7 +3551,7 @@ export default function Programs({ userEmail }) {
     // staff and noteCounts are dependencies now: without them a name stays
     // unresolved and a count stays zero until some other change happens to
     // recompute this.
-  }, [rows, buckets, staff, noteCounts, tasks, rounds, carriers, sampleTypes, sentByLive]);
+  }, [rows, buckets, staff, noteCounts, tasks, rounds, carriers, sampleTypes, sentByLive, pkg2Live]);
 
   // ── WRITING A STAGE, AND WRITING AN OWNER ───────────────────────────────────
   // The only two things this page changes. Both re-read from the database after
