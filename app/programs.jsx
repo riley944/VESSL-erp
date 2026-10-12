@@ -421,7 +421,10 @@ function NotesPanel({ staff = [], table, keyCol, keyId, insertExtra = {}, extraC
       .eq(keyCol, keyId);
     if (filter) qy = qy.eq(filter.col, filter.val);
     if (nullCol) qy = qy.is(nullCol, null);
-    const { data, error } = await qy.order('created_at', { ascending:false });
+    // NEWEST FIRST, always -- by when a note was written, so an edit never moves
+    // it, and id breaks a tie between two notes stamped the same instant so they
+    // keep one order. Every add, edit and delete re-reads through here (settle).
+    const { data, error } = await qy.order('created_at', { ascending:false }).order('id', { ascending:false });
     if (error) { setErr(error.message); setNotes([]); return; }
     setNotes(data || []);
   };
@@ -2182,13 +2185,13 @@ const fetchCardNotes = async (r, staff = []) => {
   // Notes (script 98). A deleted round's notes have NULL here and are included.
   const own = await SB.from('program_notes')
     .select('author,note,created_at,edited_at,source,stage,round_no')
-    .eq('program_id', r.id).is('round_id', null).order('created_at', { ascending:false });
+    .eq('program_id', r.id).is('round_id', null).order('created_at', { ascending:false }).order('id', { ascending:false });
   if (own.error) throw new Error(own.error.message);
   // The notes on the card's live rounds, for the working file's Round notes.
-  // Oldest first within a round, the order they were written in.
+  // Newest first within a round, as the card lists them; id breaks a tie.
   const onRounds = await SB.from('program_notes')
     .select('author,note,created_at,edited_at,source,round_id,round_no')
-    .eq('program_id', r.id).not('round_id', 'is', null).order('created_at', { ascending:true });
+    .eq('program_id', r.id).not('round_id', 'is', null).order('created_at', { ascending:false }).order('id', { ascending:false });
   if (onRounds.error) throw new Error(onRounds.error.message);
   // A card with no product has no product notes to ask for. product_id is the
   // key, and .eq on null matches nothing -- a round trip to learn what is already
@@ -2200,7 +2203,7 @@ const fetchCardNotes = async (r, staff = []) => {
     prod = await SB.from('product_notes')
       .select('author,note,created_at,edited_at,kind')
       .eq('product_id', r.product_id).eq('kind', 'sampling')
-      .order('created_at', { ascending:false });
+      .order('created_at', { ascending:false }).order('id', { ascending:false });
     if (prod.error) throw new Error(prod.error.message);
   }
   return { card: shapeNotes(own.data, 'source', 'manual', staff),
@@ -3871,11 +3874,12 @@ export default function Programs({ userEmail }) {
   const boardTables = async () => {
     const [cn, gn, rn] = await Promise.all([
       SB.from('program_notes').select('program_id,author,note,created_at,edited_at,source,stage,round_no')
-        .is('round_id', null).order('created_at', { ascending:false }),
+        .is('round_id', null).order('created_at', { ascending:false }).order('id', { ascending:false }),
       SB.from('product_notes').select('product_id,author,note,created_at,edited_at,kind')
-        .eq('kind', 'sampling').order('created_at', { ascending:false }),
+        .eq('kind', 'sampling').order('created_at', { ascending:false }).order('id', { ascending:false }),
+      // Newest first like the card's own lists, id breaking a tie.
       SB.from('program_notes').select('program_id,author,note,created_at,edited_at,source,round_id,round_no')
-        .not('round_id', 'is', null).order('created_at', { ascending:true }),
+        .not('round_id', 'is', null).order('created_at', { ascending:false }).order('id', { ascending:false }),
     ]);
     if (cn.error) throw new Error(cn.error.message);
     if (gn.error) throw new Error(gn.error.message);
