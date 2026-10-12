@@ -1027,7 +1027,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
   });
   const SENT_BY_NOT_YET = 'Sent by cannot be saved yet: the database does not have it (script 112 has not been run). Set Sent by back to — to save the rest.';
   const sentByBlocked = f => !r.sentByLive && !!f.sentBy;
-  const PKG2_NOT_YET = 'Package 2 cannot be saved yet: the database does not have it (script 113 has not been run). Clear the Package 2 row to save the rest.';
+  const PKG2_NOT_YET = 'The second row cannot be saved yet: the database does not have it (script 113 has not been run). Clear the second row to save the rest.';
   const pkg2Blocked = f => !r.pkg2Live && pkg2Any(f);
   const unchanged = (x, f) => {
     const v = values(f);
@@ -1281,7 +1281,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
     return (
       <>
         <select data-noguard value={hit ? hit.name : val} disabled={busy}
-          aria-label={slot ? 'Carrier, package 2' : 'Carrier'}
+          aria-label={slot ? 'Carrier, second package' : 'Carrier, first package'}
           onChange={e => {
             if (e.target.value === '__add__') { setAddFor(tag); return; }
             pick(tag, e.target.value);
@@ -1429,18 +1429,17 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
         </div>
       )}
       {/* Two packages, each a row of Sent by, carrier and number in the order
-          the entry line reads them, captioned Package 1 and Package 2 (script
-          113). Sent by is a dash for Not set (script 112), Us (KUI) or Them.
+          the entry line reads them, one under the other with no caption (script
+          113) -- the aria-labels say first and second package. Sent by is a dash for Not set (script 112), Us (KUI) or Them.
           The carrier is picked from the list; the number is free text, as it is
           on the label. Both rows are optional. */}
       {['', '2'].map(slot => (
         <div key={slot || '1'} style={{gridColumn:'1 / -1'}}>
-          <span style={{...lbl,color:'#1D1D1F',marginBottom:'6px'}}>Package {slot || '1'}</span>
           <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr) minmax(0,2fr)',gap:'14px'}}>
             <div>
               <span style={lbl}>Sent by</span>
               <select data-noguard value={f['sentBy' + slot]} disabled={busy}
-                aria-label={slot ? 'Sent by, package 2' : 'Sent by'}
+                aria-label={slot ? 'Sent by, second package' : 'Sent by, first package'}
                 onChange={e=>set({ ...f, ['sentBy' + slot]: e.target.value })}
                 style={{...inp,cursor:busy?'default':'pointer',color:f['sentBy' + slot]?'#1D1D1F':'#86868B'}}>
                 <option value="">—</option>
@@ -1454,7 +1453,7 @@ function SampleRounds({ r, staff, userEmail, onTouched }) {
             <div>
               <span style={lbl}>Tracking #</span>
               <input data-noguard value={f['tracking' + slot]} disabled={busy} style={inp}
-                aria-label={slot ? 'Tracking number, package 2' : 'Tracking number'}
+                aria-label={slot ? 'Tracking number, second package' : 'Tracking number, first package'}
                 placeholder="Optional" onChange={e=>set({ ...f, ['tracking' + slot]: e.target.value })} />
             </div>
           </div>
