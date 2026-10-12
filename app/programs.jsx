@@ -2997,12 +2997,22 @@ function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);      // { tone: 'ok' | 'info' | 'err', text, quote? }
   const [ask, setAsk] = useState(null);      // { quote, productId, clientId, ownerId, code }
+  // An empty box is answered with a pop-up rather than a greyed-out button, so the
+  // button can say what it needs instead of silently refusing. Closing it puts the
+  // cursor back in the box.
+  const [needId, setNeedId] = useState(false);
+  const inputRef = useRef(null);
+  const closeNeedId = () => {
+    setNeedId(false);
+    setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
+  };
 
   const quoteUrl = id => (typeof window !== 'undefined' ? window.location.origin : '') + '/?quote=' + id + '#quotes';
   const labelOf = q => (q.sku || 'No SKU') + ' · ' + (q.client || 'no client');
 
   const go = async () => {
     setMsg(null);
+    if (!text.trim()) { setNeedId(true); return; }
     const code = parseQuoteCode(text);
     if (!code) { setMsg({ tone: 'err', text: 'Type a quote ID, for example Q-0356.' }); return; }
     setBusy(true);
@@ -3066,15 +3076,17 @@ function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
   return (
     <>
       <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
-        <input value={text} disabled={busy} onChange={e => { setText(e.target.value); if (msg) setMsg(null); }}
+        <input ref={inputRef} value={text} disabled={busy} onChange={e => { setText(e.target.value); if (msg) setMsg(null); }}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); go(); } }}
           placeholder="Quote ID, e.g. Q-0356" aria-label="Create a card from a Quote ID"
           style={{width:'170px',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 12px',
                   fontSize:'13.5px',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'}} />
-        <button onClick={go} disabled={busy || !text.trim()}
+        {/* Always live; disabled only while a lookup or a create is running, so it
+            cannot be pressed twice. An empty box is handled in go(). */}
+        <button onClick={go} disabled={busy}
           style={{border:'none',borderRadius:'10px',padding:'9px 14px',fontSize:'13px',fontWeight:600,fontFamily:'inherit',
-                  background:text.trim() ? '#1D1D1F' : '#E5E5EA',color:text.trim() ? '#fff' : '#A0A0A4',
-                  cursor:busy || !text.trim() ? 'default' : 'pointer',whiteSpace:'nowrap'}}>
+                  background:'#1D1D1F',color:'#fff',opacity:busy ? 0.6 : 1,
+                  cursor:busy ? 'default' : 'pointer',whiteSpace:'nowrap'}}>
           {busy && !ask ? 'Checking…' : 'Create card'}
         </button>
       </div>
@@ -3082,6 +3094,18 @@ function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
         <div style={{flexBasis:'100%',fontSize:'12.5px',color:toneColor[msg.tone] || '#5A5A5E',lineHeight:1.5}}>
           {msg.quote && <QuoteLinkValue link={msg.quote} />}{msg.text}
         </div>
+      )}
+      {needId && (
+        <Overlay onClose={closeNeedId} maxWidth={400}>
+          <div style={{fontSize:'15px',color:'#1D1D1F',lineHeight:1.5}}>
+            Enter a Quote ID to create a card. You can find the Quote ID under Quotes, in the Quote List.
+          </div>
+          <div style={{display:'flex',justifyContent:'flex-end',marginTop:'20px'}}>
+            <button autoFocus onClick={closeNeedId}
+              style={{background:'#1D1D1F',border:'none',borderRadius:'10px',padding:'9px 18px',
+                      fontSize:'13px',fontWeight:600,color:'#fff',fontFamily:'inherit',cursor:'pointer'}}>OK</button>
+          </div>
+        </Overlay>
       )}
       {ask && (
         <CardOwnerPopup title={'Create sample card for ' + (ask.quote.sku || ask.code) + ' · ' + ask.code}
