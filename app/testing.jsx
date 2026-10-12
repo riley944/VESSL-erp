@@ -31,39 +31,12 @@ import { isSelectableProduct } from "@/app/components/ProductCpscRules";
 import { materialLabel } from "@/lib/materialLabel";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 import { Overlay, useMarkDirty } from '@/app/components/ModalGuard';
+// The dates, the expiry window, the eFiling reading and the latest-test-date rule
+// moved to lib so the sample card's Testing tab reads them from the same place.
+import { fmtDate, daysUntil, EXPIRY_WINDOW_DAYS, efilingKey, EFILING_LABEL,
+         latestTestDateByProduct, testingDateOf } from "@/lib/testingStatus";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-const fmtDate = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}); };
-const daysUntil = s => { if(!s) return null; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); if(isNaN(d)) return null; return Math.round((d.getTime()-Date.now())/86400000); };
-// eFiling has FOUR readings, not two, and the fourth is the one every product is in
-// today. efiling_required is nullable with no default and null on all 271 rows: nobody
-// has decided. That is not "not required" -- it is the absence of the decision -- and it
-// is not "not filed" either, which a null efiled_date already says on its own.
-//
-// Tested with === on both branches, never truthiness. false and null are both falsy, so
-// !p.efiling_required would read an undecided product as one Jenn had ruled exempt, and
-// nothing on screen would say the reading was invented. That is the products.active
-// mistake 0c41008 had to undo.
-//
-// A stored date outranks the judgement below it. A filing that happened is a fact;
-// required is somebody's reading of the rules, and where the two disagree the fact is
-// the one worth showing. Reachable today: 2 of 271 carry a date, both with required
-// still unset.
-const efilingKey = p =>
-    p.efiled_date              ? 'filed'
-  : p.efiling_required === false ? 'notreq'
-  : p.efiling_required === true  ? 'unfiled'
-  :                                'undecided';
-// One place the four strings are written, so the row tooltip, the search index and the
-// filter cannot drift apart. CreateProductModal repeats them rather than importing:
-// that module is imported BY this one, and importing back would close a cycle -- the
-// same reason fmtDay is duplicated there.
-// "Not set" is the word for the undecided state, everywhere. EfilingModal's dropdown
-// says "— Not set —" and that is where Jenn meets the concept, so it is the word she
-// will type into the search box and look for on a pill. page.jsx's active cell already
-// calls its undecided option the same thing, which makes this the app's word for the
-// state rather than this feature's word for it.
-const EFILING_LABEL = { filed:'eFiled', unfiled:'Not eFiled', notreq:'Not required', undecided:'Not set' };
 const efilingTitle = p => {
   const k = efilingKey(p);
   if (k==='filed')   return 'eFiled '+fmtDate(p.efiled_date);
@@ -194,10 +167,6 @@ const TABS = [
   ['reports','Test Reports','test reports'],
   ['regs','Regulations','regulations'],
 ];
-// Reports whose expiry lands inside this window count as "expiring" on the pulse
-// strip and the reports filter. 60 days is the re-test lead time that gives a lab
-// round-trip comfortable margin.
-const EXPIRY_WINDOW_DAYS = 60;
 
 function StatusPill({ map, status }) {
   const s = map[status] || { label:status||'—', color:'#8A8A8E', bg:'#F2F2F4' };
@@ -416,14 +385,7 @@ export default function Testing({ userEmail = '' }) {
   // Reaches 4 of 271 products today. 73 of the 84 reports are orphans carrying neither
   // a product nor a material, which is the style_ref resolution problem rather than
   // anything this map can fix.
-  const testedByProduct = useMemo(()=>{
-    const map = {};
-    reports.forEach(r=>{
-      if(!r.product_id || !r.test_date) return;
-      if(!map[r.product_id] || r.test_date > map[r.product_id]) map[r.product_id] = r.test_date;
-    });
-    return map;
-  },[reports]);
+  const testedByProduct = useMemo(()=>latestTestDateByProduct(reports),[reports]);
   // Local date, not toISOString(): that returns UTC and would move the window boundary by
   // a day for anyone west of it.
   const isoDaysAgo = (n) => {
@@ -764,7 +726,7 @@ export default function Testing({ userEmail = '' }) {
     ['Compliance status', p => (PROD_STATUS[effectiveStatus(p) || 'not_set'] || PROD_STATUS.not_set).label],
     // The row prefers a linked report's date and falls back to the hand-entered one,
     // because only 4 of 271 products have a linked report at all. Same order here.
-    ['Testing date',      p => testedByProduct[p.id] || p.manual_test_date || null, 'date'],
+    ['Testing date',      p => testingDateOf(p, testedByProduct), 'date'],
     ['eFiling status',    p => EFILING_LABEL[efilingKey(p)] || ''],
     ['eFiled date',       p => p.efiled_date || null, 'date'],
     ['CPSC type',         p => p.cpsc_type || 'No CPSC'],
