@@ -10810,7 +10810,8 @@ export default function App() {
           {page==='testing'          && <Testing userEmail={user?.email||''} />}
           {page==='codes'            && <Codes canDeleteCodes={role !== 'limited_qc'} />}
           {page===PRICING_PAGE && PRICING_ENABLED && <Pricing />}
-          {page==='programs'         && <Programs userEmail={user?.email||''} />}
+          {page==='programs'         && <Programs userEmail={user?.email||''}
+                                                  canOpenTesting={!allowedPages || allowedPages.includes('testing')} />}
           {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} userEmail={user?.email||''} displayName={displayName} />}
           {page==='inventory'        && <Inventory />}
           {/* role and user are already in this scope for the gate and the header;
