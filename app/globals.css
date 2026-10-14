@@ -925,11 +925,8 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   border-radius:5px;padding:2px 7px;font-size:11px;font-weight:700;color:var(--ink);letter-spacing:.04em;}
 
 /* ── Samples, by client (14 Oct) ─────────────────────────────────────────── */
-/* The register and the detail sit side by side down to tablet width; on a
-   phone the register stacks above and the detail's two columns become one. */
+/* A consignment's action items and notes sit side by side; on a phone they
+   stack. */
 @media (max-width: 900px){
-  .plm-register{grid-template-columns:1fr !important;}
-  .plm-register > nav{border-right:none !important;border-bottom:1px solid var(--line);max-height:38vh !important;}
-  .plm-register > div{max-height:none !important;}
   .plm-consignment-grid{grid-template-columns:1fr !important;}
 }

@@ -3576,26 +3576,50 @@ const clientRollup = list => {
   return { open, sampling, quoting, items, onUs, stale, last, next };
 };
 
-// ── THE REGISTER ROW ────────────────────────────────────────────────────────
-function ClientRow({ name, list, active, onOpen }) {
+// ── CLIENT COLOURS ──────────────────────────────────────────────────────────
+// Each client gets one colour, hashed from its name the way the Quotes page
+// does (clientColor there), so a client keeps its colour between visits. These
+// are deeper than the Quotes palette because the whole tile wears the colour
+// and the lettering is white -- every one holds 4.5:1 against white text.
+const CLIENT_INKS = ['#c0392b', '#d35400', '#b7791f', '#2f855a', '#0f766e', '#1d4ed8', '#3461e0', '#6d28d9', '#be185d', '#475569'];
+const clientInk = name => {
+  const n = (name || 'Unassigned').trim(); let h = 0;
+  for (let i = 0; i < n.length; i++) h = (h * 31 + n.charCodeAt(i)) >>> 0;
+  return CLIENT_INKS[h % CLIENT_INKS.length];
+};
+const initialsOf = name => (name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+
+// ── THE CLIENT TILE ─────────────────────────────────────────────────────────
+// A folder, in the client's colour, white lettering. The mark is the initials;
+// the lines under the name are what is in play and what KUI is waiting on.
+function ClientTile({ name, list, onOpen }) {
   const c = clientRollup(list);
+  const ink = clientInk(name);
   const owe = c.onUs > 0 || c.stale > 0;
-  const line = c.open.length === 0 ? 'Nothing in play'
-    : [c.sampling.length ? c.sampling.length + ' sampling' : null, c.quoting.length ? c.quoting.length + ' quoting' : null].filter(Boolean).join(', ');
+  const chips = [
+    c.sampling.length ? c.sampling.length + ' sampling' : null,
+    c.quoting.length ? c.quoting.length + ' quoting' : null,
+    c.open.length === 0 ? 'Nothing in play' : null,
+  ].filter(Boolean);
   return (
-    <button onClick={onOpen} aria-current={active ? 'true' : undefined}
-      style={{display:'block',width:'100%',textAlign:'left',background:active ? T.accentSoft : 'transparent',border:'none',
-              borderLeft:'3px solid ' + (active ? T.accent : 'transparent'),padding:'12px 14px 12px 13px',cursor:'pointer',
-              fontFamily:T.sans,borderBottom:'1px solid ' + T.line2}}>
-      <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'8px'}}>
-        <span style={{fontFamily:T.serif,fontSize:'16.5px',fontWeight:500,color:T.ink,letterSpacing:'-.005em',lineHeight:1.2,
-                      whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{name}</span>
+    <button onClick={onOpen}
+      style={{textAlign:'left',background:ink,color:'#fff',border:'none',borderRadius:'14px',padding:'18px 18px 16px',
+              cursor:'pointer',fontFamily:T.sans,display:'flex',flexDirection:'column',gap:'10px',minHeight:'168px',
+              boxShadow:'0 1px 2px rgba(15,23,41,.12), 0 6px 18px -8px rgba(15,23,41,.35)',position:'relative'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+        <div style={{width:'42px',height:'42px',borderRadius:'11px',background:'rgba(255,255,255,.18)',display:'flex',alignItems:'center',
+                     justifyContent:'center',fontSize:'15px',fontWeight:700,letterSpacing:'.02em'}}>{initialsOf(name)}</div>
         {owe && <span title={c.onUs ? c.onUs + ' waiting on KUI' : 'Not moved in ' + STALE_DAYS + ' days'}
-                      style={{width:'7px',height:'7px',borderRadius:'50%',background:T.hot,flexShrink:0}} />}
+                      style={{fontSize:'11px',fontWeight:700,background:'#fff',color:ink,borderRadius:'999px',padding:'3px 9px'}}>
+                  {c.onUs ? c.onUs + ' on KUI' : 'Stalled'}</span>}
       </div>
-      <div style={{fontSize:'12px',color:T.muted,marginTop:'3px'}}>{line}</div>
-      {c.next && <div style={{fontSize:'12px',color:T.ink2,marginTop:'2px'}}>Waiting on: {c.next.toLowerCase()}</div>}
-      {c.items > 0 && <div style={{fontSize:'12px',color:c.onUs ? T.hot : T.muted,marginTop:'2px'}}>{c.items} action item{c.items === 1 ? '' : 's'}{c.onUs ? ', ' + c.onUs + ' on KUI' : ''}</div>}
+      <div style={{fontSize:'19px',fontWeight:600,letterSpacing:'-.01em',lineHeight:1.15,marginTop:'2px'}}>{name}</div>
+      <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+        {chips.map(t => <span key={t} style={{fontSize:'11.5px',fontWeight:600,background:'rgba(255,255,255,.2)',borderRadius:'999px',padding:'3px 9px'}}>{t}</span>)}
+      </div>
+      <div style={{fontSize:'12.5px',color:'rgba(255,255,255,.85)',marginTop:'auto',lineHeight:1.45}}>
+        {c.next ? 'Waiting on: ' + c.next.toLowerCase() : c.items ? c.items + ' action item' + (c.items === 1 ? '' : 's') : c.last ? 'Updated ' + shortDate(c.last) : ''}
+      </div>
     </button>
   );
 }
@@ -3710,10 +3734,11 @@ function ShuttleRail({ r, carriers, open, onOpen, onEdit }) {
 
 // ── ACTION ITEMS ────────────────────────────────────────────────────────────
 // "Is the UPC art approved?" -- program_tasks through TaskRow, so an item here
-// is the same thing as a task on the card. No assignee on the quick add: the
-// item belongs to KUI; the card can assign it later.
+// is the same thing as a task on the card. The picker names who will do it;
+// left on Anyone at KUI, it belongs to the office.
 function ActionItems({ r, staff, userEmail, onTouched }) {
   const [text, setText] = useState('');
+  const [who, setWho] = useState('');
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState(null);
   const [showDone, setShowDone] = useState(false);
@@ -3725,7 +3750,8 @@ function ActionItems({ r, staff, userEmail, onTouched }) {
     const body = text.trim(); if (!body) return;
     setBusy(true);
     const { error } = await SB.from('program_tasks').insert({ program_id: r.id, stage: r.stage || 'sampling', task: body,
-      assigned_by: userEmail || null, blocker: 'none', sort_order: all.reduce((m, t) => Math.max(m, t.sort_order || 0), -1) + 1 });
+      owner_id: who || null, assigned_by: userEmail || null, blocker: 'none',
+      sort_order: all.reduce((m, t) => Math.max(m, t.sort_order || 0), -1) + 1 });
     if (error) window._toast?.('Could not add the item: ' + error.message, 'err'); else setText('');
     await onTouched(); setBusy(false);
   };
@@ -3739,7 +3765,12 @@ function ActionItems({ r, staff, userEmail, onTouched }) {
         onDel={t => write(t, () => SB.from('program_tasks').delete().eq('id', t.id))} />)}
       <div style={{display:'flex',gap:'6px',marginTop:'8px'}}>
         <input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{ if (e.key === 'Enter') add(); }}
-          placeholder="Add an item and press Enter" style={{...field,flex:1}} />
+          placeholder="Add an item and press Enter" style={{...field,flex:'1 1 160px'}} />
+        <select data-noguard value={who} onChange={e=>setWho(e.target.value)} aria-label="Who will do it"
+          style={{...field,flex:'0 1 150px',color:who ? T.ink : T.muted}}>
+          <option value="">Anyone at KUI</option>
+          {staff.map(p => <option key={p.id} value={p.id}>{p.full_name || p.email}</option>)}
+        </select>
         <button onClick={add} disabled={busy || !text.trim()} style={btnQuiet}>Add</button>
       </div>
       {done.length > 0 && (
@@ -3820,7 +3851,7 @@ function Consignment({ r, staff, userEmail, carriers, busy, onStage, onOpenCard,
 }
 
 // ── THE DETAIL PANE ─────────────────────────────────────────────────────────
-function ClientDetail({ name, list, staff, userEmail, carriers, saving, onStage, onOpenCard, onTouched }) {
+function ClientDetail({ name, list, staff, userEmail, carriers, saving, onStage, onOpenCard, onTouched, onBack }) {
   const c = clientRollup(list);
   const [showArchived, setShowArchived] = useState(false);
   const order = { sampling:0, revision:0, quoted:1, testing:2, production:3, shipped:4 };
@@ -3832,14 +3863,24 @@ function ClientDetail({ name, list, staff, userEmail, carriers, saving, onStage,
     c.quoting.length ? c.quoting.length + ' quoting' : null,
     c.onUs ? c.onUs + ' item' + (c.onUs === 1 ? '' : 's') + ' waiting on KUI' : null,
   ].filter(Boolean);
+  const ink = clientInk(name);
   return (
-    <div style={{padding:'6px 32px 40px 32px',minWidth:0}}>
-      <header style={{paddingBottom:'6px'}}>
-        <h2 style={{fontFamily:T.serif,fontSize:'30px',fontWeight:500,color:T.ink,margin:0,letterSpacing:'-.01em',lineHeight:1.1}}>{name}</h2>
-        <div style={{fontSize:'13px',color:T.muted,marginTop:'8px',display:'flex',gap:'16px',flexWrap:'wrap'}}>
-          {summary.map((s, i) => <span key={i} style={{color: /KUI/.test(s) ? T.hot : T.muted}}>{s}</span>)}
+    <div style={{minWidth:0}}>
+      <header style={{background:ink,color:'#fff',borderRadius:'14px',padding:'20px 24px 22px',marginBottom:'6px'}}>
+        <button onClick={onBack} style={{background:'rgba(255,255,255,.16)',color:'#fff',border:'none',borderRadius:'999px',padding:'6px 12px',
+                fontSize:'12.5px',fontWeight:600,cursor:'pointer',fontFamily:T.sans,marginBottom:'14px'}}>All clients</button>
+        <div style={{display:'flex',alignItems:'center',gap:'14px'}}>
+          <div style={{width:'46px',height:'46px',borderRadius:'12px',background:'rgba(255,255,255,.18)',display:'flex',alignItems:'center',
+                       justifyContent:'center',fontSize:'16px',fontWeight:700,flexShrink:0}}>{initialsOf(name)}</div>
+          <div style={{minWidth:0}}>
+            <h2 style={{fontSize:'26px',fontWeight:600,margin:0,letterSpacing:'-.015em',lineHeight:1.1}}>{name}</h2>
+            <div style={{fontSize:'13px',color:'rgba(255,255,255,.85)',marginTop:'6px',display:'flex',gap:'14px',flexWrap:'wrap'}}>
+              {summary.map((t, i) => <span key={i} style={{fontWeight:/KUI/.test(t) ? 700 : 500}}>{t}</span>)}
+            </div>
+          </div>
         </div>
       </header>
+      <div style={{background:'#fff',border:'1px solid ' + T.line,borderRadius:'14px',padding:'0 24px'}}>
       {live.map((r, i) => <Consignment key={r.id} r={r} staff={staff} userEmail={userEmail} carriers={carriers} busy={saving === r.id}
         onStage={onStage} onOpenCard={()=>onOpenCard(r.id)} onTouched={onTouched} last={i === live.length - 1 && !archived.length} />)}
       {live.length === 0 && (
@@ -3858,6 +3899,7 @@ function ClientDetail({ name, list, staff, userEmail, carriers, saving, onStage,
           </div>}
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -4832,86 +4874,58 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
                                  onTouched={load} canOpenTesting={canOpenTesting}
                                  onClose={()=>setOpenId(null)} />}
 
-      {/* THE TITLE ROW, THREE COLUMNS. The heading sits in the middle one, so it
-          stays centred on the page; the board export sits at the right end of the
-          row, where the page action sits on the pages that use the shared header
-          (+ New on Companies). The empty left column balances the right one, and
-          a grid rather than absolute positioning keeps the two from overlapping
-          on a narrow screen. */}
-      <div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',alignItems:'start',columnGap:'12px',marginBottom:'18px'}}>
-        <div />
-        <div style={{textAlign:'center'}}>
-          <h1 style={{fontFamily:'var(--serif)',fontSize:'28px',fontWeight:500,letterSpacing:'-.01em',color:'var(--ink)',margin:0}}>Samples</h1>
-          <div style={{fontSize:'13px',color:'var(--muted)',marginTop:'5px'}}>
-            {companies.length} client{companies.length === 1 ? '' : 's'}, {board.length} product{board.length === 1 ? '' : 's'} in play
-          </div>
-          {/* Two ways to look at the same cards: by client, which is how the
-              office thinks, or by stage, which is the board. */}
-          <div role="tablist" style={{display:'inline-flex',gap:'18px',marginTop:'12px',borderBottom:'1px solid var(--line)'}}>
-            {[['companies','By client'],['board','By stage']].map(([v,l]) => {
-              const on = (ui.view||'companies') === v;
-              return (
-                <button key={v} role="tab" aria-selected={on} onClick={()=>{ setUi('view', v); }}
-                  style={{background:'none',border:'none',borderBottom:'2px solid ' + (on ? 'var(--ink)' : 'transparent'),marginBottom:'-1px',
-                          padding:'4px 0 8px',cursor:'pointer',fontSize:'13px',fontWeight:on ? 600 : 500,fontFamily:'var(--sans)',
-                          color:on ? 'var(--ink)' : 'var(--muted)'}}>{l}</button>
-              );
-            })}
-          </div>
+      {/* ── THE TOOLBAR ────────────────────────────────────────────────────
+          No page title: the sidebar already says Samples. One row carries
+          search, the Clients | Board switch (the Codes page's segmented control,
+          with counts), the quote-ID box and the board export. On the board view
+          the board's own controls follow beneath, unchanged. */}
+      <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap',marginBottom:'18px'}}>
+        <div style={{position:'relative',flex:'1 1 240px',maxWidth:'380px'}}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" strokeWidth="2" strokeLinecap="round"
+            style={{position:'absolute',left:'12px',top:'50%',transform:'translateY(-50%)'}}><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Search clients, products, SKUs"
+            aria-label="Search clients, products, SKUs"
+            style={{width:'100%',border:'1px solid var(--line)',borderRadius:'10px',padding:'10px 12px 10px 34px',fontSize:'13.5px',outline:'none',
+                    fontFamily:'var(--sans)',background:'#fff',color:'var(--ink)',boxSizing:'border-box',boxShadow:'0 1px 2px rgba(15,23,41,.04)'}} />
         </div>
-        <div style={{justifySelf:'end'}}>
-          <ExportButton count={exportCards.length} busy={boardExporting} align="right"
-            note={'Every card on the board (' + exportCards.length + '), filters not applied'}
-            onXlsx={exportBoardXlsx} onCsv={exportBoardCsv} />
+        <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px'}}>
+          {[['companies','Clients',companies.length],['board','Board',board.length]].map(([v,l,n]) => {
+            const on = (ui.view||'companies') === v;
+            return (
+              <button key={v} onClick={()=>{ setUi('view', v); }} aria-pressed={on}
+                style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'8px 15px',borderRadius:'9px',border:'none',cursor:'pointer',
+                        fontSize:'13px',fontWeight:600,letterSpacing:'-.01em',fontFamily:'var(--sans)',
+                        background:on ? 'var(--ink)' : 'transparent',color:on ? '#fff' : '#5A5A5E',
+                        boxShadow:on ? '0 1px 3px rgba(0,0,0,.18)' : 'none',transition:'.14s'}}>
+                {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 7px',
+                                 background:on ? 'rgba(255,255,255,.22)' : '#DCDCE0',color:on ? '#fff' : '#6A6A6E'}}>{n}</span>
+              </button>
+            );
+          })}
         </div>
+        <div style={{flex:1}} />
+        <CardFromQuoteBox staff={staff} userEmail={userEmail} onOpen={id => setOpenId(id)} onReload={load} />
+        <ExportButton count={exportCards.length} busy={boardExporting} align="right"
+          note={'Every card (' + exportCards.length + '), filters not applied'}
+          onXlsx={exportBoardXlsx} onCsv={exportBoardCsv} />
       </div>
 
-      {/* ── HEALTH, NOT STAGE COUNTS ─────────────────────────────────────────
-          The stage counts moved into the column headings, where the 11 Aug board
-          had them and where they cost no vertical space. What earns the strip
-          instead is the thing a column heading cannot say -- how many cards are
-          in trouble, wherever they happen to be sitting.
-
-          These read the whole board rather than the filtered view, so narrowing
-          never makes a total lie. */}
-      {/* The strip draws only the tiles that can be non-zero: Stalled while
-          either of its rules can fire (STALLED_POSSIBLE), Overdue samples while
-          due back is on, the Waiting tiles while the checklist is. With all
-          three off there is nothing left to count and no strip at all. */}
       {(ui.view||'companies') === 'companies' && (
-        <div style={{display:'flex',gap:'10px',alignItems:'center',marginBottom:'14px',flexWrap:'wrap'}}>
-          <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Find a client or product"
-            aria-label="Find a client or product"
-            style={{flex:'1 1 240px',maxWidth:'340px',border:'1px solid var(--line)',borderRadius:'4px',padding:'8px 11px',
-                    fontSize:'13px',outline:'none',fontFamily:'var(--sans)',background:'#fff',color:'var(--ink)',boxSizing:'border-box'}} />
-          <div style={{flex:1}} />
-          <CardFromQuoteBox staff={staff} userEmail={userEmail} onOpen={id => setOpenId(id)} onReload={load} />
-        </div>
-      )}
-      {(ui.view||'companies') === 'companies' && (
-        shownCompanies.length === 0 ? (
-          <div style={{background:'#fff',border:'1px solid var(--line)',borderRadius:'4px',padding:'48px 32px'}}>
-            <div style={{fontFamily:'var(--serif)',fontSize:'20px',fontWeight:500,color:'var(--ink)',marginBottom:'8px'}}>
+        openCompany ? (
+          <ClientDetail key={openCompany.id} name={openCompany.name} list={openCompany.list} staff={staff} userEmail={userEmail} carriers={carriers}
+            saving={saving} onStage={setStage} onOpenCard={id => setOpenId(id)} onTouched={load} onBack={()=>setUi('companyId', '')} />
+        ) : shownCompanies.length === 0 ? (
+          <div style={{background:'#fff',border:'1px solid var(--line)',borderRadius:'14px',padding:'56px 32px',textAlign:'center'}}>
+            <div style={{fontSize:'18px',fontWeight:600,color:'var(--ink)',marginBottom:'8px',letterSpacing:'-.01em'}}>
               {board.length ? 'No client matches that' : 'No samples in play'}
             </div>
-            <div style={{color:'var(--muted)',fontSize:'14px',maxWidth:'480px',lineHeight:1.6}}>
+            <div style={{color:'var(--muted)',fontSize:'14px',maxWidth:'460px',margin:'0 auto',lineHeight:1.6}}>
               {board.length ? 'Try another name, SKU or product.' : 'A product shows up here when someone presses Create Sample Card on a quote, or types a quote ID into the box above.'}
             </div>
           </div>
         ) : (
-          <div className="plm-register" style={{display:'grid',gridTemplateColumns:'300px minmax(0,1fr)',background:'#fff',
-                                                  border:'1px solid var(--line)',borderRadius:'4px',minHeight:'60vh'}}>
-            <nav aria-label="Clients" style={{borderRight:'1px solid var(--line)',overflowY:'auto',maxHeight:'calc(100vh - 230px)'}}>
-              <div style={{padding:'12px 14px 10px',fontSize:'12.5px',fontWeight:600,color:'var(--muted)',borderBottom:'1px solid var(--line)'}}>Clients</div>
-              {shownCompanies.map(c => <ClientRow key={c.id} name={c.name} list={c.list}
-                active={(openCompany || shownCompanies[0]).id === c.id} onOpen={()=>setUi('companyId', c.id)} />)}
-            </nav>
-            <div style={{overflowY:'auto',maxHeight:'calc(100vh - 230px)'}}>
-              {(() => { const sel = openCompany || shownCompanies[0]; return sel
-                ? <ClientDetail key={sel.id} name={sel.name} list={sel.list} staff={staff} userEmail={userEmail} carriers={carriers}
-                    saving={saving} onStage={setStage} onOpenCard={id => setOpenId(id)} onTouched={load} />
-                : null; })()}
-            </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(236px,1fr))',gap:'16px'}}>
+            {shownCompanies.map(c => <ClientTile key={c.id} name={c.name} list={c.list} onOpen={()=>setUi('companyId', c.id)} />)}
           </div>
         )
       )}
@@ -4955,11 +4969,6 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
       )}
 
       <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',marginBottom:'14px'}}>
-        <div style={{position:'relative',flex:'1 1 240px',maxWidth:'320px'}}>
-          <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Search product, SKU or client…"
-            style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 12px',
-                    fontSize:'13.5px',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'}} />
-        </div>
         <div style={{flex:1}} />
         {/* THE ONLY ROUTE BACK TO A REMOVED CARD, so it names its count even at
             zero -- a control that disappears when the list is empty is one nobody
@@ -4970,9 +4979,6 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
             onChange={e=>setUi('showRemoved', e.target.checked)} style={{cursor:'pointer'}} />
           Show {removed.length} removed
         </label>
-        {/* A card from a Quote ID, last in the row so its message line -- flex
-            basis 100% -- falls under everything rather than splitting the row. */}
-        <CardFromQuoteBox staff={staff} userEmail={userEmail} onOpen={id => setOpenId(id)} onReload={load} />
 
       </div>
 
