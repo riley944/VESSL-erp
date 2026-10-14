@@ -928,6 +928,9 @@ const sampleTracking = r => {
 const ROUND_SELECT = 'id,program_id,stage,round,sample_type,master_sample,sent_date,due_back,carrier,tracking_number,comment,created_by,created_at,updated_by,updated_at';
 const ROUND_SELECT_112 = ',sent_by';
 const ROUND_SELECT_113 = ',sent_by_2,carrier_2,tracking_number_2';
+// The client leg of the shuttle (script 114): arrived at KUI, sent on to the
+// client, how that leg tracks, when they had it, what they said.
+const ROUND_SELECT_114 = ',received_date,client_sent_date,client_carrier,client_tracking_number,client_received_date,client_feedback,client_feedback_at';
 
 // A date the database will take and a person meant. A date input passes
 // through 0002 and 0020 while the year is typed, and one saved mid-typing is a
@@ -3506,6 +3509,359 @@ function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
 
 // canOpenTesting: whether this person's role may open the Testing page, for the
 // card's Open in Testing link. page.jsx decides it from allowedPages.
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ── THE CLIENT VIEW (14 Oct, second cut) ─────────────────────────────────────
+// Riley: "we think in terms of company. What's going on for Stitch Golf?" So
+// Samples opens as a register of clients on the left and the selected client's
+// products on the right -- master and detail, no navigating back and forth.
+//
+// EACH PRODUCT IS A CONSIGNMENT. Its panel carries the stage control, the
+// SHUTTLE the sample makes (left factory → at KUI → sent to client → with
+// client → feedback in) drawn as a rail with the next step as the one action
+// button, then action items and notes side by side. The sample is KUI's, not
+// any one person's, so no owner is named on the line; names stay on notes,
+// where they are the record.
+//
+// IT DRAWS ON THE APP'S OWN TOKENS -- globals.css: ink, muted, line, accent,
+// Fraunces for the display voice, Spline Sans Mono for data. The first cut
+// borrowed an Apple palette the rest of Vessl does not use, and read as a
+// prototype for it.
+//
+// IT READS WHAT THE BOARD READS: the same enriched rows, grouped by client.
+// Stage moves go through setStage, notes through NotesPanel, action items
+// through program_tasks, shuttle steps through program_sample_rounds -- the
+// write paths that already exist, so nothing here can drift from the card.
+
+// The five stations, in order: label on the rail, the column that marks it
+// reached, the button that reaches it, and whether that step ships something.
+const SHUTTLE = [
+  ['factory',  'Left factory',   'sent_date',            'Record factory shipment',    true],
+  ['arrived',  'At KUI',         'received_date',        'Record arrival at KUI',      false],
+  ['toclient', 'Sent to client', 'client_sent_date',     'Record shipment to client',  true],
+  ['client',   'With client',    'client_received_date', 'Mark received by client',    false],
+  ['feedback', 'Feedback in',    'client_feedback_at',   'Log client feedback',        false],
+];
+const shuttleIdx = x => { if (!x) return -1; let i = -1; SHUTTLE.forEach(([, , col], n) => { if (x[col]) i = n; }); return i; };
+const todayIso = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+
+// Tokens, read once. Inline styles everywhere else in this file, so these stay
+// inline too -- but they are the CSS variables, not fresh hex.
+const T = {
+  ink:'var(--ink)', ink2:'var(--ink-2)', muted:'var(--muted)', faint:'var(--faint)',
+  line:'var(--line)', line2:'var(--line-2)', soft:'var(--soft)', soft2:'var(--soft-2)',
+  accent:'var(--accent)', accentSoft:'var(--accent-soft)',
+  serif:'var(--serif)', sans:'var(--sans)', mono:'var(--mono)',
+  amber:'#c2790b', hot:'var(--hot)', ok:'var(--ok)',
+};
+const btnPrimary = { background:T.ink, color:'#fff', border:'1px solid ' + T.ink, borderRadius:'4px', padding:'8px 14px',
+  fontSize:'13px', fontWeight:600, fontFamily:T.sans, cursor:'pointer', letterSpacing:'.005em' };
+const btnQuiet = { background:'#fff', color:T.ink2, border:'1px solid ' + T.line, borderRadius:'4px', padding:'7px 12px',
+  fontSize:'12.5px', fontWeight:500, fontFamily:T.sans, cursor:'pointer' };
+const field = { border:'1px solid ' + T.line, borderRadius:'4px', padding:'8px 10px', fontSize:'13px', outline:'none',
+  fontFamily:T.sans, background:'#fff', color:T.ink, boxSizing:'border-box' };
+
+// What a client's register row says.
+const clientRollup = list => {
+  const open = list.filter(r => r.stage !== ARCHIVED);
+  const sampling = open.filter(r => SAMPLING_STAGES.includes(r.stage));
+  const quoting = open.filter(r => r.stage === 'quoted');
+  const items = open.reduce((n, r) => n + (r.tasks || []).filter(t => !t.done).length, 0);
+  const onUs = open.reduce((n, r) => n + (r.tasks || []).filter(t => !t.done && t.blocker === 'us').length, 0);
+  const stale = open.filter(r => r.stale).length;
+  const last = list.map(r => r.updated_at || r.created_at).filter(Boolean).sort().pop() || null;
+  // The station most of the client's samples are waiting to reach.
+  const nexts = sampling.map(r => { const i = shuttleIdx(latestRound(r)); return i < SHUTTLE.length - 1 ? SHUTTLE[i + 1][1] : null; }).filter(Boolean);
+  const next = nexts.sort((a, b) => nexts.filter(v => v === b).length - nexts.filter(v => v === a).length)[0] || null;
+  return { open, sampling, quoting, items, onUs, stale, last, next };
+};
+
+// ── THE REGISTER ROW ────────────────────────────────────────────────────────
+function ClientRow({ name, list, active, onOpen }) {
+  const c = clientRollup(list);
+  const owe = c.onUs > 0 || c.stale > 0;
+  const line = c.open.length === 0 ? 'Nothing in play'
+    : [c.sampling.length ? c.sampling.length + ' sampling' : null, c.quoting.length ? c.quoting.length + ' quoting' : null].filter(Boolean).join(', ');
+  return (
+    <button onClick={onOpen} aria-current={active ? 'true' : undefined}
+      style={{display:'block',width:'100%',textAlign:'left',background:active ? T.accentSoft : 'transparent',border:'none',
+              borderLeft:'3px solid ' + (active ? T.accent : 'transparent'),padding:'12px 14px 12px 13px',cursor:'pointer',
+              fontFamily:T.sans,borderBottom:'1px solid ' + T.line2}}>
+      <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'8px'}}>
+        <span style={{fontFamily:T.serif,fontSize:'16.5px',fontWeight:500,color:T.ink,letterSpacing:'-.005em',lineHeight:1.2,
+                      whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{name}</span>
+        {owe && <span title={c.onUs ? c.onUs + ' waiting on KUI' : 'Not moved in ' + STALE_DAYS + ' days'}
+                      style={{width:'7px',height:'7px',borderRadius:'50%',background:T.hot,flexShrink:0}} />}
+      </div>
+      <div style={{fontSize:'12px',color:T.muted,marginTop:'3px'}}>{line}</div>
+      {c.next && <div style={{fontSize:'12px',color:T.ink2,marginTop:'2px'}}>Waiting on: {c.next.toLowerCase()}</div>}
+      {c.items > 0 && <div style={{fontSize:'12px',color:c.onUs ? T.hot : T.muted,marginTop:'2px'}}>{c.items} action item{c.items === 1 ? '' : 's'}{c.onUs ? ', ' + c.onUs + ' on KUI' : ''}</div>}
+    </button>
+  );
+}
+
+// ── RECORDING A STATION ─────────────────────────────────────────────────────
+// One form under the rail: a date (today by default), carrier and number for
+// the two legs that ship, text for feedback. Writes the latest round, or starts
+// round 1 when the card has none -- somebody recording a shipment has a sample.
+function StationForm({ r, step, carriers, userEmail, onDone, onCancel }) {
+  const [, label, col, , ships] = SHUTTLE.find(s => s[0] === step);
+  const x = latestRound(r);
+  const isFactory = step === 'factory';
+  const [date, setDate] = useState(x && x[col] && step !== 'feedback' ? String(x[col]).slice(0, 10) : todayIso());
+  const [carrier, setCarrier] = useState(x ? (isFactory ? x.carrier : x.client_carrier) || '' : '');
+  const [number, setNumber]   = useState(x ? (isFactory ? x.tracking_number : x.client_tracking_number) || '' : '');
+  const [text, setText] = useState(x ? x.client_feedback || '' : '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useDirtySource(!!number.trim() || !!text.trim());
+
+  const save = async () => {
+    setBusy(true); setErr('');
+    const patch = { updated_by: userEmail || null, updated_at: new Date().toISOString() };
+    if (step === 'feedback') { patch.client_feedback = text.trim() || null; patch.client_feedback_at = new Date().toISOString(); }
+    else patch[col] = date || null;
+    if (ships && isFactory) { patch.carrier = carrier.trim() || null; patch.tracking_number = number.trim() || null; }
+    if (ships && !isFactory) { patch.client_carrier = carrier.trim() || null; patch.client_tracking_number = number.trim() || null; }
+    let error = null;
+    if (x) ({ error } = await SB.from('program_sample_rounds').update(patch).eq('id', x.id));
+    else ({ error } = await SB.from('program_sample_rounds').insert({ program_id: r.id, stage: 'sampling', round: 1, created_by: userEmail || null, ...patch }));
+    if (error) { setErr(error.message); setBusy(false); return; }
+    if (step === 'feedback' && text.trim()) {
+      await SB.from('program_notes').insert({ program_id: r.id, author: userEmail || null, source: 'manual', stage: r.stage || null,
+        round_no: x ? x.round : 1, note: 'Client feedback: ' + text.trim() });
+    }
+    const t = await touchProgram(r.id, userEmail); if (t) touchFailedToast(t);
+    setBusy(false); onDone();
+  };
+  return (
+    <div style={{borderTop:'1px solid ' + T.line,marginTop:'14px',paddingTop:'14px'}}>
+      <div style={{fontSize:'13.5px',fontWeight:600,color:T.ink,marginBottom:'10px'}}>{label}{x ? ', round ' + x.round : ' (starts round 1)'}</div>
+      <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
+        {step !== 'feedback' && <input type="date" value={date} onChange={e=>setDate(e.target.value)} aria-label="Date" style={{...field,flex:'0 0 160px'}} />}
+        {ships && (
+          <>
+            <input list={'carriers-' + r.id} value={carrier} onChange={e=>setCarrier(e.target.value)} placeholder="Carrier" style={{...field,flex:'1 1 130px'}} />
+            <datalist id={'carriers-' + r.id}>{(carriers || []).map(c => <option key={c.id} value={c.name} />)}</datalist>
+            <input value={number} onChange={e=>setNumber(e.target.value)} placeholder="Tracking number" style={{...field,flex:'2 1 200px',fontFamily:T.mono,fontSize:'12.5px'}} />
+          </>
+        )}
+        {step === 'feedback' && <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="What the client said" rows={3} style={{...field,flex:'1 1 100%',resize:'vertical',lineHeight:1.5}} />}
+      </div>
+      {err && <div style={{fontSize:'12.5px',color:T.hot,marginTop:'8px'}}>Could not save: {err}</div>}
+      <div style={{display:'flex',gap:'8px',marginTop:'12px'}}>
+        <button onClick={save} disabled={busy || (step === 'feedback' && !text.trim())} style={{...btnPrimary,opacity:busy ? .6 : 1}}>{busy ? 'Saving' : 'Save'}</button>
+        <button onClick={onCancel} disabled={busy} style={btnQuiet}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ── THE RAIL ────────────────────────────────────────────────────────────────
+// Five stations on a track. Reached stations are filled squares joined by a
+// solid line and carry their date beneath; the next one is the action button.
+// The two legs that ship show the tracking number as a link under the station.
+function ShuttleRail({ r, carriers, open, onOpen, onEdit }) {
+  const x = latestRound(r);
+  const idx = shuttleIdx(x);
+  const done = idx >= SHUTTLE.length - 1;
+  return (
+    <div style={{marginTop:'16px'}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)'}}>
+        {SHUTTLE.map(([k, label, col, , ships], i) => {
+          const reached = i <= idx, next = i === idx + 1;
+          const val = x ? x[col] : null;
+          const carrier = k === 'factory' ? (x || {}).carrier : (x || {}).client_carrier;
+          const number  = k === 'factory' ? (x || {}).tracking_number : (x || {}).client_tracking_number;
+          const color = reached ? T.ink : next ? T.accent : T.line;
+          return (
+            <div key={k} style={{position:'relative',minWidth:0}}>
+              {/* track segment to the right of this station */}
+              {i < SHUTTLE.length - 1 && (
+                <div style={{position:'absolute',top:'6px',left:'14px',right:'-0px',height:'3px',
+                             background:i < idx ? T.ink : T.line2}} />
+              )}
+              {/* station marker */}
+              <button onClick={()=>reached ? onEdit(k) : next ? onOpen(k) : null} disabled={!reached && !next}
+                aria-label={(reached ? 'Edit ' : next ? 'Record ' : '') + label}
+                style={{position:'relative',zIndex:1,width:'15px',height:'15px',padding:0,border:'2px solid ' + color,
+                        background:reached ? T.ink : '#fff',borderRadius:'2px',cursor:reached || next ? 'pointer' : 'default',
+                        outline:open === k ? '3px solid ' + T.accentSoft : 'none'}} />
+              <div style={{fontSize:'12px',fontWeight:reached || next ? 600 : 500,color:reached ? T.ink : next ? T.accent : T.faint,
+                           marginTop:'8px',paddingRight:'10px',lineHeight:1.25}}>{label}</div>
+              <div style={{fontFamily:T.mono,fontSize:'11.5px',color:T.muted,marginTop:'2px',paddingRight:'10px',lineHeight:1.4,
+                           overflow:'hidden',textOverflow:'ellipsis'}}>
+                {reached && val ? shortDate(val) : ''}
+                {reached && ships && number ? <div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                  <TrackingLink number={number} url={trackingUrl(carrier, number, carriers)} /></div> : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {!done && !open && (
+        <button onClick={()=>onOpen(SHUTTLE[idx + 1][0])} style={{...btnPrimary,marginTop:'12px',background:T.accent,borderColor:T.accent}}>
+          {SHUTTLE[idx + 1][3]}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── ACTION ITEMS ────────────────────────────────────────────────────────────
+// "Is the UPC art approved?" -- program_tasks through TaskRow, so an item here
+// is the same thing as a task on the card. No assignee on the quick add: the
+// item belongs to KUI; the card can assign it later.
+function ActionItems({ r, staff, userEmail, onTouched }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState(null);
+  const [showDone, setShowDone] = useState(false);
+  useDirtySource(!!text.trim());
+  const all = r.tasks || [];
+  const open = all.filter(t => !t.done), done = all.filter(t => t.done);
+  const write = async (t, fn) => { setPending(t.id); const { error } = await fn(); if (error) window._toast?.(error.message, 'err'); await onTouched(); setPending(null); };
+  const add = async () => {
+    const body = text.trim(); if (!body) return;
+    setBusy(true);
+    const { error } = await SB.from('program_tasks').insert({ program_id: r.id, stage: r.stage || 'sampling', task: body,
+      assigned_by: userEmail || null, blocker: 'none', sort_order: all.reduce((m, t) => Math.max(m, t.sort_order || 0), -1) + 1 });
+    if (error) window._toast?.('Could not add the item: ' + error.message, 'err'); else setText('');
+    await onTouched(); setBusy(false);
+  };
+  return (
+    <div>
+      <div style={{fontSize:'13.5px',fontWeight:600,color:T.ink,marginBottom:'4px'}}>Action items{open.length ? ' (' + open.length + ')' : ''}</div>
+      {open.length === 0 && <div style={{fontSize:'12.5px',color:T.faint,padding:'6px 0'}}>Nothing open.</div>}
+      {open.map(t => <TaskRow key={t.id} t={t} staff={staff} pending={pending === t.id}
+        onToggle={t => write(t, () => SB.from('program_tasks').update({ done: true, done_at: new Date().toISOString() }).eq('id', t.id))}
+        onBlocker={(t, b) => write(t, () => SB.from('program_tasks').update({ blocker: b }).eq('id', t.id))}
+        onDel={t => write(t, () => SB.from('program_tasks').delete().eq('id', t.id))} />)}
+      <div style={{display:'flex',gap:'6px',marginTop:'8px'}}>
+        <input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{ if (e.key === 'Enter') add(); }}
+          placeholder="Add an item and press Enter" style={{...field,flex:1}} />
+        <button onClick={add} disabled={busy || !text.trim()} style={btnQuiet}>Add</button>
+      </div>
+      {done.length > 0 && (
+        <button onClick={()=>setShowDone(v=>!v)} style={{background:'none',border:'none',padding:'8px 0 0',fontSize:'12px',color:T.muted,cursor:'pointer',fontFamily:T.sans,textDecoration:'underline',textUnderlineOffset:'3px'}}>
+          {showDone ? 'Hide' : 'Show'} {done.length} done
+        </button>
+      )}
+      {showDone && done.map(t => <TaskRow key={t.id} t={t} staff={staff} dim pending={pending === t.id}
+        onToggle={t => write(t, () => SB.from('program_tasks').update({ done: false, done_at: null }).eq('id', t.id))}
+        onBlocker={()=>{}} onDel={t => write(t, () => SB.from('program_tasks').delete().eq('id', t.id))} />)}
+    </div>
+  );
+}
+
+// ── ONE CONSIGNMENT ─────────────────────────────────────────────────────────
+function Consignment({ r, staff, userEmail, carriers, busy, onStage, onOpenCard, onTouched, last }) {
+  const p = r.products || {};
+  const x = latestRound(r);
+  const [station, setStation] = useState(null);   // the station form that is open
+  const inSampling = SAMPLING_STAGES.includes(r.stage);
+  const roundLine = x ? 'Round ' + x.round + (x.sample_type ? ', ' + sampleTypeLabel(x.sample_type).toLowerCase() : '')
+                      : inSampling ? 'No round recorded yet' : null;
+  return (
+    <section style={{padding:'22px 0 26px',borderBottom:last ? 'none' : '1px solid ' + T.line}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'16px',flexWrap:'wrap'}}>
+        <div style={{minWidth:0,flex:'1 1 260px'}}>
+          <div style={{display:'flex',alignItems:'baseline',gap:'10px',flexWrap:'wrap'}}>
+            <h3 style={{fontSize:'17px',fontWeight:600,color:T.ink,margin:0,letterSpacing:'-.01em'}}>{p.name || 'Unnamed product'}</h3>
+            {p.sku && <span style={{fontFamily:T.mono,fontSize:'12px',color:T.muted}}>{p.sku}</span>}
+          </div>
+          <div style={{fontSize:'12.5px',color:T.muted,marginTop:'4px',display:'flex',gap:'14px',flexWrap:'wrap'}}>
+            {r.factoryName && <span>{r.factoryName}</span>}
+            {roundLine && <span>{roundLine}</span>}
+            {r.days !== null && r.stage && r.stage !== ARCHIVED && <span>{r.days} day{r.days === 1 ? '' : 's'} in {stageLabel(r.stage).toLowerCase()}</span>}
+          </div>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
+          {/* stage control: a segmented row, the current stage in its colour */}
+          <div role="group" aria-label="Stage" style={{display:'inline-flex',border:'1px solid ' + T.line,borderRadius:'4px',overflow:'hidden'}}>
+            {VISIBLE_STAGES.map(([k, l, c], i) => {
+              const active = k === r.stage;
+              return <button key={k} onClick={()=>onStage(r, k)} disabled={busy || active} aria-pressed={active}
+                style={{fontSize:'12px',fontWeight:600,padding:'6px 12px',border:'none',borderLeft:i ? '1px solid ' + T.line : 'none',
+                        fontFamily:T.sans,cursor:(busy||active)?'default':'pointer',
+                        background:active ? c : '#fff',color:active ? '#fff' : T.muted}}>{l}</button>;
+            })}
+          </div>
+          <button onClick={onOpenCard} style={btnQuiet}>Open card</button>
+        </div>
+      </div>
+
+      {(inSampling || x) && (
+        <ShuttleRail r={r} carriers={carriers} open={station} onOpen={k => setStation(k)} onEdit={k => setStation(station === k ? null : k)} />
+      )}
+      {station && <StationForm r={r} step={station} carriers={carriers} userEmail={userEmail}
+        onDone={async()=>{ setStation(null); await onTouched(); }} onCancel={()=>setStation(null)} />}
+      {x && x.client_feedback && (
+        <div style={{marginTop:'14px',borderLeft:'3px solid ' + T.amber,padding:'6px 12px',fontSize:'13px',color:T.ink2,lineHeight:1.5}}>
+          <span style={{fontWeight:600,color:T.ink}}>Client feedback</span>
+          {x.client_feedback_at && <span style={{fontFamily:T.mono,fontSize:'11.5px',color:T.muted,marginLeft:'8px'}}>{shortDate(x.client_feedback_at)}</span>}
+          <div style={{marginTop:'2px'}}>{x.client_feedback}</div>
+        </div>
+      )}
+
+      <div style={{display:'grid',gridTemplateColumns:'minmax(260px,1fr) minmax(300px,1.4fr)',gap:'28px',marginTop:'20px'}} className="plm-consignment-grid">
+        <ActionItems r={r} staff={staff} userEmail={userEmail} onTouched={onTouched} />
+        <div>
+          <NotesPanel staff={staff} table="program_notes" keyCol="program_id" keyId={r.id}
+            insertExtra={{ source: 'manual', stage: r.stage || null }} extraCol="source" extraDefault="manual"
+            quietExtras={['manual', 'round']} nullCol="round_id" selectExtra="stage,round_no"
+            labelOf={n => n.round_no ? 'Round ' + n.round_no : (n.stage ? stageLabel(n.stage) : null)}
+            reloadKey={(r.rounds || []).map(y => y.id).join(',') + '-' + r.noteCount}
+            title={'Notes' + (r.noteCount ? ' (' + r.noteCount + ')' : '')} programId={r.id} userEmail={userEmail} onTouched={onTouched} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ── THE DETAIL PANE ─────────────────────────────────────────────────────────
+function ClientDetail({ name, list, staff, userEmail, carriers, saving, onStage, onOpenCard, onTouched }) {
+  const c = clientRollup(list);
+  const [showArchived, setShowArchived] = useState(false);
+  const order = { sampling:0, revision:0, quoted:1, testing:2, production:3, shipped:4 };
+  const sorted = [...list].sort((a, b) => ((order[a.stage] ?? 5) - (order[b.stage] ?? 5)) || ((a.updated_at || '') < (b.updated_at || '') ? 1 : -1));
+  const live = sorted.filter(r => r.stage !== ARCHIVED), archived = sorted.filter(r => r.stage === ARCHIVED);
+  const summary = [
+    live.length + ' product' + (live.length === 1 ? '' : 's') + ' in play',
+    c.sampling.length ? c.sampling.length + ' sampling' : null,
+    c.quoting.length ? c.quoting.length + ' quoting' : null,
+    c.onUs ? c.onUs + ' item' + (c.onUs === 1 ? '' : 's') + ' waiting on KUI' : null,
+  ].filter(Boolean);
+  return (
+    <div style={{padding:'6px 32px 40px 32px',minWidth:0}}>
+      <header style={{paddingBottom:'6px'}}>
+        <h2 style={{fontFamily:T.serif,fontSize:'30px',fontWeight:500,color:T.ink,margin:0,letterSpacing:'-.01em',lineHeight:1.1}}>{name}</h2>
+        <div style={{fontSize:'13px',color:T.muted,marginTop:'8px',display:'flex',gap:'16px',flexWrap:'wrap'}}>
+          {summary.map((s, i) => <span key={i} style={{color: /KUI/.test(s) ? T.hot : T.muted}}>{s}</span>)}
+        </div>
+      </header>
+      {live.map((r, i) => <Consignment key={r.id} r={r} staff={staff} userEmail={userEmail} carriers={carriers} busy={saving === r.id}
+        onStage={onStage} onOpenCard={()=>onOpenCard(r.id)} onTouched={onTouched} last={i === live.length - 1 && !archived.length} />)}
+      {live.length === 0 && (
+        <div style={{padding:'36px 0',fontSize:'14px',color:T.muted,borderTop:'1px solid ' + T.line,marginTop:'10px'}}>
+          Nothing in play for {name}. Everything is archived, or a card has not been created from a quote yet.
+        </div>
+      )}
+      {archived.length > 0 && (
+        <div style={{paddingTop:'16px'}}>
+          <button onClick={()=>setShowArchived(v=>!v)} style={{...btnQuiet,fontSize:'12px'}}>
+            {showArchived ? 'Hide' : 'Show'} {archived.length} archived
+          </button>
+          {showArchived && <div style={{opacity:.7}}>
+            {archived.map((r, i) => <Consignment key={r.id} r={r} staff={staff} userEmail={userEmail} carriers={carriers} busy={saving === r.id}
+              onStage={onStage} onOpenCard={()=>onOpenCard(r.id)} onTouched={onTouched} last={i === archived.length - 1} />)}
+          </div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Programs({ userEmail, canOpenTesting = false }) {
   const [rows, setRows]   = useState([]);
   const [ev, setEv]       = useState(null);
@@ -3524,7 +3880,7 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
   // Shipped is a column now, so there is nothing to open or shut, and a card on a
   // retired product sits in its own stage column like any other -- the tile says
   // so with a pill rather than the card being filed somewhere else.
-  const [ui, setUi] = usePageState('programs', { search:'', showRemoved:false, blocker:'' });
+  const [ui, setUi] = usePageState('programs', { search:'', showRemoved:false, blocker:'', view:'companies', companyId:'' });
   const [openId, setOpenId] = useState(null);
   const [staff, setStaff] = useState([]);
   // Set while a stage or an owner is being written, so the control can say so and
@@ -3645,16 +4001,17 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
         // rather than when a card opens -- the trade the note counts make.
         // Not read at all while the checklist is off -- nothing on the board or
         // in the files would use it.
-        CHECKLIST_ON
-          ? SB.from('program_tasks')
-              .select('id,program_id,stage,task,owner_id,assigned_by,due_date,blocker,done,done_at,sort_order,created_at')
-              .order('sort_order').order('created_at')
-          : Promise.resolve({ data: [], error: null }),
+        // Read whatever CHECKLIST_ON says: the company view's Open questions
+        // (14 Oct) are program_tasks, and they show there even while the card's
+        // own checklist stays off.
+        SB.from('program_tasks')
+          .select('id,program_id,stage,task,owner_id,assigned_by,due_date,blocker,done,done_at,sort_order,created_at')
+          .order('sort_order').order('created_at'),
         // EVERY SAMPLE ROUND, IN BULK, highest round first per card -- the tile
         // pill and the Stalled and Overdue samples tiles read the latest one's
         // due back, so they have to arrive with the board.
         SB.from('program_sample_rounds')
-          .select(ROUND_SELECT + ROUND_SELECT_112 + ROUND_SELECT_113)
+          .select(ROUND_SELECT + ROUND_SELECT_112 + ROUND_SELECT_113 + ROUND_SELECT_114)
           .order('round', { ascending:false }),
         // THE CARRIERS ARE COMPANIES of type carrier (script 85), with the tracking
         // page pattern on companies.tracking_url. They are managed on Companies ->
@@ -3668,8 +4025,12 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
       // whole read, so a refusal that names one of them is read again without
       // package 2's columns, then without sent_by too, and what is missing reads
       // Not set. Any other error is reported as before.
-      const missingCol = res => !!res.error && /sent_by|carrier_2|tracking_number_2/.test(res.error.message || '');
+      const missingCol = res => !!res.error && /sent_by|carrier_2|tracking_number_2|received_date|client_/.test(res.error.message || '');
       let sr = srTry, live = true, live2 = true;
+      // Before script 114: read again without the client leg, which then reads empty.
+      if (missingCol(sr)) {
+        sr = await SB.from('program_sample_rounds').select(ROUND_SELECT + ROUND_SELECT_112 + ROUND_SELECT_113).order('round', { ascending:false });
+      }
       if (missingCol(sr)) {
         live2 = false;
         sr = await SB.from('program_sample_rounds').select(ROUND_SELECT + ROUND_SELECT_112).order('round', { ascending:false });
@@ -4103,6 +4464,40 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
   const shownRemoved = useMemo(() => removed.filter(r => matches(r) && blockerMatches(r)),
     [removed, ui.search, ui.blocker]);
 
+  // ── COMPANIES (14 Oct) ──────────────────────────────────────────────────────
+  // Every live card grouped by client. Search narrows the company list by name
+  // and the products inside a company by SKU, name or client -- the same
+  // matches() the board uses, so one search means one thing.
+  const companies = useMemo(() => {
+    const m = new Map();
+    board.forEach(r => {
+      const id = r.client_company_id || 'none';
+      if (!m.has(id)) m.set(id, { id, name: (r.client || {}).name || 'No client', list: [] });
+      m.get(id).list.push(r);
+    });
+    return [...m.values()].sort((a, b) => {
+      // Companies with something in sampling first, then by most recent touch.
+      const sa = a.list.some(r => SAMPLING_STAGES.includes(r.stage)) ? 0 : 1;
+      const sb = b.list.some(r => SAMPLING_STAGES.includes(r.stage)) ? 0 : 1;
+      if (sa !== sb) return sa - sb;
+      const la = a.list.map(r => r.updated_at || '').sort().pop() || '';
+      const lb = b.list.map(r => r.updated_at || '').sort().pop() || '';
+      return la < lb ? 1 : la > lb ? -1 : a.name.localeCompare(b.name);
+    });
+  }, [board]);
+  const shownCompanies = useMemo(() => {
+    if (!ui.search) return companies;
+    const q = norm(ui.search);
+    return companies.filter(c => norm(c.name).includes(q) || c.list.some(matches));
+  }, [companies, ui.search]);
+  const openCompany = useMemo(() => {
+    const c = ui.companyId ? companies.find(x => x.id === ui.companyId) || null : null;
+    if (!c || !ui.search) return c;
+    // Narrow the client's products too, unless it was the name that matched.
+    const byName = norm(c.name).includes(norm(ui.search));
+    return byName ? c : { ...c, list: c.list.filter(matches) };
+  }, [companies, ui.companyId, ui.search]);
+
   // ── EXPORTING THE BOARD ─────────────────────────────────────────────────────
   // Every card on the board, and the removed ones only while Show removed is
   // ticked. The search box and the Waiting tiles are NOT applied, on purpose: a
@@ -4446,9 +4841,22 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
       <div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',alignItems:'start',columnGap:'12px',marginBottom:'18px'}}>
         <div />
         <div style={{textAlign:'center'}}>
-          <h1 style={{fontSize:'26px',fontWeight:700,letterSpacing:'-.02em',color:'#1D1D1F',margin:0}}>Samples</h1>
-          <div style={{fontSize:'13px',color:'#86868B',marginTop:'5px'}}>
-            {board.length} on the board
+          <h1 style={{fontFamily:'var(--serif)',fontSize:'28px',fontWeight:500,letterSpacing:'-.01em',color:'var(--ink)',margin:0}}>Samples</h1>
+          <div style={{fontSize:'13px',color:'var(--muted)',marginTop:'5px'}}>
+            {companies.length} client{companies.length === 1 ? '' : 's'}, {board.length} product{board.length === 1 ? '' : 's'} in play
+          </div>
+          {/* Two ways to look at the same cards: by client, which is how the
+              office thinks, or by stage, which is the board. */}
+          <div role="tablist" style={{display:'inline-flex',gap:'18px',marginTop:'12px',borderBottom:'1px solid var(--line)'}}>
+            {[['companies','By client'],['board','By stage']].map(([v,l]) => {
+              const on = (ui.view||'companies') === v;
+              return (
+                <button key={v} role="tab" aria-selected={on} onClick={()=>{ setUi('view', v); }}
+                  style={{background:'none',border:'none',borderBottom:'2px solid ' + (on ? 'var(--ink)' : 'transparent'),marginBottom:'-1px',
+                          padding:'4px 0 8px',cursor:'pointer',fontSize:'13px',fontWeight:on ? 600 : 500,fontFamily:'var(--sans)',
+                          color:on ? 'var(--ink)' : 'var(--muted)'}}>{l}</button>
+              );
+            })}
           </div>
         </div>
         <div style={{justifySelf:'end'}}>
@@ -4470,6 +4878,45 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
           either of its rules can fire (STALLED_POSSIBLE), Overdue samples while
           due back is on, the Waiting tiles while the checklist is. With all
           three off there is nothing left to count and no strip at all. */}
+      {(ui.view||'companies') === 'companies' && (
+        <div style={{display:'flex',gap:'10px',alignItems:'center',marginBottom:'14px',flexWrap:'wrap'}}>
+          <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Find a client or product"
+            aria-label="Find a client or product"
+            style={{flex:'1 1 240px',maxWidth:'340px',border:'1px solid var(--line)',borderRadius:'4px',padding:'8px 11px',
+                    fontSize:'13px',outline:'none',fontFamily:'var(--sans)',background:'#fff',color:'var(--ink)',boxSizing:'border-box'}} />
+          <div style={{flex:1}} />
+          <CardFromQuoteBox staff={staff} userEmail={userEmail} onOpen={id => setOpenId(id)} onReload={load} />
+        </div>
+      )}
+      {(ui.view||'companies') === 'companies' && (
+        shownCompanies.length === 0 ? (
+          <div style={{background:'#fff',border:'1px solid var(--line)',borderRadius:'4px',padding:'48px 32px'}}>
+            <div style={{fontFamily:'var(--serif)',fontSize:'20px',fontWeight:500,color:'var(--ink)',marginBottom:'8px'}}>
+              {board.length ? 'No client matches that' : 'No samples in play'}
+            </div>
+            <div style={{color:'var(--muted)',fontSize:'14px',maxWidth:'480px',lineHeight:1.6}}>
+              {board.length ? 'Try another name, SKU or product.' : 'A product shows up here when someone presses Create Sample Card on a quote, or types a quote ID into the box above.'}
+            </div>
+          </div>
+        ) : (
+          <div className="plm-register" style={{display:'grid',gridTemplateColumns:'300px minmax(0,1fr)',background:'#fff',
+                                                  border:'1px solid var(--line)',borderRadius:'4px',minHeight:'60vh'}}>
+            <nav aria-label="Clients" style={{borderRight:'1px solid var(--line)',overflowY:'auto',maxHeight:'calc(100vh - 230px)'}}>
+              <div style={{padding:'12px 14px 10px',fontSize:'12.5px',fontWeight:600,color:'var(--muted)',borderBottom:'1px solid var(--line)'}}>Clients</div>
+              {shownCompanies.map(c => <ClientRow key={c.id} name={c.name} list={c.list}
+                active={(openCompany || shownCompanies[0]).id === c.id} onOpen={()=>setUi('companyId', c.id)} />)}
+            </nav>
+            <div style={{overflowY:'auto',maxHeight:'calc(100vh - 230px)'}}>
+              {(() => { const sel = openCompany || shownCompanies[0]; return sel
+                ? <ClientDetail key={sel.id} name={sel.name} list={sel.list} staff={staff} userEmail={userEmail} carriers={carriers}
+                    saving={saving} onStage={setStage} onOpenCard={id => setOpenId(id)} onTouched={load} />
+                : null; })()}
+            </div>
+          </div>
+        )
+      )}
+
+      {(ui.view||'companies') === 'board' && (<>
       {(STALLED_POSSIBLE || DUE_BACK_ON || CHECKLIST_ON) && (
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',
                    gap:'12px',marginBottom:'18px'}}>
@@ -4589,6 +5036,7 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
         own &mdash; an order, a test report or a change on Testing is reported on the card
         and never acts on it.
       </p>
+      </>)}
     </div>
   );
 }
