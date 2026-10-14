@@ -3511,92 +3511,104 @@ function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
 // card's Open in Testing link. page.jsx decides it from allowedPages.
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ── THE COMPANY VIEW (14 Oct) ────────────────────────────────────────────────
-// Riley: "we think in terms of company, not product. What's going on for Stitch
-// Golf?" So the page opens on companies, one card each, and a company opens to
-// the products being sampled for it -- each with the SHUTTLE a sample makes
-// (factory → KUI → client → feedback), its notes up front, and the open
-// questions nobody should have to phone about.
+// ── THE CLIENT VIEW (14 Oct, second cut) ─────────────────────────────────────
+// Riley: "we think in terms of company. What's going on for Stitch Golf?" So
+// Samples opens as a register of clients on the left and the selected client's
+// products on the right -- master and detail, no navigating back and forth.
 //
-// IT READS WHAT THE BOARD READS. No new fetch, no second derivation: the same
-// enriched rows, grouped by client_company_id. Stage moves go through setStage,
-// notes through NotesPanel, questions through program_tasks -- the write paths
-// Matt built, so nothing here can drift from the card.
+// EACH PRODUCT IS A CONSIGNMENT. Its panel carries the stage control, the
+// SHUTTLE the sample makes (left factory → at KUI → sent to client → with
+// client → feedback in) drawn as a rail with the next step as the one action
+// button, then action items and notes side by side. The sample is KUI's, not
+// any one person's, so no owner is named on the line; names stay on notes,
+// where they are the record.
 //
-// THE SHUTTLE IS THE LATEST ROUND. The five milestones live on
-// program_sample_rounds (sent_date and the packages from 112/113, the client leg
-// from 114). Logging a step on a card with no round makes round 1 -- somebody
-// recording an arrival has a sample, and a sample is a round.
+// IT DRAWS ON THE APP'S OWN TOKENS -- globals.css: ink, muted, line, accent,
+// Fraunces for the display voice, Spline Sans Mono for data. The first cut
+// borrowed an Apple palette the rest of Vessl does not use, and read as a
+// prototype for it.
 //
-// The stage board is still here, behind the By stage switch Riley asked for.
+// IT READS WHAT THE BOARD READS: the same enriched rows, grouped by client.
+// Stage moves go through setStage, notes through NotesPanel, action items
+// through program_tasks, shuttle steps through program_sample_rounds -- the
+// write paths that already exist, so nothing here can drift from the card.
 
+// The five stations, in order: label on the rail, the column that marks it
+// reached, the button that reaches it, and whether that step ships something.
 const SHUTTLE = [
-  // key, label, the column it reads, the column it writes, carries tracking?
-  ['factory',  'Factory sent',   'sent_date',            true],
-  ['arrived',  'Arrived at KUI', 'received_date',        false],
-  ['toclient', 'Sent to client', 'client_sent_date',     true],
-  ['client',   'Client has it',  'client_received_date', false],
-  ['feedback', 'Feedback',       'client_feedback_at',   false],
+  ['factory',  'Left factory',   'sent_date',            'Record factory shipment',    true],
+  ['arrived',  'At KUI',         'received_date',        'Record arrival at KUI',      false],
+  ['toclient', 'Sent to client', 'client_sent_date',     'Record shipment to client',  true],
+  ['client',   'With client',    'client_received_date', 'Mark received by client',    false],
+  ['feedback', 'Feedback in',    'client_feedback_at',   'Log client feedback',        false],
 ];
-const shuttleIdx = x => {
-  if (!x) return -1;
-  let i = -1;
-  SHUTTLE.forEach(([, , col], n) => { if (x[col]) i = n; });
-  return i;
-};
+const shuttleIdx = x => { if (!x) return -1; let i = -1; SHUTTLE.forEach(([, , col], n) => { if (x[col]) i = n; }); return i; };
 const todayIso = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 
-// What a company card needs to say in one glance.
-const companyRollup = list => {
+// Tokens, read once. Inline styles everywhere else in this file, so these stay
+// inline too -- but they are the CSS variables, not fresh hex.
+const T = {
+  ink:'var(--ink)', ink2:'var(--ink-2)', muted:'var(--muted)', faint:'var(--faint)',
+  line:'var(--line)', line2:'var(--line-2)', soft:'var(--soft)', soft2:'var(--soft-2)',
+  accent:'var(--accent)', accentSoft:'var(--accent-soft)',
+  serif:'var(--serif)', sans:'var(--sans)', mono:'var(--mono)',
+  amber:'#c2790b', hot:'var(--hot)', ok:'var(--ok)',
+};
+const btnPrimary = { background:T.ink, color:'#fff', border:'1px solid ' + T.ink, borderRadius:'4px', padding:'8px 14px',
+  fontSize:'13px', fontWeight:600, fontFamily:T.sans, cursor:'pointer', letterSpacing:'.005em' };
+const btnQuiet = { background:'#fff', color:T.ink2, border:'1px solid ' + T.line, borderRadius:'4px', padding:'7px 12px',
+  fontSize:'12.5px', fontWeight:500, fontFamily:T.sans, cursor:'pointer' };
+const field = { border:'1px solid ' + T.line, borderRadius:'4px', padding:'8px 10px', fontSize:'13px', outline:'none',
+  fontFamily:T.sans, background:'#fff', color:T.ink, boxSizing:'border-box' };
+
+// What a client's register row says.
+const clientRollup = list => {
   const open = list.filter(r => r.stage !== ARCHIVED);
   const sampling = open.filter(r => SAMPLING_STAGES.includes(r.stage));
   const quoting = open.filter(r => r.stage === 'quoted');
-  const qs = open.reduce((n, r) => n + (r.tasks || []).filter(t => !t.done).length, 0);
-  const waitingUs = open.reduce((n, r) => n + (r.tasks || []).filter(t => !t.done && t.blocker === 'us').length, 0);
+  const items = open.reduce((n, r) => n + (r.tasks || []).filter(t => !t.done).length, 0);
+  const onUs = open.reduce((n, r) => n + (r.tasks || []).filter(t => !t.done && t.blocker === 'us').length, 0);
   const stale = open.filter(r => r.stale).length;
   const last = list.map(r => r.updated_at || r.created_at).filter(Boolean).sort().pop() || null;
-  // The next thing somebody is waiting for across the company's shuttles.
-  const next = sampling.map(r => { const x = latestRound(r); const i = shuttleIdx(x); return i >= 0 && i < SHUTTLE.length - 1 ? SHUTTLE[i + 1][1] : null; }).filter(Boolean);
-  return { open, sampling, quoting, qs, waitingUs, stale, last, next };
+  // The station most of the client's samples are waiting to reach.
+  const nexts = sampling.map(r => { const i = shuttleIdx(latestRound(r)); return i < SHUTTLE.length - 1 ? SHUTTLE[i + 1][1] : null; }).filter(Boolean);
+  const next = nexts.sort((a, b) => nexts.filter(v => v === b).length - nexts.filter(v => v === a).length)[0] || null;
+  return { open, sampling, quoting, items, onUs, stale, last, next };
 };
 
-function CompanyTile({ name, list, onOpen }) {
-  const c = companyRollup(list);
-  const alert = c.waitingUs > 0 || c.stale > 0;
+// ── THE REGISTER ROW ────────────────────────────────────────────────────────
+function ClientRow({ name, list, active, onOpen }) {
+  const c = clientRollup(list);
+  const owe = c.onUs > 0 || c.stale > 0;
+  const line = c.open.length === 0 ? 'Nothing in play'
+    : [c.sampling.length ? c.sampling.length + ' sampling' : null, c.quoting.length ? c.quoting.length + ' quoting' : null].filter(Boolean).join(', ');
   return (
-    <button onClick={onOpen}
-      style={{textAlign:'left',background:'#fff',border:'none',borderRadius:'18px',padding:'18px 19px 15px',
-              boxShadow:'0 1px 3px rgba(0,0,0,.05)',cursor:'pointer',fontFamily:'inherit',display:'flex',
-              flexDirection:'column',gap:'11px',borderLeft:'4px solid ' + (alert ? '#FF9F0A' : c.sampling.length ? '#c2790b' : '#D9D9DE')}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'10px'}}>
-        <div style={{fontSize:'17px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.018em',lineHeight:1.15}}>{name}</div>
-        <div style={{fontSize:'11px',color:'#A0A0A4',whiteSpace:'nowrap',flexShrink:0,marginTop:'3px'}}>{c.last ? shortDate(c.last) : ''}</div>
+    <button onClick={onOpen} aria-current={active ? 'true' : undefined}
+      style={{display:'block',width:'100%',textAlign:'left',background:active ? T.accentSoft : 'transparent',border:'none',
+              borderLeft:'3px solid ' + (active ? T.accent : 'transparent'),padding:'12px 14px 12px 13px',cursor:'pointer',
+              fontFamily:T.sans,borderBottom:'1px solid ' + T.line2}}>
+      <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'8px'}}>
+        <span style={{fontFamily:T.serif,fontSize:'16.5px',fontWeight:500,color:T.ink,letterSpacing:'-.005em',lineHeight:1.2,
+                      whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{name}</span>
+        {owe && <span title={c.onUs ? c.onUs + ' waiting on KUI' : 'Not moved in ' + STALE_DAYS + ' days'}
+                      style={{width:'7px',height:'7px',borderRadius:'50%',background:T.hot,flexShrink:0}} />}
       </div>
-      <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
-        {c.sampling.length > 0 && <span style={{fontSize:'11.5px',fontWeight:600,color:'#fff',background:'#c2790b',borderRadius:'980px',padding:'3px 10px'}}>{c.sampling.length} sampling</span>}
-        {c.quoting.length > 0 && <span style={{fontSize:'11.5px',fontWeight:600,color:'#5A5A5E',background:'#F0F0F2',borderRadius:'980px',padding:'3px 10px'}}>{c.quoting.length} quoting</span>}
-        {c.open.length === 0 && <span style={{fontSize:'11.5px',fontWeight:600,color:'#8E8E93',background:'#F0F0F2',borderRadius:'980px',padding:'3px 10px'}}>all archived</span>}
-      </div>
-      <div style={{display:'flex',flexDirection:'column',gap:'4px',fontSize:'12.5px',color:'#5A5A5E'}}>
-        {c.next.length > 0 && <div>Next: <b style={{color:'#1D1D1F',fontWeight:600}}>{[...new Set(c.next)].slice(0, 2).join(', ')}</b></div>}
-        {c.qs > 0 && <div style={{color:c.waitingUs ? '#B91C1C' : '#5A5A5E'}}>{c.qs} open question{c.qs === 1 ? '' : 's'}{c.waitingUs ? ' · ' + c.waitingUs + ' on us' : ''}</div>}
-        {c.stale > 0 && <div style={{color:'#B45309'}}>{c.stale} not moved in {STALE_DAYS}+ days</div>}
-        {c.next.length === 0 && c.qs === 0 && c.stale === 0 && <div style={{color:'#A0A0A4'}}>Nothing waiting</div>}
-      </div>
+      <div style={{fontSize:'12px',color:T.muted,marginTop:'3px'}}>{line}</div>
+      {c.next && <div style={{fontSize:'12px',color:T.ink2,marginTop:'2px'}}>Waiting on: {c.next.toLowerCase()}</div>}
+      {c.items > 0 && <div style={{fontSize:'12px',color:c.onUs ? T.hot : T.muted,marginTop:'2px'}}>{c.items} action item{c.items === 1 ? '' : 's'}{c.onUs ? ', ' + c.onUs + ' on KUI' : ''}</div>}
     </button>
   );
 }
 
-// ── LOGGING A SHUTTLE STEP ──────────────────────────────────────────────────
-// One small form: a date (today by default), carrier and tracking for the two
-// legs that ship, text for feedback. Writes the latest round, or inserts round
-// 1 when the card has none. Everything lands through the same two tables the
-// round editor writes.
-function ShuttleStepForm({ r, step, carriers, userEmail, onDone, onCancel }) {
-  const [, label, col, ships] = SHUTTLE.find(s => s[0] === step);
+// ── RECORDING A STATION ─────────────────────────────────────────────────────
+// One form under the rail: a date (today by default), carrier and number for
+// the two legs that ship, text for feedback. Writes the latest round, or starts
+// round 1 when the card has none -- somebody recording a shipment has a sample.
+function StationForm({ r, step, carriers, userEmail, onDone, onCancel }) {
+  const [, label, col, , ships] = SHUTTLE.find(s => s[0] === step);
   const x = latestRound(r);
-  const [date, setDate] = useState(x && x[col] && step !== 'feedback' ? String(x[col]).slice(0, 10) : todayIso());
   const isFactory = step === 'factory';
+  const [date, setDate] = useState(x && x[col] && step !== 'feedback' ? String(x[col]).slice(0, 10) : todayIso());
   const [carrier, setCarrier] = useState(x ? (isFactory ? x.carrier : x.client_carrier) || '' : '');
   const [number, setNumber]   = useState(x ? (isFactory ? x.tracking_number : x.client_tracking_number) || '' : '');
   const [text, setText] = useState(x ? x.client_feedback || '' : '');
@@ -3606,90 +3618,102 @@ function ShuttleStepForm({ r, step, carriers, userEmail, onDone, onCancel }) {
 
   const save = async () => {
     setBusy(true); setErr('');
-    const patch = {};
+    const patch = { updated_by: userEmail || null, updated_at: new Date().toISOString() };
     if (step === 'feedback') { patch.client_feedback = text.trim() || null; patch.client_feedback_at = new Date().toISOString(); }
     else patch[col] = date || null;
     if (ships && isFactory) { patch.carrier = carrier.trim() || null; patch.tracking_number = number.trim() || null; }
     if (ships && !isFactory) { patch.client_carrier = carrier.trim() || null; patch.client_tracking_number = number.trim() || null; }
-    patch.updated_by = userEmail || null; patch.updated_at = new Date().toISOString();
     let error = null;
     if (x) ({ error } = await SB.from('program_sample_rounds').update(patch).eq('id', x.id));
     else ({ error } = await SB.from('program_sample_rounds').insert({ program_id: r.id, stage: 'sampling', round: 1, created_by: userEmail || null, ...patch }));
     if (error) { setErr(error.message); setBusy(false); return; }
     if (step === 'feedback' && text.trim()) {
-      // Feedback is also a note, so it sits in the thread with everything else.
       await SB.from('program_notes').insert({ program_id: r.id, author: userEmail || null, source: 'manual', stage: r.stage || null,
         round_no: x ? x.round : 1, note: 'Client feedback: ' + text.trim() });
     }
     const t = await touchProgram(r.id, userEmail); if (t) touchFailedToast(t);
     setBusy(false); onDone();
   };
-  const inp = { border:'1px solid rgba(0,0,0,.1)', borderRadius:'9px', padding:'8px 10px', fontSize:'13px', outline:'none', fontFamily:'inherit', background:'#fff', boxSizing:'border-box' };
   return (
-    <div style={{background:'#F7F7F9',borderRadius:'12px',padding:'12px 14px',marginTop:'10px'}}>
-      <div style={{fontSize:'11px',fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',color:'#86868B',marginBottom:'8px'}}>{label}{x ? ' · round ' + x.round : ' · starts round 1'}</div>
+    <div style={{borderTop:'1px solid ' + T.line,marginTop:'14px',paddingTop:'14px'}}>
+      <div style={{fontSize:'13.5px',fontWeight:600,color:T.ink,marginBottom:'10px'}}>{label}{x ? ', round ' + x.round : ' (starts round 1)'}</div>
       <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
-        {step !== 'feedback' && <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...inp,flex:'0 0 150px'}} />}
+        {step !== 'feedback' && <input type="date" value={date} onChange={e=>setDate(e.target.value)} aria-label="Date" style={{...field,flex:'0 0 160px'}} />}
         {ships && (
           <>
-            <input list={'carriers-' + r.id} value={carrier} onChange={e=>setCarrier(e.target.value)} placeholder="Carrier" style={{...inp,flex:'1 1 120px'}} />
+            <input list={'carriers-' + r.id} value={carrier} onChange={e=>setCarrier(e.target.value)} placeholder="Carrier" style={{...field,flex:'1 1 130px'}} />
             <datalist id={'carriers-' + r.id}>{(carriers || []).map(c => <option key={c.id} value={c.name} />)}</datalist>
-            <input value={number} onChange={e=>setNumber(e.target.value)} placeholder="Tracking number" style={{...inp,flex:'2 1 180px',fontFamily:'var(--mono)'}} />
+            <input value={number} onChange={e=>setNumber(e.target.value)} placeholder="Tracking number" style={{...field,flex:'2 1 200px',fontFamily:T.mono,fontSize:'12.5px'}} />
           </>
         )}
-        {step === 'feedback' && <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="What did the client say?" rows={2} style={{...inp,flex:'1 1 100%',resize:'vertical'}} />}
+        {step === 'feedback' && <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="What the client said" rows={3} style={{...field,flex:'1 1 100%',resize:'vertical',lineHeight:1.5}} />}
       </div>
-      {err && <div style={{fontSize:'12.5px',color:'#B91C1C',marginTop:'8px'}}>{err}</div>}
-      <div style={{display:'flex',justifyContent:'flex-end',gap:'8px',marginTop:'10px'}}>
-        <button onClick={onCancel} disabled={busy} style={{background:'none',border:'none',fontSize:'13px',color:'#8A8A8E',cursor:'pointer',fontFamily:'inherit'}}>Cancel</button>
-        <button onClick={save} disabled={busy || (step === 'feedback' && !text.trim())}
-          style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'7px 16px',fontSize:'13px',fontWeight:600,cursor:'pointer',fontFamily:'inherit',opacity:busy?0.6:1}}>{busy ? 'Saving…' : 'Save'}</button>
+      {err && <div style={{fontSize:'12.5px',color:T.hot,marginTop:'8px'}}>Could not save: {err}</div>}
+      <div style={{display:'flex',gap:'8px',marginTop:'12px'}}>
+        <button onClick={save} disabled={busy || (step === 'feedback' && !text.trim())} style={{...btnPrimary,opacity:busy ? .6 : 1}}>{busy ? 'Saving' : 'Save'}</button>
+        <button onClick={onCancel} disabled={busy} style={btnQuiet}>Cancel</button>
       </div>
     </div>
   );
 }
 
-// The strip itself: five dots, the reached ones filled in the stage colour, the
-// next one outlined and tappable. Each reached step shows its date; the two
-// legs that ship show their tracking as a link.
-function ShuttleStrip({ r, carriers, onStep }) {
+// ── THE RAIL ────────────────────────────────────────────────────────────────
+// Five stations on a track. Reached stations are filled squares joined by a
+// solid line and carry their date beneath; the next one is the action button.
+// The two legs that ship show the tracking number as a link under the station.
+function ShuttleRail({ r, carriers, open, onOpen, onEdit }) {
   const x = latestRound(r);
   const idx = shuttleIdx(x);
-  const link = (carrier, number) => number ? <TrackingLink number={number} url={trackingUrl(carrier, number, carriers)} /> : null;
+  const done = idx >= SHUTTLE.length - 1;
   return (
-    <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'4px',marginTop:'12px'}}>
-      {SHUTTLE.map(([k, label, col, ships], i) => {
-        const done = i <= idx, next = i === idx + 1;
-        const val = x ? x[col] : null;
-        const carrier = k === 'factory' ? (x || {}).carrier : (x || {}).client_carrier;
-        const number  = k === 'factory' ? (x || {}).tracking_number : (x || {}).client_tracking_number;
-        return (
-          <button key={k} onClick={()=>onStep(k)} title={done ? 'Edit ' + label.toLowerCase() : 'Log ' + label.toLowerCase()}
-            style={{background:'none',border:'none',padding:0,cursor:'pointer',textAlign:'left',fontFamily:'inherit',minWidth:0}}>
-            <div style={{display:'flex',alignItems:'center',gap:'0'}}>
-              <span style={{width:'12px',height:'12px',borderRadius:'50%',flexShrink:0,
-                            background:done ? '#c2790b' : '#fff',
-                            border:'2px solid ' + (done ? '#c2790b' : next ? '#c2790b' : '#D9D9DE')}} />
-              {i < SHUTTLE.length - 1 && <span style={{flex:1,height:'2px',background:i < idx ? '#c2790b' : '#E5E5EA'}} />}
+    <div style={{marginTop:'16px'}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)'}}>
+        {SHUTTLE.map(([k, label, col, , ships], i) => {
+          const reached = i <= idx, next = i === idx + 1;
+          const val = x ? x[col] : null;
+          const carrier = k === 'factory' ? (x || {}).carrier : (x || {}).client_carrier;
+          const number  = k === 'factory' ? (x || {}).tracking_number : (x || {}).client_tracking_number;
+          const color = reached ? T.ink : next ? T.accent : T.line;
+          return (
+            <div key={k} style={{position:'relative',minWidth:0}}>
+              {/* track segment to the right of this station */}
+              {i < SHUTTLE.length - 1 && (
+                <div style={{position:'absolute',top:'6px',left:'14px',right:'-0px',height:'3px',
+                             background:i < idx ? T.ink : T.line2}} />
+              )}
+              {/* station marker */}
+              <button onClick={()=>reached ? onEdit(k) : next ? onOpen(k) : null} disabled={!reached && !next}
+                aria-label={(reached ? 'Edit ' : next ? 'Record ' : '') + label}
+                style={{position:'relative',zIndex:1,width:'15px',height:'15px',padding:0,border:'2px solid ' + color,
+                        background:reached ? T.ink : '#fff',borderRadius:'2px',cursor:reached || next ? 'pointer' : 'default',
+                        outline:open === k ? '3px solid ' + T.accentSoft : 'none'}} />
+              <div style={{fontSize:'12px',fontWeight:reached || next ? 600 : 500,color:reached ? T.ink : next ? T.accent : T.faint,
+                           marginTop:'8px',paddingRight:'10px',lineHeight:1.25}}>{label}</div>
+              <div style={{fontFamily:T.mono,fontSize:'11.5px',color:T.muted,marginTop:'2px',paddingRight:'10px',lineHeight:1.4,
+                           overflow:'hidden',textOverflow:'ellipsis'}}>
+                {reached && val ? shortDate(val) : ''}
+                {reached && ships && number ? <div style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                  <TrackingLink number={number} url={trackingUrl(carrier, number, carriers)} /></div> : null}
+              </div>
             </div>
-            <div style={{fontSize:'10.5px',fontWeight:next ? 700 : 600,color:done ? '#1D1D1F' : next ? '#c2790b' : '#B0B0B4',marginTop:'6px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{label}</div>
-            <div style={{fontSize:'11px',color:'#8A8A8E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-              {done && k === 'feedback' ? shortDate(val) : done ? shortDate(val) : next ? 'tap to log' : ''}
-              {done && ships && number ? <span> · {link(carrier, number)}</span> : null}
-            </div>
-          </button>
-        );
-      })}
+          );
+        })}
+      </div>
+      {!done && !open && (
+        <button onClick={()=>onOpen(SHUTTLE[idx + 1][0])} style={{...btnPrimary,marginTop:'12px',background:T.accent,borderColor:T.accent}}>
+          {SHUTTLE[idx + 1][3]}
+        </button>
+      )}
     </div>
   );
 }
 
-// ── OPEN QUESTIONS ──────────────────────────────────────────────────────────
-// "Is the UPC art approved?" -- the things people phone about. program_tasks,
-// read through TaskRow so a question looks and behaves like a task everywhere.
-function OpenQuestions({ r, staff, userEmail, onTouched }) {
+// ── ACTION ITEMS ────────────────────────────────────────────────────────────
+// "Is the UPC art approved?" -- program_tasks through TaskRow, so an item here
+// is the same thing as a task on the card. No assignee on the quick add: the
+// item belongs to KUI; the card can assign it later.
+function ActionItems({ r, staff, userEmail, onTouched }) {
   const [text, setText] = useState('');
-  const [who, setWho] = useState('');
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState(null);
   const [showDone, setShowDone] = useState(false);
@@ -3700,30 +3724,27 @@ function OpenQuestions({ r, staff, userEmail, onTouched }) {
   const add = async () => {
     const body = text.trim(); if (!body) return;
     setBusy(true);
-    const { error } = await SB.from('program_tasks').insert({ program_id: r.id, stage: r.stage || 'sampling', task: body, owner_id: who || null,
+    const { error } = await SB.from('program_tasks').insert({ program_id: r.id, stage: r.stage || 'sampling', task: body,
       assigned_by: userEmail || null, blocker: 'none', sort_order: all.reduce((m, t) => Math.max(m, t.sort_order || 0), -1) + 1 });
-    if (error) window._toast?.(error.message, 'err'); else setText('');
+    if (error) window._toast?.('Could not add the item: ' + error.message, 'err'); else setText('');
     await onTouched(); setBusy(false);
   };
   return (
-    <div style={{marginTop:'14px'}}>
-      <div style={{fontSize:'11px',fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',color:'#86868B',marginBottom:'4px'}}>Open questions{open.length ? ' · ' + open.length : ''}</div>
+    <div>
+      <div style={{fontSize:'13.5px',fontWeight:600,color:T.ink,marginBottom:'4px'}}>Action items{open.length ? ' (' + open.length + ')' : ''}</div>
+      {open.length === 0 && <div style={{fontSize:'12.5px',color:T.faint,padding:'6px 0'}}>Nothing open.</div>}
       {open.map(t => <TaskRow key={t.id} t={t} staff={staff} pending={pending === t.id}
         onToggle={t => write(t, () => SB.from('program_tasks').update({ done: true, done_at: new Date().toISOString() }).eq('id', t.id))}
         onBlocker={(t, b) => write(t, () => SB.from('program_tasks').update({ blocker: b }).eq('id', t.id))}
         onDel={t => write(t, () => SB.from('program_tasks').delete().eq('id', t.id))} />)}
-      <div style={{display:'flex',gap:'6px',marginTop:'6px'}}>
-        <input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{ if (e.key === 'Enter') add(); }} placeholder="Add a question or to-do… (Enter to save)"
-          style={{flex:1,border:'1px solid rgba(0,0,0,.1)',borderRadius:'9px',padding:'8px 10px',fontSize:'13px',outline:'none',fontFamily:'inherit',background:'#fff'}} />
-        <select data-noguard value={who} onChange={e=>setWho(e.target.value)} aria-label="Owner"
-          style={{border:'1px solid rgba(0,0,0,.1)',borderRadius:'9px',padding:'8px 8px',fontSize:'12.5px',fontFamily:'inherit',background:'#fff',color:'#5A5A5E'}}>
-          <option value="">Anyone</option>{staff.map(s => <option key={s.id} value={s.id}>{s.full_name || s.email}</option>)}
-        </select>
-        <button onClick={add} disabled={busy || !text.trim()} style={{background:'#F0F0F2',border:'none',borderRadius:'9px',padding:'8px 12px',fontSize:'13px',fontWeight:600,cursor:'pointer',fontFamily:'inherit',color:'#1D1D1F'}}>Add</button>
+      <div style={{display:'flex',gap:'6px',marginTop:'8px'}}>
+        <input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{ if (e.key === 'Enter') add(); }}
+          placeholder="Add an item and press Enter" style={{...field,flex:1}} />
+        <button onClick={add} disabled={busy || !text.trim()} style={btnQuiet}>Add</button>
       </div>
       {done.length > 0 && (
-        <button onClick={()=>setShowDone(v=>!v)} style={{background:'none',border:'none',fontSize:'12px',color:'#A0A0A4',cursor:'pointer',padding:'6px 0 0',fontFamily:'inherit'}}>
-          {showDone ? 'Hide' : 'Show'} {done.length} resolved
+        <button onClick={()=>setShowDone(v=>!v)} style={{background:'none',border:'none',padding:'8px 0 0',fontSize:'12px',color:T.muted,cursor:'pointer',fontFamily:T.sans,textDecoration:'underline',textUnderlineOffset:'3px'}}>
+          {showDone ? 'Hide' : 'Show'} {done.length} done
         </button>
       )}
       {showDone && done.map(t => <TaskRow key={t.id} t={t} staff={staff} dim pending={pending === t.id}
@@ -3733,105 +3754,107 @@ function OpenQuestions({ r, staff, userEmail, onTouched }) {
   );
 }
 
-// ── ONE PRODUCT, FOR ONE COMPANY ────────────────────────────────────────────
-// Identity and stage pills on the first line, the shuttle under it, then the
-// two things Riley wanted in front: notes and questions. Round and sample type
-// are on the stage line; the full round history and the Testing tab stay in the
-// card, one click away.
-function CompanyProduct({ r, staff, userEmail, carriers, busy, onStage, onOpenCard, onTouched }) {
+// ── ONE CONSIGNMENT ─────────────────────────────────────────────────────────
+function Consignment({ r, staff, userEmail, carriers, busy, onStage, onOpenCard, onTouched, last }) {
   const p = r.products || {};
   const x = latestRound(r);
-  const [step, setStep] = useState(null);
-  const [showNotes, setShowNotes] = useState(true);
+  const [station, setStation] = useState(null);   // the station form that is open
   const inSampling = SAMPLING_STAGES.includes(r.stage);
+  const roundLine = x ? 'Round ' + x.round + (x.sample_type ? ', ' + sampleTypeLabel(x.sample_type).toLowerCase() : '')
+                      : inSampling ? 'No round recorded yet' : null;
   return (
-    <div style={{background:'#fff',borderRadius:'18px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',padding:'18px 20px',
-                 borderLeft:'4px solid ' + accentOf(r.stage)}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'12px',flexWrap:'wrap'}}>
-        <div style={{minWidth:0,flex:'1 1 240px'}}>
-          <div style={{display:'flex',alignItems:'baseline',gap:'8px',flexWrap:'wrap'}}>
-            <span style={{fontSize:'16px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.014em'}}>{p.name || '—'}</span>
-            <span style={{fontFamily:'var(--mono)',fontSize:'12px',color:'#8A8A8E'}}>{p.sku || ''}</span>
+    <section style={{padding:'22px 0 26px',borderBottom:last ? 'none' : '1px solid ' + T.line}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'16px',flexWrap:'wrap'}}>
+        <div style={{minWidth:0,flex:'1 1 260px'}}>
+          <div style={{display:'flex',alignItems:'baseline',gap:'10px',flexWrap:'wrap'}}>
+            <h3 style={{fontSize:'17px',fontWeight:600,color:T.ink,margin:0,letterSpacing:'-.01em'}}>{p.name || 'Unnamed product'}</h3>
+            {p.sku && <span style={{fontFamily:T.mono,fontSize:'12px',color:T.muted}}>{p.sku}</span>}
           </div>
-          <div style={{fontSize:'12.5px',color:'#86868B',marginTop:'3px'}}>
-            {[r.factoryName, r.ownerName ? 'Owner ' + r.ownerName : null,
-              x ? 'Round ' + x.round + (x.sample_type ? ' · ' + sampleTypeLabel(x.sample_type) : '') : (inSampling ? 'No round logged yet' : null),
-              r.days !== null && r.stage && r.stage !== ARCHIVED ? r.days + 'd in ' + stageLabel(r.stage).toLowerCase() : null]
-              .filter(Boolean).join(' · ')}
+          <div style={{fontSize:'12.5px',color:T.muted,marginTop:'4px',display:'flex',gap:'14px',flexWrap:'wrap'}}>
+            {r.factoryName && <span>{r.factoryName}</span>}
+            {roundLine && <span>{roundLine}</span>}
+            {r.days !== null && r.stage && r.stage !== ARCHIVED && <span>{r.days} day{r.days === 1 ? '' : 's'} in {stageLabel(r.stage).toLowerCase()}</span>}
           </div>
         </div>
-        <div style={{display:'flex',alignItems:'center',gap:'4px',flexWrap:'wrap'}}>
-          {VISIBLE_STAGES.map(([k, l, c]) => {
-            const active = k === r.stage;
-            return <button key={k} onClick={()=>onStage(r, k)} disabled={busy || active} aria-pressed={active}
-              style={{fontSize:'11px',fontWeight:600,padding:'5px 10px',borderRadius:'980px',border:'none',fontFamily:'inherit',
-                      cursor:(busy||active)?'default':'pointer',background:active?c:'#F5F5F7',color:active?'#fff':'#8A8A8E'}}>{l}</button>;
-          })}
-          <button onClick={onOpenCard} title="Open the full card" style={{marginLeft:'4px',background:'none',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'5px 11px',fontSize:'11.5px',fontWeight:600,color:'#5A5A5E',cursor:'pointer',fontFamily:'inherit'}}>Full card →</button>
+        <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
+          {/* stage control: a segmented row, the current stage in its colour */}
+          <div role="group" aria-label="Stage" style={{display:'inline-flex',border:'1px solid ' + T.line,borderRadius:'4px',overflow:'hidden'}}>
+            {VISIBLE_STAGES.map(([k, l, c], i) => {
+              const active = k === r.stage;
+              return <button key={k} onClick={()=>onStage(r, k)} disabled={busy || active} aria-pressed={active}
+                style={{fontSize:'12px',fontWeight:600,padding:'6px 12px',border:'none',borderLeft:i ? '1px solid ' + T.line : 'none',
+                        fontFamily:T.sans,cursor:(busy||active)?'default':'pointer',
+                        background:active ? c : '#fff',color:active ? '#fff' : T.muted}}>{l}</button>;
+            })}
+          </div>
+          <button onClick={onOpenCard} style={btnQuiet}>Open card</button>
         </div>
       </div>
 
-      {(inSampling || x) && <ShuttleStrip r={r} carriers={carriers} onStep={k => setStep(step === k ? null : k)} />}
-      {step && <ShuttleStepForm r={r} step={step} carriers={carriers} userEmail={userEmail} onDone={async()=>{ setStep(null); await onTouched(); }} onCancel={()=>setStep(null)} />}
+      {(inSampling || x) && (
+        <ShuttleRail r={r} carriers={carriers} open={station} onOpen={k => setStation(k)} onEdit={k => setStation(station === k ? null : k)} />
+      )}
+      {station && <StationForm r={r} step={station} carriers={carriers} userEmail={userEmail}
+        onDone={async()=>{ setStation(null); await onTouched(); }} onCancel={()=>setStation(null)} />}
       {x && x.client_feedback && (
-        <div style={{marginTop:'10px',background:'#FFF8EC',borderRadius:'10px',padding:'9px 12px',fontSize:'13px',color:'#5A3E0A',lineHeight:1.5}}>
-          <b style={{fontWeight:700}}>Client feedback</b>{x.client_feedback_at ? <span style={{color:'#B08650'}}> · {shortDate(x.client_feedback_at)}</span> : null}: {x.client_feedback}
+        <div style={{marginTop:'14px',borderLeft:'3px solid ' + T.amber,padding:'6px 12px',fontSize:'13px',color:T.ink2,lineHeight:1.5}}>
+          <span style={{fontWeight:600,color:T.ink}}>Client feedback</span>
+          {x.client_feedback_at && <span style={{fontFamily:T.mono,fontSize:'11.5px',color:T.muted,marginLeft:'8px'}}>{shortDate(x.client_feedback_at)}</span>}
+          <div style={{marginTop:'2px'}}>{x.client_feedback}</div>
         </div>
       )}
 
-      <OpenQuestions r={r} staff={staff} userEmail={userEmail} onTouched={onTouched} />
-
-      <div style={{marginTop:'14px'}}>
-        {!showNotes && (
-          <button onClick={()=>setShowNotes(true)} style={{background:'none',border:'none',padding:0,cursor:'pointer',fontFamily:'inherit',
-            fontSize:'11px',fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',color:'#86868B'}}>
-            Show notes{r.noteCount ? ' · ' + r.noteCount : ''}
-          </button>
-        )}
-        {showNotes && (
+      <div style={{display:'grid',gridTemplateColumns:'minmax(260px,1fr) minmax(300px,1.4fr)',gap:'28px',marginTop:'20px'}} className="plm-consignment-grid">
+        <ActionItems r={r} staff={staff} userEmail={userEmail} onTouched={onTouched} />
+        <div>
           <NotesPanel staff={staff} table="program_notes" keyCol="program_id" keyId={r.id}
             insertExtra={{ source: 'manual', stage: r.stage || null }} extraCol="source" extraDefault="manual"
             quietExtras={['manual', 'round']} nullCol="round_id" selectExtra="stage,round_no"
             labelOf={n => n.round_no ? 'Round ' + n.round_no : (n.stage ? stageLabel(n.stage) : null)}
             reloadKey={(r.rounds || []).map(y => y.id).join(',') + '-' + r.noteCount}
-            title={'Notes' + (r.noteCount ? ' · ' + r.noteCount : '')} programId={r.id} userEmail={userEmail} onTouched={onTouched} />
-        )}
+            title={'Notes' + (r.noteCount ? ' (' + r.noteCount + ')' : '')} programId={r.id} userEmail={userEmail} onTouched={onTouched} />
+        </div>
       </div>
-    </div>
+    </section>
   );
 }
 
-// ── THE COMPANY PAGE ────────────────────────────────────────────────────────
-function CompanyDetail({ name, list, staff, userEmail, carriers, saving, onStage, onOpenCard, onTouched, onBack }) {
-  const c = companyRollup(list);
+// ── THE DETAIL PANE ─────────────────────────────────────────────────────────
+function ClientDetail({ name, list, staff, userEmail, carriers, saving, onStage, onOpenCard, onTouched }) {
+  const c = clientRollup(list);
   const [showArchived, setShowArchived] = useState(false);
   const order = { sampling:0, revision:0, quoted:1, testing:2, production:3, shipped:4 };
-  const sorted = [...list].sort((a, b) => ((order[a.stage] ?? 5) - (order[b.stage] ?? 5)) || (a.updated_at < b.updated_at ? 1 : -1));
+  const sorted = [...list].sort((a, b) => ((order[a.stage] ?? 5) - (order[b.stage] ?? 5)) || ((a.updated_at || '') < (b.updated_at || '') ? 1 : -1));
   const live = sorted.filter(r => r.stage !== ARCHIVED), archived = sorted.filter(r => r.stage === ARCHIVED);
+  const summary = [
+    live.length + ' product' + (live.length === 1 ? '' : 's') + ' in play',
+    c.sampling.length ? c.sampling.length + ' sampling' : null,
+    c.quoting.length ? c.quoting.length + ' quoting' : null,
+    c.onUs ? c.onUs + ' item' + (c.onUs === 1 ? '' : 's') + ' waiting on KUI' : null,
+  ].filter(Boolean);
   return (
-    <div>
-      <button onClick={onBack} style={{background:'none',border:'none',padding:0,fontSize:'13px',color:'#0A84FF',cursor:'pointer',fontFamily:'inherit',marginBottom:'10px'}}>← All companies</button>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',gap:'14px',flexWrap:'wrap',marginBottom:'18px'}}>
-        <div>
-          <div style={{fontSize:'28px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.028em',lineHeight:1.05}}>{name}</div>
-          <div style={{fontSize:'13.5px',color:'#86868B',marginTop:'6px'}}>
-            {[c.sampling.length + ' sampling', c.quoting.length + ' quoting', c.qs + ' open question' + (c.qs === 1 ? '' : 's'), archived.length ? archived.length + ' archived' : null].filter(Boolean).join(' · ')}
-          </div>
+    <div style={{padding:'6px 32px 40px 32px',minWidth:0}}>
+      <header style={{paddingBottom:'6px'}}>
+        <h2 style={{fontFamily:T.serif,fontSize:'30px',fontWeight:500,color:T.ink,margin:0,letterSpacing:'-.01em',lineHeight:1.1}}>{name}</h2>
+        <div style={{fontSize:'13px',color:T.muted,marginTop:'8px',display:'flex',gap:'16px',flexWrap:'wrap'}}>
+          {summary.map((s, i) => <span key={i} style={{color: /KUI/.test(s) ? T.hot : T.muted}}>{s}</span>)}
         </div>
-      </div>
-      <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
-        {live.map(r => <CompanyProduct key={r.id} r={r} staff={staff} userEmail={userEmail} carriers={carriers} busy={saving === r.id}
-          onStage={onStage} onOpenCard={()=>onOpenCard(r.id)} onTouched={onTouched} />)}
-        {live.length === 0 && <div style={{background:'#fff',borderRadius:'18px',padding:'40px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Nothing active for {name}.</div>}
-      </div>
+      </header>
+      {live.map((r, i) => <Consignment key={r.id} r={r} staff={staff} userEmail={userEmail} carriers={carriers} busy={saving === r.id}
+        onStage={onStage} onOpenCard={()=>onOpenCard(r.id)} onTouched={onTouched} last={i === live.length - 1 && !archived.length} />)}
+      {live.length === 0 && (
+        <div style={{padding:'36px 0',fontSize:'14px',color:T.muted,borderTop:'1px solid ' + T.line,marginTop:'10px'}}>
+          Nothing in play for {name}. Everything is archived, or a card has not been created from a quote yet.
+        </div>
+      )}
       {archived.length > 0 && (
-        <div style={{marginTop:'18px'}}>
-          <button onClick={()=>setShowArchived(v=>!v)} style={{background:'none',border:'none',fontSize:'13px',color:'#8A8A8E',cursor:'pointer',fontFamily:'inherit',padding:0}}>
+        <div style={{paddingTop:'16px'}}>
+          <button onClick={()=>setShowArchived(v=>!v)} style={{...btnQuiet,fontSize:'12px'}}>
             {showArchived ? 'Hide' : 'Show'} {archived.length} archived
           </button>
-          {showArchived && <div style={{display:'flex',flexDirection:'column',gap:'12px',marginTop:'10px',opacity:0.75}}>
-            {archived.map(r => <CompanyProduct key={r.id} r={r} staff={staff} userEmail={userEmail} carriers={carriers} busy={saving === r.id}
-              onStage={onStage} onOpenCard={()=>onOpenCard(r.id)} onTouched={onTouched} />)}
+          {showArchived && <div style={{opacity:.7}}>
+            {archived.map((r, i) => <Consignment key={r.id} r={r} staff={staff} userEmail={userEmail} carriers={carriers} busy={saving === r.id}
+              onStage={onStage} onOpenCard={()=>onOpenCard(r.id)} onTouched={onTouched} last={i === archived.length - 1} />)}
           </div>}
         </div>
       )}
@@ -4467,7 +4490,13 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
     const q = norm(ui.search);
     return companies.filter(c => norm(c.name).includes(q) || c.list.some(matches));
   }, [companies, ui.search]);
-  const openCompany = ui.companyId ? companies.find(c => c.id === ui.companyId) || null : null;
+  const openCompany = useMemo(() => {
+    const c = ui.companyId ? companies.find(x => x.id === ui.companyId) || null : null;
+    if (!c || !ui.search) return c;
+    // Narrow the client's products too, unless it was the name that matched.
+    const byName = norm(c.name).includes(norm(ui.search));
+    return byName ? c : { ...c, list: c.list.filter(matches) };
+  }, [companies, ui.companyId, ui.search]);
 
   // ── EXPORTING THE BOARD ─────────────────────────────────────────────────────
   // Every card on the board, and the removed ones only while Show removed is
@@ -4812,18 +4841,22 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
       <div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',alignItems:'start',columnGap:'12px',marginBottom:'18px'}}>
         <div />
         <div style={{textAlign:'center'}}>
-          <h1 style={{fontSize:'26px',fontWeight:700,letterSpacing:'-.02em',color:'#1D1D1F',margin:0}}>Samples</h1>
-          <div style={{fontSize:'13px',color:'#86868B',marginTop:'5px'}}>
-            {companies.length} compan{companies.length === 1 ? 'y' : 'ies'} · {board.length} product{board.length === 1 ? '' : 's'}
+          <h1 style={{fontFamily:'var(--serif)',fontSize:'28px',fontWeight:500,letterSpacing:'-.01em',color:'var(--ink)',margin:0}}>Samples</h1>
+          <div style={{fontSize:'13px',color:'var(--muted)',marginTop:'5px'}}>
+            {companies.length} client{companies.length === 1 ? '' : 's'}, {board.length} product{board.length === 1 ? '' : 's'} in play
           </div>
-          {/* THE SWITCH Riley asked for: companies is how the office thinks, the
-              stage board is the other way to look at the same cards. */}
-          <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'10px',padding:'3px',marginTop:'10px'}}>
-            {[['companies','By company'],['board','By stage']].map(([v,l]) => (
-              <button key={v} onClick={()=>{ setUi('view', v); if (v === 'board') setUi('companyId', ''); }}
-                style={{padding:'6px 14px',borderRadius:'8px',border:'none',cursor:'pointer',fontSize:'12.5px',fontWeight:600,fontFamily:'inherit',
-                        background:(ui.view||'companies')===v?'#1D1D1F':'transparent',color:(ui.view||'companies')===v?'#fff':'#5A5A5E'}}>{l}</button>
-            ))}
+          {/* Two ways to look at the same cards: by client, which is how the
+              office thinks, or by stage, which is the board. */}
+          <div role="tablist" style={{display:'inline-flex',gap:'18px',marginTop:'12px',borderBottom:'1px solid var(--line)'}}>
+            {[['companies','By client'],['board','By stage']].map(([v,l]) => {
+              const on = (ui.view||'companies') === v;
+              return (
+                <button key={v} role="tab" aria-selected={on} onClick={()=>{ setUi('view', v); }}
+                  style={{background:'none',border:'none',borderBottom:'2px solid ' + (on ? 'var(--ink)' : 'transparent'),marginBottom:'-1px',
+                          padding:'4px 0 8px',cursor:'pointer',fontSize:'13px',fontWeight:on ? 600 : 500,fontFamily:'var(--sans)',
+                          color:on ? 'var(--ink)' : 'var(--muted)'}}>{l}</button>
+              );
+            })}
           </div>
         </div>
         <div style={{justifySelf:'end'}}>
@@ -4846,34 +4879,40 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
           due back is on, the Waiting tiles while the checklist is. With all
           three off there is nothing left to count and no strip at all. */}
       {(ui.view||'companies') === 'companies' && (
-        openCompany ? (
-          <CompanyDetail name={openCompany.name} list={openCompany.list} staff={staff} userEmail={userEmail} carriers={carriers}
-            saving={saving} onStage={setStage} onOpenCard={id => setOpenId(id)} onTouched={load}
-            onBack={()=>setUi('companyId', '')} />
-        ) : (
-          <>
-            <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',marginBottom:'14px'}}>
-              <div style={{position:'relative',flex:'1 1 240px',maxWidth:'320px'}}>
-                <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Search companies or products…"
-                  style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 12px',
-                          fontSize:'13.5px',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'}} />
-              </div>
-              <div style={{flex:1}} />
-              <CardFromQuoteBox staff={staff} userEmail={userEmail} onOpen={id => setOpenId(id)} onReload={load} />
+        <div style={{display:'flex',gap:'10px',alignItems:'center',marginBottom:'14px',flexWrap:'wrap'}}>
+          <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Find a client or product"
+            aria-label="Find a client or product"
+            style={{flex:'1 1 240px',maxWidth:'340px',border:'1px solid var(--line)',borderRadius:'4px',padding:'8px 11px',
+                    fontSize:'13px',outline:'none',fontFamily:'var(--sans)',background:'#fff',color:'var(--ink)',boxSizing:'border-box'}} />
+          <div style={{flex:1}} />
+          <CardFromQuoteBox staff={staff} userEmail={userEmail} onOpen={id => setOpenId(id)} onReload={load} />
+        </div>
+      )}
+      {(ui.view||'companies') === 'companies' && (
+        shownCompanies.length === 0 ? (
+          <div style={{background:'#fff',border:'1px solid var(--line)',borderRadius:'4px',padding:'48px 32px'}}>
+            <div style={{fontFamily:'var(--serif)',fontSize:'20px',fontWeight:500,color:'var(--ink)',marginBottom:'8px'}}>
+              {board.length ? 'No client matches that' : 'No samples in play'}
             </div>
-            {shownCompanies.length === 0 ? (
-              <div style={{background:'#fff',borderRadius:'20px',padding:'64px 32px',textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.04)'}}>
-                <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',marginBottom:'8px',letterSpacing:'-.018em'}}>{board.length ? 'No company matches' : 'Nothing being sampled'}</div>
-                <div style={{color:'#86868B',fontSize:'14px',maxWidth:'440px',margin:'0 auto',lineHeight:1.6}}>
-                  {board.length ? 'Try a different search.' : 'A product appears here when somebody presses Create Sample Card on a quote.'}
-                </div>
-              </div>
-            ) : (
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:'14px'}}>
-                {shownCompanies.map(c => <CompanyTile key={c.id} name={c.name} list={c.list} onOpen={()=>setUi('companyId', c.id)} />)}
-              </div>
-            )}
-          </>
+            <div style={{color:'var(--muted)',fontSize:'14px',maxWidth:'480px',lineHeight:1.6}}>
+              {board.length ? 'Try another name, SKU or product.' : 'A product shows up here when someone presses Create Sample Card on a quote, or types a quote ID into the box above.'}
+            </div>
+          </div>
+        ) : (
+          <div className="plm-register" style={{display:'grid',gridTemplateColumns:'300px minmax(0,1fr)',background:'#fff',
+                                                  border:'1px solid var(--line)',borderRadius:'4px',minHeight:'60vh'}}>
+            <nav aria-label="Clients" style={{borderRight:'1px solid var(--line)',overflowY:'auto',maxHeight:'calc(100vh - 230px)'}}>
+              <div style={{padding:'12px 14px 10px',fontSize:'12.5px',fontWeight:600,color:'var(--muted)',borderBottom:'1px solid var(--line)'}}>Clients</div>
+              {shownCompanies.map(c => <ClientRow key={c.id} name={c.name} list={c.list}
+                active={(openCompany || shownCompanies[0]).id === c.id} onOpen={()=>setUi('companyId', c.id)} />)}
+            </nav>
+            <div style={{overflowY:'auto',maxHeight:'calc(100vh - 230px)'}}>
+              {(() => { const sel = openCompany || shownCompanies[0]; return sel
+                ? <ClientDetail key={sel.id} name={sel.name} list={sel.list} staff={staff} userEmail={userEmail} carriers={carriers}
+                    saving={saving} onStage={setStage} onOpenCard={id => setOpenId(id)} onTouched={load} />
+                : null; })()}
+            </div>
+          </div>
         )
       )}
 
