@@ -928,6 +928,9 @@ const sampleTracking = r => {
 const ROUND_SELECT = 'id,program_id,stage,round,sample_type,master_sample,sent_date,due_back,carrier,tracking_number,comment,created_by,created_at,updated_by,updated_at';
 const ROUND_SELECT_112 = ',sent_by';
 const ROUND_SELECT_113 = ',sent_by_2,carrier_2,tracking_number_2';
+// The client leg of the shuttle (script 114): arrived at KUI, sent on to the
+// client, how that leg tracks, when they had it, what they said.
+const ROUND_SELECT_114 = ',received_date,client_sent_date,client_carrier,client_tracking_number,client_received_date,client_feedback,client_feedback_at';
 
 // A date the database will take and a person meant. A date input passes
 // through 0002 and 0020 while the year is typed, and one saved mid-typing is a
@@ -3506,6 +3509,336 @@ function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
 
 // canOpenTesting: whether this person's role may open the Testing page, for the
 // card's Open in Testing link. page.jsx decides it from allowedPages.
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ── THE COMPANY VIEW (14 Oct) ────────────────────────────────────────────────
+// Riley: "we think in terms of company, not product. What's going on for Stitch
+// Golf?" So the page opens on companies, one card each, and a company opens to
+// the products being sampled for it -- each with the SHUTTLE a sample makes
+// (factory → KUI → client → feedback), its notes up front, and the open
+// questions nobody should have to phone about.
+//
+// IT READS WHAT THE BOARD READS. No new fetch, no second derivation: the same
+// enriched rows, grouped by client_company_id. Stage moves go through setStage,
+// notes through NotesPanel, questions through program_tasks -- the write paths
+// Matt built, so nothing here can drift from the card.
+//
+// THE SHUTTLE IS THE LATEST ROUND. The five milestones live on
+// program_sample_rounds (sent_date and the packages from 112/113, the client leg
+// from 114). Logging a step on a card with no round makes round 1 -- somebody
+// recording an arrival has a sample, and a sample is a round.
+//
+// The stage board is still here, behind the By stage switch Riley asked for.
+
+const SHUTTLE = [
+  // key, label, the column it reads, the column it writes, carries tracking?
+  ['factory',  'Factory sent',   'sent_date',            true],
+  ['arrived',  'Arrived at KUI', 'received_date',        false],
+  ['toclient', 'Sent to client', 'client_sent_date',     true],
+  ['client',   'Client has it',  'client_received_date', false],
+  ['feedback', 'Feedback',       'client_feedback_at',   false],
+];
+const shuttleIdx = x => {
+  if (!x) return -1;
+  let i = -1;
+  SHUTTLE.forEach(([, , col], n) => { if (x[col]) i = n; });
+  return i;
+};
+const todayIso = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+
+// What a company card needs to say in one glance.
+const companyRollup = list => {
+  const open = list.filter(r => r.stage !== ARCHIVED);
+  const sampling = open.filter(r => SAMPLING_STAGES.includes(r.stage));
+  const quoting = open.filter(r => r.stage === 'quoted');
+  const qs = open.reduce((n, r) => n + (r.tasks || []).filter(t => !t.done).length, 0);
+  const waitingUs = open.reduce((n, r) => n + (r.tasks || []).filter(t => !t.done && t.blocker === 'us').length, 0);
+  const stale = open.filter(r => r.stale).length;
+  const last = list.map(r => r.updated_at || r.created_at).filter(Boolean).sort().pop() || null;
+  // The next thing somebody is waiting for across the company's shuttles.
+  const next = sampling.map(r => { const x = latestRound(r); const i = shuttleIdx(x); return i >= 0 && i < SHUTTLE.length - 1 ? SHUTTLE[i + 1][1] : null; }).filter(Boolean);
+  return { open, sampling, quoting, qs, waitingUs, stale, last, next };
+};
+
+function CompanyTile({ name, list, onOpen }) {
+  const c = companyRollup(list);
+  const alert = c.waitingUs > 0 || c.stale > 0;
+  return (
+    <button onClick={onOpen}
+      style={{textAlign:'left',background:'#fff',border:'none',borderRadius:'18px',padding:'18px 19px 15px',
+              boxShadow:'0 1px 3px rgba(0,0,0,.05)',cursor:'pointer',fontFamily:'inherit',display:'flex',
+              flexDirection:'column',gap:'11px',borderLeft:'4px solid ' + (alert ? '#FF9F0A' : c.sampling.length ? '#c2790b' : '#D9D9DE')}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'10px'}}>
+        <div style={{fontSize:'17px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.018em',lineHeight:1.15}}>{name}</div>
+        <div style={{fontSize:'11px',color:'#A0A0A4',whiteSpace:'nowrap',flexShrink:0,marginTop:'3px'}}>{c.last ? shortDate(c.last) : ''}</div>
+      </div>
+      <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+        {c.sampling.length > 0 && <span style={{fontSize:'11.5px',fontWeight:600,color:'#fff',background:'#c2790b',borderRadius:'980px',padding:'3px 10px'}}>{c.sampling.length} sampling</span>}
+        {c.quoting.length > 0 && <span style={{fontSize:'11.5px',fontWeight:600,color:'#5A5A5E',background:'#F0F0F2',borderRadius:'980px',padding:'3px 10px'}}>{c.quoting.length} quoting</span>}
+        {c.open.length === 0 && <span style={{fontSize:'11.5px',fontWeight:600,color:'#8E8E93',background:'#F0F0F2',borderRadius:'980px',padding:'3px 10px'}}>all archived</span>}
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:'4px',fontSize:'12.5px',color:'#5A5A5E'}}>
+        {c.next.length > 0 && <div>Next: <b style={{color:'#1D1D1F',fontWeight:600}}>{[...new Set(c.next)].slice(0, 2).join(', ')}</b></div>}
+        {c.qs > 0 && <div style={{color:c.waitingUs ? '#B91C1C' : '#5A5A5E'}}>{c.qs} open question{c.qs === 1 ? '' : 's'}{c.waitingUs ? ' · ' + c.waitingUs + ' on us' : ''}</div>}
+        {c.stale > 0 && <div style={{color:'#B45309'}}>{c.stale} not moved in {STALE_DAYS}+ days</div>}
+        {c.next.length === 0 && c.qs === 0 && c.stale === 0 && <div style={{color:'#A0A0A4'}}>Nothing waiting</div>}
+      </div>
+    </button>
+  );
+}
+
+// ── LOGGING A SHUTTLE STEP ──────────────────────────────────────────────────
+// One small form: a date (today by default), carrier and tracking for the two
+// legs that ship, text for feedback. Writes the latest round, or inserts round
+// 1 when the card has none. Everything lands through the same two tables the
+// round editor writes.
+function ShuttleStepForm({ r, step, carriers, userEmail, onDone, onCancel }) {
+  const [, label, col, ships] = SHUTTLE.find(s => s[0] === step);
+  const x = latestRound(r);
+  const [date, setDate] = useState(x && x[col] && step !== 'feedback' ? String(x[col]).slice(0, 10) : todayIso());
+  const isFactory = step === 'factory';
+  const [carrier, setCarrier] = useState(x ? (isFactory ? x.carrier : x.client_carrier) || '' : '');
+  const [number, setNumber]   = useState(x ? (isFactory ? x.tracking_number : x.client_tracking_number) || '' : '');
+  const [text, setText] = useState(x ? x.client_feedback || '' : '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useDirtySource(!!number.trim() || !!text.trim());
+
+  const save = async () => {
+    setBusy(true); setErr('');
+    const patch = {};
+    if (step === 'feedback') { patch.client_feedback = text.trim() || null; patch.client_feedback_at = new Date().toISOString(); }
+    else patch[col] = date || null;
+    if (ships && isFactory) { patch.carrier = carrier.trim() || null; patch.tracking_number = number.trim() || null; }
+    if (ships && !isFactory) { patch.client_carrier = carrier.trim() || null; patch.client_tracking_number = number.trim() || null; }
+    patch.updated_by = userEmail || null; patch.updated_at = new Date().toISOString();
+    let error = null;
+    if (x) ({ error } = await SB.from('program_sample_rounds').update(patch).eq('id', x.id));
+    else ({ error } = await SB.from('program_sample_rounds').insert({ program_id: r.id, stage: 'sampling', round: 1, created_by: userEmail || null, ...patch }));
+    if (error) { setErr(error.message); setBusy(false); return; }
+    if (step === 'feedback' && text.trim()) {
+      // Feedback is also a note, so it sits in the thread with everything else.
+      await SB.from('program_notes').insert({ program_id: r.id, author: userEmail || null, source: 'manual', stage: r.stage || null,
+        round_no: x ? x.round : 1, note: 'Client feedback: ' + text.trim() });
+    }
+    const t = await touchProgram(r.id, userEmail); if (t) touchFailedToast(t);
+    setBusy(false); onDone();
+  };
+  const inp = { border:'1px solid rgba(0,0,0,.1)', borderRadius:'9px', padding:'8px 10px', fontSize:'13px', outline:'none', fontFamily:'inherit', background:'#fff', boxSizing:'border-box' };
+  return (
+    <div style={{background:'#F7F7F9',borderRadius:'12px',padding:'12px 14px',marginTop:'10px'}}>
+      <div style={{fontSize:'11px',fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',color:'#86868B',marginBottom:'8px'}}>{label}{x ? ' · round ' + x.round : ' · starts round 1'}</div>
+      <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}}>
+        {step !== 'feedback' && <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...inp,flex:'0 0 150px'}} />}
+        {ships && (
+          <>
+            <input list={'carriers-' + r.id} value={carrier} onChange={e=>setCarrier(e.target.value)} placeholder="Carrier" style={{...inp,flex:'1 1 120px'}} />
+            <datalist id={'carriers-' + r.id}>{(carriers || []).map(c => <option key={c.id} value={c.name} />)}</datalist>
+            <input value={number} onChange={e=>setNumber(e.target.value)} placeholder="Tracking number" style={{...inp,flex:'2 1 180px',fontFamily:'var(--mono)'}} />
+          </>
+        )}
+        {step === 'feedback' && <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="What did the client say?" rows={2} style={{...inp,flex:'1 1 100%',resize:'vertical'}} />}
+      </div>
+      {err && <div style={{fontSize:'12.5px',color:'#B91C1C',marginTop:'8px'}}>{err}</div>}
+      <div style={{display:'flex',justifyContent:'flex-end',gap:'8px',marginTop:'10px'}}>
+        <button onClick={onCancel} disabled={busy} style={{background:'none',border:'none',fontSize:'13px',color:'#8A8A8E',cursor:'pointer',fontFamily:'inherit'}}>Cancel</button>
+        <button onClick={save} disabled={busy || (step === 'feedback' && !text.trim())}
+          style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'7px 16px',fontSize:'13px',fontWeight:600,cursor:'pointer',fontFamily:'inherit',opacity:busy?0.6:1}}>{busy ? 'Saving…' : 'Save'}</button>
+      </div>
+    </div>
+  );
+}
+
+// The strip itself: five dots, the reached ones filled in the stage colour, the
+// next one outlined and tappable. Each reached step shows its date; the two
+// legs that ship show their tracking as a link.
+function ShuttleStrip({ r, carriers, onStep }) {
+  const x = latestRound(r);
+  const idx = shuttleIdx(x);
+  const link = (carrier, number) => number ? <TrackingLink number={number} url={trackingUrl(carrier, number, carriers)} /> : null;
+  return (
+    <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'4px',marginTop:'12px'}}>
+      {SHUTTLE.map(([k, label, col, ships], i) => {
+        const done = i <= idx, next = i === idx + 1;
+        const val = x ? x[col] : null;
+        const carrier = k === 'factory' ? (x || {}).carrier : (x || {}).client_carrier;
+        const number  = k === 'factory' ? (x || {}).tracking_number : (x || {}).client_tracking_number;
+        return (
+          <button key={k} onClick={()=>onStep(k)} title={done ? 'Edit ' + label.toLowerCase() : 'Log ' + label.toLowerCase()}
+            style={{background:'none',border:'none',padding:0,cursor:'pointer',textAlign:'left',fontFamily:'inherit',minWidth:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:'0'}}>
+              <span style={{width:'12px',height:'12px',borderRadius:'50%',flexShrink:0,
+                            background:done ? '#c2790b' : '#fff',
+                            border:'2px solid ' + (done ? '#c2790b' : next ? '#c2790b' : '#D9D9DE')}} />
+              {i < SHUTTLE.length - 1 && <span style={{flex:1,height:'2px',background:i < idx ? '#c2790b' : '#E5E5EA'}} />}
+            </div>
+            <div style={{fontSize:'10.5px',fontWeight:next ? 700 : 600,color:done ? '#1D1D1F' : next ? '#c2790b' : '#B0B0B4',marginTop:'6px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{label}</div>
+            <div style={{fontSize:'11px',color:'#8A8A8E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+              {done && k === 'feedback' ? shortDate(val) : done ? shortDate(val) : next ? 'tap to log' : ''}
+              {done && ships && number ? <span> · {link(carrier, number)}</span> : null}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── OPEN QUESTIONS ──────────────────────────────────────────────────────────
+// "Is the UPC art approved?" -- the things people phone about. program_tasks,
+// read through TaskRow so a question looks and behaves like a task everywhere.
+function OpenQuestions({ r, staff, userEmail, onTouched }) {
+  const [text, setText] = useState('');
+  const [who, setWho] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState(null);
+  const [showDone, setShowDone] = useState(false);
+  useDirtySource(!!text.trim());
+  const all = r.tasks || [];
+  const open = all.filter(t => !t.done), done = all.filter(t => t.done);
+  const write = async (t, fn) => { setPending(t.id); const { error } = await fn(); if (error) window._toast?.(error.message, 'err'); await onTouched(); setPending(null); };
+  const add = async () => {
+    const body = text.trim(); if (!body) return;
+    setBusy(true);
+    const { error } = await SB.from('program_tasks').insert({ program_id: r.id, stage: r.stage || 'sampling', task: body, owner_id: who || null,
+      assigned_by: userEmail || null, blocker: 'none', sort_order: all.reduce((m, t) => Math.max(m, t.sort_order || 0), -1) + 1 });
+    if (error) window._toast?.(error.message, 'err'); else setText('');
+    await onTouched(); setBusy(false);
+  };
+  return (
+    <div style={{marginTop:'14px'}}>
+      <div style={{fontSize:'11px',fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',color:'#86868B',marginBottom:'4px'}}>Open questions{open.length ? ' · ' + open.length : ''}</div>
+      {open.map(t => <TaskRow key={t.id} t={t} staff={staff} pending={pending === t.id}
+        onToggle={t => write(t, () => SB.from('program_tasks').update({ done: true, done_at: new Date().toISOString() }).eq('id', t.id))}
+        onBlocker={(t, b) => write(t, () => SB.from('program_tasks').update({ blocker: b }).eq('id', t.id))}
+        onDel={t => write(t, () => SB.from('program_tasks').delete().eq('id', t.id))} />)}
+      <div style={{display:'flex',gap:'6px',marginTop:'6px'}}>
+        <input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{ if (e.key === 'Enter') add(); }} placeholder="Add a question or to-do… (Enter to save)"
+          style={{flex:1,border:'1px solid rgba(0,0,0,.1)',borderRadius:'9px',padding:'8px 10px',fontSize:'13px',outline:'none',fontFamily:'inherit',background:'#fff'}} />
+        <select data-noguard value={who} onChange={e=>setWho(e.target.value)} aria-label="Owner"
+          style={{border:'1px solid rgba(0,0,0,.1)',borderRadius:'9px',padding:'8px 8px',fontSize:'12.5px',fontFamily:'inherit',background:'#fff',color:'#5A5A5E'}}>
+          <option value="">Anyone</option>{staff.map(s => <option key={s.id} value={s.id}>{s.full_name || s.email}</option>)}
+        </select>
+        <button onClick={add} disabled={busy || !text.trim()} style={{background:'#F0F0F2',border:'none',borderRadius:'9px',padding:'8px 12px',fontSize:'13px',fontWeight:600,cursor:'pointer',fontFamily:'inherit',color:'#1D1D1F'}}>Add</button>
+      </div>
+      {done.length > 0 && (
+        <button onClick={()=>setShowDone(v=>!v)} style={{background:'none',border:'none',fontSize:'12px',color:'#A0A0A4',cursor:'pointer',padding:'6px 0 0',fontFamily:'inherit'}}>
+          {showDone ? 'Hide' : 'Show'} {done.length} resolved
+        </button>
+      )}
+      {showDone && done.map(t => <TaskRow key={t.id} t={t} staff={staff} dim pending={pending === t.id}
+        onToggle={t => write(t, () => SB.from('program_tasks').update({ done: false, done_at: null }).eq('id', t.id))}
+        onBlocker={()=>{}} onDel={t => write(t, () => SB.from('program_tasks').delete().eq('id', t.id))} />)}
+    </div>
+  );
+}
+
+// ── ONE PRODUCT, FOR ONE COMPANY ────────────────────────────────────────────
+// Identity and stage pills on the first line, the shuttle under it, then the
+// two things Riley wanted in front: notes and questions. Round and sample type
+// are on the stage line; the full round history and the Testing tab stay in the
+// card, one click away.
+function CompanyProduct({ r, staff, userEmail, carriers, busy, onStage, onOpenCard, onTouched }) {
+  const p = r.products || {};
+  const x = latestRound(r);
+  const [step, setStep] = useState(null);
+  const [showNotes, setShowNotes] = useState(true);
+  const inSampling = SAMPLING_STAGES.includes(r.stage);
+  return (
+    <div style={{background:'#fff',borderRadius:'18px',boxShadow:'0 1px 3px rgba(0,0,0,.05)',padding:'18px 20px',
+                 borderLeft:'4px solid ' + accentOf(r.stage)}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'12px',flexWrap:'wrap'}}>
+        <div style={{minWidth:0,flex:'1 1 240px'}}>
+          <div style={{display:'flex',alignItems:'baseline',gap:'8px',flexWrap:'wrap'}}>
+            <span style={{fontSize:'16px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.014em'}}>{p.name || '—'}</span>
+            <span style={{fontFamily:'var(--mono)',fontSize:'12px',color:'#8A8A8E'}}>{p.sku || ''}</span>
+          </div>
+          <div style={{fontSize:'12.5px',color:'#86868B',marginTop:'3px'}}>
+            {[r.factoryName, r.ownerName ? 'Owner ' + r.ownerName : null,
+              x ? 'Round ' + x.round + (x.sample_type ? ' · ' + sampleTypeLabel(x.sample_type) : '') : (inSampling ? 'No round logged yet' : null),
+              r.days !== null && r.stage && r.stage !== ARCHIVED ? r.days + 'd in ' + stageLabel(r.stage).toLowerCase() : null]
+              .filter(Boolean).join(' · ')}
+          </div>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:'4px',flexWrap:'wrap'}}>
+          {VISIBLE_STAGES.map(([k, l, c]) => {
+            const active = k === r.stage;
+            return <button key={k} onClick={()=>onStage(r, k)} disabled={busy || active} aria-pressed={active}
+              style={{fontSize:'11px',fontWeight:600,padding:'5px 10px',borderRadius:'980px',border:'none',fontFamily:'inherit',
+                      cursor:(busy||active)?'default':'pointer',background:active?c:'#F5F5F7',color:active?'#fff':'#8A8A8E'}}>{l}</button>;
+          })}
+          <button onClick={onOpenCard} title="Open the full card" style={{marginLeft:'4px',background:'none',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'5px 11px',fontSize:'11.5px',fontWeight:600,color:'#5A5A5E',cursor:'pointer',fontFamily:'inherit'}}>Full card →</button>
+        </div>
+      </div>
+
+      {(inSampling || x) && <ShuttleStrip r={r} carriers={carriers} onStep={k => setStep(step === k ? null : k)} />}
+      {step && <ShuttleStepForm r={r} step={step} carriers={carriers} userEmail={userEmail} onDone={async()=>{ setStep(null); await onTouched(); }} onCancel={()=>setStep(null)} />}
+      {x && x.client_feedback && (
+        <div style={{marginTop:'10px',background:'#FFF8EC',borderRadius:'10px',padding:'9px 12px',fontSize:'13px',color:'#5A3E0A',lineHeight:1.5}}>
+          <b style={{fontWeight:700}}>Client feedback</b>{x.client_feedback_at ? <span style={{color:'#B08650'}}> · {shortDate(x.client_feedback_at)}</span> : null}: {x.client_feedback}
+        </div>
+      )}
+
+      <OpenQuestions r={r} staff={staff} userEmail={userEmail} onTouched={onTouched} />
+
+      <div style={{marginTop:'14px'}}>
+        {!showNotes && (
+          <button onClick={()=>setShowNotes(true)} style={{background:'none',border:'none',padding:0,cursor:'pointer',fontFamily:'inherit',
+            fontSize:'11px',fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',color:'#86868B'}}>
+            Show notes{r.noteCount ? ' · ' + r.noteCount : ''}
+          </button>
+        )}
+        {showNotes && (
+          <NotesPanel staff={staff} table="program_notes" keyCol="program_id" keyId={r.id}
+            insertExtra={{ source: 'manual', stage: r.stage || null }} extraCol="source" extraDefault="manual"
+            quietExtras={['manual', 'round']} nullCol="round_id" selectExtra="stage,round_no"
+            labelOf={n => n.round_no ? 'Round ' + n.round_no : (n.stage ? stageLabel(n.stage) : null)}
+            reloadKey={(r.rounds || []).map(y => y.id).join(',') + '-' + r.noteCount}
+            title={'Notes' + (r.noteCount ? ' · ' + r.noteCount : '')} programId={r.id} userEmail={userEmail} onTouched={onTouched} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── THE COMPANY PAGE ────────────────────────────────────────────────────────
+function CompanyDetail({ name, list, staff, userEmail, carriers, saving, onStage, onOpenCard, onTouched, onBack }) {
+  const c = companyRollup(list);
+  const [showArchived, setShowArchived] = useState(false);
+  const order = { sampling:0, revision:0, quoted:1, testing:2, production:3, shipped:4 };
+  const sorted = [...list].sort((a, b) => ((order[a.stage] ?? 5) - (order[b.stage] ?? 5)) || (a.updated_at < b.updated_at ? 1 : -1));
+  const live = sorted.filter(r => r.stage !== ARCHIVED), archived = sorted.filter(r => r.stage === ARCHIVED);
+  return (
+    <div>
+      <button onClick={onBack} style={{background:'none',border:'none',padding:0,fontSize:'13px',color:'#0A84FF',cursor:'pointer',fontFamily:'inherit',marginBottom:'10px'}}>← All companies</button>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',gap:'14px',flexWrap:'wrap',marginBottom:'18px'}}>
+        <div>
+          <div style={{fontSize:'28px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.028em',lineHeight:1.05}}>{name}</div>
+          <div style={{fontSize:'13.5px',color:'#86868B',marginTop:'6px'}}>
+            {[c.sampling.length + ' sampling', c.quoting.length + ' quoting', c.qs + ' open question' + (c.qs === 1 ? '' : 's'), archived.length ? archived.length + ' archived' : null].filter(Boolean).join(' · ')}
+          </div>
+        </div>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
+        {live.map(r => <CompanyProduct key={r.id} r={r} staff={staff} userEmail={userEmail} carriers={carriers} busy={saving === r.id}
+          onStage={onStage} onOpenCard={()=>onOpenCard(r.id)} onTouched={onTouched} />)}
+        {live.length === 0 && <div style={{background:'#fff',borderRadius:'18px',padding:'40px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Nothing active for {name}.</div>}
+      </div>
+      {archived.length > 0 && (
+        <div style={{marginTop:'18px'}}>
+          <button onClick={()=>setShowArchived(v=>!v)} style={{background:'none',border:'none',fontSize:'13px',color:'#8A8A8E',cursor:'pointer',fontFamily:'inherit',padding:0}}>
+            {showArchived ? 'Hide' : 'Show'} {archived.length} archived
+          </button>
+          {showArchived && <div style={{display:'flex',flexDirection:'column',gap:'12px',marginTop:'10px',opacity:0.75}}>
+            {archived.map(r => <CompanyProduct key={r.id} r={r} staff={staff} userEmail={userEmail} carriers={carriers} busy={saving === r.id}
+              onStage={onStage} onOpenCard={()=>onOpenCard(r.id)} onTouched={onTouched} />)}
+          </div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Programs({ userEmail, canOpenTesting = false }) {
   const [rows, setRows]   = useState([]);
   const [ev, setEv]       = useState(null);
@@ -3524,7 +3857,7 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
   // Shipped is a column now, so there is nothing to open or shut, and a card on a
   // retired product sits in its own stage column like any other -- the tile says
   // so with a pill rather than the card being filed somewhere else.
-  const [ui, setUi] = usePageState('programs', { search:'', showRemoved:false, blocker:'' });
+  const [ui, setUi] = usePageState('programs', { search:'', showRemoved:false, blocker:'', view:'companies', companyId:'' });
   const [openId, setOpenId] = useState(null);
   const [staff, setStaff] = useState([]);
   // Set while a stage or an owner is being written, so the control can say so and
@@ -3645,16 +3978,17 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
         // rather than when a card opens -- the trade the note counts make.
         // Not read at all while the checklist is off -- nothing on the board or
         // in the files would use it.
-        CHECKLIST_ON
-          ? SB.from('program_tasks')
-              .select('id,program_id,stage,task,owner_id,assigned_by,due_date,blocker,done,done_at,sort_order,created_at')
-              .order('sort_order').order('created_at')
-          : Promise.resolve({ data: [], error: null }),
+        // Read whatever CHECKLIST_ON says: the company view's Open questions
+        // (14 Oct) are program_tasks, and they show there even while the card's
+        // own checklist stays off.
+        SB.from('program_tasks')
+          .select('id,program_id,stage,task,owner_id,assigned_by,due_date,blocker,done,done_at,sort_order,created_at')
+          .order('sort_order').order('created_at'),
         // EVERY SAMPLE ROUND, IN BULK, highest round first per card -- the tile
         // pill and the Stalled and Overdue samples tiles read the latest one's
         // due back, so they have to arrive with the board.
         SB.from('program_sample_rounds')
-          .select(ROUND_SELECT + ROUND_SELECT_112 + ROUND_SELECT_113)
+          .select(ROUND_SELECT + ROUND_SELECT_112 + ROUND_SELECT_113 + ROUND_SELECT_114)
           .order('round', { ascending:false }),
         // THE CARRIERS ARE COMPANIES of type carrier (script 85), with the tracking
         // page pattern on companies.tracking_url. They are managed on Companies ->
@@ -3668,8 +4002,12 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
       // whole read, so a refusal that names one of them is read again without
       // package 2's columns, then without sent_by too, and what is missing reads
       // Not set. Any other error is reported as before.
-      const missingCol = res => !!res.error && /sent_by|carrier_2|tracking_number_2/.test(res.error.message || '');
+      const missingCol = res => !!res.error && /sent_by|carrier_2|tracking_number_2|received_date|client_/.test(res.error.message || '');
       let sr = srTry, live = true, live2 = true;
+      // Before script 114: read again without the client leg, which then reads empty.
+      if (missingCol(sr)) {
+        sr = await SB.from('program_sample_rounds').select(ROUND_SELECT + ROUND_SELECT_112 + ROUND_SELECT_113).order('round', { ascending:false });
+      }
       if (missingCol(sr)) {
         live2 = false;
         sr = await SB.from('program_sample_rounds').select(ROUND_SELECT + ROUND_SELECT_112).order('round', { ascending:false });
@@ -4103,6 +4441,34 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
   const shownRemoved = useMemo(() => removed.filter(r => matches(r) && blockerMatches(r)),
     [removed, ui.search, ui.blocker]);
 
+  // ── COMPANIES (14 Oct) ──────────────────────────────────────────────────────
+  // Every live card grouped by client. Search narrows the company list by name
+  // and the products inside a company by SKU, name or client -- the same
+  // matches() the board uses, so one search means one thing.
+  const companies = useMemo(() => {
+    const m = new Map();
+    board.forEach(r => {
+      const id = r.client_company_id || 'none';
+      if (!m.has(id)) m.set(id, { id, name: (r.client || {}).name || 'No client', list: [] });
+      m.get(id).list.push(r);
+    });
+    return [...m.values()].sort((a, b) => {
+      // Companies with something in sampling first, then by most recent touch.
+      const sa = a.list.some(r => SAMPLING_STAGES.includes(r.stage)) ? 0 : 1;
+      const sb = b.list.some(r => SAMPLING_STAGES.includes(r.stage)) ? 0 : 1;
+      if (sa !== sb) return sa - sb;
+      const la = a.list.map(r => r.updated_at || '').sort().pop() || '';
+      const lb = b.list.map(r => r.updated_at || '').sort().pop() || '';
+      return la < lb ? 1 : la > lb ? -1 : a.name.localeCompare(b.name);
+    });
+  }, [board]);
+  const shownCompanies = useMemo(() => {
+    if (!ui.search) return companies;
+    const q = norm(ui.search);
+    return companies.filter(c => norm(c.name).includes(q) || c.list.some(matches));
+  }, [companies, ui.search]);
+  const openCompany = ui.companyId ? companies.find(c => c.id === ui.companyId) || null : null;
+
   // ── EXPORTING THE BOARD ─────────────────────────────────────────────────────
   // Every card on the board, and the removed ones only while Show removed is
   // ticked. The search box and the Waiting tiles are NOT applied, on purpose: a
@@ -4448,7 +4814,16 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
         <div style={{textAlign:'center'}}>
           <h1 style={{fontSize:'26px',fontWeight:700,letterSpacing:'-.02em',color:'#1D1D1F',margin:0}}>Samples</h1>
           <div style={{fontSize:'13px',color:'#86868B',marginTop:'5px'}}>
-            {board.length} on the board
+            {companies.length} compan{companies.length === 1 ? 'y' : 'ies'} · {board.length} product{board.length === 1 ? '' : 's'}
+          </div>
+          {/* THE SWITCH Riley asked for: companies is how the office thinks, the
+              stage board is the other way to look at the same cards. */}
+          <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'10px',padding:'3px',marginTop:'10px'}}>
+            {[['companies','By company'],['board','By stage']].map(([v,l]) => (
+              <button key={v} onClick={()=>{ setUi('view', v); if (v === 'board') setUi('companyId', ''); }}
+                style={{padding:'6px 14px',borderRadius:'8px',border:'none',cursor:'pointer',fontSize:'12.5px',fontWeight:600,fontFamily:'inherit',
+                        background:(ui.view||'companies')===v?'#1D1D1F':'transparent',color:(ui.view||'companies')===v?'#fff':'#5A5A5E'}}>{l}</button>
+            ))}
           </div>
         </div>
         <div style={{justifySelf:'end'}}>
@@ -4470,6 +4845,39 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
           either of its rules can fire (STALLED_POSSIBLE), Overdue samples while
           due back is on, the Waiting tiles while the checklist is. With all
           three off there is nothing left to count and no strip at all. */}
+      {(ui.view||'companies') === 'companies' && (
+        openCompany ? (
+          <CompanyDetail name={openCompany.name} list={openCompany.list} staff={staff} userEmail={userEmail} carriers={carriers}
+            saving={saving} onStage={setStage} onOpenCard={id => setOpenId(id)} onTouched={load}
+            onBack={()=>setUi('companyId', '')} />
+        ) : (
+          <>
+            <div style={{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center',marginBottom:'14px'}}>
+              <div style={{position:'relative',flex:'1 1 240px',maxWidth:'320px'}}>
+                <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Search companies or products…"
+                  style={{width:'100%',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 12px',
+                          fontSize:'13.5px',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'}} />
+              </div>
+              <div style={{flex:1}} />
+              <CardFromQuoteBox staff={staff} userEmail={userEmail} onOpen={id => setOpenId(id)} onReload={load} />
+            </div>
+            {shownCompanies.length === 0 ? (
+              <div style={{background:'#fff',borderRadius:'20px',padding:'64px 32px',textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.04)'}}>
+                <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',marginBottom:'8px',letterSpacing:'-.018em'}}>{board.length ? 'No company matches' : 'Nothing being sampled'}</div>
+                <div style={{color:'#86868B',fontSize:'14px',maxWidth:'440px',margin:'0 auto',lineHeight:1.6}}>
+                  {board.length ? 'Try a different search.' : 'A product appears here when somebody presses Create Sample Card on a quote.'}
+                </div>
+              </div>
+            ) : (
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:'14px'}}>
+                {shownCompanies.map(c => <CompanyTile key={c.id} name={c.name} list={c.list} onOpen={()=>setUi('companyId', c.id)} />)}
+              </div>
+            )}
+          </>
+        )
+      )}
+
+      {(ui.view||'companies') === 'board' && (<>
       {(STALLED_POSSIBLE || DUE_BACK_ON || CHECKLIST_ON) && (
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',
                    gap:'12px',marginBottom:'18px'}}>
@@ -4589,6 +4997,7 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
         own &mdash; an order, a test report or a change on Testing is reported on the card
         and never acts on it.
       </p>
+      </>)}
     </div>
   );
 }
