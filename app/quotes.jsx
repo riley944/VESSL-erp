@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   Plus, Search, Trash2, Edit3, X, Package, Truck, Building2,
   Factory, DollarSign, Copy, ChevronDown, ChevronRight, ChevronLeft,
-  Box, AlertCircle, Check, Lock, Clock, Download, LogOut, Layers, Users, Printer, Bell, CheckCircle2, Circle, ListChecks, Send, FolderOpen
+  Box, AlertCircle, Check, Lock, Clock, Download, LogOut, Layers, Users, Printer, Bell, CheckCircle2, Circle, ListChecks, Send, FolderOpen, FileText
 } from "lucide-react";
 // The SBQ import went with the htscodes fetch -- that was this file's last use of it.
 // lib/supabaseQuotes still exists; page.jsx and pricing.jsx both import it.
@@ -645,6 +645,9 @@ function rowToForm(r) {
     cartonH: r.carton_h ?? "", cartonWeight: r.carton_weight ?? "",
     freightDutyUpdatedAt: r.freight_duty_updated_at || "", freightDutyUpdatedBy: r.freight_duty_updated_by || "",
     moldFee: r.mold_fee ?? "", sampleFee: r.sample_fee ?? "",
+    // The client price sheet's Details and Color (script 116), in words meant for
+    // the client. Set on the form or in the sheet's settings step.
+    clientDetails: r.client_details || "", clientColor: r.client_color || "",
     tiers: tiers || [],
     updatedAt: r.updated_at || "", updatedBy: r.updated_by || "",
   };
@@ -699,6 +702,7 @@ function formToRow(f) {
     landed: num(first.landed), freight_duty: num(first.ship === "air" ? first.freightAir : first.freightOcean),
     freight_duty_updated_at: f.freightDutyUpdatedAt || null, freight_duty_updated_by: f.freightDutyUpdatedBy || null,
     mold_fee: num(f.moldFee), sample_fee: num(f.sampleFee),
+    client_details: (f.clientDetails || "").trim() || null, client_color: (f.clientColor || "").trim() || null,
     tiers: tiers,
     updated_at: stamp(), updated_by: f.updatedBy || null,
   };
@@ -4172,6 +4176,14 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
             <Field label="Carton W (cm)" k="cartonW" type="number" f={f} set={set} />
             <Field label="Carton H (cm)" k="cartonH" type="number" f={f} set={set} />
             <Field label="Carton Weight (kg)" k="cartonWeight" type="number" f={f} set={set} />
+          </FormSection>
+
+          {/* What the client price sheet (Send to Client) prints in its Details
+              and Color columns -- client wording, not the internal notes. Also
+              editable in the sheet's settings step, which saves back here. */}
+          <FormSection icon={<FileText size={15} />} title="Client Price Sheet">
+            <Field label="Details" k="clientDetails" placeholder="e.g. 100% cotton, 180gsm" f={f} set={set} />
+            <Field label="Color" k="clientColor" placeholder="e.g. Red / Black / Grey" f={f} set={set} />
           </FormSection>
 
           <div style={S.formSection}>
