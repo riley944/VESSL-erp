@@ -2327,7 +2327,9 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
         <div style={S.detailHead}><ListChecks size={14} /> Tasks</div>
         {tasks.length > 0 && (
           <div style={{ marginBottom: 10 }}>
-            {tasks.map((t) => (
+            {/* Newest first on the card, so what was just assigned is on top.
+                The bell and the Tasks modal run the other way. */}
+            {[...tasks].sort((a, b) => byCreated(b, a)).map((t) => (
               <div key={t.id} style={S.taskItem}>
                 <button style={S.taskCheck} onClick={() => onToggleTask(t)}>
                   {t.done ? <CheckCircle2 size={17} color="#3f7d5a" /> : <Circle size={17} color="#bba" />}
