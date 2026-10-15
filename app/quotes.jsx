@@ -806,6 +806,27 @@ function dutyValue(t) {
   if (t.dutyLegacy) return "incl.";
   return t.duty === "" || t.duty == null ? "" : tierDuty(t);
 }
+// NO CLIENT PRICE, SAID RATHER THAN DASHED. A quote with no client price on any
+// tier used to show "—" under Client Price Range and Avg Margin, which reads the
+// same as a figure that failed to load. It now says so, in one small muted tag;
+// a quote priced on some tiers keeps its range and adds "Some tiers unpriced".
+// The expanded card's tier rows use the same words where a tier has no price.
+const NO_PRICE_TEXT = "No client price entered";
+const NO_PRICE_TIP = "Client price and margin show once a client price is entered on a tier";
+const SOME_UNPRICED_TEXT = "Some tiers unpriced";
+const SOME_UNPRICED_TIP = "Some tiers have no client price yet; the range and margin cover the priced ones";
+function PriceTag({ text, tip }) {
+  return (
+    <span title={tip} style={{ display: "inline-block", fontSize: 11, fontWeight: 500, color: "#6a7488", background: "#f1f3f7",
+      borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap", lineHeight: 1.5, fontVariantNumeric: "normal" }}>{text}</span>
+  );
+}
+// none: tiers exist and none has a client price. some: priced on some, not all.
+function pricedState(q) {
+  const tiers = q.tiers || [];
+  const priced = tiers.filter((t) => Number(t.client) > 0).length;
+  return { none: tiers.length > 0 && priced === 0, some: priced > 0 && priced < tiers.length };
+}
 function quoteSummary(q, dutyRate = null) {
   const tiers = q.tiers || [];
   if (!tiers.length) return { count: 0, minClient: null, maxClient: null, avgMargin: 0, method: null };
@@ -1555,6 +1576,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
 
           {!(loading && quotes.length === 0) && shownQuotes.map((q) => {
             const sum = quoteSummary(q, rateOf(q));
+            const ps = pricedState(q);
             const open = expanded === q.id;
             const priceRange = sum.minClient == null ? "—"
               // Client PRICE range across tiers -- per-unit on both ends, so it
@@ -1591,8 +1613,17 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
                       plain muted text, centred in a column wide enough to stand
                       clear of Tiers. */}
                   <div style={{ textAlign: "center", fontSize: 13, color: "#6a7488" }}>{sum.method || "—"}</div>
-                  <div style={{ textAlign: "center", whiteSpace: "nowrap", ...S.num, fontWeight: 600, color: "#0f1729" }}>{priceRange}</div>
-                  <div style={{ textAlign: "center", whiteSpace: "nowrap", ...S.num }}>{marginCell}</div>
+                  {ps.none ? (
+                    <div style={{ gridColumn: "span 2", textAlign: "center" }}><PriceTag text={NO_PRICE_TEXT} tip={NO_PRICE_TIP} /></div>
+                  ) : (
+                    <>
+                      <div style={{ textAlign: "center", whiteSpace: "nowrap", ...S.num, fontWeight: 600, color: "#0f1729" }}>
+                        {priceRange}
+                        {ps.some && <div style={{ marginTop: 3 }}><PriceTag text={SOME_UNPRICED_TEXT} tip={SOME_UNPRICED_TIP} /></div>}
+                      </div>
+                      <div style={{ textAlign: "center", whiteSpace: "nowrap", ...S.num }}>{marginCell}</div>
+                    </>
+                  )}
                   {/* paddingLeft on top of the column gap, so the margin figure
                       and the date read as two things, not one. */}
                   <div style={{ minWidth: 0, paddingLeft: 10 }}>
@@ -1640,12 +1671,21 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
                   {/* Air and Ocean are not good and bad, so no colour coding —
                       plain muted text, same tone as the other secondary cells. */}
                   {!isMobile && <div style={{ flex: 0.8, fontSize: 13, color: "#6a7488" }}>{sum.method || "—"}</div>}
-                  <div style={{ flex: isMobile ? "0 0 auto" : 1.5, textAlign: "right", whiteSpace: "nowrap", ...S.num, fontWeight: 600, color: "#0f1729", fontSize: isMobile ? 13 : undefined }}>{priceRange}</div>
-                  <div style={{ ...(isMobile ? { width: 56, flexShrink: 0 } : { flex: 0.9 }), textAlign: "right", whiteSpace: "nowrap", ...S.num }}>
-                    <span style={{ color: sum.avgMargin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>
-                      {sum.avgMargin ? sum.avgMargin.toFixed(0) + "%" : "—"}
-                    </span>
-                  </div>
+                  {ps.none ? (
+                    <div style={{ flex: isMobile ? "0 0 auto" : 2.4, textAlign: "right" }}><PriceTag text={NO_PRICE_TEXT} tip={NO_PRICE_TIP} /></div>
+                  ) : (
+                    <>
+                      <div style={{ flex: isMobile ? "0 0 auto" : 1.5, textAlign: "right", whiteSpace: "nowrap", ...S.num, fontWeight: 600, color: "#0f1729", fontSize: isMobile ? 13 : undefined }}>
+                        {priceRange}
+                        {ps.some && <div style={{ marginTop: 3 }}><PriceTag text={SOME_UNPRICED_TEXT} tip={SOME_UNPRICED_TIP} /></div>}
+                      </div>
+                      <div style={{ ...(isMobile ? { width: 56, flexShrink: 0 } : { flex: 0.9 }), textAlign: "right", whiteSpace: "nowrap", ...S.num }}>
+                        <span style={{ color: sum.avgMargin < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>
+                          {sum.avgMargin ? sum.avgMargin.toFixed(0) + "%" : "—"}
+                        </span>
+                      </div>
+                    </>
+                  )}
                   {!isMobile && (
                     <div style={{ flex: 1.1 }}>
                       <div style={S.cellSub2}>{fmtStamp(q.updatedAt)}</div>
@@ -2286,7 +2326,7 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
                   {pair("Freight", freightCell(t))}
                   {pair("Duty", dutyCell(t))}
                   {pair("Total Cost", <>{total ? `$${fmtUnit(total)}` : "—"}{mpu > 0 && <div style={{ fontSize: 10.5, color: "#6a7488", fontWeight: 500 }}>incl. ${fmtUnit(mpu)} mold</div>}</>, true)}
-                  {pair("Client Price", t.client ? `$${fmtUnit(t.client)}` : "—", true)}
+                  {pair("Client Price", t.client ? `$${fmtUnit(t.client)}` : <PriceTag text={NO_PRICE_TEXT} tip={NO_PRICE_TIP} />, true)}
                   {pair("Margin", <span style={{ color: m && m < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{m ? m.toFixed(0) + "%" : "—"}</span>)}
                   {sz.differs && <div style={{ gridColumn: "1 / -1", ...S.sizeDetailLine }}>{sz.lines.map((l) => sizeLineText(l, true)).join(" · ")}</div>}
                 </div>
@@ -2333,10 +2373,19 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
                   {total ? `$${fmtUnit(total)}` : "—"}
                   {mpu > 0 && <div style={{ fontSize: 10.5, color: "#6a7488", fontWeight: 500 }}>incl. ${fmtUnit(mpu)} mold</div>}
                 </div>
-                <div style={{ ...tierCol("client"), textAlign: "right", ...S.num, fontWeight: 600, color: "#0f1729", whiteSpace: "nowrap" }}>{t.client ? `$${fmtUnit(t.client)}` : "—"}</div>
-                <div style={{ ...tierCol("margin"), textAlign: "right", ...S.num }}>
-                  <span style={{ color: m && m < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{m ? m.toFixed(0) + "%" : "—"}</span>
-                </div>
+                {Number(t.client) > 0 ? (
+                  <>
+                    <div style={{ ...tierCol("client"), textAlign: "right", ...S.num, fontWeight: 600, color: "#0f1729", whiteSpace: "nowrap" }}>${fmtUnit(t.client)}</div>
+                    <div style={{ ...tierCol("margin"), textAlign: "right", ...S.num }}>
+                      <span style={{ color: m && m < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{m ? m.toFixed(0) + "%" : "—"}</span>
+                    </div>
+                  </>
+                ) : (
+                  // Client Price and Margin as one cell, the tag right-aligned in it.
+                  <div style={{ flex: TIER_COLS.client.flex + TIER_COLS.margin.flex, minWidth: TIER_COLS.client.min + TIER_COLS.margin.min + 8, textAlign: "right" }}>
+                    <PriceTag text={NO_PRICE_TEXT} tip={NO_PRICE_TIP} />
+                  </div>
+                )}
               </div>
               {sz.differs && <div style={{ ...S.tierBodyRow, borderTop: "1px dashed #eef1f6", paddingTop: 6, paddingBottom: 8, ...S.sizeDetailLine }}>{sz.lines.map((l) => sizeLineText(l, true)).join(" · ")}</div>}
               </React.Fragment>
