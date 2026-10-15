@@ -35,7 +35,7 @@ import { loadExcelJS, excelDate } from '@/lib/excel';
 import { trackingUrl, findCarrier } from '@/lib/tracking';
 import { CreateCompanyModal } from '@/app/components/CreateCompanyModal';
 import { seedStageTasks as seedTasksFor, syncProductStage, createProgram } from '@/lib/programs';
-import { parseQuoteCode, findQuoteByCode, resolveQuoteLinks, existingCardFor, missingWords, existingCardMessage } from '@/lib/quoteCard';
+import { resolveQuoteLinks, existingCardFor, missingWords, existingCardMessage } from '@/lib/quoteCard';
 import { CardOwnerPopup } from '@/app/components/CardOwnerPopup';
 import { ownerIdForEmail } from '@/app/components/OwnerSelect';
 // Sync from records is gone with the derived board -- nothing here creates a
@@ -3383,34 +3383,21 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
 // onOpen(id) opens a card on the board -- removed ones included, since the
 // board's open card is found among every card, not only the visible ones.
 function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
-  const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);      // { tone: 'ok' | 'info' | 'err', text, quote? }
   const [ask, setAsk] = useState(null);      // { quote, productId, clientId, ownerId, code }
-  // An empty box is answered with a pop-up rather than a greyed-out button, so the
-  // button can say what it needs instead of silently refusing. Closing it puts the
-  // cursor back in the box.
-  const [needId, setNeedId] = useState(false);
-  const inputRef = useRef(null);
-  const closeNeedId = () => {
-    setNeedId(false);
-    setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
-  };
+  const [picking, setPicking] = useState(false);
 
   const quoteUrl = id => (typeof window !== 'undefined' ? window.location.origin : '') + '/?quote=' + id + '#quotes';
   const labelOf = q => (q.sku || 'No SKU') + ' · ' + (q.client || 'no client');
 
-  const go = async () => {
-    setMsg(null);
-    if (!text.trim()) { setNeedId(true); return; }
-    const code = parseQuoteCode(text);
-    if (!code) { setMsg({ tone: 'err', text: 'Type a quote ID, for example Q-0356.' }); return; }
+  // The quote is picked from the list (QuotePickOverlay), so there is nothing to
+  // parse: the row is in hand. The checks are Create PLM Card's, unchanged.
+  const go = async q => {
+    setMsg(null); setPicking(false);
+    const code = q.quote_code || '';
     setBusy(true);
     try {
-      const f = await findQuoteByCode(code);
-      if (f.error) { setMsg({ tone: 'err', text: 'Could not look up ' + code + ' — ' + f.error.message }); return; }
-      if (!f.quote) { setMsg({ tone: 'err', text: 'No quote ' + code + ' — check the number.' }); return; }
-      const q = f.quote;
       const res = await resolveQuoteLinks(q.id);
       if (res.error) { setMsg({ tone: 'err', text: 'Could not read ' + code + ' — ' + res.error.message }); return; }
       if (res.needsProduct || res.needsClient) {
@@ -3453,7 +3440,6 @@ function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
       setMsg(ours
         ? { tone: 'ok', text: 'Sample card created from ' + ask.code + ' — ' + labelOf(ask.quote) + '.' }
         : { tone: 'info', text: 'A card for ' + labelOf(ask.quote) + ' was created by somebody else a moment ago. Opened it.' });
-      setText('');
       setAsk(null);
     } catch (e) {
       setMsg({ tone: 'err', text: 'Something went wrong — ' + ((e && e.message) || e) });
@@ -3465,38 +3451,18 @@ function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
   const toneColor = { ok: '#1a7f4b', info: '#5A5A5E', err: 'var(--hot)' };
   return (
     <>
-      <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
-        <input ref={inputRef} value={text} disabled={busy} onChange={e => { setText(e.target.value); if (msg) setMsg(null); }}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); go(); } }}
-          placeholder="Quote ID, e.g. Q-0356" aria-label="Create a card from a Quote ID"
-          style={{width:'170px',border:'1px solid rgba(0,0,0,.1)',borderRadius:'10px',padding:'9px 12px',
-                  fontSize:'13.5px',outline:'none',fontFamily:'inherit',background:'#fff',boxSizing:'border-box'}} />
-        {/* Always live; disabled only while a lookup or a create is running, so it
-            cannot be pressed twice. An empty box is handled in go(). */}
-        <button onClick={go} disabled={busy}
-          style={{border:'none',borderRadius:'10px',padding:'9px 14px',fontSize:'13px',fontWeight:600,fontFamily:'inherit',
-                  background:'#1D1D1F',color:'#fff',opacity:busy ? 0.6 : 1,
-                  cursor:busy ? 'default' : 'pointer',whiteSpace:'nowrap'}}>
-          {busy && !ask ? 'Checking…' : 'Create card'}
-        </button>
-      </div>
+      <button onClick={()=>{ if (msg) setMsg(null); setPicking(true); }} disabled={busy}
+        style={{display:'inline-flex',alignItems:'center',gap:'7px',border:'none',borderRadius:'10px',padding:'9px 14px',fontSize:'13px',fontWeight:600,
+                fontFamily:'var(--sans)',background:'var(--ink)',color:'#fff',opacity:busy ? 0.6 : 1,cursor:busy ? 'default' : 'pointer',whiteSpace:'nowrap'}}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        {busy && !ask ? 'Checking…' : 'Create card'}
+      </button>
       {msg && (
         <div style={{flexBasis:'100%',fontSize:'12.5px',color:toneColor[msg.tone] || '#5A5A5E',lineHeight:1.5}}>
           {msg.quote && <QuoteLinkValue link={msg.quote} />}{msg.text}
         </div>
       )}
-      {needId && (
-        <Overlay onClose={closeNeedId} maxWidth={400}>
-          <div style={{fontSize:'15px',color:'#1D1D1F',lineHeight:1.5}}>
-            Enter a Quote ID to create a card. You can find the Quote ID under Quotes, in the Quote List.
-          </div>
-          <div style={{display:'flex',justifyContent:'flex-end',marginTop:'20px'}}>
-            <button autoFocus onClick={closeNeedId}
-              style={{background:'#1D1D1F',border:'none',borderRadius:'10px',padding:'9px 18px',
-                      fontSize:'13px',fontWeight:600,color:'#fff',fontFamily:'inherit',cursor:'pointer'}}>OK</button>
-          </div>
-        </Overlay>
-      )}
+      {picking && <QuotePickOverlay onPick={go} onClose={()=>setPicking(false)} />}
       {ask && (
         <CardOwnerPopup title={'Create sample card for ' + (ask.quote.sku || ask.code) + ' · ' + ask.code}
           staff={staff} ownerId={ask.ownerId} busy={busy}
@@ -3504,6 +3470,58 @@ function CardFromQuoteBox({ staff = [], userEmail, onOpen, onReload }) {
           onStart={start} onCancel={() => setAsk(null)} />
       )}
     </>
+  );
+}
+
+// ── PICKING THE QUOTE ───────────────────────────────────────────────────────
+// The same list the sales-order and purchase-order forms open (QuotePickerModal
+// in page.jsx): every quote, newest first, one search box over product, client,
+// factory, SKU and quote code. Uses the qp-* classes from globals.css so it is
+// the same picker to the eye. A quote that already has a card says so and opens
+// it rather than making a second (go() above checks the pair).
+function QuotePickOverlay({ onPick, onClose }) {
+  const [quotes, setQuotes] = useState(null);
+  const [search, setSearch] = useState('');
+  useEffect(() => {
+    SB.from('quotes').select('id,quote_code,sku,product,client,factory,product_id,client_company_id,updated_by,updated_at,created_at')
+      .order('updated_at', { ascending: false }).limit(600)
+      .then(({ data }) => setQuotes(data || []));
+  }, []);
+  const q = norm(search);
+  const shown = (quotes || []).filter(x => !q || norm([x.product, x.client, x.factory, x.sku, x.quote_code].filter(Boolean).join(' ')).includes(q));
+  return (
+    <Overlay onClose={onClose} maxWidth={600} cardStyle={{padding:0,overflow:'hidden'}}>
+      <div style={{padding:'18px 22px 14px',borderBottom:'1px solid var(--line)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div>
+          <div style={{fontFamily:'var(--serif)',fontSize:'19px',fontWeight:600,color:'var(--ink)',letterSpacing:'-.01em'}}>Create a sample card</div>
+          <div style={{fontSize:'12.5px',color:'var(--muted)',marginTop:'3px'}}>Pick the quote the sample is for.</div>
+        </div>
+        <button onClick={onClose} aria-label="Close" style={{background:'none',border:'none',fontSize:'22px',color:'var(--faint)',cursor:'pointer',lineHeight:1,padding:'4px'}}>×</button>
+      </div>
+      <div style={{padding:'16px 22px 22px'}}>
+        <div className="qp-search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input data-noguard autoFocus placeholder="Search quotes — product, client, factory, SKU, Q-number" value={search} onChange={e=>setSearch(e.target.value)} />
+        </div>
+        <div className="qp-list" style={{maxHeight:'400px'}}>
+          {quotes === null && <div className="empty" style={{padding:'30px'}}><p>Loading…</p></div>}
+          {quotes !== null && shown.length === 0 && <div className="empty" style={{padding:'30px'}}><p>No quotes match.</p></div>}
+          {shown.map(x => (
+            <button key={x.id} className="qp-card" onClick={()=>onPick(x)}>
+              <span className="qp-avatar" style={{background:clientInkByName(x.client),color:'#fff'}}>{initialsOf(x.client)}</span>
+              <span className="qp-meta">
+                <div className="qp-prod">{x.product || 'Untitled'}</div>
+                <div className="qp-sub">{x.client || '—'}{x.factory ? ' · ' + x.factory : ''}{x.sku ? ' · ' + x.sku : ''}</div>
+              </span>
+              <span className="qp-right">
+                <div className="qp-price">{x.quote_code || ''}</div>
+                <div className="qp-tiers">{shortDate(x.updated_at || x.created_at)}</div>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </Overlay>
   );
 }
 
@@ -3577,24 +3595,40 @@ const clientRollup = list => {
 };
 
 // ── CLIENT COLOURS ──────────────────────────────────────────────────────────
-// Each client gets one colour, hashed from its name the way the Quotes page
-// does (clientColor there), so a client keeps its colour between visits. These
-// are deeper than the Quotes palette because the whole tile wears the colour
-// and the lettering is white -- every one holds 4.5:1 against white text.
-const CLIENT_INKS = ['#c0392b', '#d35400', '#b7791f', '#2f855a', '#0f766e', '#1d4ed8', '#3461e0', '#6d28d9', '#be185d', '#475569'];
-const clientInk = name => {
+// One family -- deep blues, indigos and teals around Vessl's accent -- so the
+// folders read as one set, and dealt in turn down the alphabetical list of
+// clients so no two on the page share a colour until the family runs out. The
+// pick is by position, not by hash: a hash handed three clients three oranges.
+// Every one holds 4.5:1 against white lettering.
+const CLIENT_INKS = ['#1e3a8a', '#0f766e', '#4338ca', '#1d4ed8', '#334155', '#6d28d9', '#0e7490', '#3461e0', '#5b21b6', '#1f2937', '#0369a1', '#4c1d95'];
+const clientInkByName = name => {
   const n = (name || 'Unassigned').trim(); let h = 0;
   for (let i = 0; i < n.length; i++) h = (h * 31 + n.charCodeAt(i)) >>> 0;
   return CLIENT_INKS[h % CLIENT_INKS.length];
+};
+// names: every client on the page, so the deal is stable while the set is.
+const clientInkMap = names => {
+  const m = {};
+  [...new Set(names)].sort((a, b) => a.localeCompare(b)).forEach((n, i) => { m[n] = CLIENT_INKS[i % CLIENT_INKS.length]; });
+  return m;
+};
+// The leg a sample is on right now, for the glance: the client leg once it has
+// a number, else the factory leg. Null when nothing has shipped.
+const legOf = r => {
+  const x = latestRound(r); if (!x) return null;
+  if (x.client_tracking_number) return { label: 'To client', carrier: x.client_carrier, number: x.client_tracking_number, when: x.client_sent_date };
+  if (x.tracking_number) return { label: 'From factory', carrier: x.carrier, number: x.tracking_number, when: x.sent_date };
+  return null;
 };
 const initialsOf = name => (name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
 
 // ── THE CLIENT TILE ─────────────────────────────────────────────────────────
 // A folder, in the client's colour, white lettering. The mark is the initials;
 // the lines under the name are what is in play and what KUI is waiting on.
-function ClientTile({ name, list, onOpen }) {
+function ClientTile({ name, list, ink, carriers, onOpen }) {
   const c = clientRollup(list);
-  const ink = clientInk(name);
+  // The most recently shipped leg across the client's products.
+  const leg = list.map(r => ({ r, l: legOf(r) })).filter(z => z.l).sort((a, b) => ((a.l.when || '') < (b.l.when || '') ? 1 : -1))[0] || null;
   const owe = c.onUs > 0 || c.stale > 0;
   const chips = [
     c.sampling.length ? c.sampling.length + ' sampling' : null,
@@ -3602,9 +3636,9 @@ function ClientTile({ name, list, onOpen }) {
     c.open.length === 0 ? 'Nothing in play' : null,
   ].filter(Boolean);
   return (
-    <button onClick={onOpen}
+    <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={e=>{ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
       style={{textAlign:'left',background:ink,color:'#fff',border:'none',borderRadius:'14px',padding:'18px 18px 16px',
-              cursor:'pointer',fontFamily:T.sans,display:'flex',flexDirection:'column',gap:'10px',minHeight:'168px',
+              cursor:'pointer',fontFamily:T.sans,display:'flex',flexDirection:'column',gap:'10px',minHeight:'176px',
               boxShadow:'0 1px 2px rgba(15,23,41,.12), 0 6px 18px -8px rgba(15,23,41,.35)',position:'relative'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
         <div style={{width:'42px',height:'42px',borderRadius:'11px',background:'rgba(255,255,255,.18)',display:'flex',alignItems:'center',
@@ -3617,10 +3651,21 @@ function ClientTile({ name, list, onOpen }) {
       <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
         {chips.map(t => <span key={t} style={{fontSize:'11.5px',fontWeight:600,background:'rgba(255,255,255,.2)',borderRadius:'999px',padding:'3px 9px'}}>{t}</span>)}
       </div>
-      <div style={{fontSize:'12.5px',color:'rgba(255,255,255,.85)',marginTop:'auto',lineHeight:1.45}}>
-        {c.next ? 'Waiting on: ' + c.next.toLowerCase() : c.items ? c.items + ' action item' + (c.items === 1 ? '' : 's') : c.last ? 'Updated ' + shortDate(c.last) : ''}
+      <div style={{marginTop:'auto'}}>
+        {leg && (
+          <div style={{fontSize:'12px',color:'rgba(255,255,255,.85)',lineHeight:1.45,marginBottom:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+            <span style={{opacity:.8}}>{leg.label}{leg.carrier ? ' · ' + leg.carrier : ''} </span>
+            <a href={trackingUrl(leg.carrier, leg.number, carriers) || undefined} target="_blank" rel="noopener noreferrer"
+               onClick={e=>e.stopPropagation()} title={'Track ' + leg.number}
+               style={{color:'#fff',fontFamily:T.mono,fontSize:'11.5px',fontWeight:600,textDecoration:'underline',textUnderlineOffset:'3px',textDecorationColor:'rgba(255,255,255,.5)'}}>
+              {leg.number} ↗</a>
+          </div>
+        )}
+        <div style={{fontSize:'12.5px',color:'rgba(255,255,255,.85)',lineHeight:1.45}}>
+          {c.next ? 'Waiting on: ' + c.next.toLowerCase() : c.items ? c.items + ' action item' + (c.items === 1 ? '' : 's') : c.last ? 'Updated ' + shortDate(c.last) : ''}
+        </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -3789,6 +3834,7 @@ function ActionItems({ r, staff, userEmail, onTouched }) {
 function Consignment({ r, staff, userEmail, carriers, busy, onStage, onOpenCard, onTouched, last }) {
   const p = r.products || {};
   const x = latestRound(r);
+  const leg = legOf(r);
   const [station, setStation] = useState(null);   // the station form that is open
   const inSampling = SAMPLING_STAGES.includes(r.stage);
   const roundLine = x ? 'Round ' + x.round + (x.sample_type ? ', ' + sampleTypeLabel(x.sample_type).toLowerCase() : '')
@@ -3806,6 +3852,14 @@ function Consignment({ r, staff, userEmail, carriers, busy, onStage, onOpenCard,
             {roundLine && <span>{roundLine}</span>}
             {r.days !== null && r.stage && r.stage !== ARCHIVED && <span>{r.days} day{r.days === 1 ? '' : 's'} in {stageLabel(r.stage).toLowerCase()}</span>}
           </div>
+          {leg && (
+            <div style={{display:'inline-flex',alignItems:'center',gap:'8px',marginTop:'8px',padding:'5px 10px',borderRadius:'6px',
+                         background:T.soft,border:'1px solid ' + T.line,fontSize:'12px',color:T.muted}}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z"/><circle cx="7" cy="18" r="1.6"/><circle cx="17" cy="18" r="1.6"/></svg>
+              <span>{leg.label}{leg.carrier ? ' · ' + leg.carrier : ''}{leg.when ? ' · ' + shortDate(leg.when) : ''}</span>
+              <TrackingLink number={leg.number} url={trackingUrl(leg.carrier, leg.number, carriers)} />
+            </div>
+          )}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
           {/* stage control: a segmented row, the current stage in its colour */}
@@ -3840,7 +3894,7 @@ function Consignment({ r, staff, userEmail, carriers, busy, onStage, onOpenCard,
         <div>
           <NotesPanel staff={staff} table="program_notes" keyCol="program_id" keyId={r.id}
             insertExtra={{ source: 'manual', stage: r.stage || null }} extraCol="source" extraDefault="manual"
-            quietExtras={['manual', 'round']} nullCol="round_id" selectExtra="stage,round_no"
+            quietExtras={['manual', 'round']} selectExtra="stage,round_no"
             labelOf={n => n.round_no ? 'Round ' + n.round_no : (n.stage ? stageLabel(n.stage) : null)}
             reloadKey={(r.rounds || []).map(y => y.id).join(',') + '-' + r.noteCount}
             title={'Notes' + (r.noteCount ? ' (' + r.noteCount + ')' : '')} programId={r.id} userEmail={userEmail} onTouched={onTouched} />
@@ -3851,7 +3905,7 @@ function Consignment({ r, staff, userEmail, carriers, busy, onStage, onOpenCard,
 }
 
 // ── THE DETAIL PANE ─────────────────────────────────────────────────────────
-function ClientDetail({ name, list, staff, userEmail, carriers, saving, onStage, onOpenCard, onTouched, onBack }) {
+function ClientDetail({ name, list, ink, staff, userEmail, carriers, saving, onStage, onOpenCard, onTouched, onBack }) {
   const c = clientRollup(list);
   const [showArchived, setShowArchived] = useState(false);
   const order = { sampling:0, revision:0, quoted:1, testing:2, production:3, shipped:4 };
@@ -3863,12 +3917,19 @@ function ClientDetail({ name, list, staff, userEmail, carriers, saving, onStage,
     c.quoting.length ? c.quoting.length + ' quoting' : null,
     c.onUs ? c.onUs + ' item' + (c.onUs === 1 ? '' : 's') + ' waiting on KUI' : null,
   ].filter(Boolean);
-  const ink = clientInk(name);
   return (
     <div style={{minWidth:0}}>
-      <header style={{background:ink,color:'#fff',borderRadius:'14px',padding:'20px 24px 22px',marginBottom:'6px'}}>
-        <button onClick={onBack} style={{background:'rgba(255,255,255,.16)',color:'#fff',border:'none',borderRadius:'999px',padding:'6px 12px',
-                fontSize:'12.5px',fontWeight:600,cursor:'pointer',fontFamily:T.sans,marginBottom:'14px'}}>All clients</button>
+      <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'12px'}}>
+        <button type="button" onClick={onBack}
+          style={{display:'inline-flex',alignItems:'center',gap:'8px',background:'#fff',color:T.ink,border:'1px solid ' + T.line,borderRadius:'10px',
+                  padding:'8px 14px 8px 11px',fontSize:'13px',fontWeight:600,cursor:'pointer',fontFamily:T.sans,boxShadow:'0 1px 2px rgba(15,23,41,.04)'}}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          All clients
+        </button>
+        <span style={{fontSize:'13px',color:T.faint}}>/</span>
+        <span style={{fontSize:'13px',color:T.muted,fontWeight:500}}>{name}</span>
+      </div>
+      <header style={{background:ink,color:'#fff',borderRadius:'14px',padding:'22px 24px',marginBottom:'6px'}}>
         <div style={{display:'flex',alignItems:'center',gap:'14px'}}>
           <div style={{width:'46px',height:'46px',borderRadius:'12px',background:'rgba(255,255,255,.18)',display:'flex',alignItems:'center',
                        justifyContent:'center',fontSize:'16px',fontWeight:700,flexShrink:0}}>{initialsOf(name)}</div>
@@ -4532,6 +4593,7 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
     const q = norm(ui.search);
     return companies.filter(c => norm(c.name).includes(q) || c.list.some(matches));
   }, [companies, ui.search]);
+  const inkOf = useMemo(() => clientInkMap(companies.map(c => c.name)), [companies]);
   const openCompany = useMemo(() => {
     const c = ui.companyId ? companies.find(x => x.id === ui.companyId) || null : null;
     if (!c || !ui.search) return c;
@@ -4892,7 +4954,7 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
           {[['companies','Clients',companies.length],['board','Board',board.length]].map(([v,l,n]) => {
             const on = (ui.view||'companies') === v;
             return (
-              <button key={v} onClick={()=>{ setUi('view', v); }} aria-pressed={on}
+              <button key={v} onClick={()=>{ setUi('view', v); if (v === 'companies') setUi('companyId', ''); }} aria-pressed={on}
                 style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'8px 15px',borderRadius:'9px',border:'none',cursor:'pointer',
                         fontSize:'13px',fontWeight:600,letterSpacing:'-.01em',fontFamily:'var(--sans)',
                         background:on ? 'var(--ink)' : 'transparent',color:on ? '#fff' : '#5A5A5E',
@@ -4912,7 +4974,8 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
 
       {(ui.view||'companies') === 'companies' && (
         openCompany ? (
-          <ClientDetail key={openCompany.id} name={openCompany.name} list={openCompany.list} staff={staff} userEmail={userEmail} carriers={carriers}
+          <ClientDetail key={openCompany.id} name={openCompany.name} list={openCompany.list} ink={inkOf[openCompany.name] || CLIENT_INKS[0]}
+            staff={staff} userEmail={userEmail} carriers={carriers}
             saving={saving} onStage={setStage} onOpenCard={id => setOpenId(id)} onTouched={load} onBack={()=>setUi('companyId', '')} />
         ) : shownCompanies.length === 0 ? (
           <div style={{background:'#fff',border:'1px solid var(--line)',borderRadius:'14px',padding:'56px 32px',textAlign:'center'}}>
@@ -4920,12 +4983,12 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
               {board.length ? 'No client matches that' : 'No samples in play'}
             </div>
             <div style={{color:'var(--muted)',fontSize:'14px',maxWidth:'460px',margin:'0 auto',lineHeight:1.6}}>
-              {board.length ? 'Try another name, SKU or product.' : 'A product shows up here when someone presses Create Sample Card on a quote, or types a quote ID into the box above.'}
+              {board.length ? 'Try another name, SKU or product.' : 'A product shows up here when someone presses Create Sample Card on a quote, or presses Create card above and picks the quote.'}
             </div>
           </div>
         ) : (
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(236px,1fr))',gap:'16px'}}>
-            {shownCompanies.map(c => <ClientTile key={c.id} name={c.name} list={c.list} onOpen={()=>setUi('companyId', c.id)} />)}
+            {shownCompanies.map(c => <ClientTile key={c.id} name={c.name} list={c.list} ink={inkOf[c.name] || CLIENT_INKS[0]} carriers={carriers} onOpen={()=>setUi('companyId', c.id)} />)}
           </div>
         )
       )}
