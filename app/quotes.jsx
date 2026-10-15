@@ -2173,7 +2173,10 @@ function ContainerPackout({ q, cbmPerCarton }) {
 function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTask, userEmail, staff = [], assignees = TEAM, isMobile = false, onEdit, onDuplicate, onDelete }) {
   const [taskText, setTaskText] = useState("");
   // No default person: the picker starts on "Assign to…" and goes back there
-  // after each task, so nobody is assigned a task by not looking.
+  // after each task, so nobody is assigned a task by not looking. Only that
+  // placeholder is grey; the names, in the list and once picked, are the ink
+  // colour -- set on each option, since an option otherwise takes the grey the
+  // empty select is drawn in.
   const [taskWho, setTaskWho] = useState("");
   const [assigning, setAssigning] = useState(false);
   // Said, not silent, when Enter is pressed on an empty box. Cleared by typing.
@@ -2357,10 +2360,10 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
           </div>
         )}
         <div style={S.taskAddRow}>
-          <select style={{ ...S.input, flex: "0 0 130px", color: taskWho ? undefined : "#9aa3b5" }} value={taskWho}
+          <select style={{ ...S.input, flex: "0 0 130px", color: taskWho ? "#0f1729" : "#9aa3b5" }} value={taskWho}
             onChange={(e) => { setTaskWho(e.target.value); if (taskHint) setTaskHint(""); }} aria-label="Assign to">
-            <option value="" disabled>Assign to…</option>
-            {assignees.map((m) => <option key={m.email} value={m.email}>{m.name}</option>)}
+            <option value="" disabled style={{ color: "#9aa3b5" }}>Assign to…</option>
+            {assignees.map((m) => <option key={m.email} value={m.email} style={{ color: "#0f1729" }}>{m.name}</option>)}
           </select>
           <input style={{ ...S.input, flex: 1 }} value={taskText} disabled={assigning} onChange={(e) => { setTaskText(e.target.value); if (taskHint) setTaskHint(""); }} onKeyDown={(e) => e.key === "Enter" && submitTask()} placeholder="e.g. Get freight quotes" />
           <button className="press-feedback" onClick={submitTask} disabled={assigning || !taskWho || !taskText.trim()}
@@ -4610,10 +4613,10 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
               </div>
             ))}
             <div style={S.taskAddRow}>
-              <select style={{ ...S.input, flex: "0 0 130px", color: qWho ? undefined : "#9aa3b5" }} value={qWho}
+              <select style={{ ...S.input, flex: "0 0 130px", color: qWho ? "#0f1729" : "#9aa3b5" }} value={qWho}
                 onChange={(e) => { setQWho(e.target.value); if (qHint) setQHint(""); }} aria-label="Assign to">
-                <option value="" disabled>Assign to…</option>
-                {assignees.map((m) => <option key={m.email} value={m.email}>{m.name}</option>)}
+                <option value="" disabled style={{ color: "#9aa3b5" }}>Assign to…</option>
+                {assignees.map((m) => <option key={m.email} value={m.email} style={{ color: "#0f1729" }}>{m.name}</option>)}
               </select>
               <input style={{ ...S.input, flex: 1 }} value={qText} onChange={(e) => { setQText(e.target.value); if (qHint) setQHint(""); }}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); queueTask(); } }}
