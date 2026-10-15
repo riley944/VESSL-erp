@@ -841,51 +841,38 @@ function Platform({ session, newQuote = null }) {
   }, []);
 
   const addTask = async (task) => {
-    const { error } = await supabase.from("tasks").insert(task);
+    const { data, error } = await supabase.from("tasks").insert(task).select("id").single();
     if (error) { flash("Couldn't add task: " + error.message); return false; }
     await loadTasks();
     flash("Task assigned to " + nameForEmail(task.assigned_to));
-    notifyTaskAssigned(task); // best-effort email; never blocks task creation
+    notifyTaskAssigned(data && data.id, task); // best-effort email; never blocks task creation
     return true;
   };
 
-  const notifyTaskAssigned = async (task) => {
+  // THE ASSIGNEE'S EMAIL, FROM THE SERVER (/api/tasks/notify). Only the new
+  // task's id goes over: the route re-reads the row and writes the email itself,
+  // from tasks@vessl.io with Reply going to the assigner. The task is already
+  // saved by now, so a failed send says so in a toast that stays until it is
+  // closed -- the assigner may need to tell the person some other way.
+  const notifyTaskAssigned = async (taskId, task) => {
+    if (!task.assigned_to || task.assigned_to.toLowerCase() === (task.assigned_by || "").toLowerCase()) return;
+    const who = nameForEmail(task.assigned_to);
+    const failed = (why) => window._toast?.("Task saved, but the email to " + who + " didn't send" + (why ? " — " + why : ""), "err", null, { sticky: true });
     try {
-      if (!task.assigned_to) return;
-      const e = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-      const who  = nameForEmail(task.assigned_to);
-      const from = nameForEmail(task.assigned_by);
-      const label = task.quote_label
-        ? `<p style="margin:0;color:#64748b;font-size:12.5px">Quote: <strong style="color:#0b1120">${e(task.quote_label)}</strong></p>` : "";
-      const html = `
-        <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:520px;margin:0 auto;padding:8px">
-          <p style="font-size:15px;color:#0b1120;margin:0 0 4px">Hi ${e(who)},</p>
-          <p style="font-size:15px;color:#0b1120;margin:0 0 16px"><strong>${e(from)}</strong> assigned you a task in Vessl:</p>
-          <div style="background:#f6f8fb;border:1px solid #e6eaf0;border-radius:10px;padding:16px 18px;margin:0 0 18px">
-            <p style="margin:0 0 8px;font-size:15px;color:#0b1120;line-height:1.5">${e(task.task)}</p>
-            ${label}
-          </div>
-          <a href="https://orders.vessl.io" style="display:inline-block;background:#0b1530;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 18px;border-radius:8px">Open Vessl &rarr;</a>
-          <p style="color:#94a3b8;font-size:11px;margin:22px 0 0">King Universal &middot; Vessl</p>
-        </div>`;
-      const { data, error } = await supabase.functions.invoke("send-email", {
-        body: {
-          to: task.assigned_to,
-          replyTo: task.assigned_by || undefined,
-          subject: `New task from ${from}`,
-          html,
-        },
+      if (!taskId) { failed("the new task's id did not come back"); return; }
+      const { data: { session: s } } = await supabase.auth.getSession();
+      const token = s && s.access_token;
+      if (!token) { failed("your session has expired"); return; }
+      const res = await fetch("/api/tasks/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ taskId }),
       });
-      if (error) {
-        let why = error.message || "unknown error";
-        try { const ctx = await error.context?.json?.(); if (ctx?.error) why = ctx.error; } catch {}
-        flash("Email didn't send: " + why);
-        return;
-      }
-      if (data && data.ok === false) { flash("Email didn't send: " + (data.error || "unknown")); return; }
-      flash("Email sent to " + who);
+      let out = null;
+      try { out = await res.json(); } catch { out = null; }
+      if (!res.ok || !out || !out.ok) { failed((out && out.error) || "HTTP " + res.status); return; }
     } catch (err) {
-      flash("Email error: " + (err?.message || err));
+      failed(err?.message || String(err));
     }
   };
 
@@ -1119,9 +1106,9 @@ function Platform({ session, newQuote = null }) {
       for (const t of queuedTasks) {
         const task = { quote_id: savedRow.id, quote_label: label, assigned_to: t.assigned_to,
                        assigned_by: userEmail, task: t.task, done: false };
-        const { error } = await supabase.from("tasks").insert(task);
+        const { data: made, error } = await supabase.from("tasks").insert(task).select("id").single();
         if (error) failedTasks.push({ ...t, error: error.message });
-        else { assignedCount += 1; notifyTaskAssigned(task); }
+        else { assignedCount += 1; notifyTaskAssigned(made && made.id, task); }
       }
       await loadTasks();
     }

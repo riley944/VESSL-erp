@@ -775,10 +775,12 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, rol
 const ToastCtx = React.createContext(null);
 function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
-  const push = useCallback((msg, type='ok', action=null) => {
-    const id = Date.now();
+  // opts.sticky keeps the toast up until its x is pressed -- for news the person
+  // must not miss, like a task email that did not go out.
+  const push = useCallback((msg, type='ok', action=null, opts=null) => {
+    const id = Date.now() + Math.random();
     setToasts(p => [...p, { id, msg, type, action }]);
-    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 5000);
+    if (!(opts && opts.sticky)) setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 5000);
   }, []);
   // global bridge for non-hook callers
   useEffect(() => { window._toast = push; return () => { delete window._toast; }; }, [push]);
