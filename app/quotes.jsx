@@ -601,7 +601,14 @@ function qtyMapToRow(map, scales) {
 // ── Per-size figures inside a tier ───────────────────────────────────────────
 // sizeCostFrom and sizeCostToRow live in lib/quoteTiers, so every screen that reads
 // a stored tier reads it through the same pair the form saves with.
+// When freight and duty became two figures on the tier row: commit b1aded7,
+// "Compute duty from the HTS code and split it from freight on the tier row",
+// 12 Aug 2026 12:20 Eastern. A tier saved before this with no duty and a freight
+// figure carries its duty inside that freight (dutyLegacy, below).
+const DUTY_SPLIT_AT = Date.parse("2026-08-12T16:20:05Z");
 function rowToForm(r) {
+  const savedAt = Date.parse(r.freight_duty_updated_at || r.updated_at || "");
+  const beforeDutySplit = isFinite(savedAt) && savedAt < DUTY_SPLIT_AT;
   // Read FIRST: both the deltas and every tier's quantities need it to attribute
   // legacy scale-less entries, so it cannot be computed at the return.
   const scales = toScaleList(r.size_scale);
@@ -636,7 +643,14 @@ function rowToForm(r) {
     // be written back -- which is the point. This is a transitional concern about 19
     // tiers, and duty_only is already sitting in that jsonb as a dead key nobody
     // reads; a second one would outlive its purpose the same way.
-    const legacyFreight = (t.duty == null || t.duty === "") && (air !== "" || ocean !== "");
+    //
+    // ONLY BEFORE THE SPLIT. A blank duty on a tier saved since freight and duty
+    // became two boxes means duty was never entered, not that it sits in freight
+    // (Broughton BRO-001, saved 2 Oct, freight 9 and duty blank, read "incl."). So
+    // the flag needs the quote's freight-and-duty stamp -- or, without one, its
+    // last save -- to fall before DUTY_SPLIT_AT; after it, a blank duty is just
+    // blank and every screen shows "—".
+    const legacyFreight = beforeDutySplit && (t.duty == null || t.duty === "") && (air !== "" || ocean !== "");
     return { qty: t.qty ?? "", landed: t.landed ?? "", ship, freightAir: air, freightOcean: ocean, client: t.client ?? "", fb: Array.isArray(t.fb) ? t.fb : null, duty_only: t.duty_only || false, duty: t.duty ?? "", dutyManual: !!t.dutyManual, dutyLegacy: legacyFreight, sizeQty: qtyMapFrom(t.sizeQty, scales), sizeCost: sizeCostFrom(t.sizeCost, scales) };
   });
   return {
