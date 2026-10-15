@@ -2829,7 +2829,7 @@ function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClo
                   </div>
                 </div>
                 <label style={{ display: "block" }}>
-                  <span style={lbl}>Accent colour</span>
+                  <span style={lbl}>Accent color</span>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                     <input data-noguard type="color" value={accent} onChange={(e) => setAccent(e.target.value)} style={{ width: 40, height: 32, border: "1px solid #e7eaf0", borderRadius: 8, padding: 2, background: "#fff" }} />
                     <span style={{ fontSize: 12.5, color: "#6a7488", fontFamily: "monospace" }}>{accent}</span>
@@ -2848,7 +2848,7 @@ function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClo
               )}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 12 }}>
                 {field("Company title", head.company, (v) => setH("company", v))}
-                {field("Programme title", head.programme, (v) => setH("programme", v))}
+                {field("Program title", head.programme, (v) => setH("programme", v))}
                 {field("Prepared by", head.preparedBy, (v) => setH("preparedBy", v))}
                 {field("Date", head.date, (v) => setH("date", v))}
               </div>
