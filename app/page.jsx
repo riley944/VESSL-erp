@@ -822,7 +822,7 @@ const useToast = () => React.useContext(ToastCtx);
 // who it is for and who asked, and the quote it belongs to. A tick stamps
 // done_at as the Quotes panel does. A task added here is the signed-in person's
 // own, with no quote -- the Quotes page is where a task is assigned to somebody
-// on a quote. Names come from nameFromEmail, as the top bar's do.
+// on a quote. Names come from staff_profiles, else nameFromEmail.
 //
 // THREE VIEWS OF THE ONE LIST (15 Oct). Assigned to me, the default; Created by
 // me; and All, for an admin only. Filtered here on the signed-in email -- every
@@ -836,6 +836,8 @@ const useToast = () => React.useContext(ToastCtx);
 // MM/DD/YYYY, as a date field shows it.
 const taskDay = s => { const d = s ? new Date(s) : null; return d && !isNaN(d) ? d.toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' }) : ''; };
 const TASK_VIEWS = [['mine', 'Assigned to me'], ['created', 'Created by me'], ['all', 'All']];
+// Open is red, done is green -- the Testing tab's Expired and OK.
+const TASK_TONE = { open: { color:'#B91C1C', bg:'#FEE2E2' }, done: { color:'#15803D', bg:'#15803D' } };
 function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
   // NOT A GUARDED FORM. The x closes at once, never asking: the panel stays
   // mounted while it is shut, so a half-typed task is still in the box when it
@@ -848,6 +850,18 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
     if (!open) return;
     SB.from('tasks').select('*').order('created_at').then(({ data }) => { setTasks(data||[]); setLoading(false); });
   }, [open]);
+  // NAMES FROM staff_profiles, the source the task email uses, read once on the
+  // first open. An address with no profile -- or a read that failed -- falls
+  // back to nameFromEmail.
+  const [people, setPeople] = useState(null);
+  useEffect(() => {
+    if (!open || people) return;
+    SB.from('staff_profiles').select('email,full_name').then(({ data }) => setPeople(data || []));
+  }, [open, people]);
+  const nameOf = email => {
+    const p = (people || []).find(x => (x.email || '').toLowerCase() === (email || '').toLowerCase());
+    return (p && (p.full_name || '').trim()) || nameFromEmail(email);
+  };
   // The quote card's Assign pattern: "Adding…" while the insert runs, the box
   // cleared only once it is saved, a toast either way.
   const [adding, setAdding] = useState(false);
@@ -861,8 +875,8 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
     if (error) { toast('Could not add the task — ' + error.message, 'err'); return; }
     if (data) {
       setTasks(p => [...p, data]); setInput('');
-      toast('Task assigned to ' + (nameFromEmail(userEmail) || 'you'), 'ok');
-      notifyTaskAssigned(data.id, nameFromEmail(userEmail) || 'you');
+      toast('Task assigned to ' + (nameOf(userEmail) || 'you'), 'ok');
+      notifyTaskAssigned(data.id, nameOf(userEmail) || 'you');
     }
   };
   const toggleTask = async (t) => {
@@ -911,12 +925,13 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
          shown.length===0 ? <div className="task-empty">{emptyText}</div> :
          shown.map(t => (
           <div key={t.id} className="task-item" onClick={()=>toggleTask(t)}>
-            <input type="checkbox" className="task-cb" checked={t.done} readOnly />
+            <input type="checkbox" className="task-cb" checked={t.done} readOnly aria-label={t.done ? 'Done' : 'Open'}
+              style={{borderColor:TASK_TONE[t.done ? 'done' : 'open'].color,background:TASK_TONE[t.done ? 'done' : 'open'].bg}} />
             <div className="task-body">
               <div className={'task-title'+(t.done?' done':'')}>{t.task}</div>
               <div className="task-meta">
-                {[t.quote_label, t.assigned_to ? 'For ' + nameFromEmail(t.assigned_to) : null,
-                  t.assigned_by ? 'by ' + nameFromEmail(t.assigned_by) : null, taskDay(t.created_at)].filter(Boolean).join(' · ')}
+                {[t.quote_label, t.assigned_to ? 'For ' + nameOf(t.assigned_to) : null,
+                  t.assigned_by ? 'by ' + nameOf(t.assigned_by) : null, taskDay(t.created_at)].filter(Boolean).join(' · ')}
               </div>
             </div>
           </div>
