@@ -34,6 +34,11 @@ import { tierFreight, activeFreight, moldPerUnit, effectiveQty, tierTotalCost, s
 // Reading a tier's per-size figures, and the HTS rate, the same way on every screen.
 import { isBagMode, sizeCostFields, sizeCostFrom, sizeCostToRow, rateFromRows, htsRateFor, sizeLines } from "@/lib/quoteTiers";
 import { BANK_FIELDS } from "@/lib/bankFields";
+import ExportMenu from "@/app/components/ExportMenu";
+import { loadExcelJS } from "@/lib/excel";
+import { buildPriceSheet } from "@/lib/workbook";
+import { safeName } from "@/lib/exportFormats";
+import { buildModel, toWorkbookSheet, toCsv, toHtml, longDate, DEFAULT_ACCENT, NOTE_DDP, NOTE_BREAKDOWN, NOTE_APPROVAL } from "@/lib/clientSheet";
 import { CodeModal } from "@/app/components/CodeModal";
 // HtsField used to live in this file. It moved to app/components so the Edit
 // Product modal could use the same control rather than a second copy -- the
@@ -903,7 +908,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
   }, []);
 
   const loadStaff = useCallback(async () => {
-    const { data, error } = await supabase.from("staff_profiles").select("id,email,full_name")
+    const { data, error } = await supabase.from("staff_profiles").select("id,email,full_name,job_title")
       .order("full_name", { nullsFirst: false });
     if (!error) setStaff(data || []);
     setStaffFailed(!!error);
@@ -1357,7 +1362,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
       )}
 
       {showSend && (
-        <SendToClientModal clients={clients} onClose={() => setShowSend(false)} />
+        <SendToClientModal clients={clients} staff={staff} userEmail={userEmail} onSaved={load} onClose={() => setShowSend(false)} />
       )}
 
       {/* ── THE SECTION SWITCHER ── the Codes page's pill control, with a count
@@ -2592,123 +2597,25 @@ async function printQuote(q, dutyRate = null) {
   if (w) { w.document.open(); w.document.write(html); w.document.close(); }
 }
 
-// ---------- payment block ----------
-// SIX LABELLED LINES, NOT A BLOB. Script 35 replaced kui_settings.ach_info with
-// six columns so this can print only what is known -- a wire route with no ACH
-// routing number now prints five lines instead of a paragraph with a dangling
-// empty label.
+// ---------- Send to Client: the client price sheet ----------
+// Company, then the quotes, then the sheet's settings, then Excel, PDF or CSV.
+// The sheet itself -- tables by quantity set, size bands, the Delivered and
+// Breakdown views -- is lib/clientSheet.js; the Excel layout is buildPriceSheet
+// in lib/workbook.js. Nothing here shows a cost or a margin.
 //
-// THE LIST IS IMPORTED, not repeated. It lived here as a second copy for about an
-// hour, mirroring the one in page.jsx by hand, which is the arrangement that put
-// duty in one margin calculation and not the other. lib/bankFields.js is the
-// single definition and lib/tierCost.js is the precedent.
-//
-// THE EMPTY CASE IS THE IMPORTANT ONE. The block renders only when at least one
-// field has content after trimming, so a row of blank strings -- which is what
-// the table holds until somebody fills it in -- produces exactly nothing here,
-// identical to the no-row behaviour that predates the table existing.
-function bankBlock(settings) {
-  const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-  const rows = BANK_FIELDS
-    .map(([k, label]) => [label, String(settings?.[k] ?? '').trim()])
-    .filter(([, v]) => v !== '');
-  if (rows.length === 0) return '';
-  const lines = rows.map(([label, v]) =>
-    `<div style="margin-bottom:3px"><span style="display:inline-block;min-width:104px;color:#8a8478">${esc(label)}</span><span style="color:#3a3a36">${esc(v).replace(/\n/g, '<br>')}</span></div>`
-  ).join('');
-  return `<div style="margin-top:16px;padding:14px 16px;border:1px solid #e3e3dd;border-radius:8px;background:#faf9f5"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8a8478;margin-bottom:6px">Payment / Wire Instructions</div><div style="font-size:12.5px;line-height:1.6">${lines}</div></div>`;
-}
+// Item, Details and Color are editable per quote in the settings step. Details
+// and Color save back to the quote (client_details, client_color, script 116)
+// when the sheet is exported, so the next sheet starts from them; Item is for
+// this sheet only. A quote with no client prices is still included, and its
+// prices read "—".
+const downloadBlob = (blob, filename) => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+};
 
-// ---------- client-safe sheet ----------
-function printClientSheet(clientName, quotesArr, settings, vendor, logoImg) {
-  const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-  const productBlocks = quotesArr.map((q) => {
-    // Quantity from the size mix where there is one. Per size, the price only --
-    // the one figure this sheet has ever shown -- and only where a size's price
-    // differs from the tier's.
-    const rows = (q.tiers || [])
-      .filter((t) => tierQtyShown(t) && t.client)
-      .map((t) => {
-        const sz = sizeLines(t, q.sizeScales, q.sizeDeltas);
-        return `<tr>
-        <td class="qty">${tierQtyShown(t).toLocaleString()}</td>
-        <td class="r price">$${fmtUnit(t.client)}</td>
-      </tr>${sz.differs ? `<tr><td colspan="2" class="sizes">${esc(sz.lines.map((l) => sizeLineText(l, false)).join(" · "))}</td></tr>` : ""}`;
-      }).join("");
-    if (!rows) return "";
-    return `
-      <div class="product">
-        <div class="phead">
-          <div class="pname">${esc(q.product || "Product")}</div>
-          ${q.sku ? `<div class="psku">SKU ${esc(q.sku)}</div>` : ""}
-        </div>
-        <table>
-          <thead><tr><th>Quantity</th><th class="r">Price / Unit</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
-  }).filter(Boolean).join("");
-
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Quote — ${esc(clientName)}</title>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600&display=swap');
-    @page { margin: 0; size: letter; }
-    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    body { font-family: 'Inter', Arial, sans-serif; color: #1f2937; margin: 0; background: #fff; }
-    .sheet { padding: 50px 56px 44px; max-width: 800px; margin: 0 auto; }
-    .head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1f2937; padding-bottom: 22px; margin-bottom: 30px; }
-    .mark { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
-    .logoimg { height: 42px; width: auto; display: block; }
-    .brandsub { font-size: 9.5px; letter-spacing: 2.5px; color: #6e7681; text-transform: uppercase; margin-top: 2px; }
-    .docmeta { text-align: right; font-size: 12px; color: #8b949e; line-height: 1.7; }
-    .docmeta b { color: #1f2937; }
-    .title { font-family: 'Fraunces', serif; font-size: 30px; font-weight: 600; margin: 0 0 4px; }
-    .titlesub { font-size: 13px; color: #58a6ff; margin-bottom: 34px; font-weight: 500; }
-    .product { margin-bottom: 30px; page-break-inside: avoid; }
-    .phead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
-    .pname { font-family: 'Fraunces', serif; font-size: 19px; font-weight: 600; }
-    .psku { font-size: 12px; color: #6e7681; letter-spacing: 0.5px; }
-    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-    thead th { text-align: right; background: #1a2238; color: #f4f7fb; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.7px; padding: 11px 14px; font-weight: 600; }
-    thead th:first-child { text-align: left; border-radius: 6px 0 0 0; }
-    thead th:last-child { border-radius: 0 6px 0 0; }
-    tbody td { padding: 11px 14px; border-bottom: 1px solid #eee3d0; }
-    tbody tr:nth-child(even) { background: #f7f8fa; }
-    td.qty { font-weight: 600; font-family: 'Fraunces', serif; font-size: 15px; }
-    td.r { text-align: right; font-variant-numeric: tabular-nums; }
-    td.price { font-weight: 700; font-size: 14px; color: #1f2937; }
-    td.sizes { font-size: 11px; color: #4b5563; padding-top: 0; font-variant-numeric: tabular-nums; }
-    .foot { margin-top: 40px; padding-top: 14px; border-top: 1px solid #e7ddca; font-size: 10px; color: #b3a488; }
-    .terms { font-size: 11px; color: #8b949e; margin-top: 6px; line-height: 1.5; }
-  </style></head><body>
-    <div class="sheet">
-      <div class="head">
-        <div class="mark">
-          ${logoImg ? `<img src="${logoImg}" alt="King Universal" class="logoimg" />` : ""}
-          <div class="brandsub">Product Development &amp; Sourcing</div>
-        </div>
-        <div class="docmeta">
-          <div>Pricing Quote</div>
-          <div><b>${esc(new Date().toLocaleDateString())}</b></div>
-        </div>
-      </div>
-      <div class="title">Pricing Quote</div>
-      <div class="titlesub">Prepared for ${esc(clientName)}${vendor?` &middot; Vendor #${esc(vendor)}`:''}</div>
-      ${productBlocks || '<div style="color:#6e7681">No priced quantities to show.</div>'}
-      <div class="foot">
-        ${settings?.company_name ? esc(settings.company_name) : 'King Universal Inc.'}
-        ${(settings?.contact_name||settings?.email||settings?.phone||settings?.office_phone||settings?.address) ? `<div class="terms">${[settings.contact_name,settings.email,settings.phone,settings.office_phone].filter(Boolean).map(esc).join(' &middot; ')}${settings.address?'<br>'+esc(settings.address).replace(/\n/g,'<br>'):''}</div>` : ''}
-        ${bankBlock(settings)}
-        <div class="terms">Pricing shown is per unit and quoted in USD. Quantities and pricing are estimates valid for 30 days and subject to final confirmation. Prepared by ${settings?.company_name?esc(settings.company_name):'King Universal Inc.'}.</div>
-      </div>
-    </div>
-  </body></html>`;
-  return html;
-}
-
-// ---------- Send to Client modal ----------
-function SendToClientModal({ clients, onClose }) {
-  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
+function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClose }) {
+  const { ref: cardRef, guardedClose, registerSource } = useDirtyGuard(onClose);
   const [step, setStep] = useState("client");
   const [chosenClient, setChosenClient] = useState(null);
   const [picked, setPicked] = useState({});
@@ -2724,47 +2631,151 @@ function SendToClientModal({ clients, onClose }) {
     else setPicked(Object.fromEntries(clientQuotes.map((q) => [q.id, true])));
   };
 
-  const generate = async () => {
-    const win = window.open("", "_blank");
-    if (win) win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Preparing sheet…</body>');
-    let settings = null;
-    try { const { data } = await SB.from('kui_settings').select('*').eq('id',1).single(); settings = data; } catch(e){}
-    let vendor = null;
-    try { const { data } = await SB.from('companies').select('vendor_number').eq('type','client').ilike('name',chosenClient||'').limit(1); vendor = (data&&data[0])?data[0].vendor_number:null; } catch(e){}
-    const logoImg = await kuLogoDataUri();
-    const html = printClientSheet(chosenClient, pickedQuotes, settings, vendor, logoImg);
-    if (win) {
-      win.document.open(); win.document.write(html); win.document.close();
-      setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} }, 400);
-    } else {
-      const url = URL.createObjectURL(new Blob([html],{type:'text/html'}));
-      const a = document.createElement('a'); a.href=url; a.download=`quote-${chosenClient||'client'}.html`;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(()=>URL.revokeObjectURL(url),4000);
+  // ── THE SETTINGS STEP ──────────────────────────────────────────────────────
+  const [view, setView] = useState("ddp");
+  const [accent, setAccent] = useState(DEFAULT_ACCENT);
+  const [withPayment, setWithPayment] = useState(false);
+  const [head, setHead] = useState(null);           // the header fields, filled on entering the step
+  const [edits, setEdits] = useState({});           // { [quoteId]: { item, details, color } }
+  const [settings, setSettings] = useState(null);   // kui_settings
+  const [vendor, setVendor] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState("");
+  // Closing asks only while a Details or Color edit has not reached its quote --
+  // the header fields are this sheet's alone, so the settings inputs opt out of
+  // the form snapshot (data-noguard) and report through this flag instead.
+  const unsaved = useRef(false);
+  unsaved.current = pickedQuotes.some((q) => {
+    const e = edits[q.id];
+    return !!e && ((e.details || "").trim() !== (q.clientDetails || "").trim() || (e.color || "").trim() !== (q.clientColor || "").trim());
+  });
+  useEffect(() => registerSource(unsaved), [registerSource]);
+  const setH = (k, v) => setHead((h) => ({ ...h, [k]: v }));
+  const setSign = (k, v) => setHead((h) => ({ ...h, signoff: { ...h.signoff, [k]: v } }));
+  const setEdit = (id, k, v) => setEdits((e) => ({ ...e, [id]: { ...e[id], [k]: v } }));
+
+  const toSettings = async () => {
+    setStep("settings"); setMsg("");
+    let s = settings;
+    if (!s) {
+      try { const { data } = await SB.from("kui_settings").select("*").eq("id", 1).single(); s = data || {}; } catch (e) { s = {}; }
+      setSettings(s);
     }
+    try {
+      const { data } = await SB.from("companies").select("vendor_number").eq("type", "client").ilike("name", chosenClient || "").limit(1);
+      setVendor(data && data[0] ? data[0].vendor_number : null);
+    } catch (e) { setVendor(null); }
+    const co = (s && s.company_name) || "King Universal Inc.";
+    const me = staff.find((p) => (p.email || "").toLowerCase() === userEmail.toLowerCase()) || {};
+    setHead((h) => h || {
+      company: (chosenClient || "").toUpperCase(),
+      programme: "UNIT PRICING",
+      preparedBy: "Prepared by " + co,
+      date: longDate(new Date()),
+      notes: [NOTE_DDP, NOTE_APPROVAL],
+      signoff: { name: me.full_name || "", title: me.job_title || "", company: co },
+    });
+    setEdits((prev) => {
+      const next = { ...prev };
+      pickedQuotes.forEach((q) => { if (!next[q.id]) next[q.id] = { item: q.product || "", details: q.clientDetails || "", color: q.clientColor || "" }; });
+      return next;
+    });
+  };
+  // The first footer line follows the view, unless somebody has rewritten it.
+  const pickView = (v) => {
+    setView(v);
+    setHead((h) => {
+      if (!h) return h;
+      const [first, ...rest] = h.notes;
+      const swap = v === "breakdown" && first === NOTE_DDP ? NOTE_BREAKDOWN : v === "ddp" && first === NOTE_BREAKDOWN ? NOTE_DDP : first;
+      return { ...h, notes: [swap, ...rest] };
+    });
   };
 
+  // Details and Color that differ from the quote, written back before export.
+  const saveBack = async () => {
+    const changed = pickedQuotes.filter((q) => {
+      const e = edits[q.id] || {};
+      return (e.details || "").trim() !== (q.clientDetails || "").trim() || (e.color || "").trim() !== (q.clientColor || "").trim();
+    });
+    for (const q of changed) {
+      const e = edits[q.id] || {};
+      const { error } = await supabase.from("quotes").update({
+        client_details: (e.details || "").trim() || null, client_color: (e.color || "").trim() || null,
+        updated_at: stamp(), updated_by: userEmail || null,
+      }).eq("id", q.id);
+      if (error) return "Details and Color for " + (q.sku || q.product || "a quote") + " did not save — " + error.message;
+    }
+    if (changed.length && onSaved) await onSaved();
+    return "";
+  };
+
+  const exportAs = async (fmt) => {
+    if (busy || !head) return;
+    // The PDF window opens on the click, before any wait, or a pop-up blocker takes it.
+    let win = null;
+    if (fmt === "pdf") {
+      win = window.open("", "_blank");
+      if (!win) { setMsg("The PDF opens in a new window. Allow pop-ups for this site and try again."); return; }
+      win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Preparing the sheet…</body>');
+    }
+    setBusy(fmt); setMsg("");
+    try {
+      const saveErr = await saveBack();
+      const payment = withPayment && settings ? {
+        vendor,
+        bank: BANK_FIELDS.map(([k, label]) => [label, String((settings || {})[k] ?? "").trim()]).filter(([, v]) => v !== ""),
+      } : null;
+      const model = buildModel({ quotes: pickedQuotes, edits, header: head, view, accent, payment });
+      const day = new Date().toISOString().slice(0, 10);
+      const base = "KUI-Price-Sheet-" + safeName(chosenClient || "client") + "-" + day;
+      if (fmt === "xlsx") {
+        const ExcelJS = await loadExcelJS();
+        const buf = await buildPriceSheet(ExcelJS, toWorkbookSheet(model)).xlsx.writeBuffer();
+        downloadBlob(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), base + ".xlsx");
+      } else if (fmt === "csv") {
+        downloadBlob(new Blob(["﻿" + toCsv(model)], { type: "text/csv;charset=utf-8" }), base + ".csv");
+      } else if (win) {
+        win.document.open(); win.document.write(toHtml(model)); win.document.close();
+      }
+      if (saveErr) setMsg(saveErr);
+    } catch (e) {
+      if (win) { try { win.close(); } catch (x) {} }
+      setMsg("Could not build the sheet — " + ((e && e.message) || e));
+    }
+    setBusy("");
+  };
+
+  const lbl = { ...S.fieldLabel, display: "block", marginBottom: 4 };
+  const inp = { ...S.input, padding: "8px 10px", fontSize: 13 };
+  const field = (label, value, onChange, extra) => (
+    <label style={{ display: "block", minWidth: 0, ...(extra || {}) }}>
+      <span style={lbl}>{label}</span>
+      <input data-noguard style={inp} value={value} onChange={(e) => onChange(e.target.value)} />
+    </label>
+  );
+
   return (
-    // Same as TasksPanel: no controls, so it closes silently. Guarded anyway so
-    // every modal in this file goes through one path.
+    // No controls on the first two steps, so they close silently; the settings
+    // step holds typing, and closing then asks first.
     <div style={S.overlay} onClick={guardedClose}>
-      <div ref={cardRef} style={{ ...S.modal, maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
+      <div ref={cardRef} style={{ ...S.modal, maxWidth: step === "settings" ? 860 : 560 }} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
           {/* modalTitle stays serif for our own wording and switches to sans the
               moment it is holding a client name instead. */}
-          <h2 style={step === "client" ? S.modalTitle : { ...S.modalTitle, fontFamily: SANS }}>{step === "client" ? "Send Quote Sheet" : chosenClient}</h2>
+          <h2 style={step === "client" ? S.modalTitle : { ...S.modalTitle, fontFamily: SANS }}>{step === "client" ? "Client Price Sheet" : chosenClient}</h2>
           <button style={S.iconBtn} onClick={guardedClose}><X size={18} /></button>
         </div>
-        <div style={{ padding: "20px 26px 24px", maxHeight: "62vh", overflowY: "auto" }}>
+        <div style={{ padding: "20px 26px 24px", maxHeight: "64vh", overflowY: "auto" }}>
           {step === "client" && (
             <>
-              <p style={{ fontSize: 13.5, color: "#6a7488", marginTop: 0 }}>Pick a client, then choose which quotes to include. The sheet shows only product, SKU, quantity, and price — no cost or margin.</p>
+              <p style={{ fontSize: 13.5, color: "#6a7488", marginTop: 0 }}>Pick a client, choose the quotes, then set up the sheet. It shows the client's prices per order quantity, delivered or broken down into freight and duty — never your cost or margin.</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {realClients.length === 0 && <div style={{ color: "#6a7488" }}>No clients yet.</div>}
                 {realClients.map((c) => {
                   const col = clientColor(c.name);
                   return (
-                    <button key={c.name} style={S.sendClientRow} onClick={() => { setChosenClient(c.name); setStep("quotes"); }}>
+                    <button key={c.name} style={S.sendClientRow} onClick={() => { setChosenClient(c.name); setStep("quotes"); setHead(null); setEdits({}); }}>
                       <span style={{ ...S.clientAvatar, width: 34, height: 34, fontSize: 13, background: col.avatar, color: col.text }}>{c.name.slice(0, 2).toUpperCase()}</span>
                       <span style={{ flex: 1, fontWeight: 600, color: "#0f1729" }}>{c.name}</span>
                       <span style={{ fontSize: 12.5, color: "#6a7488" }}>{c.quotes.length} {c.quotes.length === 1 ? "quote" : "quotes"}</span>
@@ -2786,14 +2797,14 @@ function SendToClientModal({ clients, onClose }) {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {clientQuotes.map((q) => {
-                  const priced = (q.tiers || []).some((t) => t.qty && t.client);
+                  const priced = (q.tiers || []).some((t) => effectiveQty(t) > 0 && Number(t.client) > 0);
                   return (
-                    <button key={q.id} style={{ ...S.sendQuoteRow, opacity: priced ? 1 : 0.5 }} onClick={() => priced && toggle(q.id)} disabled={!priced}>
+                    <button key={q.id} style={S.sendQuoteRow} onClick={() => toggle(q.id)}>
                       {picked[q.id] ? <CheckCircle2 size={18} color="#3f7d5a" /> : <Circle size={18} color="#bba" />}
                       <span style={{ flex: 1, textAlign: "left" }}>
                         <span style={{ fontWeight: 600, color: "#0f1729" }}>{q.sku || "No SKU"}</span>
                         {q.product ? <span style={{ color: "#6a7488", fontSize: 12.5 }}> · {q.product}</span> : null}
-                        {!priced && <span style={{ color: "#c2683a", fontSize: 11.5, display: "block" }}>No priced tiers — can't include</span>}
+                        {!priced && <span style={{ color: "#c2683a", fontSize: 11.5, display: "block" }}>No client prices yet — its prices will read "—"</span>}
                       </span>
                     </button>
                   );
@@ -2801,13 +2812,87 @@ function SendToClientModal({ clients, onClose }) {
               </div>
             </>
           )}
+          {step === "settings" && head && (
+            <>
+              <button style={{ ...S.crumbBtn, marginBottom: 14 }} onClick={() => setStep("quotes")}>
+                <ChevronLeft size={15} /> Back to quotes
+              </button>
+              <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
+                <div>
+                  <span style={lbl}>View</span>
+                  <div style={{ display: "inline-flex", background: "#ECECF0", borderRadius: 10, padding: 3 }}>
+                    {[["ddp", "Delivered (DDP)"], ["breakdown", "Breakdown"]].map(([v, l]) => (
+                      <button key={v} type="button" onClick={() => pickView(v)} aria-pressed={view === v}
+                        style={{ border: "none", borderRadius: 8, padding: "7px 13px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                                 background: view === v ? "#0f1729" : "transparent", color: view === v ? "#fff" : "#5A5A5E" }}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+                <label style={{ display: "block" }}>
+                  <span style={lbl}>Accent colour</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <input data-noguard type="color" value={accent} onChange={(e) => setAccent(e.target.value)} style={{ width: 40, height: 32, border: "1px solid #e7eaf0", borderRadius: 8, padding: 2, background: "#fff" }} />
+                    <span style={{ fontSize: 12.5, color: "#6a7488", fontFamily: "monospace" }}>{accent}</span>
+                    {accent !== DEFAULT_ACCENT && <button type="button" style={S.taskJump} onClick={() => setAccent(DEFAULT_ACCENT)}>KUI navy</button>}
+                  </span>
+                </label>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, color: "#0f1729", paddingBottom: 6 }}>
+                  <input data-noguard type="checkbox" checked={withPayment} onChange={(e) => setWithPayment(e.target.checked)} />
+                  Include payment details
+                </label>
+              </div>
+              {view === "breakdown" && (
+                <p style={{ fontSize: 12.5, color: "#6a7488", margin: "0 0 14px" }}>
+                  Breakdown shows each quantity as product price, freight, duty and delivered total, using the quote's own freight and duty. Where those cannot be worked out the three read "—"; size rows show the delivered price only.
+                </p>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 12 }}>
+                {field("Company title", head.company, (v) => setH("company", v))}
+                {field("Programme title", head.programme, (v) => setH("programme", v))}
+                {field("Prepared by", head.preparedBy, (v) => setH("preparedBy", v))}
+                {field("Date", head.date, (v) => setH("date", v))}
+              </div>
+              <div style={{ display: "grid", gap: 12, marginBottom: 12 }}>
+                {field("Footer note 1", head.notes[0] || "", (v) => setHead((h) => ({ ...h, notes: [v, h.notes[1] || ""] })))}
+                {field("Footer note 2", head.notes[1] || "", (v) => setHead((h) => ({ ...h, notes: [h.notes[0] || "", v] })))}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 18 }}>
+                {field("Sign-off name", head.signoff.name, (v) => setSign("name", v))}
+                {field("Title", head.signoff.title, (v) => setSign("title", v))}
+                {field("Company", head.signoff.company, (v) => setSign("company", v))}
+              </div>
+              <div style={{ ...S.fieldLabel, marginBottom: 6 }}>Products</div>
+              <p style={{ fontSize: 12, color: "#6a7488", margin: "0 0 8px" }}>Item is for this sheet only. Details and Color save back to the quote when you export.</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {pickedQuotes.map((q) => {
+                  const e = edits[q.id] || {};
+                  return (
+                    <div key={q.id} style={{ display: "grid", gridTemplateColumns: "minmax(90px, .7fr) minmax(0, 1.5fr) minmax(0, 1.6fr) minmax(0, 1.1fr)", gap: 8, alignItems: "center" }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: "#0f1729", overflow: "hidden", textOverflow: "ellipsis" }} title={q.sku}>{q.sku || "No SKU"}</span>
+                      <input data-noguard style={inp} aria-label={"Item, " + (q.sku || "")} value={e.item ?? ""} onChange={(ev) => setEdit(q.id, "item", ev.target.value)} placeholder="Item" />
+                      <input data-noguard style={inp} aria-label={"Details, " + (q.sku || "")} value={e.details ?? ""} onChange={(ev) => setEdit(q.id, "details", ev.target.value)} placeholder="Details" />
+                      <input data-noguard style={inp} aria-label={"Color, " + (q.sku || "")} value={e.color ?? ""} onChange={(ev) => setEdit(q.id, "color", ev.target.value)} placeholder="Color" />
+                    </div>
+                  );
+                })}
+              </div>
+              {msg && <div style={{ marginTop: 14, fontSize: 12.5, color: "#c2683a" }}>{msg}</div>}
+            </>
+          )}
         </div>
         {step === "quotes" && (
           <div style={S.modalFoot}>
             <button style={S.ghostBtn} onClick={onClose}>Cancel</button>
-            <button style={{ ...S.primaryBtn, opacity: pickedQuotes.length ? 1 : 0.5 }} disabled={!pickedQuotes.length} onClick={generate}>
-              <Printer size={16} /> Generate Sheet ({pickedQuotes.length})
+            <button style={{ ...S.primaryBtn, opacity: pickedQuotes.length ? 1 : 0.5 }} disabled={!pickedQuotes.length} onClick={toSettings}>
+              Set up sheet ({pickedQuotes.length}) <ChevronRight size={16} />
             </button>
+          </div>
+        )}
+        {step === "settings" && (
+          <div style={S.modalFoot}>
+            <button style={S.ghostBtn} onClick={guardedClose}>Cancel</button>
+            <ExportMenu label="Export sheet" busyLabel="Building…" className="export-pill" busy={!!busy} disabled={!!busy || !head}
+              title="Export the client price sheet" ariaLabel="Export the client price sheet" onPick={exportAs} />
           </div>
         )}
       </div>
