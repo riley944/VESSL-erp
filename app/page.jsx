@@ -822,7 +822,14 @@ const useToast = () => React.useContext(ToastCtx);
 // done_at as the Quotes panel does. A task added here is the signed-in person's
 // own, with no quote -- the Quotes page is where a task is assigned to somebody
 // on a quote. Names come from nameFromEmail, as the top bar's do.
-function TaskPanel({ open, onClose, userEmail = '' }) {
+//
+// THREE VIEWS OF THE ONE LIST (15 Oct). Assigned to me, the default; Created by
+// me; and All, for an admin only. Filtered here on the signed-in email -- every
+// staff member can still read every row, this only decides what the panel
+// shows. Done tasks stay where they were, struck through in created order, and
+// the header counts only the open ones in the view on screen.
+const TASK_VIEWS = [['mine', 'Assigned to me'], ['created', 'Created by me'], ['all', 'All']];
+function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
   // A slide-over rather than a modal -- there is no backdrop to click -- so the x
   // is the only way out, and the half-typed task in the box below is the work it
   // would take with it.
@@ -860,17 +867,39 @@ function TaskPanel({ open, onClose, userEmail = '' }) {
     if (error) { setTasks(p => p.map(x => x.id===t.id?t:x)); toast('Could not update the task — ' + error.message, 'err'); return; }
     if (done) toast('Task completed', 'ok');
   };
-  const open_ = tasks.filter(t=>!t.done).length;
+  const [view, setView] = useState('mine');
+  const me = (userEmail || '').toLowerCase();
+  const views = TASK_VIEWS.filter(([k]) => k !== 'all' || isAdmin);
+  // An admin who loses the role mid-session drops back to their own list.
+  const shownView = views.some(([k]) => k === view) ? view : 'mine';
+  const shown = tasks.filter(t =>
+    shownView === 'all' ? true
+    : shownView === 'created' ? (t.assigned_by || '').toLowerCase() === me
+    : (t.assigned_to || '').toLowerCase() === me);
+  const open_ = shown.filter(t=>!t.done).length;
+  const emptyText = shownView === 'created' ? 'You have not assigned any tasks.'
+    : shownView === 'all' ? 'No tasks yet. Add one below.'
+    : 'Nothing assigned to you. Add one below.';
   return (
     <div className={'task-panel ' + (open?'open':'')} ref={cardRef}>
       <div className="task-panel-head">
         <h3>Tasks {open_>0?'('+open_+' open)':''}</h3>
         <button className="task-panel-close" onClick={guardedClose}>×</button>
       </div>
+      <div role="tablist" aria-label="Which tasks" style={{display:'flex',gap:'4px',padding:'10px 14px',borderBottom:'1px solid var(--line-2)',flexShrink:0}}>
+        {views.map(([k, l]) => {
+          const on = shownView === k;
+          return (
+            <button key={k} role="tab" aria-selected={on} onClick={()=>setView(k)}
+              style={{border:'none',borderRadius:'7px',padding:'6px 10px',fontSize:'12px',fontWeight:600,fontFamily:'inherit',cursor:'pointer',
+                      background:on ? 'var(--ink)' : 'transparent',color:on ? '#fff' : 'var(--muted)'}}>{l}</button>
+          );
+        })}
+      </div>
       <div className="task-list">
         {loading ? <div className="task-empty">Loading…</div> :
-         tasks.length===0 ? <div className="task-empty">No tasks yet. Add one below.</div> :
-         tasks.map(t => (
+         shown.length===0 ? <div className="task-empty">{emptyText}</div> :
+         shown.map(t => (
           <div key={t.id} className="task-item" onClick={()=>toggleTask(t)}>
             <input type="checkbox" className="task-cb" checked={t.done} readOnly />
             <div className="task-body">
@@ -10781,7 +10810,7 @@ export default function App() {
       <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} allowedPages={allowedPages} role={role} canAnalytics={canAnalytics}
                collapsed={railCollapsed} onToggleRail={toggleRail} />
       <TopBar user={user} displayName={displayName} title="" taskOpen={taskPanelOpen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
-      <TaskPanel open={taskPanelOpen} onClose={()=>setTaskPanelOpen(false)} userEmail={user?.email || ''} />
+      <TaskPanel open={taskPanelOpen} onClose={()=>setTaskPanelOpen(false)} userEmail={user?.email || ''} isAdmin={role === 'admin'} />
       {page==='quotes' ? (
         <div className="main-area">
           <div className="quotes-root" style={{height:'100%',overflowY:'auto'}}>
