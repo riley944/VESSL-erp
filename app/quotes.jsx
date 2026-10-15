@@ -60,6 +60,7 @@ import { ProductCpscRules, useProductCpscRules, matchSkuToProduct } from "@/app/
 import { useDirtyGuard } from "@/app/components/ModalGuard";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 import { notifyTaskAssigned as notifyTask } from "@/lib/taskNotify";
+import { isUnseen, markSeen, insertTask, unseenCount, taskDay, byCreated, TASK_TONE } from "@/lib/taskSeen";
 
 // ============================================================
 //  SUPABASE CONNECTION
@@ -728,7 +729,7 @@ const BLANK = {
 //  Login is handled by the ERP shell; we read the existing session
 //  and render the Platform directly.
 // ============================================================
-export default function Quotes({ session: erpSession, newQuote = null }) {
+export default function Quotes({ session: erpSession, newQuote = null, isAdmin = false }) {
   const [session, setSession] = useState(erpSession || null);
 
   useEffect(() => {
@@ -739,7 +740,7 @@ export default function Quotes({ session: erpSession, newQuote = null }) {
   }, [erpSession]);
 
   if (!session) return <div style={S.shell}><style>{CSS}</style><div style={S.center}>Loading quotes…</div></div>;
-  return <Platform session={session} newQuote={newQuote} />;
+  return <Platform session={session} newQuote={newQuote} isAdmin={isAdmin} />;
 }
 
 // ---------- tier calc helpers ----------
@@ -794,7 +795,7 @@ function quoteSummary(q, dutyRate = null) {
 const ALL = "__all_clients__";
 
 // ---------- main platform ----------
-function Platform({ session, newQuote = null }) {
+function Platform({ session, newQuote = null, isAdmin = false }) {
   const userEmail = session?.user?.email || "unknown";
   // The HTS rate each quote's duty is worked out at, for the card, the detail view,
   // the printed quote and the CSV -- the same rate the form uses, from the same list.
@@ -839,10 +840,30 @@ function Platform({ session, newQuote = null }) {
   const loadTasks = useCallback(async () => {
     const { data, error } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
     if (!error) setTasks(data || []);
+    return error ? null : (data || []);
   }, []);
 
+  // OPENING THE TASKS MODAL marks every open task assigned to me as seen
+  // (lib/taskSeen.js). It reads the list fresh first, so the New tags are the
+  // tasks unseen at that moment; they stay until the modal closes.
+  const [newTaskIds, setNewTaskIds] = useState([]);
+  const openTasks = async () => {
+    setShowTasks(true);
+    const rows = await loadTasks();
+    if (!rows) return;
+    setNewTaskIds(rows.filter((t) => isUnseen(t, userEmail)).map((t) => t.id));
+    if ((await markSeen(rows, userEmail)).length) await loadTasks();
+  };
+  const closeTasks = () => { setShowTasks(false); setNewTaskIds([]); loadTasks(); };
+  // The badge and the list come back up to date when the window regains focus.
+  useEffect(() => {
+    const onFocus = () => { loadTasks(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [loadTasks]);
+
   const addTask = async (task) => {
-    const { data, error } = await supabase.from("tasks").insert(task).select("id").single();
+    const { data, error } = await insertTask(task, "id");
     if (error) { flash("Couldn't add task: " + error.message); return false; }
     await loadTasks();
     flash("Task assigned to " + nameForEmail(task.assigned_to));
@@ -858,11 +879,6 @@ function Platform({ session, newQuote = null }) {
 
   const toggleTask = async (t) => {
     const { error } = await supabase.from("tasks").update({ done: !t.done, done_at: !t.done ? stamp() : null }).eq("id", t.id);
-    if (!error) loadTasks();
-  };
-
-  const deleteTask = async (id) => {
-    const { error } = await supabase.from("tasks").delete().eq("id", id);
     if (!error) loadTasks();
   };
 
@@ -1086,7 +1102,7 @@ function Platform({ session, newQuote = null }) {
       for (const t of queuedTasks) {
         const task = { quote_id: savedRow.id, quote_label: label, assigned_to: t.assigned_to,
                        assigned_by: userEmail, task: t.task, done: false };
-        const { data: made, error } = await supabase.from("tasks").insert(task).select("id").single();
+        const { data: made, error } = await insertTask(task, "id");
         if (error) failedTasks.push({ ...t, error: error.message });
         else { assignedCount += 1; notifyTaskAssigned(made && made.id, task); }
       }
@@ -1288,7 +1304,8 @@ function Platform({ session, newQuote = null }) {
   // sidebar open gets there.
   const qMin = 22 + 140 + 56 + (view === "search" ? 56 + 10 : 0) + 104 + 48 + 50 + 106 + 56 + 86 + 97 + 9 * 10 + 36;
 
-  const myOpenTaskCount = tasks.filter((t) => !t.done && (t.assigned_to || "").toLowerCase() === userEmail.toLowerCase()).length;
+  // Open tasks assigned to me that I have not seen; 0 while the modal is open.
+  const myUnseenTaskCount = showTasks ? 0 : unseenCount(tasks, userEmail);
 
   return (
     <div style={{ ...S.shell, ...(isMobile ? { padding: "16px 12px 60px" } : {}) }}>
@@ -1301,9 +1318,9 @@ function Platform({ session, newQuote = null }) {
         </div>
         <div style={{ display: "flex", gap: isMobile ? 6 : 10, alignItems: "center", flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end" }}>
           {!isMobile && <span style={S.userTag}>{userEmail}</span>}
-          <button style={{ ...S.ghostBtn, position: "relative", ...(isMobile ? S.btnMobile : {}) }} onClick={() => setShowTasks(true)}>
+          <button style={{ ...S.ghostBtn, position: "relative", ...(isMobile ? S.btnMobile : {}) }} onClick={openTasks}>
             <Bell size={15} /> {isMobile ? "" : "Tasks"}
-            {myOpenTaskCount > 0 && <span style={S.taskBadge}>{myOpenTaskCount}</span>}
+            {myUnseenTaskCount > 0 && <span style={S.taskBadge}>{myUnseenTaskCount}</span>}
           </button>
           <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setShowSend(true)}><Send size={15} /> {isMobile ? "Send" : "Send to Client"}</button>
           {/* The app's export pill (.export-pill in globals.css). On a phone it keeps
@@ -1317,10 +1334,10 @@ function Platform({ session, newQuote = null }) {
 
       {showTasks && (
         <TasksPanel
-          tasks={tasks} userEmail={userEmail}
-          onToggle={toggleTask} onDelete={deleteTask}
-          onClose={() => setShowTasks(false)}
-          onJump={(qid) => { const qq = quotes.find((x) => x.id === qid); if (qq) { setUi('activeClient', (qq.client || "Unassigned").trim() || "Unassigned"); setExpanded(qid); setShowTasks(false); } }}
+          tasks={tasks} userEmail={userEmail} isAdmin={isAdmin} newIds={newTaskIds}
+          onToggle={toggleTask}
+          onClose={closeTasks}
+          onJump={(qid) => { const qq = quotes.find((x) => x.id === qid); if (qq) { setUi('activeClient', (qq.client || "Unassigned").trim() || "Unassigned"); setExpanded(qid); closeTasks(); } }}
         />
       )}
 
@@ -1600,7 +1617,7 @@ function Platform({ session, newQuote = null }) {
                   )}
                 </div>
                 )}
-                {open && <ExpandedDetail q={q} dutyRate={rateOf(q)} tasks={tasks.filter((t) => t.quote_id === q.id)} onAddTask={addTask} onToggleTask={toggleTask} onDeleteTask={deleteTask} userEmail={userEmail} staff={staff} isMobile={isMobile} onEdit={() => setEditing(q)} onDuplicate={() => duplicateQuote(q)} onDelete={() => { if (confirm("Delete this quote?")) removeQuote(q.id); }} />}
+                {open && <ExpandedDetail q={q} dutyRate={rateOf(q)} tasks={tasks.filter((t) => t.quote_id === q.id)} onAddTask={addTask} onToggleTask={toggleTask} userEmail={userEmail} staff={staff} isMobile={isMobile} onEdit={() => setEditing(q)} onDuplicate={() => duplicateQuote(q)} onDelete={() => { if (confirm("Delete this quote?")) removeQuote(q.id); }} />}
               </div>
             );
           })}
@@ -2142,7 +2159,7 @@ function ContainerPackout({ q, cbmPerCarton }) {
   );
 }
 
-function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTask, onDeleteTask, userEmail, staff = [], isMobile = false, onEdit, onDuplicate, onDelete }) {
+function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTask, userEmail, staff = [], isMobile = false, onEdit, onDuplicate, onDelete }) {
   const [taskText, setTaskText] = useState("");
   const [taskWho, setTaskWho] = useState(TEAM[0].email);
   const [assigning, setAssigning] = useState(false);
@@ -2319,7 +2336,6 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
                   <div style={{ fontSize: 13.5, color: t.done ? "#9aa3b5" : "#0f1729", textDecoration: t.done ? "line-through" : "none", fontWeight: 500 }}>{t.task}</div>
                   <div style={S.taskMeta}>For {nameForEmail(t.assigned_to)} · by {nameForEmail(t.assigned_by)} · {fmtStamp(t.created_at)}</div>
                 </div>
-                <button style={S.tierDel} onClick={() => onDeleteTask(t.id)}><X size={14} /></button>
               </div>
             ))}
           </div>
@@ -2354,28 +2370,37 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
 }
 
 // ---------- tasks panel ----------
-function TasksPanel({ tasks, userEmail, onToggle, onDelete, onClose, onJump }) {
+// My Tasks for everyone, All Tasks for an admin only -- as the bell's panel. One
+// list, oldest to newest, done tasks in their place, each with the day it was
+// made. Open is the bell's red box, done green and struck through. Tasks that
+// were unseen when the modal opened carry a New tag until it closes. There is
+// no delete: done is the only way a task leaves the list.
+function TasksPanel({ tasks, userEmail, isAdmin = false, newIds = [], onToggle, onClose, onJump }) {
   const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   const [tab, setTab] = useState("mine");
+  const shownTab = isAdmin ? tab : "mine";
   const mine = tasks.filter((t) => (t.assigned_to || "").toLowerCase() === userEmail.toLowerCase());
-  const shown = (tab === "mine" ? mine : tasks);
-  const open = shown.filter((t) => !t.done);
-  const done = shown.filter((t) => t.done);
-  const Row = ({ t }) => (
-    <div style={S.taskItem}>
-      <button style={S.taskCheck} onClick={() => onToggle(t)}>
-        {t.done ? <CheckCircle2 size={18} color="#3f7d5a" /> : <Circle size={18} color="#bba" />}
-      </button>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 14, color: t.done ? "#9aa3b5" : "#0f1729", textDecoration: t.done ? "line-through" : "none", fontWeight: 500 }}>{t.task}</div>
-        <div style={S.taskMeta}>
-          {t.quote_label ? <button style={S.taskJump} onClick={() => onJump(t.quote_id)}>{t.quote_label}</button> : null}
-          {" · "}For {nameForEmail(t.assigned_to)} · by {nameForEmail(t.assigned_by)} · {fmtStamp(t.created_at)}
+  const shown = [...(shownTab === "mine" ? mine : tasks)].sort(byCreated);
+  const Row = ({ t }) => {
+    const tone = TASK_TONE[t.done ? "done" : "open"];
+    return (
+      <div style={S.taskItem}>
+        <button style={S.taskCheck} onClick={() => onToggle(t)} aria-label={t.done ? "Mark not done" : "Mark done"}>
+          <span style={{ display: "block", width: 16, height: 16, borderRadius: 5, border: "2px solid " + tone.color, background: tone.bg, boxSizing: "border-box" }} />
+        </button>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, color: t.done ? "#9aa3b5" : "#0f1729", textDecoration: t.done ? "line-through" : "none", fontWeight: 500 }}>
+            {t.task}
+            {!t.done && newIds.includes(t.id) && <span style={{ marginLeft: 7, fontSize: 10, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "#fff", background: "#3461e0", borderRadius: 4, padding: "1px 5px", verticalAlign: 1 }}>New</span>}
+          </div>
+          <div style={S.taskMeta}>
+            {t.quote_label ? <button style={S.taskJump} onClick={() => onJump(t.quote_id)}>{t.quote_label}</button> : null}
+            {t.quote_label ? " · " : ""}For {nameForEmail(t.assigned_to)} · by {nameForEmail(t.assigned_by)} · {taskDay(t.created_at)}
+          </div>
         </div>
       </div>
-      <button style={S.tierDel} onClick={() => onDelete(t.id)}><X size={15} /></button>
-    </div>
-  );
+    );
+  };
   return (
     // Guarded like the rest of the file so nothing here is left on the old
     // behaviour. It holds no controls, so its snapshot is "0" on both sides and
@@ -2387,14 +2412,12 @@ function TasksPanel({ tasks, userEmail, onToggle, onDelete, onClose, onJump }) {
           <button style={S.iconBtn} onClick={guardedClose}><X size={18} /></button>
         </div>
         <div style={{ padding: "0 26px", display: "flex", gap: 8, borderBottom: "1px solid #e7eaf0" }}>
-          <button style={{ ...S.taskTab, ...(tab === "mine" ? S.taskTabOn : {}) }} onClick={() => setTab("mine")}>My Tasks ({mine.filter((t) => !t.done).length})</button>
-          <button style={{ ...S.taskTab, ...(tab === "all" ? S.taskTabOn : {}) }} onClick={() => setTab("all")}>All Tasks ({tasks.filter((t) => !t.done).length})</button>
+          <button style={{ ...S.taskTab, ...(shownTab === "mine" ? S.taskTabOn : {}) }} onClick={() => setTab("mine")}>My Tasks ({mine.filter((t) => !t.done).length})</button>
+          {isAdmin && <button style={{ ...S.taskTab, ...(shownTab === "all" ? S.taskTabOn : {}) }} onClick={() => setTab("all")}>All Tasks ({tasks.filter((t) => !t.done).length})</button>}
         </div>
         <div style={{ padding: "18px 26px 24px", maxHeight: "60vh", overflowY: "auto" }}>
-          {open.length === 0 && done.length === 0 && <div style={{ color: "#6a7488", textAlign: "center", padding: "30px 0" }}>No tasks here.</div>}
-          {open.map((t) => <Row key={t.id} t={t} />)}
-          {done.length > 0 && <div style={{ ...S.detailHead, marginTop: 18 }}>Completed</div>}
-          {done.map((t) => <Row key={t.id} t={t} />)}
+          {shown.length === 0 && <div style={{ color: "#6a7488", textAlign: "center", padding: "30px 0" }}>No tasks here.</div>}
+          {shown.map((t) => <Row key={t.id} t={t} />)}
         </div>
       </div>
     </div>

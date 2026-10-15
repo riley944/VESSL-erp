@@ -109,6 +109,7 @@ function cartonForSize(it, e) {
 // modals in this file are wired, so none is left behind on the old behaviour.
 import { useDirtyGuard } from '@/app/components/ModalGuard';
 import { notifyTaskAssigned } from '@/lib/taskNotify';
+import { isUnseen, markSeen, insertTask, unseenCount, taskDay, byCreated, TASK_TONE } from '@/lib/taskSeen';
 import { RenameSkuModal, QuoteSkuChoiceModal } from '@/app/components/RenameSkuModal';
 import { CreateProductModal } from '@/app/components/CreateProductModal';
 // BOTH NAMES NOW. This file used to keep its own loadExcelJS, so importing the
@@ -833,11 +834,12 @@ const useToast = () => React.useContext(ToastCtx);
 // 15 Oct, later: every tab runs oldest to newest, done tasks in their place, and
 // each row carries the day it was made. A task added here is emailed to its
 // person like any other (lib/taskNotify.js) -- here that is always you.
-// MM/DD/YYYY, as a date field shows it.
-const taskDay = s => { const d = s ? new Date(s) : null; return d && !isNaN(d) ? d.toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' }) : ''; };
+//
+// SEEN (lib/taskSeen.js, script 115). Opening the panel marks every open task
+// assigned to you as seen; the ones that were not carry a New tag until it
+// closes. The bell's badge counts what is still unseen, so it reads 0 while the
+// panel is open. A task added here is yours, so it starts seen.
 const TASK_VIEWS = [['mine', 'Assigned to me'], ['created', 'Created by me'], ['all', 'All']];
-// Open is red, done is green -- the Testing tab's Expired and OK.
-const TASK_TONE = { open: { color:'#B91C1C', bg:'#FEE2E2' }, done: { color:'#15803D', bg:'#15803D' } };
 function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
   // NOT A GUARDED FORM. The x closes at once, never asking: the panel stays
   // mounted while it is shut, so a half-typed task is still in the box when it
@@ -846,10 +848,25 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
   const toast = useToast();
+  // The tasks that were unseen when the panel opened -- the New tags. Cleared
+  // on close, so the next open starts from what is unseen then.
+  const [newIds, setNewIds] = useState([]);
   useEffect(() => {
-    if (!open) return;
-    SB.from('tasks').select('*').order('created_at').then(({ data }) => { setTasks(data||[]); setLoading(false); });
-  }, [open]);
+    if (!open) { setNewIds([]); return; }
+    let live = true;
+    SB.from('tasks').select('*').order('created_at').then(async ({ data }) => {
+      if (!live) return;
+      const rows = data || [];
+      setTasks(rows); setLoading(false);
+      setNewIds(rows.filter(t => isUnseen(t, userEmail)).map(t => t.id));
+      const marked = await markSeen(rows, userEmail);
+      if (live && marked.length) {
+        const at = new Date().toISOString();
+        setTasks(p => p.map(t => marked.includes(t.id) ? { ...t, seen_at: at } : t));
+      }
+    });
+    return () => { live = false; };
+  }, [open, userEmail]);
   // NAMES FROM staff_profiles, the source the task email uses, read once on the
   // first open. An address with no profile -- or a read that failed -- falls
   // back to nameFromEmail.
@@ -868,9 +885,7 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
   const addTask = async () => {
     if (!input.trim() || adding) return;
     setAdding(true);
-    const { data, error } = await SB.from('tasks')
-      .insert({ task: input.trim(), assigned_to: userEmail || null, assigned_by: userEmail || null, done: false })
-      .select().single();
+    const { data, error } = await insertTask({ task: input.trim(), assigned_to: userEmail || null, assigned_by: userEmail || null, done: false });
     setAdding(false);
     if (error) { toast('Could not add the task — ' + error.message, 'err'); return; }
     if (data) {
@@ -898,8 +913,7 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
     shownView === 'all' ? true
     : shownView === 'created' ? (t.assigned_by || '').toLowerCase() === me
     : (t.assigned_to || '').toLowerCase() === me)
-    .sort((a, b) => (a.created_at || '') < (b.created_at || '') ? -1 : (a.created_at || '') > (b.created_at || '') ? 1
-      : String(a.id) < String(b.id) ? -1 : 1);
+    .sort(byCreated);
   const open_ = shown.filter(t=>!t.done).length;
   const emptyText = shownView === 'created' ? 'You have not assigned any tasks.'
     : shownView === 'all' ? 'No tasks yet. Add one below.'
@@ -928,7 +942,11 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
             <input type="checkbox" className="task-cb" checked={t.done} readOnly aria-label={t.done ? 'Done' : 'Open'}
               style={{borderColor:TASK_TONE[t.done ? 'done' : 'open'].color,background:TASK_TONE[t.done ? 'done' : 'open'].bg}} />
             <div className="task-body">
-              <div className={'task-title'+(t.done?' done':'')}>{t.task}</div>
+              <div className={'task-title'+(t.done?' done':'')}>
+                {t.task}
+                {!t.done && newIds.includes(t.id) && <span style={{marginLeft:'7px',fontSize:'10px',fontWeight:700,letterSpacing:'.04em',
+                  textTransform:'uppercase',color:'#fff',background:'var(--accent)',borderRadius:'4px',padding:'1px 5px',verticalAlign:'1px'}}>New</span>}
+              </div>
               <div className="task-meta">
                 {[t.quote_label, t.assigned_to ? 'For ' + nameOf(t.assigned_to) : null,
                   t.assigned_by ? 'by ' + nameOf(t.assigned_by) : null, taskDay(t.created_at)].filter(Boolean).join(' · ')}
@@ -10601,6 +10619,21 @@ export default function App() {
   const [shipmentsRefresh, setShipmentsRefresh] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
+  // THE BELL'S BADGE: open tasks assigned to me that I have not seen
+  // (lib/taskSeen.js). Read at sign-in, whenever the panel opens or closes, and
+  // when the window comes back into focus. Opening the panel marks them seen, so
+  // it reads 0 while the panel is open.
+  const [taskUnseen, setTaskUnseen] = useState(0);
+  const userEmailForTasks = user?.email || '';
+  useEffect(() => {
+    if (!userEmailForTasks) { setTaskUnseen(0); return; }
+    let live = true;
+    const refresh = () => SB.from('tasks').select('*').eq('done', false)
+      .then(({ data }) => { if (live) setTaskUnseen(unseenCount(data, userEmailForTasks)); });
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => { live = false; window.removeEventListener('focus', refresh); };
+  }, [userEmailForTasks, taskPanelOpen]);
   const [crUnread, setCrUnread] = useState(0);
   const [dreqOpen, setDreqOpen] = useState(0);
 
@@ -10834,12 +10867,12 @@ export default function App() {
       <div className={'sidebar-backdrop ' + (navOpen?'show':'')} onClick={()=>setNavOpen(false)} />
       <Sidebar page={page} navigate={navigate} user={user} open={navOpen} badges={badges} allowedPages={allowedPages} role={role} canAnalytics={canAnalytics}
                collapsed={railCollapsed} onToggleRail={toggleRail} />
-      <TopBar user={user} displayName={displayName} title="" taskOpen={taskPanelOpen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
+      <TopBar user={user} displayName={displayName} title="" taskOpen={taskPanelOpen} taskCount={taskPanelOpen ? 0 : taskUnseen} onBell={()=>setTaskPanelOpen(p=>!p)} onSettings={()=>navigate('settings')} />
       <TaskPanel open={taskPanelOpen} onClose={()=>setTaskPanelOpen(false)} userEmail={user?.email || ''} isAdmin={role === 'admin'} />
       {page==='quotes' ? (
         <div className="main-area">
           <div className="quotes-root" style={{height:'100%',overflowY:'auto'}}>
-            <Quotes session={session} newQuote={params.newQuote} />
+            <Quotes session={session} newQuote={params.newQuote} isAdmin={role === 'admin'} />
           </div>
         </div>
       ) : (
