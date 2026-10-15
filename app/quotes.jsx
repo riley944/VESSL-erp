@@ -30,7 +30,7 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { SIZE_SCALES, sizesForSelection, toScaleList, sizeKey, storedQtyToMap as qtyMapFrom } from "@/app/components/SizeGrid";
 // The tier cost helpers live in lib/tierCost.js so page.jsx reads the SAME ones.
 // They were duplicated by hand there and had drifted; see that file for what broke.
-import { tierFreight, activeFreight, moldPerUnit, effectiveQty, tierTotalCost, sizedTierSummary, tierHasSizeMold, tierMoldFee } from "@/lib/tierCost";
+import { tierFreight, tierDuty, moldPerUnit, effectiveQty, tierTotalCost, sizedTierSummary, tierHasSizeMold, tierMoldFee } from "@/lib/tierCost";
 // Reading a tier's per-size figures, and the HTS rate, the same way on every screen.
 import { isBagMode, sizeCostFields, sizeCostFrom, sizeCostToRow, rateFromRows, htsRateFor, sizeLines } from "@/lib/quoteTiers";
 import { BANK_FIELDS } from "@/lib/bankFields";
@@ -244,6 +244,10 @@ function tierTableMin(sized, bag) {
   cells.push(TIER_DEL_W);
   return cells.reduce((a, v) => a + v, 0) + TIER_ROW_GAP * (cells.length - 1) + TIER_ROW_PAD_X * 2 + 2;  // 2: the table's border
 }
+// The quote card's tier table (ExpandedDetail): the same widths, without Mold Fee
+// or the delete slot, and the card rows' own 8px gap and 14px padding.
+const CARD_TIER_MIN = ["qty", "exw", "method", "freight", "duty", "total", "client", "margin"]
+  .reduce((a, k) => a + (TIER_COLS[k].width || TIER_COLS[k].min), 0) + 8 * 7 + 14 * 2;
 // The quote form's modal. 1200 rather than the shared 1100: in Bag mode the tier
 // table's floors come to 1088px, and at 1100 the form's inner width (less 26px
 // padding each side and the body's ~17px scrollbar) is ~1029, so it scrolled
@@ -782,6 +786,26 @@ function sizeLineText(l, withCosts) {
   if (withCosts && l.mold != null) s += " · mold $" + fmt(l.mold);
   return s;
 }
+// FREIGHT AND DUTY, APART. The card, the printed quote and the CSV showed one
+// "Freight + Duty" figure (activeFreight); they now show the two halves. Freight
+// is tierFreight -- the tier's own method -- and Duty is tierDuty. A tier saved
+// before the two were split (dutyLegacy: no duty, a freight figure) carries duty
+// inside its freight, so Freight shows that figure and Duty says "incl." --
+// never $0.00, which would read as duty-free. Total Cost is unchanged either way.
+function freightCell(t) {
+  const f = tierFreight(t);
+  return f ? "$" + fmtUnit(f) : "—";
+}
+function dutyCell(t) {
+  if (t.dutyLegacy) return "incl.";
+  return t.duty === "" || t.duty == null ? "—" : "$" + fmtUnit(tierDuty(t));
+}
+// The same two as plain values for the CSV: numbers, "incl." or blank.
+function freightValue(t) { const f = tierFreight(t); return f || ""; }
+function dutyValue(t) {
+  if (t.dutyLegacy) return "incl.";
+  return t.duty === "" || t.duty == null ? "" : tierDuty(t);
+}
 function quoteSummary(q, dutyRate = null) {
   const tiers = q.tiers || [];
   if (!tiers.length) return { count: 0, minClient: null, maxClient: null, avgMargin: 0, method: null };
@@ -1265,7 +1289,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
   }, [quotes, ui.activeClient]);
 
   const exportCSV = () => {
-    const cols = ["SKU","Date","Product","Client","Client Contact","Factory","Country","HTS","Tier Qty","EXW Cost","Method","Freight+Duty","Mold Fee","Total Cost","Client Price","Margin %","Sizes","Updated","Updated By","Notes"];
+    const cols = ["SKU","Date","Product","Client","Client Contact","Factory","Country","HTS","Tier Qty","EXW Cost","Method","Freight","Duty","Mold Fee","Total Cost","Client Price","Margin %","Sizes","Updated","Updated By","Notes"];
     const lines = [cols.join(",")];
     quotes.forEach((q) => {
       const tiers = q.tiers && q.tiers.length ? q.tiers : [{}];
@@ -1275,7 +1299,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
         // or mold -- so a sized tier priced flat reads as it always did.
         const sz = t.sizeQty ? sizeLines(t, q.sizeScales, q.sizeDeltas) : { differs: false, lines: [] };
         const sizesText = sz.differs ? sz.lines.map((l) => sizeLineText(l, true)).join("; ") : "";
-        lines.push([q.sku,q.quoteDate,q.product,q.client,q.clientContact,q.factory,q.country,q.hts,t.sizeQty ? (tierQtyShown(t) ?? "") : t.qty,t.landed,(t.ship||"ocean")==="air"?"Air":"Ocean",activeFreight(t)||"",tierMoldFee(t, q.moldFee)||"",tierTotalCost(t, q.moldFee, rateOf(q))||"",t.client,m ? m.toFixed(1) : "",sizesText,fmtStamp(q.updatedAt),q.updatedBy,(q.notes||"").replace(/\n/g," ")]
+        lines.push([q.sku,q.quoteDate,q.product,q.client,q.clientContact,q.factory,q.country,q.hts,t.sizeQty ? (tierQtyShown(t) ?? "") : t.qty,t.landed,(t.ship||"ocean")==="air"?"Air":"Ocean",freightValue(t),dutyValue(t),tierMoldFee(t, q.moldFee)||"",tierTotalCost(t, q.moldFee, rateOf(q))||"",t.client,m ? m.toFixed(1) : "",sizesText,fmtStamp(q.updatedAt),q.updatedBy,(q.notes||"").replace(/\n/g," ")]
           .map((v) => `"${String(v ?? "").replace(/"/g,'""')}"`).join(","));
       });
     });
@@ -2259,7 +2283,8 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
                   {pair("Quantity", tierQtyShown(t) ? tierQtyShown(t).toLocaleString() : "—", true)}
                   {pair("EXW Cost", t.landed ? `$${fmtUnit(t.landed)}` : "—")}
                   {pair("Method", <span style={S.methodTag}>{(t.ship || "ocean") === "air" ? "Air" : "Ocean"}</span>)}
-                  {pair("Freight + Duty", activeFreight(t) ? `$${fmtUnit(activeFreight(t))}` : "—")}
+                  {pair("Freight", freightCell(t))}
+                  {pair("Duty", dutyCell(t))}
                   {pair("Total Cost", <>{total ? `$${fmtUnit(total)}` : "—"}{mpu > 0 && <div style={{ fontSize: 10.5, color: "#6a7488", fontWeight: 500 }}>incl. ${fmtUnit(mpu)} mold</div>}</>, true)}
                   {pair("Client Price", t.client ? `$${fmtUnit(t.client)}` : "—", true)}
                   {pair("Margin", <span style={{ color: m && m < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{m ? m.toFixed(0) + "%" : "—"}</span>)}
@@ -2270,15 +2295,20 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
             {(!q.tiers || q.tiers.length === 0) && <div style={{ ...S.tierTable, padding: "11px 14px", color: "#6a7488", textAlign: "center", fontSize: 13.5 }}>No tiers entered.</div>}
           </div>
         ) : (
-        <div style={S.tierTable}>
+        <div style={{ ...S.tierTable, overflowX: "auto" }}>
+          {/* The quote form's tierCol widths, Mold Fee aside, so Freight and Duty
+              have room and no figure wraps. Below their sum the table scrolls
+              sideways inside its border rather than squeezing. */}
+          <div style={{ minWidth: CARD_TIER_MIN }}>
           <div style={S.tierHeadRow}>
-            <div style={{ flex: 1 }}>Quantity</div>
-            <div style={{ flex: 1, textAlign: "right" }}>EXW Cost</div>
-            <div style={{ flex: 0.8, textAlign: "center" }}>Method</div>
-            <div style={{ flex: 1, textAlign: "right" }}>Freight + Duty</div>
-            <div style={{ flex: 1, textAlign: "right" }}>Total Cost</div>
-            <div style={{ flex: 1, textAlign: "right" }}>Client Price</div>
-            <div style={{ flex: 0.8, textAlign: "right" }}>Margin</div>
+            <div style={{ ...tierCol("qty"), whiteSpace: "nowrap" }}>Quantity</div>
+            <div style={{ ...tierCol("exw"), textAlign: "right", whiteSpace: "nowrap" }}>EXW Cost</div>
+            <div style={{ ...tierCol("method"), textAlign: "center" }}>Method</div>
+            <div style={{ ...tierCol("freight"), textAlign: "right" }}>Freight</div>
+            <div style={{ ...tierCol("duty"), textAlign: "right" }}>Duty</div>
+            <div style={{ ...tierCol("total"), textAlign: "right", whiteSpace: "nowrap" }}>Total Cost</div>
+            <div style={{ ...tierCol("client"), textAlign: "right", whiteSpace: "nowrap" }}>Client Price</div>
+            <div style={{ ...tierCol("margin"), textAlign: "right" }}>Margin</div>
           </div>
           {(q.tiers || []).map((t, i) => {
             const m = tierMargin(t, t.client, q.moldFee, dutyRate);
@@ -2291,18 +2321,20 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
             return (
               <React.Fragment key={i}>
               <div style={S.tierBodyRow}>
-                <div style={{ flex: 1, fontWeight: 600, color: "#0f1729" }}>{tierQtyShown(t) ? tierQtyShown(t).toLocaleString() : "—"}</div>
-                <div style={{ flex: 1, textAlign: "right", ...S.num }}>{t.landed ? `$${fmtUnit(t.landed)}` : "—"}</div>
-                <div style={{ flex: 0.8, textAlign: "center", ...S.num }}>
+                <div style={{ ...tierCol("qty"), fontWeight: 600, color: "#0f1729", whiteSpace: "nowrap" }}>{tierQtyShown(t) ? tierQtyShown(t).toLocaleString() : "—"}</div>
+                <div style={{ ...tierCol("exw"), textAlign: "right", ...S.num, whiteSpace: "nowrap" }}>{t.landed ? `$${fmtUnit(t.landed)}` : "—"}</div>
+                <div style={{ ...tierCol("method"), textAlign: "center", ...S.num }}>
                   <span style={S.methodTag}>{(t.ship || "ocean") === "air" ? "Air" : "Ocean"}</span>
                 </div>
-                <div style={{ flex: 1, textAlign: "right", ...S.num }}>{activeFreight(t) ? `$${fmtUnit(activeFreight(t))}` : "—"}</div>
-                <div style={{ flex: 1, textAlign: "right", ...S.num, fontWeight: 600, color: "#0f1729" }}>
+                <div style={{ ...tierCol("freight"), textAlign: "right", ...S.num, whiteSpace: "nowrap" }}>{freightCell(t)}</div>
+                <div style={{ ...tierCol("duty"), textAlign: "right", ...S.num, whiteSpace: "nowrap", ...(t.dutyLegacy ? { color: "#6a7488" } : {}) }}
+                  title={t.dutyLegacy ? "Saved before duty was split out: duty is included in the freight figure" : undefined}>{dutyCell(t)}</div>
+                <div style={{ ...tierCol("total"), textAlign: "right", ...S.num, fontWeight: 600, color: "#0f1729", whiteSpace: "nowrap" }}>
                   {total ? `$${fmtUnit(total)}` : "—"}
                   {mpu > 0 && <div style={{ fontSize: 10.5, color: "#6a7488", fontWeight: 500 }}>incl. ${fmtUnit(mpu)} mold</div>}
                 </div>
-                <div style={{ flex: 1, textAlign: "right", ...S.num, fontWeight: 600, color: "#0f1729" }}>{t.client ? `$${fmtUnit(t.client)}` : "—"}</div>
-                <div style={{ flex: 0.8, textAlign: "right", ...S.num }}>
+                <div style={{ ...tierCol("client"), textAlign: "right", ...S.num, fontWeight: 600, color: "#0f1729", whiteSpace: "nowrap" }}>{t.client ? `$${fmtUnit(t.client)}` : "—"}</div>
+                <div style={{ ...tierCol("margin"), textAlign: "right", ...S.num }}>
                   <span style={{ color: m && m < 25 ? "#c2683a" : "#3f7d5a", fontWeight: 600 }}>{m ? m.toFixed(0) + "%" : "—"}</span>
                 </div>
               </div>
@@ -2311,6 +2343,7 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
             );
           })}
           {(!q.tiers || q.tiers.length === 0) && <div style={{ ...S.tierBodyRow, color: "#6a7488", justifyContent: "center" }}>No tiers entered.</div>}
+          </div>
         </div>
         )}
         {(moldFeeText(q) || Number(q.sampleFee) > 0) && (
@@ -2320,7 +2353,7 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
           </div>
         )}
         {q.freightDutyUpdatedAt && (
-          <div style={S.fdStamp}><Clock size={11} /> Freight + duty updated {fmtStamp(q.freightDutyUpdatedAt)}{q.freightDutyUpdatedBy ? ` · ${q.freightDutyUpdatedBy}` : ""}</div>
+          <div style={S.fdStamp}><Clock size={11} /> Freight and duty updated {fmtStamp(q.freightDutyUpdatedAt)}{q.freightDutyUpdatedBy ? ` · ${q.freightDutyUpdatedBy}` : ""}</div>
         )}
         <FreightBreakdownView tiers={q.tiers} />
       </div>
@@ -2482,7 +2515,6 @@ async function printQuote(q, dutyRate = null) {
   const tierRows = (q.tiers || []).map((t, idx) => {
     const m = tierMargin(t, t.client, q.moldFee, dutyRate);
     const total = tierTotalCost(t, q.moldFee, dutyRate);
-    const af = activeFreight(t);
     // effectiveQty, not t.qty -- the SAME divisor tierTotalCost used one line above.
     // On a tier with a size mix these disagreed, so this caption could claim a mold
     // share the total beside it had not used, on a document that goes to the client.
@@ -2492,12 +2524,13 @@ async function printQuote(q, dutyRate = null) {
     // Per size, the client price and nothing else: this sheet shows no per-size
     // cost, so a size's own EXW or mold stays off it.
     const sz = sizeLines(t, q.sizeScales, q.sizeDeltas);
-    const sizeRow = sz.differs ? `<tr${idx % 2 ? ' class="alt"' : ''}><td colspan="7" class="sizes">${esc(sz.lines.map((l) => sizeLineText(l, false)).join(" · "))}</td></tr>` : "";
+    const sizeRow = sz.differs ? `<tr${idx % 2 ? ' class="alt"' : ''}><td colspan="8" class="sizes">${esc(sz.lines.map((l) => sizeLineText(l, false)).join(" · "))}</td></tr>` : "";
     return `<tr${idx % 2 ? ' class="alt"' : ''}>
       <td class="qty">${tierQtyShown(t) ? tierQtyShown(t).toLocaleString() : "—"}</td>
       <td class="r">${t.landed ? "$" + fmtUnit(t.landed) : "—"}</td>
       <td class="c"><span class="method">${(t.ship || "ocean") === "air" ? "Air" : "Ocean"}</span></td>
-      <td class="r">${af ? "$" + fmtUnit(af) : "—"}</td>
+      <td class="r">${esc(freightCell(t))}</td>
+      <td class="r">${esc(dutyCell(t))}</td>
       <td class="r">${total ? "$" + fmtUnit(total) : "—"}${mpu > 0 ? `<div style="font-size:9px;color:#6a7488;font-weight:500">incl. $${fmtUnit(mpu)} mold</div>` : ""}</td>
       <td class="r price">${t.client ? "$" + fmtUnit(t.client) : "—"}</td>
       <td class="r">${m ? m.toFixed(0) + "%" : "—"}</td>
@@ -2575,8 +2608,8 @@ async function printQuote(q, dutyRate = null) {
       <div class="pricewrap">
         <h2>Tiered Pricing</h2>
         <table>
-          <thead><tr><th>Quantity</th><th>EXW Cost</th><th style="text-align:center">Method</th><th>Freight + Duty</th><th>Total Cost</th><th>Client Price</th><th>Margin</th></tr></thead>
-          <tbody>${tierRows || '<tr><td colspan="7" style="text-align:center;color:#6e7681">No pricing tiers entered</td></tr>'}</tbody>
+          <thead><tr><th>Quantity</th><th>EXW Cost</th><th style="text-align:center">Method</th><th>Freight</th><th>Duty</th><th>Total Cost</th><th>Client Price</th><th>Margin</th></tr></thead>
+          <tbody>${tierRows || '<tr><td colspan="8" style="text-align:center;color:#6e7681">No pricing tiers entered</td></tr>'}</tbody>
         </table>
         ${feeLine}
         ${fdStamp}
