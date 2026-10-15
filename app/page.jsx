@@ -3196,9 +3196,22 @@ function MyAccount({ user, displayName, onDisplayName }) {
   // mount before it lands. Syncing on change rather than only at mount is what
   // stops the field showing blank for the first second on a cold load.
   useEffect(()=>{ setName(displayName||''); }, [displayName]);
+  // JOB TITLE (script 116), for the sign-off on the client price sheet. Read
+  // here with the same exact-email match the save uses; saved with the name.
+  const [title, setTitle] = useState('');
+  const [savedTitle, setSavedTitle] = useState('');
+  useEffect(() => {
+    if (!email) return;
+    SB.from('staff_profiles').select('email,job_title').ilike('email', email).then(({ data }) => {
+      const row = (data||[]).find(r => (r.email||'').toLowerCase() === email.toLowerCase());
+      const t = (row && row.job_title) || '';
+      setTitle(t); setSavedTitle(t);
+    });
+  }, [email]);
 
   const saveName = async () => {
     const next = name.trim();
+    const nextTitle = title.trim();
     if (!email) return;
     setNameBusy(true); setNameMsg('');
     // THE SAME ilike PLUS EXACT RE-CHECK THE SHELL'S LOADER USES. ilike can only
@@ -3213,9 +3226,10 @@ function MyAccount({ user, displayName, onDisplayName }) {
       setNameMsg(readErr ? 'Could not load your profile — '+readErr.message : 'No staff profile found for this address.');
       return;
     }
-    const { error } = await SB.from('staff_profiles').update({ full_name: next || null }).eq('id', row.id);
+    const { error } = await SB.from('staff_profiles').update({ full_name: next || null, job_title: nextTitle || null }).eq('id', row.id);
     setNameBusy(false);
     if (error) { setNameMsg('Could not save — '+error.message); return; }
+    setTitle(nextTitle); setSavedTitle(nextTitle);
     // Lift it so the avatar and its initials change now. The shell reads full_name
     // once per session, on the email-keyed effect, so without this the header would
     // keep the old name until a reload.
@@ -3250,7 +3264,7 @@ function MyAccount({ user, displayName, onDisplayName }) {
   return (
     <>
       <div className="section-card" style={{marginBottom:'20px'}}>
-        <div className="section-head"><h3>Profile</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>How your name appears in the app</span></div>
+        <div className="section-head"><h3>Profile</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>How your name and title appear in the app</span></div>
         <div style={{padding:'18px',display:'flex',flexDirection:'column',gap:'16px',maxWidth:'420px'}}>
           <div>
             <label>Display name</label>
@@ -3264,6 +3278,14 @@ function MyAccount({ user, displayName, onDisplayName }) {
             </p>
           </div>
           <div>
+            <label>Job title</label>
+            <input className="form-input" value={title} onChange={e=>setTitle(e.target.value)}
+                   placeholder="e.g. VP of Sales" onKeyDown={e=>{ if(e.key==='Enter') saveName(); }} />
+            <p style={{fontSize:'12px',color:'var(--muted)',marginTop:'6px'}}>
+              Signs off the client price sheet you send from Quotes.
+            </p>
+          </div>
+          <div>
             <label>Email</label>
             {/* Read-only, and not an input: a disabled box invites a click and then
                 does nothing. Changing the address would move the staff_profiles match,
@@ -3272,8 +3294,9 @@ function MyAccount({ user, displayName, onDisplayName }) {
             <p style={{fontSize:'12px',color:'var(--muted)',marginTop:'6px'}}>Your sign-in address. Ask an admin if this needs to change.</p>
           </div>
           <div style={{display:'flex',alignItems:'center',gap:'14px'}}>
-            <button className="btn btn-dark" onClick={saveName} disabled={nameBusy || name.trim()===(displayName||'').trim()}>
-              {nameBusy?'Saving…':'Save name'}
+            <button className="btn btn-dark" onClick={saveName}
+              disabled={nameBusy || (name.trim()===(displayName||'').trim() && title.trim()===savedTitle.trim())}>
+              {nameBusy?'Saving…':'Save profile'}
             </button>
             {nameMsg && <span style={{fontSize:'13px',color:nameMsg==='Saved.'?'var(--accent)':'var(--hot)'}}>{nameMsg}</span>}
           </div>
