@@ -76,7 +76,8 @@ const TEAM = [
   { name: "Riley", email: "riley@kinguniversal.com" },
   { name: "Steven", email: "steven@kinguniversal.com" },
   { name: "Carmela", email: "carmela@kinguniversal.com" },
-  // Last, so TEAM[0] -- the default assignee in both task boxes -- stays Kristy.
+  // The task pickers read staff_profiles now; this list is their fallback if
+  // that read fails, and still names people on task lines.
   { name: "Matt", email: "mattdillon@kinguniversal.com" },
 ];
 function nameForEmail(email) {
@@ -901,7 +902,17 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
     const { data, error } = await supabase.from("staff_profiles").select("id,email,full_name")
       .order("full_name", { nullsFirst: false });
     if (!error) setStaff(data || []);
+    setStaffFailed(!!error);
   }, []);
+  // WHO A TASK CAN BE ASSIGNED TO: everyone with a staff profile, by full name.
+  // The hard-coded TEAM list only if that read failed or came back empty.
+  const [staffFailed, setStaffFailed] = useState(false);
+  const assignees = useMemo(() => {
+    const fromProfiles = staffFailed ? [] : staff.filter((p) => p.email)
+      .map((p) => ({ email: p.email, name: (p.full_name || "").trim() || nameForEmail(p.email) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return fromProfiles.length ? fromProfiles : TEAM;
+  }, [staff, staffFailed]);
 
   // saveContact is gone with the quote form button that called it. It upserted a
   // client_contacts row and then UPSERTED A COMPANY from the typed client name,
@@ -1617,7 +1628,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
                   )}
                 </div>
                 )}
-                {open && <ExpandedDetail q={q} dutyRate={rateOf(q)} tasks={tasks.filter((t) => t.quote_id === q.id)} onAddTask={addTask} onToggleTask={toggleTask} userEmail={userEmail} staff={staff} isMobile={isMobile} onEdit={() => setEditing(q)} onDuplicate={() => duplicateQuote(q)} onDelete={() => { if (confirm("Delete this quote?")) removeQuote(q.id); }} />}
+                {open && <ExpandedDetail q={q} dutyRate={rateOf(q)} tasks={tasks.filter((t) => t.quote_id === q.id)} onAddTask={addTask} onToggleTask={toggleTask} userEmail={userEmail} staff={staff} assignees={assignees} isMobile={isMobile} onEdit={() => setEditing(q)} onDuplicate={() => duplicateQuote(q)} onDelete={() => { if (confirm("Delete this quote?")) removeQuote(q.id); }} />}
               </div>
             );
           })}
@@ -1627,7 +1638,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
 
       </>)}
 
-      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} userEmail={userEmail}
+      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} userEmail={userEmail} assignees={assignees}
         existingTasks={editing.id ? tasks.filter((t) => t.quote_id === editing.id) : []} />}
       {/* Opens after a SKU change is saved. onDone reloads so the list shows the
           result; the modal stays up because the report IS the result. */}
@@ -2159,9 +2170,11 @@ function ContainerPackout({ q, cbmPerCarton }) {
   );
 }
 
-function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTask, userEmail, staff = [], isMobile = false, onEdit, onDuplicate, onDelete }) {
+function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTask, userEmail, staff = [], assignees = TEAM, isMobile = false, onEdit, onDuplicate, onDelete }) {
   const [taskText, setTaskText] = useState("");
-  const [taskWho, setTaskWho] = useState(TEAM[0].email);
+  // No default person: the picker starts on "Assign to…" and goes back there
+  // after each task, so nobody is assigned a task by not looking.
+  const [taskWho, setTaskWho] = useState("");
   const [assigning, setAssigning] = useState(false);
   // Said, not silent, when Enter is pressed on an empty box. Cleared by typing.
   const [taskHint, setTaskHint] = useState("");
@@ -2172,6 +2185,7 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
   // silently doing nothing.
   const submitTask = async () => {
     if (assigning) return;
+    if (!taskWho) { setTaskHint("Pick who the task is for"); return; }
     if (!taskText.trim()) { setTaskHint("Type a task first"); return; }
     setTaskHint("");
     setAssigning(true);
@@ -2184,7 +2198,7 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
       done: false,
     });
     setAssigning(false);
-    if (ok) setTaskText("");
+    if (ok) { setTaskText(""); setTaskWho(""); }
   };
   // ON A PHONE, ONE COLUMN, AND LONG VALUES WRAP. Two columns of about 140px
   // could not hold an email or an address, and the panel clips what overflows,
@@ -2343,12 +2357,14 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
           </div>
         )}
         <div style={S.taskAddRow}>
-          <select style={{ ...S.input, flex: "0 0 130px" }} value={taskWho} onChange={(e) => setTaskWho(e.target.value)}>
-            {TEAM.map((m) => <option key={m.email} value={m.email}>{m.name}</option>)}
+          <select style={{ ...S.input, flex: "0 0 130px", color: taskWho ? undefined : "#9aa3b5" }} value={taskWho}
+            onChange={(e) => { setTaskWho(e.target.value); if (taskHint) setTaskHint(""); }} aria-label="Assign to">
+            <option value="" disabled>Assign to…</option>
+            {assignees.map((m) => <option key={m.email} value={m.email}>{m.name}</option>)}
           </select>
           <input style={{ ...S.input, flex: 1 }} value={taskText} disabled={assigning} onChange={(e) => { setTaskText(e.target.value); if (taskHint) setTaskHint(""); }} onKeyDown={(e) => e.key === "Enter" && submitTask()} placeholder="e.g. Get freight quotes" />
-          <button className="press-feedback" onClick={submitTask} disabled={assigning || !taskText.trim()}
-            style={{ ...S.primaryBtnSm, ...(assigning || !taskText.trim() ? { opacity: 0.45, cursor: "default" } : { cursor: "pointer" }) }}>
+          <button className="press-feedback" onClick={submitTask} disabled={assigning || !taskWho || !taskText.trim()}
+            style={{ ...S.primaryBtnSm, ...(assigning || !taskWho || !taskText.trim() ? { opacity: 0.45, cursor: "default" } : { cursor: "pointer" }) }}>
             {assigning ? "Assigning…" : "Assign"}
           </button>
         </div>
@@ -3026,7 +3042,7 @@ function SelectField({ label, k, placeholder, options, hint, f, set }) {
 // staff went with the PLM tick. It fed the owner picker that appeared when the
 // box was ticked, and nothing else in this form ever read it -- the quote CARD
 // still passes its own staff to MarkWonButton, which is a different binding.
-function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) {
+function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], assignees = TEAM }) {
   // The form this guard exists for. About eleven of its edits are click-driven --
   // the saved-factory chips, the client suggestions, picking an HTS code, Add
   // tier, Preset qtys, auto, the Air/Ocean toggles -- and not one of them fires
@@ -3713,12 +3729,15 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
   // asks first. Text typed in the box but not yet added is sent too: somebody
   // who typed a task and pressed Save meant it.
   const [queued, setQueued] = useState([]);
-  const [qWho, setQWho] = useState(TEAM[0].email);
+  // No default person, as on the quote card: blank until chosen, blank again
+  // after each task is queued.
+  const [qWho, setQWho] = useState("");
   const [qText, setQText] = useState("");
+  const [qHint, setQHint] = useState("");
   const queueTask = () => {
-    if (!qText.trim()) return;
+    if (!qWho || !qText.trim()) return;
     setQueued((prev) => [...prev, { key: Date.now() + "-" + prev.length, assigned_to: qWho, task: qText.trim() }]);
-    setQText("");
+    setQText(""); setQWho(""); setQHint("");
     markDirty();
   };
   const unqueueTask = (key) => { setQueued((prev) => prev.filter((t) => t.key !== key)); markDirty(); };
@@ -3728,6 +3747,9 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
     // Belt and braces over the disabled button: a keyboard submit or a stale
     // render must not slip past the same rule.
     if (skuBlocked || saving) return;
+    // A task typed but with nobody picked would be assigned to no one. Say so
+    // rather than save it, or drop the words.
+    if (qText.trim() && !qWho) { setQHint("Pick who the task is for, or clear the task box, then save."); return; }
     const out = { ...f };
     out.freightDutyUpdatedAt = stamp();
     const toSend = [...queued, ...(qText.trim() ? [{ key: "typed", assigned_to: qWho, task: qText.trim() }] : [])];
@@ -4588,15 +4610,18 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [] }) 
               </div>
             ))}
             <div style={S.taskAddRow}>
-              <select style={{ ...S.input, flex: "0 0 130px" }} value={qWho} onChange={(e) => setQWho(e.target.value)} aria-label="Assign to">
-                {TEAM.map((m) => <option key={m.email} value={m.email}>{m.name}</option>)}
+              <select style={{ ...S.input, flex: "0 0 130px", color: qWho ? undefined : "#9aa3b5" }} value={qWho}
+                onChange={(e) => { setQWho(e.target.value); if (qHint) setQHint(""); }} aria-label="Assign to">
+                <option value="" disabled>Assign to…</option>
+                {assignees.map((m) => <option key={m.email} value={m.email}>{m.name}</option>)}
               </select>
-              <input style={{ ...S.input, flex: 1 }} value={qText} onChange={(e) => setQText(e.target.value)}
+              <input style={{ ...S.input, flex: 1 }} value={qText} onChange={(e) => { setQText(e.target.value); if (qHint) setQHint(""); }}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); queueTask(); } }}
                 placeholder="e.g. Get freight quotes" aria-label="Task" />
-              <button type="button" className="press-feedback" onClick={queueTask} disabled={!qText.trim()}
-                style={{ ...S.primaryBtnSm, ...(qText.trim() ? { cursor: "pointer" } : { opacity: 0.45, cursor: "default" }) }}>Assign</button>
+              <button type="button" className="press-feedback" onClick={queueTask} disabled={!qWho || !qText.trim()}
+                style={{ ...S.primaryBtnSm, ...(qWho && qText.trim() ? { cursor: "pointer" } : { opacity: 0.45, cursor: "default" }) }}>Assign</button>
             </div>
+            {qHint && <div style={{ fontSize: 11.5, color: "#c2683a", marginTop: 6 }}>{qHint}</div>}
           </div>
         </div>
         <div style={S.modalFoot}>
