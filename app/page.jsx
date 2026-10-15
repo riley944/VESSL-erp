@@ -108,6 +108,7 @@ function cartonForSize(it, e) {
 // treatment quotes.jsx got: card ref, onClose becomes guardedClose. All sixteen
 // modals in this file are wired, so none is left behind on the old behaviour.
 import { useDirtyGuard } from '@/app/components/ModalGuard';
+import { notifyTaskAssigned } from '@/lib/taskNotify';
 import { RenameSkuModal, QuoteSkuChoiceModal } from '@/app/components/RenameSkuModal';
 import { CreateProductModal } from '@/app/components/CreateProductModal';
 // BOTH NAMES NOW. This file used to keep its own loadExcelJS, so importing the
@@ -828,12 +829,17 @@ const useToast = () => React.useContext(ToastCtx);
 // staff member can still read every row, this only decides what the panel
 // shows. Done tasks stay where they were, struck through in created order, and
 // the header counts only the open ones in the view on screen.
+//
+// 15 Oct, later: every tab runs oldest to newest, done tasks in their place, and
+// each row carries the day it was made. A task added here is emailed to its
+// person like any other (lib/taskNotify.js) -- here that is always you.
+// MM/DD/YYYY, as a date field shows it.
+const taskDay = s => { const d = s ? new Date(s) : null; return d && !isNaN(d) ? d.toLocaleDateString('en-US', { month:'2-digit', day:'2-digit', year:'numeric' }) : ''; };
 const TASK_VIEWS = [['mine', 'Assigned to me'], ['created', 'Created by me'], ['all', 'All']];
 function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
-  // A slide-over rather than a modal -- there is no backdrop to click -- so the x
-  // is the only way out, and the half-typed task in the box below is the work it
-  // would take with it.
-  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
+  // NOT A GUARDED FORM. The x closes at once, never asking: the panel stays
+  // mounted while it is shut, so a half-typed task is still in the box when it
+  // opens again -- there is nothing to discard and so nothing to confirm.
   const [tasks, setTasks] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
@@ -856,6 +862,7 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
     if (data) {
       setTasks(p => [...p, data]); setInput('');
       toast('Task assigned to ' + (nameFromEmail(userEmail) || 'you'), 'ok');
+      notifyTaskAssigned(data.id, nameFromEmail(userEmail) || 'you');
     }
   };
   const toggleTask = async (t) => {
@@ -872,19 +879,22 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
   const views = TASK_VIEWS.filter(([k]) => k !== 'all' || isAdmin);
   // An admin who loses the role mid-session drops back to their own list.
   const shownView = views.some(([k]) => k === view) ? view : 'mine';
+  // Oldest first, ties by id, so the order holds however a row arrived.
   const shown = tasks.filter(t =>
     shownView === 'all' ? true
     : shownView === 'created' ? (t.assigned_by || '').toLowerCase() === me
-    : (t.assigned_to || '').toLowerCase() === me);
+    : (t.assigned_to || '').toLowerCase() === me)
+    .sort((a, b) => (a.created_at || '') < (b.created_at || '') ? -1 : (a.created_at || '') > (b.created_at || '') ? 1
+      : String(a.id) < String(b.id) ? -1 : 1);
   const open_ = shown.filter(t=>!t.done).length;
   const emptyText = shownView === 'created' ? 'You have not assigned any tasks.'
     : shownView === 'all' ? 'No tasks yet. Add one below.'
     : 'Nothing assigned to you. Add one below.';
   return (
-    <div className={'task-panel ' + (open?'open':'')} ref={cardRef}>
+    <div className={'task-panel ' + (open?'open':'')}>
       <div className="task-panel-head">
         <h3>Tasks {open_>0?'('+open_+' open)':''}</h3>
-        <button className="task-panel-close" onClick={guardedClose}>×</button>
+        <button className="task-panel-close" onClick={onClose}>×</button>
       </div>
       <div role="tablist" aria-label="Which tasks" style={{display:'flex',gap:'4px',padding:'10px 14px',borderBottom:'1px solid var(--line-2)',flexShrink:0}}>
         {views.map(([k, l]) => {
@@ -906,7 +916,7 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
               <div className={'task-title'+(t.done?' done':'')}>{t.task}</div>
               <div className="task-meta">
                 {[t.quote_label, t.assigned_to ? 'For ' + nameFromEmail(t.assigned_to) : null,
-                  t.assigned_by ? 'by ' + nameFromEmail(t.assigned_by) : null].filter(Boolean).join(' · ')}
+                  t.assigned_by ? 'by ' + nameFromEmail(t.assigned_by) : null, taskDay(t.created_at)].filter(Boolean).join(' · ')}
               </div>
             </div>
           </div>

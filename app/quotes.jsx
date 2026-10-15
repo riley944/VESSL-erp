@@ -59,6 +59,7 @@ import { ProductCpscRules, useProductCpscRules, matchSkuToProduct } from "@/app/
 // the ref goes on the CARD, because that is what holds the controls it watches.
 import { useDirtyGuard } from "@/app/components/ModalGuard";
 import { matches, normalizeTerm } from "@/lib/textFilter";
+import { notifyTaskAssigned as notifyTask } from "@/lib/taskNotify";
 
 // ============================================================
 //  SUPABASE CONNECTION
@@ -849,31 +850,10 @@ function Platform({ session, newQuote = null }) {
     return true;
   };
 
-  // THE ASSIGNEE'S EMAIL, FROM THE SERVER (/api/tasks/notify). Only the new
-  // task's id goes over: the route re-reads the row and writes the email itself,
-  // from tasks@vessl.io with Reply going to the assigner. The task is already
-  // saved by now, so a failed send says so in a toast that stays until it is
-  // closed -- the assigner may need to tell the person some other way.
-  const notifyTaskAssigned = async (taskId, task) => {
-    if (!task.assigned_to || task.assigned_to.toLowerCase() === (task.assigned_by || "").toLowerCase()) return;
-    const who = nameForEmail(task.assigned_to);
-    const failed = (why) => window._toast?.("Task saved, but the email to " + who + " didn't send" + (why ? " — " + why : ""), "err", null, { sticky: true });
-    try {
-      if (!taskId) { failed("the new task's id did not come back"); return; }
-      const { data: { session: s } } = await supabase.auth.getSession();
-      const token = s && s.access_token;
-      if (!token) { failed("your session has expired"); return; }
-      const res = await fetch("/api/tasks/notify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
-        body: JSON.stringify({ taskId }),
-      });
-      let out = null;
-      try { out = await res.json(); } catch { out = null; }
-      if (!res.ok || !out || !out.ok) { failed((out && out.error) || "HTTP " + res.status); return; }
-    } catch (err) {
-      failed(err?.message || String(err));
-    }
+  // The assignee's email -- every assignment, a task you give yourself included.
+  // lib/taskNotify.js; the bell panel's Add box makes the same call.
+  const notifyTaskAssigned = (taskId, task) => {
+    if (task.assigned_to) notifyTask(taskId, nameForEmail(task.assigned_to));
   };
 
   const toggleTask = async (t) => {

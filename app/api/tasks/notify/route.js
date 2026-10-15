@@ -86,8 +86,8 @@ export async function POST(req) {
   if (!(ageMin <= FRESH_MINUTES)) return json({ ok:false, error:'That task is not new; no email is sent for it.' }, 409);
   const to = (task.assigned_to || '').trim();
   if (!to || !to.includes('@')) return json({ ok:false, error:'The task has no assignee address.' }, 400);
-  // A task you give yourself needs no email. Not a failure.
-  if (same(to, task.assigned_by)) return json({ ok:true, skipped:'self' }, 200);
+  // A task you give yourself is emailed too (15 Oct): the inbox is where people
+  // keep their list, so a note-to-self belongs there as well.
 
   // ── 4. THE WORDS ───────────────────────────────────────────────────────────
   // Names from staff_profiles; a refused or empty read falls back to the mailbox.
