@@ -851,8 +851,11 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
   // The tasks that were unseen when the panel opened -- the New tags. Cleared
   // on close, so the next open starts from what is unseen then.
   const [newIds, setNewIds] = useState([]);
+  // Done tasks are hidden until Show completed is pressed; back to hidden each
+  // time the panel closes.
+  const [showDone, setShowDone] = useState(false);
   useEffect(() => {
-    if (!open) { setNewIds([]); return; }
+    if (!open) { setNewIds([]); setShowDone(false); return; }
     let live = true;
     SB.from('tasks').select('*').order('created_at').then(async ({ data }) => {
       if (!live) return;
@@ -915,6 +918,8 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
     : (t.assigned_to || '').toLowerCase() === me)
     .sort(byCreated);
   const open_ = shown.filter(t=>!t.done).length;
+  const doneN = shown.length - open_;
+  const listed = showDone ? shown : shown.filter(t => !t.done);
   const emptyText = shownView === 'created' ? 'You have not assigned any tasks.'
     : shownView === 'all' ? 'No tasks yet. Add one below.'
     : 'Nothing assigned to you. Add one below.';
@@ -936,8 +941,17 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
       </div>
       <div className="task-list">
         {loading ? <div className="task-empty">Loading…</div> :
-         shown.length===0 ? <div className="task-empty">{emptyText}</div> :
-         shown.map(t => (
+         <>
+         {doneN > 0 && (
+           <button type="button" onClick={()=>setShowDone(v=>!v)} aria-pressed={showDone}
+             style={{display:'block',background:'none',border:'none',padding:'9px 18px',fontSize:'12px',fontWeight:600,color:'var(--muted)',
+                     cursor:'pointer',fontFamily:'inherit',textDecoration:'underline',textUnderlineOffset:'3px'}}>
+             {showDone ? 'Hide completed' : 'Show completed (' + doneN + ')'}
+           </button>
+         )}
+         {shown.length===0 ? <div className="task-empty">{emptyText}</div> :
+          listed.length===0 ? <div className="task-empty">No open tasks.</div> :
+         listed.map(t => (
           <div key={t.id} className="task-item" onClick={()=>toggleTask(t)}>
             <input type="checkbox" className="task-cb" checked={t.done} readOnly aria-label={t.done ? 'Done' : 'Open'}
               style={{borderColor:TASK_TONE[t.done ? 'done' : 'open'].color,background:TASK_TONE[t.done ? 'done' : 'open'].bg}} />
@@ -954,6 +968,7 @@ function TaskPanel({ open, onClose, userEmail = '', isAdmin = false }) {
             </div>
           </div>
         ))}
+         </>}
       </div>
       <div className="task-add">
         <input placeholder="Add a task…" value={input} disabled={adding} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addTask()} />

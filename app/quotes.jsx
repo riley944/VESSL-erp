@@ -2402,6 +2402,11 @@ function TasksPanel({ tasks, userEmail, isAdmin = false, newIds = [], onToggle, 
   const shownTab = isAdmin ? tab : "mine";
   const mine = tasks.filter((t) => (t.assigned_to || "").toLowerCase() === userEmail.toLowerCase());
   const shown = [...(shownTab === "mine" ? mine : tasks)].sort(byCreated);
+  // Done tasks hidden until Show completed; the modal unmounts on close, so it
+  // opens hidden every time.
+  const [showDone, setShowDone] = useState(false);
+  const doneN = shown.filter((t) => t.done).length;
+  const listed = showDone ? shown : shown.filter((t) => !t.done);
   const Row = ({ t }) => {
     const tone = TASK_TONE[t.done ? "done" : "open"];
     return (
@@ -2437,8 +2442,15 @@ function TasksPanel({ tasks, userEmail, isAdmin = false, newIds = [], onToggle, 
           {isAdmin && <button style={{ ...S.taskTab, ...(shownTab === "all" ? S.taskTabOn : {}) }} onClick={() => setTab("all")}>All Tasks ({tasks.filter((t) => !t.done).length})</button>}
         </div>
         <div style={{ padding: "18px 26px 24px", maxHeight: "60vh", overflowY: "auto" }}>
+          {doneN > 0 && (
+            <button type="button" onClick={() => setShowDone((v) => !v)} aria-pressed={showDone}
+              style={{ display: "block", background: "none", border: "none", padding: "0 0 10px", fontSize: 12.5, fontWeight: 600, color: "#6a7488", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", textUnderlineOffset: 3 }}>
+              {showDone ? "Hide completed" : "Show completed (" + doneN + ")"}
+            </button>
+          )}
           {shown.length === 0 && <div style={{ color: "#6a7488", textAlign: "center", padding: "30px 0" }}>No tasks here.</div>}
-          {shown.map((t) => <Row key={t.id} t={t} />)}
+          {shown.length > 0 && listed.length === 0 && <div style={{ color: "#6a7488", textAlign: "center", padding: "30px 0" }}>No open tasks.</div>}
+          {listed.map((t) => <Row key={t.id} t={t} />)}
         </div>
       </div>
     </div>
