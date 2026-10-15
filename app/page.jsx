@@ -3204,14 +3204,18 @@ function MyAccount({ user, displayName, onDisplayName }) {
     if (!email) return;
     SB.from('staff_profiles').select('email,job_title').ilike('email', email).then(({ data }) => {
       const row = (data||[]).find(r => (r.email||'').toLowerCase() === email.toLowerCase());
-      const t = (row && row.job_title) || '';
+      // A title that is the sign-in address is browser autofill that got saved,
+      // not a title: read it as blank.
+      const raw = ((row && row.job_title) || '').trim();
+      const t = raw.toLowerCase() === email.toLowerCase() ? '' : raw;
       setTitle(t); setSavedTitle(t);
     });
   }, [email]);
 
   const saveName = async () => {
     const next = name.trim();
-    const nextTitle = title.trim();
+    // Never store the sign-in address as a title (browser autofill).
+    const nextTitle = title.trim().toLowerCase() === email.toLowerCase() ? '' : title.trim();
     if (!email) return;
     setNameBusy(true); setNameMsg('');
     // THE SAME ilike PLUS EXACT RE-CHECK THE SHELL'S LOADER USES. ilike can only
@@ -3268,7 +3272,7 @@ function MyAccount({ user, displayName, onDisplayName }) {
         <div style={{padding:'18px',display:'flex',flexDirection:'column',gap:'16px',maxWidth:'420px'}}>
           <div>
             <label>Display name</label>
-            <input className="form-input" value={name} onChange={e=>setName(e.target.value)}
+            <input className="form-input" name="display_name" autoComplete="name" value={name} onChange={e=>setName(e.target.value)}
                    placeholder={nameFromEmail(email)} onKeyDown={e=>{ if(e.key==='Enter') saveName(); }} />
             {/* The placeholder is the fallback the header actually uses when this is
                 blank, so an empty field previews what clearing it would give you
@@ -3279,7 +3283,9 @@ function MyAccount({ user, displayName, onDisplayName }) {
           </div>
           <div>
             <label>Job title</label>
-            <input className="form-input" value={title} onChange={e=>setTitle(e.target.value)}
+            {/* Named and typed as a job title, so a browser does not take this
+                box for a login field and fill the email address into it. */}
+            <input className="form-input" name="job_title" autoComplete="organization-title" value={title} onChange={e=>setTitle(e.target.value)}
                    placeholder="e.g. VP of Sales" onKeyDown={e=>{ if(e.key==='Enter') saveName(); }} />
             <p style={{fontSize:'12px',color:'var(--muted)',marginTop:'6px'}}>
               Signs off the client price sheet you send from Quotes.

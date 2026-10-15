@@ -2769,7 +2769,9 @@ function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClo
       preparedBy: "Prepared by " + co,
       date: longDate(new Date()),
       notes: [NOTE_DDP, NOTE_APPROVAL],
-      signoff: { name: me.full_name || "", title: me.job_title || "", company: co },
+      // A job title that is the sign-in address is saved browser autofill: blank.
+      signoff: { name: me.full_name || "", company: co,
+                 title: (me.job_title || "").trim().toLowerCase() === (me.email || "").toLowerCase() ? "" : (me.job_title || "") },
     });
     setEdits((prev) => {
       const next = { ...prev };
