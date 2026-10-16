@@ -1729,26 +1729,28 @@ function Inventory() {
           the range is greyed and its inputs disabled; Clear filters returns there. */}
       {lines.length > 0 && (
         <>
-          <div style={{display:'flex',alignItems:'center',gap:'9px',background:'#fff',border:'1px solid #e7eaf0',borderRadius:'12px',padding:'11px 15px',boxShadow:'0 1px 3px rgba(26,34,56,0.05)',marginBottom:'12px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'9px',background:'#fff',border:'1px solid #e7eaf0',borderRadius:'12px',padding:'11px 15px',boxShadow:'0 1px 3px rgba(26,34,56,0.05)',marginBottom:'28px'}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6a7488" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Search product or SKU…" aria-label="Search product or SKU"
               style={{border:'none',background:'transparent',fontSize:'14.5px',width:'100%',color:'#0f1729',outline:'none',fontFamily:'inherit'}} />
             {ui.search && <button onClick={()=>setUi('search', '')} aria-label="Clear search"
               style={{background:'transparent',border:'none',color:'#6a7488',display:'inline-flex',padding:'2px',cursor:'pointer',fontSize:'15px',lineHeight:1}}>×</button>}
           </div>
-          <div className="fs-row" style={{alignItems:'flex-end',marginBottom: invRange.limited && noDate > 0 ? '8px' : '18px'}}>
+          <div className="fs-row" style={{alignItems:'center',rowGap:'28px',marginBottom: invRange.limited && noDate > 0 ? '8px' : '18px'}}>
             <FilterSelect multiple label="All Clients"   value={ui.clientF}   onChange={v=>setUi('clientF', v)}   options={clientOptions} />
             <FilterSelect multiple label="All Factories" value={ui.factoryF}  onChange={v=>setUi('factoryF', v)}  options={factoryOptions} />
             <FilterSelect multiple label="All Statuses"  value={ui.poStatusF} onChange={v=>setUi('poStatusF', v)} options={poStatusOptions} />
             <FilterSelect multiple label="All Catalog"   value={ui.catalogF}  onChange={v=>setUi('catalogF', v)}  options={catalogOptions} />
             <FilterSelect multiple label="All Methods"   value={ui.methodF}   onChange={v=>setUi('methodF', v)}   options={methodOptions} />
-            {/* The date-type picker and its range, one unit: they wrap together,
-                and the picker lines up with the FROM / TO inputs, not the label. */}
-            <div style={{display:'flex',alignItems:'flex-end',gap:'10px'}}>
+            {/* The date-type picker and its range, one unit: they wrap together.
+                The range's label sits ABOVE the block, out of the flow, so the block
+                is only the FROM / TO line -- centered with the dropdowns, on their
+                line -- and the label is centered over the inputs. */}
+            <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
             <FilterSelect label="All Dates" value={ui.dateBy || ''} onChange={v=>setUi('dateBy', v)} options={datesByOptions} />
             <div role="group" aria-label={rangeLabel} aria-disabled={rangeIdle} title={rangeIdle ? 'Choose Order Date, Cargo Ready Date or ETA to set a range' : undefined}
-              style={{display:'flex',flexDirection:'column',gap:'4px',opacity:rangeIdle?.45:1}}>
-              <span style={{fontSize:'11px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#9aa3b5'}}>{rangeLabel}</span>
+              style={{position:'relative',display:'flex',flexDirection:'column',opacity:rangeIdle?.45:1}}>
+              <span style={{position:'absolute',left:0,right:0,bottom:'100%',marginBottom:'4px',textAlign:'center',whiteSpace:'nowrap',fontSize:'11px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#9aa3b5'}}>{rangeLabel}</span>
               <div style={{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'10px',minHeight:'40px'}}>
                 <label style={{display:'inline-flex',alignItems:'center',gap:'6px'}}>
                   <span style={{fontSize:'11px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#9aa3b5'}}>From</span>
