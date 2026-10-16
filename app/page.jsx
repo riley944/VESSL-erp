@@ -1532,10 +1532,8 @@ function Inventory() {
   // could be filtered.
   const [lines, setLines] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [refreshed, setRefreshed] = useState(null);
   // Which tab, the three filters and the search box, kept across navigation. The
-  // fetched lines and the refreshed-at stamp stay plain -- this page reloads on mount
-  // and a restored timestamp would claim a freshness it does not have.
+  // fetched lines stay plain -- this page reloads on mount.
   const [ui, setUi] = usePageState('inventory', { tab:'overview', clientF:[], factoryF:[], statusF:[], search:'' });
   // All three are multi-select arrays. An empty array is no narrowing, matching
   // the All row optionsFrom emits with value ''.
@@ -1581,7 +1579,7 @@ function Inventory() {
         });
       });
     });
-    setLines(out); setRefreshed(new Date()); setLoading(false);
+    setLines(out); setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
 
@@ -1706,17 +1704,8 @@ function Inventory() {
   return (
     <div className="db-apple" style={{padding:'24px 32px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
 
-      <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'20px',marginBottom:'22px',flexWrap:'wrap'}}>
-        <div>
-          {/* No page title. "Updated" is when this tab last loaded, not a live feed
-              -- the page never refetches on its own, so an open tab keeps saying
-              the same time and means it. Refresh is the only thing that moves it. */}
-          <div style={{fontSize:'13px',color:'#86868B',letterSpacing:'-.01em'}}>Updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
-        </div>
-        <button onClick={load} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 18px',fontSize:'14px',fontWeight:500,letterSpacing:'-.01em',cursor:'pointer'}}>Refresh</button>
-      </div>
-
-      {/* Pill tabs, testing.jsx's shape. */}
+      {/* Pill tabs, testing.jsx's shape -- the page's first row (16 Oct: no
+          "Updated" line or Refresh button; the page reloads on every visit). */}
       <div style={{display:'flex',gap:'6px',marginBottom:'22px',flexWrap:'wrap'}}>
         {INV_TABS.map(([v,l])=>(
           <button key={v} onClick={()=>setUi('tab', v)}

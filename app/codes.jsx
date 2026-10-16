@@ -252,15 +252,11 @@ export default function Codes({ canDeleteCodes = true }) {
 
   return (
     <div className="db-wrap" style={{padding:'24px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
-      {/* No page title (the sidebar names it): the button row. */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'22px',gap:'14px',flexWrap:'wrap'}}>
-        <div />
-        <button onClick={()=>setModal({})} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>{createLabel}</button>
-      </div>
-
-      {/* Toggle + search. Switching clears the search: a term that matched codes
-          almost never matches rules, and a list that reads empty on arrival looks
-          broken rather than filtered. */}
+      {/* Toggle + search -- the page's first row, with Export and the create button
+          (+ New code / + New rule, following the toggle) at its right end.
+          Switching clears the search: a term that matched codes almost never
+          matches rules, and a list that reads empty on arrival looks broken rather
+          than filtered. */}
       <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'18px',flexWrap:'wrap'}}>
         <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px'}}>
           {MODES.map(([v,l])=>(
@@ -277,9 +273,10 @@ export default function Codes({ canDeleteCodes = true }) {
         {searching && <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{shown.length} of {total}</span>}
         {/* At the end of the row, exporting whichever list the toggle is showing and
             whatever the search left of it. Same control as Testing and Products. */}
-        <div style={{marginLeft:'auto'}}>
+        <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:'10px'}}>
           <ExportButton count={shown.length} busy={exporting}
                         onXlsx={exportXlsx} onCsv={exportCsv} align="right" />
+          <button onClick={()=>setModal({})} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',whiteSpace:'nowrap'}}>{createLabel}</button>
         </div>
       </div>
 
