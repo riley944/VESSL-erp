@@ -1592,19 +1592,17 @@ function Inventory() {
   const methodOptions = optionsFrom('method', 'All Methods');
 
   // THE FILTERS, every tab alike (lib/inventoryView filterInventory): client,
-  // factory, PO status, catalog, shipping method, the product/SKU search, and the
-  // period on the "Dates by" date. noDate is how many lines the range left out for
-  // having no such date -- said under the filters.
-  const { shown, range: invRange, noDate } = filterInventory(lines, ui, new Date());
+  // factory, PO status, catalog, shipping method, the product/SKU search, and a
+  // From / To range on the "Dates by" date. noDate is how many lines the range
+  // left out for having no such date -- said under the filters.
+  const { shown, range: invRange, noDate } = filterInventory(lines, ui);
   const filtered = isInventoryFiltered(ui);
-  // Under All Dates the period controls are greyed; using one picks Order Date,
-  // since a range has to be on some date.
-  const dateOn = () => { if (!ui.dateBy) setUi('dateBy', 'order'); };
-  const toCustom = () => { dateOn(); if (ui.period !== 'custom') { setUi('from', invRange.from); setUi('to', invRange.to); setUi('period', 'custom'); } };
-  const onDate = (k, v) => { toCustom(); setUi(k, v); };
-  const pickPeriod = v => { if (v === 'custom') toCustom(); else { dateOn(); setUi('period', v); } };
+  // Under All Dates the From / To are greyed; typing one picks Order Date, since
+  // a range has to be on some date.
+  const onDate = (k, v) => { if (!ui.dateBy) setUi('dateBy', 'order'); setUi(k, v); };
   const datesByOptions = INV_DATES_BY.map(([v,l]) => ({ value:v, label:l }));
-  const periodIdle = !ui.dateBy;
+  const rangeIdle = !ui.dateBy;
+  const rangeLabel = ui.dateBy ? INV_DATES_WORD[ui.dateBy] + ' range' : 'date range';
 
   // EXPORT: the tab on screen, filtered as shown, through the PO/SO pages'
   // pipeline (startOrderExport -> deliverExport). lib/inventoryView builds the sheets.
@@ -1711,6 +1709,8 @@ function Inventory() {
           ))}
         </div>
         {filtered && <span style={{fontSize:'12px',fontWeight:700,color:'#7A4700',background:'#FFF3DC',borderRadius:'999px',padding:'4px 10px',letterSpacing:'.02em'}}>Filtered</span>}
+        {filtered && <button onClick={()=>clearInventoryFilters(setUi)}
+          style={{background:'none',border:'none',padding:'0 2px',fontSize:'13px',fontWeight:600,color:'#0066CC',cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}}>Clear filters</button>}
         {/* The view on screen, filtered as shown: Excel, CSV or PDF. */}
         {lines.length > 0 && (
           <div style={{marginLeft:'auto'}}>
@@ -1720,37 +1720,45 @@ function Inventory() {
         )}
       </div>
 
-      {/* THE FILTERS, on every tab. Row 1: the product/SKU search and the period
-          -- presets and a custom From / To, as Analytics has them. Row 2: client,
-          factory, PO status, catalog (whether the product is still sold), shipping
-          method, and Dates by, which date the period reads. Under All Dates (the
-          default) nothing is narrowed by date and the period controls are greyed;
-          using one picks Order Date. */}
+      {/* THE FILTERS, on every tab. The product/SKU search on its own row, full
+          width, as the Quotes search is. Then the dropdowns -- client, factory, PO
+          status, catalog (whether the product is still sold), shipping method, and
+          Dates by -- and after Dates by the From / To range on that date, as Quote
+          List lays it out, with how many lines are shown. Under All Dates (the
+          default) the range is greyed; typing a date picks Order Date. */}
       {lines.length > 0 && (
         <>
-          <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap',marginBottom:'10px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'9px',background:'#fff',border:'1px solid #e7eaf0',borderRadius:'12px',padding:'11px 15px',boxShadow:'0 1px 3px rgba(26,34,56,0.05)',marginBottom:'12px'}}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6a7488" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Search product or SKU…" aria-label="Search product or SKU"
-              style={{flex:'1 1 220px',maxWidth:'340px',border:'none',borderRadius:'980px',padding:'10px 15px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
-            <div role="group" aria-label="Period" title={periodIdle ? 'Choose a date under Dates by -- or pick a period, which uses Order Date' : undefined}
-              style={{display:'inline-flex',background:'#E8E8ED',borderRadius:'12px',padding:'3px',flexWrap:'wrap',opacity:periodIdle?.45:1}}>
-              {PERIOD_OPTS.map(([v,l])=>{
-                const on = ui.period === v;
-                return <button key={v} className="kva-seg" onClick={()=>pickPeriod(v)}
-                  style={{border:'none',borderRadius:'9px',padding:'7px 12px',fontSize:'13px',fontWeight:600,fontFamily:'inherit',cursor:'pointer',background:on?'#fff':'transparent',color:on?'#1D1D1F':'#5A5A5E',boxShadow:on?'0 1px 2px rgba(0,0,0,.08)':'none'}}>{l}</button>;
-              })}
-            </div>
-            <input type="date" className="kva-ctl" aria-label="From" value={invRange.from} onChange={e=>onDate('from', e.target.value)} style={{width:'150px',opacity:periodIdle?.45:1}} />
-            <input type="date" className="kva-ctl" aria-label="To" value={invRange.to} onChange={e=>onDate('to', e.target.value)} style={{width:'150px',opacity:periodIdle?.45:1}} />
-            {filtered && <button onClick={()=>clearInventoryFilters(setUi)}
-              style={{background:'none',border:'none',padding:'0 2px',fontSize:'13px',fontWeight:600,color:'#0066CC',cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}}>Clear filters</button>}
+              style={{border:'none',background:'transparent',fontSize:'14.5px',width:'100%',color:'#0f1729',outline:'none',fontFamily:'inherit'}} />
+            {ui.search && <button onClick={()=>setUi('search', '')} aria-label="Clear search"
+              style={{background:'transparent',border:'none',color:'#6a7488',display:'inline-flex',padding:'2px',cursor:'pointer',fontSize:'15px',lineHeight:1}}>×</button>}
           </div>
-          <div className="fs-row" style={{marginBottom: invRange.limited && noDate > 0 ? '8px' : '18px'}}>
+          <div className="fs-row" style={{alignItems:'flex-end',marginBottom: invRange.limited && noDate > 0 ? '8px' : '18px'}}>
             <FilterSelect multiple label="All Clients"   value={ui.clientF}   onChange={v=>setUi('clientF', v)}   options={clientOptions} />
             <FilterSelect multiple label="All Factories" value={ui.factoryF}  onChange={v=>setUi('factoryF', v)}  options={factoryOptions} />
             <FilterSelect multiple label="All Statuses"  value={ui.poStatusF} onChange={v=>setUi('poStatusF', v)} options={poStatusOptions} />
             <FilterSelect multiple label="All Catalog"   value={ui.catalogF}  onChange={v=>setUi('catalogF', v)}  options={catalogOptions} />
             <FilterSelect multiple label="All Methods"   value={ui.methodF}   onChange={v=>setUi('methodF', v)}   options={methodOptions} />
             <FilterSelect label="All Dates" value={ui.dateBy || ''} onChange={v=>setUi('dateBy', v)} options={datesByOptions} />
+            <div role="group" aria-label={rangeLabel} title={rangeIdle ? 'Choose a date under All Dates -- or type one, which uses Order Date' : undefined}
+              style={{display:'flex',flexDirection:'column',gap:'4px',marginLeft:'6px'}}>
+              <span style={{fontSize:'11px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#9aa3b5'}}>{rangeLabel}</span>
+              <div style={{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'10px',minHeight:'40px'}}>
+                <label style={{display:'inline-flex',alignItems:'center',gap:'6px'}}>
+                  <span style={{fontSize:'11px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#9aa3b5'}}>From</span>
+                  <input type="date" value={ui.from} max={ui.to || undefined} onChange={e=>onDate('from', e.target.value)} aria-label={rangeLabel + ' from'} style={{border:'1px solid #e7eaf0',borderRadius:'10px',padding:'8px 10px',fontSize:'13px',fontFamily:'inherit',color:'#0f1729',background:'#fff',outline:'none',opacity:rangeIdle?.45:1}} />
+                </label>
+                <label style={{display:'inline-flex',alignItems:'center',gap:'6px'}}>
+                  <span style={{fontSize:'11px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#9aa3b5'}}>To</span>
+                  <input type="date" value={ui.to} min={ui.from || undefined} onChange={e=>onDate('to', e.target.value)} aria-label={rangeLabel + ' to'} style={{border:'1px solid #e7eaf0',borderRadius:'10px',padding:'8px 10px',fontSize:'13px',fontFamily:'inherit',color:'#0f1729',background:'#fff',outline:'none',opacity:rangeIdle?.45:1}} />
+                </label>
+              </div>
+            </div>
+            <span style={{display:'flex',alignItems:'center',height:'40px',fontSize:'12px',color:'#6a7488',fontVariantNumeric:'tabular-nums',marginLeft:'4px'}}>
+              {fmtNum(shown.length)} line{shown.length === 1 ? '' : 's'} shown
+            </span>
           </div>
           {/* A range on a date some lines do not have leaves them out -- said, with
               the count, rather than silently shrinking the totals. */}
