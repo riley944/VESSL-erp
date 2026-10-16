@@ -2761,7 +2761,6 @@ function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClo
     setHead((h) => h || {
       company: (chosenClient || "").toUpperCase(),
       programme: "UNIT PRICING",
-      preparedBy: "Prepared by " + co,
       date: longDate(new Date()),
       notes: [NOTE_DDP, NOTE_APPROVAL],
       // A job title that is the sign-in address is saved browser autofill: blank.
@@ -2943,7 +2942,6 @@ function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClo
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 12 }}>
                 {field("Company title", head.company, (v) => setH("company", v))}
                 {field("Program title", head.programme, (v) => setH("programme", v))}
-                {field("Prepared by", head.preparedBy, (v) => setH("preparedBy", v))}
                 {field("Date", head.date, (v) => setH("date", v))}
               </div>
               <div style={{ display: "grid", gap: 12, marginBottom: 12 }}>
