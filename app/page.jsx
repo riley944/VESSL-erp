@@ -134,7 +134,7 @@ import { shipmentStatusLabel } from '@/lib/shipmentStatus';
 import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
-         buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline } from '@/lib/inventoryView';
+         buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline, timelineBy, monthColor } from '@/lib/inventoryView';
 import { buildSoListSheets, buildSoRecordSheets, buildPoListSheets, buildPoRecordSheets, ordersListFileName, orderFileName, ordersCsvName, ordersPdfMeta, orderPdfMeta, orderRef } from '@/lib/ordersExport';
 import { lclBidTotal, bidEffective } from '@/lib/freightBids';
 import { buildShipmentsSheets, shipmentsFileName, SHIPMENTS_ALL, shipmentsCsvName, shipmentsPdfMeta, buildRecordSheets, recordFileName, recordPdfMeta } from '@/lib/shipmentsExport';
@@ -1597,8 +1597,14 @@ function Inventory() {
   // having no such date -- said under the filters.
   const { shown, range: invRange, noDate } = filterInventory(lines, ui, new Date());
   const filtered = isInventoryFiltered(ui);
-  const toCustom = () => { if (ui.period !== 'custom') { setUi('from', invRange.from); setUi('to', invRange.to); setUi('period', 'custom'); } };
+  // Under All Dates the period controls are greyed; using one picks Order Date,
+  // since a range has to be on some date.
+  const dateOn = () => { if (!ui.dateBy) setUi('dateBy', 'order'); };
+  const toCustom = () => { dateOn(); if (ui.period !== 'custom') { setUi('from', invRange.from); setUi('to', invRange.to); setUi('period', 'custom'); } };
   const onDate = (k, v) => { toCustom(); setUi(k, v); };
+  const pickPeriod = v => { if (v === 'custom') toCustom(); else { dateOn(); setUi('period', v); } };
+  const datesByOptions = INV_DATES_BY.map(([v,l]) => ({ value:v, label:l }));
+  const periodIdle = !ui.dateBy;
 
   // EXPORT: the tab on screen, filtered as shown, through the PO/SO pages'
   // pipeline (startOrderExport -> deliverExport). lib/inventoryView builds the sheets.
@@ -1665,7 +1671,9 @@ function Inventory() {
 
   const cardShadow = '0 1px 3px rgba(0,0,0,.04)';
   // One renderer for both charts -- same bars, same scale rule, different axis.
-  const Bars = ({ title, rows, colored }) => {
+  // colorOf(name): the Timeline's per-month color -- a plain swatch and a bar
+  // in that color, no initials. Without it, rows are client-colored or grey.
+  const Bars = ({ title, rows, colored, colorOf }) => {
     const max = Math.max(1, ...rows.map(r=>r[1]));
     return (
       <div style={{background:'#fff',borderRadius:'20px',boxShadow:cardShadow,padding:'22px 24px 20px',marginBottom:'20px'}}>
@@ -1674,11 +1682,13 @@ function Inventory() {
         {rows.map(([name,qty])=>(
           <div key={name} style={{display:'flex',alignItems:'center',gap:'14px',marginBottom:'13px'}}>
             <div style={{display:'flex',alignItems:'center',gap:'9px',width:'150px',flexShrink:0,minWidth:0}}>
-              <span style={{width:'22px',height:'22px',borderRadius:'6px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'9px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:colored?companyColor(name):'#8E8E93'}}>{initials(name)}</span>
+              {colorOf
+                ? <span style={{width:'12px',height:'12px',borderRadius:'4px',flexShrink:0,background:colorOf(name)}} />
+                : <span style={{width:'22px',height:'22px',borderRadius:'6px',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'9px',fontWeight:600,fontFamily:'var(--mono)',color:'#fff',background:colored?companyColor(name):'#8E8E93'}}>{initials(name)}</span>}
               <span style={{fontSize:'14px',color:'#1D1D1F',letterSpacing:'-.01em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{name}</span>
             </div>
             <div style={{flex:1,height:'8px',background:'#F0F0F2',borderRadius:'4px',overflow:'hidden',minWidth:0}}>
-              <div style={{height:'100%',width:(qty/max*100)+'%',background:colored?companyColor(name):'#8E8E93',opacity:.9,borderRadius:'4px',minWidth:qty>0?'4px':'0',transition:'width .45s'}} />
+              <div style={{height:'100%',width:(qty/max*100)+'%',background:colorOf?colorOf(name):colored?companyColor(name):'#8E8E93',opacity:.9,borderRadius:'4px',minWidth:qty>0?'4px':'0',transition:'width .45s'}} />
             </div>
             <span style={{fontSize:'14px',fontWeight:500,color:'#1D1D1F',width:'62px',textAlign:'right',flexShrink:0,fontVariantNumeric:'tabular-nums',letterSpacing:'-.01em'}}>{fmtNum(qty)}</span>
           </div>
@@ -1710,42 +1720,43 @@ function Inventory() {
         )}
       </div>
 
-      {/* THE FILTERS, on every tab: client, factory, PO status, catalog (whether
-          the product is still sold) and shipping method; the product/SKU search;
-          and the period on the "Dates by" date, exactly as Analytics does it --
-          presets, a custom From / To, and which date the range reads. */}
+      {/* THE FILTERS, on every tab. Row 1: the product/SKU search and the period
+          -- presets and a custom From / To, as Analytics has them. Row 2: client,
+          factory, PO status, catalog (whether the product is still sold), shipping
+          method, and Dates by, which date the period reads. Under All Dates (the
+          default) nothing is narrowed by date and the period controls are greyed;
+          using one picks Order Date. */}
       {lines.length > 0 && (
         <>
-          <div className="fs-row" style={{marginBottom:'10px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap',marginBottom:'10px'}}>
+            <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Search product or SKU…" aria-label="Search product or SKU"
+              style={{flex:'1 1 220px',maxWidth:'340px',border:'none',borderRadius:'980px',padding:'10px 15px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
+            <div role="group" aria-label="Period" title={periodIdle ? 'Choose a date under Dates by -- or pick a period, which uses Order Date' : undefined}
+              style={{display:'inline-flex',background:'#E8E8ED',borderRadius:'12px',padding:'3px',flexWrap:'wrap',opacity:periodIdle?.45:1}}>
+              {PERIOD_OPTS.map(([v,l])=>{
+                const on = ui.period === v;
+                return <button key={v} className="kva-seg" onClick={()=>pickPeriod(v)}
+                  style={{border:'none',borderRadius:'9px',padding:'7px 12px',fontSize:'13px',fontWeight:600,fontFamily:'inherit',cursor:'pointer',background:on?'#fff':'transparent',color:on?'#1D1D1F':'#5A5A5E',boxShadow:on?'0 1px 2px rgba(0,0,0,.08)':'none'}}>{l}</button>;
+              })}
+            </div>
+            <input type="date" className="kva-ctl" aria-label="From" value={invRange.from} onChange={e=>onDate('from', e.target.value)} style={{width:'150px',opacity:periodIdle?.45:1}} />
+            <input type="date" className="kva-ctl" aria-label="To" value={invRange.to} onChange={e=>onDate('to', e.target.value)} style={{width:'150px',opacity:periodIdle?.45:1}} />
+            {filtered && <button onClick={()=>clearInventoryFilters(setUi)}
+              style={{background:'none',border:'none',padding:'0 2px',fontSize:'13px',fontWeight:600,color:'#0066CC',cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}}>Clear filters</button>}
+          </div>
+          <div className="fs-row" style={{marginBottom: invRange.limited && noDate > 0 ? '8px' : '18px'}}>
             <FilterSelect multiple label="All Clients"   value={ui.clientF}   onChange={v=>setUi('clientF', v)}   options={clientOptions} />
             <FilterSelect multiple label="All Factories" value={ui.factoryF}  onChange={v=>setUi('factoryF', v)}  options={factoryOptions} />
             <FilterSelect multiple label="All Statuses"  value={ui.poStatusF} onChange={v=>setUi('poStatusF', v)} options={poStatusOptions} />
             <FilterSelect multiple label="All Catalog"   value={ui.catalogF}  onChange={v=>setUi('catalogF', v)}  options={catalogOptions} />
             <FilterSelect multiple label="All Methods"   value={ui.methodF}   onChange={v=>setUi('methodF', v)}   options={methodOptions} />
-          </div>
-          <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap',marginBottom: invRange.limited && noDate > 0 ? '8px' : '18px'}}>
-            <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Search product or SKU…" aria-label="Search product or SKU"
-              style={{flex:'1 1 220px',maxWidth:'340px',border:'none',borderRadius:'980px',padding:'10px 15px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
-            <div role="group" aria-label="Period" style={{display:'inline-flex',background:'#E8E8ED',borderRadius:'12px',padding:'3px',flexWrap:'wrap'}}>
-              {PERIOD_OPTS.map(([v,l])=>{
-                const on = ui.period === v;
-                return <button key={v} className="kva-seg" onClick={()=>{ if (v === 'custom') toCustom(); else setUi('period', v); }}
-                  style={{border:'none',borderRadius:'9px',padding:'7px 12px',fontSize:'13px',fontWeight:600,fontFamily:'inherit',cursor:'pointer',background:on?'#fff':'transparent',color:on?'#1D1D1F':'#5A5A5E',boxShadow:on?'0 1px 2px rgba(0,0,0,.08)':'none'}}>{l}</button>;
-              })}
-            </div>
-            <input type="date" className="kva-ctl" aria-label="From" value={invRange.from} onChange={e=>onDate('from', e.target.value)} style={{width:'150px'}} />
-            <input type="date" className="kva-ctl" aria-label="To" value={invRange.to} onChange={e=>onDate('to', e.target.value)} style={{width:'150px'}} />
-            <select className="kva-ctl" aria-label="Dates by" value={ui.datesBy} onChange={e=>setUi('datesBy', e.target.value)} style={{width:'auto'}}>
-              {INV_DATES_BY.map(([v,l])=><option key={v} value={v}>{'Dates by ' + l}</option>)}
-            </select>
-            {filtered && <button onClick={()=>clearInventoryFilters(setUi)}
-              style={{background:'none',border:'none',padding:'0 2px',fontSize:'13px',fontWeight:600,color:'#0066CC',cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}}>Clear filters</button>}
+            <FilterSelect label="All Dates" value={ui.dateBy || ''} onChange={v=>setUi('dateBy', v)} options={datesByOptions} />
           </div>
           {/* A range on a date some lines do not have leaves them out -- said, with
               the count, rather than silently shrinking the totals. */}
           {invRange.limited && noDate > 0 && (
             <div style={{fontSize:'12.5px',color:'#86868B',marginBottom:'18px'}}>
-              {fmtNum(noDate)} line{noDate === 1 ? ' has' : 's have'} no {INV_DATES_WORD[ui.datesBy]} and {noDate === 1 ? 'is' : 'are'} left out of this range.
+              {fmtNum(noDate)} line{noDate === 1 ? ' has' : 's have'} no {INV_DATES_WORD[ui.dateBy]} and {noDate === 1 ? 'is' : 'are'} left out of this range.
             </div>
           )}
         </>
@@ -1837,8 +1848,12 @@ function Inventory() {
       ) : ui.tab==='timeline' ? (
         /* TIMELINE: units by month of the "Dates by" date, months in order; the
            lines with no such date last. */
-        <Bars title={'Units on order by month of ' + INV_DATES_WORD[ui.datesBy]}
-              rows={timeline(shown, ui.datesBy).map(r => [r.label, r.units])} />
+        (() => {
+          const tl = timeline(shown, timelineBy(ui.dateBy));
+          const colorByLabel = Object.fromEntries(tl.map(r => [r.label, monthColor(r.key)]));
+          return <Bars title={'Units on order by month of ' + INV_DATES_WORD[timelineBy(ui.dateBy)]}
+                       rows={tl.map(r => [r.label, r.units])} colorOf={n => colorByLabel[n]} />;
+        })()
       ) : (
       <>
         {/* SAYS SO WHEN IT MATTERS. The factory is on the purchase order, not the
