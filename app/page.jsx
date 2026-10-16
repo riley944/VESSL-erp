@@ -400,7 +400,8 @@ function OrderCard({ p, navigate, onStatus, exportIcon = null }){
 }
 
 // ── PO toolbar (search + client chips + status chips), shared UI ────────────────
-function PoToolbar({ rows, search, setSearch, client, setClient, status, setStatus }){
+// actions: the page's buttons (Export, + New PO), on the search bar's row.
+function PoToolbar({ rows, search, setSearch, client, setClient, status, setStatus, actions = null }){
   const clients = distinctClients(rows);
   const clientOptions = [
     { value:'', label:'All Clients' },
@@ -412,7 +413,10 @@ function PoToolbar({ rows, search, setSearch, client, setClient, status, setStat
   ];
   return (
     <div className="po-toolbar">
-      <input className="po-search" placeholder="Search PO #, client, or product…" value={search} onChange={e=>setSearch(e.target.value)} />
+      <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
+        <input className="po-search" style={{flex:'1 1 240px',width:'auto',minWidth:0}} placeholder="Search PO #, client, or product…" value={search} onChange={e=>setSearch(e.target.value)} />
+        {actions}
+      </div>
       <div className="fs-row">
         <FilterSelect multiple label="All Clients"  value={client} onChange={setClient} options={clientOptions} />
         <FilterSelect multiple label="All Statuses" value={status} onChange={setStatus} options={statusOptions} />
@@ -1315,7 +1319,9 @@ function Dashboard({ navigate, user, displayName = '' }) {
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '16px', marginBottom: '16px', flexWrap: 'wrap' }}>
         {/* No page title (the sidebar names the page): the live counts, as a
             small muted line, and the Filtered tag beside them. */}
-        <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+        {/* Inset by the filter card's own 18px padding, so the line starts over
+            the card's FROM label; the buttons end at the card's right edge. */}
+        <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', paddingLeft: '18px' }}>
           <div style={{ fontSize: '13px', color: muted, letterSpacing: '-.01em' }}>{d.pipeCount} {!d.single ? 'open' : d.stageLabel} sales orders · {d.activeClients} active clients</div>
           {/* So a filtered page is never read as the whole business. */}
           {d.filtered && <span style={{ fontSize: '12px', fontWeight: 700, color: '#7A4700', background: '#FFF3DC', borderRadius: '999px', padding: '4px 10px', letterSpacing: '.02em' }}>Filtered</span>}
@@ -1935,15 +1941,6 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
     <div className="db-wrap" style={{padding:'24px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
       {showCreate && <CreateSOModal onClose={()=>setShowCreate(false)} onCreated={(id)=>{setShowCreate(false);id?navigate('so-detail',{id}):load();}} />}
 
-      {/* No page title: the action row, the button at the right. */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'22px',gap:'14px',flexWrap:'wrap'}}>
-        <div />
-        <button onClick={()=>setShowCreate(true)} style={{display:'inline-flex',alignItems:'center',gap:'7px',background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',flexShrink:0,boxShadow:'0 1px 2px rgba(0,0,0,.08)'}}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          New Sales Order
-        </button>
-      </div>
-
       {/* Summary tiles */}
       {shown.length>0 && (
         <div className="db-kpi-grid" style={{display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:'14px',marginBottom:'16px'}}>
@@ -1965,11 +1962,20 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
         </div>
       )}
 
-      {/* Search */}
-      <div style={{display:'flex',alignItems:'center',gap:'10px',background:'#fff',borderRadius:'12px',padding:'0 14px',height:'44px',marginBottom:'12px',boxShadow:'0 0 0 1px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.04)'}}>
+      {/* ONE ROW: the search box stretching, then the list's Export (the orders
+          on screen, filtered and sorted as shown), then New Sales Order at the
+          right -- as Purchase Orders. The filters sit under it. */}
+      <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap',marginBottom:'12px'}}>
+      <div style={{flex:'1 1 240px',minWidth:0,display:'flex',alignItems:'center',gap:'10px',background:'#fff',borderRadius:'12px',padding:'0 14px',height:'44px',boxShadow:'0 0 0 1px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.04)'}}>
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#8A8A8E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input placeholder="Search by client PO or client name…" value={ui.search} onChange={e=>setUi('search', e.target.value)} style={{flex:1,border:'none',outline:'none',background:'transparent',fontSize:'14px',color:'#1A1A1C',minWidth:0}} />
         {ui.search && <button onClick={()=>setUi('search','')} style={{flexShrink:0,width:'20px',height:'20px',borderRadius:'50%',border:'none',background:'#F0F0F2',color:'#8A8A8E',fontSize:'14px',lineHeight:1,cursor:'pointer'}}>×</button>}
+      </div>
+        <ExportMenu label="Export" className="export-pill" busy={exporting==='list'} disabled={!!exporting} title="Export Sales Orders" ariaLabel="Export Sales Orders" onPick={exportList} />
+        <button onClick={()=>setShowCreate(true)} style={{display:'inline-flex',alignItems:'center',gap:'7px',background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',flexShrink:0,boxShadow:'0 1px 2px rgba(0,0,0,.08)'}}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New Sales Order
+        </button>
       </div>
 
       {/* Client + status filters */}
@@ -1980,11 +1986,6 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
         <FilterSelect multiple label="All Statuses" value={ui.statusF} onChange={v=>setUi('statusF', v)} options={statusOptions} />
         <FilterSelect multiple label="All CRD" value={crdF} onChange={setCrdF} options={crdOptions} />
         <FilterSelect multiple ordered label="Newest SO" value={sortBy} onChange={setSortBy} options={sortOptions} />
-        {/* THE LIST'S EXPORT, at the end of the controls row: the orders on screen,
-            filtered and sorted as shown. */}
-        <div className="shp-export-wrap">
-          <ExportMenu label="Export" className="export-pill" busy={exporting==='list'} disabled={!!exporting} title="Export Sales Orders" ariaLabel="Export Sales Orders" onPick={exportList} />
-        </div>
       </div>
 
       {/* Orders — distinct 2-col card grid */}
@@ -3492,7 +3493,8 @@ function CompanyBanking() {
 }
 
 // ── Orders List ───────────────────────────────────────────────────────────────
-function Orders({ navigate, role = null, user = null, displayName = '' }) {
+// newAction: the page's + New PO button, from the shell (it opens the shell's modal).
+function Orders({ navigate, role = null, user = null, displayName = '', newAction = null }) {
   const [rows, setRows]     = useState([]);
   const [loading, setLoading] = useState(true);
   // What the user chose about this list -- search, the two filters, and which of the
@@ -3575,10 +3577,15 @@ function Orders({ navigate, role = null, user = null, displayName = '' }) {
   );
   return (
     <>
-      <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'2px'}}>
-        <div style={{flex:1}}><PoToolbar rows={rows} search={ui.search} setSearch={v=>setUi('search',v)} client={ui.client} setClient={v=>setUi('client',v)} status={ui.status} setStatus={v=>setUi('status',v)} /></div>
-        {/* THE LIST'S EXPORT, at the end of the controls row: what the current view shows. */}
-        <ExportMenu label="Export" className="export-pill" busy={exporting==='list'} disabled={!!exporting} title="Export Purchase Orders" ariaLabel="Export Purchase Orders" onPick={exportList} />
+      {/* ONE ROW: the search bar stretching, then the list's Export (what the
+          current view shows), then + New PO at the right. The client and status
+          filters sit under it, then the List / Production Board toggle. */}
+      <div style={{marginBottom:'2px'}}>
+        <PoToolbar rows={rows} search={ui.search} setSearch={v=>setUi('search',v)} client={ui.client} setClient={v=>setUi('client',v)} status={ui.status} setStatus={v=>setUi('status',v)}
+          actions={<>
+            <ExportMenu label="Export" className="export-pill" busy={exporting==='list'} disabled={!!exporting} title="Export Purchase Orders" ariaLabel="Export Purchase Orders" onPick={exportList} />
+            {newAction}
+          </>} />
       </div>
       <div style={{display:'inline-flex',background:'#F2F2F6',borderRadius:'10px',padding:'3px',marginBottom:'16px'}}>
         {[['list','List'],['board','Production Board']].map(([v,l])=>(
@@ -10894,8 +10901,10 @@ export default function App() {
 
   // Pages that draw their own action row at the top; the shared row stays off.
   const SELF_HEADED = ['dashboard','sales-orders','testing','codes','inventory','shipments','pricing','programs'];
+  // Companies and Purchase Orders draw their + New in their own rows, so today
+  // no page uses the shared row; it stays for a page whose actions have nowhere else.
   const showActionsRow = !SELF_HEADED.includes(page) && page !== 'so-detail' && page !== 'order-detail'
-    && page !== 'companies' && !!pageActions[page];
+    && page !== 'companies' && page !== 'orders' && !!pageActions[page];
   const badges = {'client-relations': crUnread, 'shipments': dreqOpen};
 
 
@@ -10937,7 +10946,7 @@ export default function App() {
           {page==='dashboard' && canAnalytics && <Dashboard navigate={navigate} user={user} displayName={displayName} />}
           {page==='sales-orders'     && <SalesOrders navigate={navigate} role={role} user={user} displayName={displayName} />}
           {page==='so-detail'        && <SalesOrderDetail id={params.id} navigate={navigate} />}
-          {page==='orders'           && <Orders navigate={navigate} role={role} user={user} displayName={displayName} />}
+          {page==='orders'           && <Orders navigate={navigate} role={role} user={user} displayName={displayName} newAction={pageActions.orders} />}
           {page==='order-detail'     && <OrderDetail id={params.id} navigate={navigate} />}
           {page==='companies'        && <Companies onTypeChange={setCompanyType} createRequest={companyCreateReq} action={pageActions.companies} />}
           {page==='products'         && <Products navigate={navigate} canCreateProducts={role !== 'limited_qc'} userEmail={user?.email||''} />}
