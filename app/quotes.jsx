@@ -1391,12 +1391,10 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
       <style>{CSS}</style>
 
       <header style={{ ...S.header, ...(isMobile ? S.headerMobile : {}) }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: isMobile ? 22 : 27, fontWeight: 600, color: "#0f1729", letterSpacing: "-0.02em" }}>Quotes</span>
-          <span style={{ fontSize: 12, color: "#6a7488" }}>Pricing &amp; quote management</span>
-        </div>
+        {/* No page title or email (16 Oct): the sidebar names the page and the
+            top bar shows who is signed in. The buttons keep the row. */}
+        <div />
         <div style={{ display: "flex", gap: isMobile ? 6 : 10, alignItems: "center", flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end" }}>
-          {!isMobile && <span style={S.userTag}>{userEmail}</span>}
           <button style={{ ...S.ghostBtn, position: "relative", ...(isMobile ? S.btnMobile : {}) }} onClick={openTasks}>
             <Bell size={15} /> {isMobile ? "" : "Tasks"}
             {myUnseenTaskCount > 0 && <span style={S.taskBadge}>{myUnseenTaskCount}</span>}
@@ -4875,7 +4873,7 @@ input::placeholder, textarea::placeholder { color: #cdd5e2; }
 `;
 
 const S = {
-  shell: { minHeight: "100%", background: "#ffffff", padding: "30px 26px 70px", fontFamily: "'Spline Sans', system-ui, sans-serif", color: "#0f1729" },
+  shell: { minHeight: "100%", background: "#ffffff", padding: "24px 26px 70px", fontFamily: "'Spline Sans', system-ui, sans-serif", color: "#0f1729" },
   center: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh", fontSize: 16, color: "#6a7488" },
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: 1280, margin: "0 auto 22px", flexWrap: "wrap", gap: 16, background: "#ffffff", padding: "16px 24px", borderRadius: 14, border: "1px solid #e7eaf0", boxShadow: "0 1px 3px rgba(15,23,41,0.05)" },
   headerMobile: { flexDirection: "column", alignItems: "stretch", gap: 12, padding: "14px 16px", borderRadius: 14, margin: "0 0 16px" },
@@ -4884,7 +4882,6 @@ const S = {
   title: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 30, fontWeight: 600, margin: "2px 0 0", color: "#0f1729", letterSpacing: "-0.01em" },
   primaryBtn: { display: "inline-flex", alignItems: "center", gap: 8, background: "linear-gradient(145deg,#16264e,#0b1530)", color: "#ffffff", border: "none", padding: "11px 18px", borderRadius: 11, fontSize: 14, fontWeight: 600, boxShadow: "0 3px 12px rgba(11,21,48,0.18)" },
   ghostBtn: { display: "inline-flex", alignItems: "center", gap: 7, background: "#ffffff", color: "#6a7488", border: "1px solid #e7eaf0", padding: "10px 15px", borderRadius: 11, fontSize: 14, fontWeight: 600 },
-  userTag: { fontSize: 12, color: "#9aa3b5", fontWeight: 500 },
   controls: { display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: 1280, margin: "0 auto 14px", gap: 16, flexWrap: "wrap" },
   searchWrap: { display: "flex", alignItems: "center", gap: 9, background: "#ffffff", border: "1px solid #e7eaf0", borderRadius: 12, padding: "11px 15px", flex: "1 1 100%", boxShadow: "0 1px 3px rgba(26,34,56,0.05)" },
   searchInput: { border: "none", background: "transparent", fontSize: 14.5, width: "100%", color: "#0f1729" },
