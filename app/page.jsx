@@ -1704,13 +1704,17 @@ function Inventory() {
   return (
     <div className="db-apple" style={{padding:'24px 32px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
 
-      {/* Pill tabs, testing.jsx's shape -- the page's first row (16 Oct: no
-          "Updated" line or Refresh button; the page reloads on every visit). */}
-      <div style={{display:'flex',gap:'6px',marginBottom:'22px',flexWrap:'wrap'}}>
-        {INV_TABS.map(([v,l])=>(
-          <button key={v} onClick={()=>setUi('tab', v)}
-            style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'9px 16px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:ui.tab===v?'#1D1D1F':'transparent',color:ui.tab===v?'#fff':'#5A5A5E',boxShadow:ui.tab===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>{l}</button>
-        ))}
+      {/* The page's first row (16 Oct: no "Updated" line or Refresh button; the
+          page reloads on every visit). The segmented control of Codes (HTS Codes /
+          CPSC Rules) and Quotes (Quotes / Quote List), with the same values: a light
+          grey pill holding the options, the active one dark with white text. */}
+      <div style={{marginBottom:'22px'}}>
+        <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',flexWrap:'wrap'}}>
+          {INV_TABS.map(([v,l])=>(
+            <button key={v} onClick={()=>setUi('tab', v)}
+              style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'8px 15px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13px',fontWeight:600,letterSpacing:'-.01em',background:ui.tab===v?'#1A1A1C':'transparent',color:ui.tab===v?'#fff':'#5A5A5E',boxShadow:ui.tab===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>{l}</button>
+          ))}
+        </div>
       </div>
 
       {lines.length===0 ? (
