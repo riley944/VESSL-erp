@@ -1041,14 +1041,13 @@ export default function Testing({ userEmail = '' }) {
   ];
 
   return (
-    <div className="db-apple" style={{padding:'30px 28px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
+    <div className="db-apple" style={{padding:'24px 28px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
 
-      {/* ── Header ── */}
-      <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'16px',marginBottom:'22px',flexWrap:'wrap'}}>
+      {/* ── Header: no page title (the sidebar names it), the live counts as a
+          small muted line, the buttons at the right ── */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'16px',marginBottom:'22px',flexWrap:'wrap'}}>
         <div>
-          <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#FF9F0A'}}/><span style={{fontSize:'11px',fontWeight:700,letterSpacing:'.12em',textTransform:'uppercase',color:'#86868B'}}>Compliance Operations</span></div>
-          <div style={{fontSize:'32px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.032em',lineHeight:1.02}}>Testing &amp; Compliance</div>
-          <div style={{fontSize:'14.5px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>{String(materials.length)+' materials \u00b7 '+String(reports.length)+' reports \u00b7 '+String(regs.length)+' active rules'}</div>
+          <div style={{fontSize:'13px',color:'#86868B',letterSpacing:'-.01em'}}>{String(materials.length)+' materials \u00b7 '+String(reports.length)+' reports \u00b7 '+String(regs.length)+' active rules'}</div>
         </div>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           <button onClick={()=>setModal({type:'material'})} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Material</button>
