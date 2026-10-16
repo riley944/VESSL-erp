@@ -132,7 +132,8 @@ import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel } from '@/lib/shipmentStatus';
 import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
-import { SO_STATUSES, SO_SM, alignStatus, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView } from '@/lib/ordersView';
+import { SO_STATUSES, SO_SM, alignStatus, statusLabel, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView } from '@/lib/ordersView';
+import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles } from '@/lib/inventoryView';
 import { buildSoListSheets, buildSoRecordSheets, buildPoListSheets, buildPoRecordSheets, ordersListFileName, orderFileName, ordersCsvName, ordersPdfMeta, orderPdfMeta, orderRef } from '@/lib/ordersExport';
 import { lclBidTotal, bidEffective } from '@/lib/freightBids';
 import { buildShipmentsSheets, shipmentsFileName, SHIPMENTS_ALL, shipmentsCsvName, shipmentsPdfMeta, buildRecordSheets, recordFileName, recordPdfMeta } from '@/lib/shipmentsExport';
@@ -1532,12 +1533,11 @@ function Inventory() {
   // could be filtered.
   const [lines, setLines] = useState([]);
   const [loading, setLoading] = useState(true);
-  // Which tab, the three filters and the search box, kept across navigation. The
-  // fetched lines stay plain -- this page reloads on mount.
-  const [ui, setUi] = usePageState('inventory', { tab:'overview', clientF:[], factoryF:[], statusF:[], search:'' });
-  // All three are multi-select arrays. An empty array is no narrowing, matching
-  // the All row optionsFrom emits with value ''.
-  // clientF, factoryF, statusF and search are all ui.* now, in the page store above.
+  // Which tab, every filter, the search and the date range, kept across navigation
+  // (lib/inventoryView INV_DEFAULTS). The fetched lines stay plain -- this page
+  // reloads on mount. The multi-selects are arrays; an empty one is no narrowing,
+  // matching the All row the options emit with value ''.
+  const [ui, setUi] = usePageState('inventory', INV_DEFAULTS);
 
   const load = async () => {
     setLoading(true);
@@ -1545,41 +1545,12 @@ function Inventory() {
     // factory is on the PO the page was already reading -- populated on all 40 live
     // POs -- so the filter costs one join and no extra round trip.
     const { data: pos } = await SB.from('purchase_orders')
-      // products.active is the only addition: one more column on a join the query
-      // already makes, so the status column and its filter cost no extra round trip
-      // and no second request. The embed is null when product_id is null, which is
-      // exactly the fourth bucket rather than something to guard against.
-      .select('id,order_number,client_po_number,status,client:companies!client_company_id(name,id),factory:companies!factory_company_id(name,id),purchase_order_items(description,quantity,products(name,sku,active)),shipment_pos(shipments(status,actual_arrival))')
+      // The PO's dates and shipping method, and each shipment's ETA, feed the
+      // filters and the date range; products.active feeds the Catalog column. The
+      // live test and the rows themselves are lib/inventoryView inventoryLines.
+      .select('id,order_number,client_po_number,status,order_date,cargo_ready_date,shipping_method,client:companies!client_company_id(name,id),factory:companies!factory_company_id(name,id),purchase_order_items(description,quantity,products(name,sku,active)),shipment_pos(shipments(status,actual_arrival,estimated_arrival))')
       .not('status','in','("draft","cancelled","closed","delivered")');
-    const active = (pos||[]).filter(po => {
-      const ships = (po.shipment_pos||[]).map(sp=>sp.shipments).filter(Boolean);
-      return !ships.some(s=>s?.actual_arrival || ['delivered'].includes(s?.status));
-    });
-    const out = [];
-    active.forEach(po=>{
-      (po.purchase_order_items||[]).forEach(it=>{
-        out.push({
-          client: po.client?.name||'Unassigned',
-          // FACTORY IS A PROPERTY OF THE PO, NOT THE LINE. A product ordered from two
-          // factories legitimately belongs to both, which is why the filter narrows
-          // contributing lines rather than whole products -- see the note rendered
-          // above the tables when a factory is chosen.
-          factory: po.factory?.name||'Unassigned',
-          prod: it.products?.name||it.description||'—',
-          sku:  it.products?.sku||'',
-          qty:  Number(it.quantity)||0,
-          po:   po.client_po_number||po.order_number||po.id.slice(0,8),
-          status: po.status,
-          // `bucket` and not `status`: that name is taken by the PURCHASE ORDER's
-          // status on this same object, and the two are unrelated -- one is where the
-          // order is, the other is whether the product is still sold.
-          bucket: !it.products ? 'noprod'
-                : it.products.active == null ? 'notset'
-                : it.products.active ? 'active' : 'inactive',
-        });
-      });
-    });
-    setLines(out); setLoading(false);
+    setLines(inventoryLines(pos)); setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
 
@@ -1604,24 +1575,29 @@ function Inventory() {
   // says the state is empty, not that it does not exist.
   const stCounts = {};
   lines.forEach(l => { stCounts[l.bucket] = (stCounts[l.bucket]||0) + 1; });
-  const statusOptions = [
-    { value:'', label:'All Statuses', count:lines.length },
+  // CATALOG: whether the product is still sold -- the filter this page used to
+  // call Status. Status is now the purchase order's.
+  const catalogOptions = [
+    { value:'', label:'All Catalog', count:lines.length },
     ...INV_STATUS.map(([v,l,color])=>({ value:v, label:l, color, count:stCounts[v]||0 })),
   ];
+  // The six live PO statuses, in the lists' order, with the lists' colors.
+  const poCounts = {};
+  lines.forEach(l => { poCounts[l.status] = (poCounts[l.status]||0) + 1; });
+  const poStatusOptions = [
+    { value:'', label:'All Statuses', count:lines.length },
+    ...INV_PO_STATUSES.map(v=>({ value:v, label:statusLabel(v), color:SO_SM[v]&&SO_SM[v].color, bg:SO_SM[v]&&SO_SM[v].bg, count:poCounts[v]||0 })),
+  ];
+  const methodOptions = optionsFrom('method', 'All Methods');
 
-  // The sentinel is built the same way on both sides -- option list and predicate --
-  // or choosing the em dash matches nothing.
-  const term = ui.search.trim().toLowerCase();
-  const shown = lines.filter(l => {
-    if (!inSel(ui.clientF, ((l.client ||'').trim()||'—')))  return false;
-    if (!inSel(ui.factoryF, ((l.factory||'').trim()||'—'))) return false;
-    // No sentinel and no normalisation: bucket is one of four fixed strings this file
-    // computes itself, so the option value and the line value cannot drift apart the
-    // way a trimmed name can.
-    if (!inSel(ui.statusF, l.bucket)) return false;
-    if (term && !((l.prod+' '+l.sku).toLowerCase().includes(term))) return false;
-    return true;
-  });
+  // THE FILTERS, every tab alike (lib/inventoryView filterInventory): client,
+  // factory, PO status, catalog, shipping method, the product/SKU search, and the
+  // period on the "Dates by" date. noDate is how many lines the range left out for
+  // having no such date -- said under the filters.
+  const { shown, range: invRange, noDate } = filterInventory(lines, ui, new Date());
+  const filtered = isInventoryFiltered(ui);
+  const toCustom = () => { if (ui.period !== 'custom') { setUi('from', invRange.from); setUi('to', invRange.to); setUi('period', 'custom'); } };
+  const onDate = (k, v) => { toCustom(); setUi(k, v); };
 
   // WHOLE-SET, deliberately, and this is the one place a filtered set would lie.
   // Status is a property of the PRODUCT while the display key is (client, name, sku),
@@ -1655,19 +1631,16 @@ function Inventory() {
     });
     return g;
   };
-  const sumBy = (rows, key) => {
-    const m = {};
-    rows.forEach(l => { const v=(l[key]||'').trim()||'—'; m[v]=(m[v]||0)+l.qty; });
-    return Object.entries(m).sort((a,b)=>b[1]-a[1]);
-  };
 
   if (loading) return <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading inventory…</div>;
 
-  const byClient  = sumBy(lines, 'client');
-  const byFactory = sumBy(lines, 'factory');
-  const totalUnits = lines.reduce((a,l)=>a+l.qty,0);
-  const allGroups  = groupBy(lines);
-  const totalSkus  = Object.values(allGroups).reduce((a,ps)=>a+Object.keys(ps).length,0);
+  // TILES AND BARS FOLLOW THE FILTERS. With none set they read the whole live
+  // set, as they always did; the Filtered tag says when they do not.
+  const byClient  = sumBy(shown, 'client');
+  const byFactory = sumBy(shown, 'factory');
+  // By PO status, in the stages' order rather than by size.
+  const byStatus = INV_PO_STATUSES.map(v => [statusLabel(v), shown.filter(l => l.status === v).reduce((a,l)=>a+l.qty,0)]).filter(r => r[1] > 0);
+  const tiles = inventoryTiles(shown);
 
   const groups = groupBy(shown);
   const clients = Object.keys(groups).sort((a,b)=>{
@@ -1704,18 +1677,59 @@ function Inventory() {
   return (
     <div className="db-apple" style={{padding:'24px 32px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
 
-      {/* The page's first row (16 Oct: no "Updated" line or Refresh button; the
-          page reloads on every visit). The segmented control of Codes (HTS Codes /
-          CPSC Rules) and Quotes (Quotes / Quote List), with the same values: a light
-          grey pill holding the options, the active one dark with white text. */}
-      <div style={{marginBottom:'22px'}}>
+      {/* THE TOOLBAR: the tab toggle -- the segmented control of Codes (HTS Codes /
+          CPSC Rules) and Quotes (Quotes / Quote List), with the same values -- and
+          the Filtered tag Analytics uses, whenever a filter or a period is set. */}
+      <div style={{display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap',marginBottom:'16px'}}>
         <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',flexWrap:'wrap'}}>
           {INV_TABS.map(([v,l])=>(
             <button key={v} onClick={()=>setUi('tab', v)}
               style={{display:'inline-flex',alignItems:'center',gap:'7px',padding:'8px 15px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13px',fontWeight:600,letterSpacing:'-.01em',background:ui.tab===v?'#1A1A1C':'transparent',color:ui.tab===v?'#fff':'#5A5A5E',boxShadow:ui.tab===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>{l}</button>
           ))}
         </div>
+        {filtered && <span style={{fontSize:'12px',fontWeight:700,color:'#7A4700',background:'#FFF3DC',borderRadius:'999px',padding:'4px 10px',letterSpacing:'.02em'}}>Filtered</span>}
       </div>
+
+      {/* THE FILTERS, on every tab: client, factory, PO status, catalog (whether
+          the product is still sold) and shipping method; the product/SKU search;
+          and the period on the "Dates by" date, exactly as Analytics does it --
+          presets, a custom From / To, and which date the range reads. */}
+      {lines.length > 0 && (
+        <>
+          <div className="fs-row" style={{marginBottom:'10px'}}>
+            <FilterSelect multiple label="All Clients"   value={ui.clientF}   onChange={v=>setUi('clientF', v)}   options={clientOptions} />
+            <FilterSelect multiple label="All Factories" value={ui.factoryF}  onChange={v=>setUi('factoryF', v)}  options={factoryOptions} />
+            <FilterSelect multiple label="All Statuses"  value={ui.poStatusF} onChange={v=>setUi('poStatusF', v)} options={poStatusOptions} />
+            <FilterSelect multiple label="All Catalog"   value={ui.catalogF}  onChange={v=>setUi('catalogF', v)}  options={catalogOptions} />
+            <FilterSelect multiple label="All Methods"   value={ui.methodF}   onChange={v=>setUi('methodF', v)}   options={methodOptions} />
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap',marginBottom: invRange.limited && noDate > 0 ? '8px' : '18px'}}>
+            <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Search product or SKU…" aria-label="Search product or SKU"
+              style={{flex:'1 1 220px',maxWidth:'340px',border:'none',borderRadius:'980px',padding:'10px 15px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
+            <div role="group" aria-label="Period" style={{display:'inline-flex',background:'#E8E8ED',borderRadius:'12px',padding:'3px',flexWrap:'wrap'}}>
+              {PERIOD_OPTS.map(([v,l])=>{
+                const on = ui.period === v;
+                return <button key={v} className="kva-seg" onClick={()=>{ if (v === 'custom') toCustom(); else setUi('period', v); }}
+                  style={{border:'none',borderRadius:'9px',padding:'7px 12px',fontSize:'13px',fontWeight:600,fontFamily:'inherit',cursor:'pointer',background:on?'#fff':'transparent',color:on?'#1D1D1F':'#5A5A5E',boxShadow:on?'0 1px 2px rgba(0,0,0,.08)':'none'}}>{l}</button>;
+              })}
+            </div>
+            <input type="date" className="kva-ctl" aria-label="From" value={invRange.from} onChange={e=>onDate('from', e.target.value)} style={{width:'150px'}} />
+            <input type="date" className="kva-ctl" aria-label="To" value={invRange.to} onChange={e=>onDate('to', e.target.value)} style={{width:'150px'}} />
+            <select className="kva-ctl" aria-label="Dates by" value={ui.datesBy} onChange={e=>setUi('datesBy', e.target.value)} style={{width:'auto'}}>
+              {INV_DATES_BY.map(([v,l])=><option key={v} value={v}>{'Dates by ' + l}</option>)}
+            </select>
+            {filtered && <button onClick={()=>clearInventoryFilters(setUi)}
+              style={{background:'none',border:'none',padding:'0 2px',fontSize:'13px',fontWeight:600,color:'#0066CC',cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}}>Clear filters</button>}
+          </div>
+          {/* A range on a date some lines do not have leaves them out -- said, with
+              the count, rather than silently shrinking the totals. */}
+          {invRange.limited && noDate > 0 && (
+            <div style={{fontSize:'12.5px',color:'#86868B',marginBottom:'18px'}}>
+              {fmtNum(noDate)} line{noDate === 1 ? ' has' : 's have'} no {INV_DATES_WORD[ui.datesBy]} and {noDate === 1 ? 'is' : 'are'} left out of this range.
+            </div>
+          )}
+        </>
+      )}
 
       {lines.length===0 ? (
         <div style={{background:'#fff',borderRadius:'20px',padding:'56px 32px',textAlign:'center',boxShadow:cardShadow}}>
@@ -1724,14 +1738,14 @@ function Inventory() {
         </div>
       ) : ui.tab==='overview' ? (
       <>
-        {/* Tiles read the WHOLE live set, never the filters -- those live on the other
-            tab, and a total that moved with a filter you cannot see from here would
-            be a number nobody could account for. */}
+        {/* The tiles and bars follow the filters above; with none set they read
+            the whole live set. Active SKUs is distinct product + SKU across
+            clients. */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'20px',marginBottom:'20px'}} className="inv-summary">
           {[
-            { k:'Total units on order', v:fmtNum(totalUnits), sub:'across all clients' },
-            { k:'Active SKUs', v:fmtNum(totalSkus), sub:'unique products' },
-            { k:'Active clients', v:String(byClient.length), sub:'with live orders' },
+            { k:'Total units on order', v:fmtNum(tiles.units), sub: filtered ? 'in this filter' : 'across all clients' },
+            { k:'Active SKUs', v:fmtNum(tiles.skus), sub:'distinct products' },
+            { k:'Active clients', v:String(tiles.clients), sub:'with live orders' },
           ].map(m=>(
             <div key={m.k} style={{background:'#fff',borderRadius:'20px',padding:'22px 24px',boxShadow:cardShadow}}>
               <div style={{fontSize:'13px',color:'#86868B',fontWeight:400,letterSpacing:'-.006em',marginBottom:'14px'}}>{m.k}</div>
@@ -1742,23 +1756,15 @@ function Inventory() {
         </div>
         <Bars title="Units on order by client" rows={byClient} colored />
         {/* The free one: the factory was already on the PO, so this is the same
-            aggregation against the other axis. Grey rather than per-name colour --
+            aggregation against the other axis. Grey rather than per-name color --
             companyColor is the CLIENT convention, and giving factories their own hues
             would imply a palette that does not exist. */}
         <Bars title="Units on order by factory" rows={byFactory} />
+        {/* By the purchase order's stage, in the stages' order. */}
+        <Bars title="Units on order by status" rows={byStatus} />
       </>
       ) : (
       <>
-        <div className="fs-row" style={{marginBottom:'14px'}}>
-          <FilterSelect multiple label="All Clients"   value={ui.clientF}  onChange={v=>setUi('clientF', v)}  options={clientOptions} />
-          <FilterSelect multiple label="All Factories" value={ui.factoryF} onChange={v=>setUi('factoryF', v)} options={factoryOptions} />
-          <FilterSelect multiple label="All Statuses"  value={ui.statusF}  onChange={v=>setUi('statusF', v)}  options={statusOptions} />
-        </div>
-        <div style={{marginBottom:'18px',maxWidth:'420px'}}>
-          <input value={ui.search} onChange={e=>setUi('search', e.target.value)} placeholder="Search product or SKU…"
-            style={{width:'100%',border:'none',borderRadius:'980px',padding:'10px 15px',fontSize:'13.5px',outline:'none',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.05)',boxSizing:'border-box'}} />
-        </div>
-
         {/* SAYS SO WHEN IT MATTERS. The factory is on the purchase order, not the
             line, so narrowing to one factory drops the CONTRIBUTING lines -- a
             product ordered from two factories stays, with a smaller number. That
@@ -1789,7 +1795,7 @@ function Inventory() {
         {clients.length===0 ? (
           <div style={{background:'#fff',borderRadius:'20px',padding:'48px 32px',textAlign:'center',boxShadow:cardShadow}}>
             <div style={{fontSize:'16px',fontWeight:600,color:'#1D1D1F',marginBottom:'6px'}}>Nothing matches</div>
-            <div style={{color:'#86868B',fontSize:'14px'}}>Try a different client, factory, status or search term.</div>
+            <div style={{color:'#86868B',fontSize:'14px'}}>Try a different filter, period or search term.</div>
           </div>
         ) : clients.map((c)=>{
           const rows = Object.values(groups[c]).sort((a,b)=>b.qty-a.qty);
