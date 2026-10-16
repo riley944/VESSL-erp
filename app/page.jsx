@@ -134,7 +134,7 @@ import { shipmentStatusLabel } from '@/lib/shipmentStatus';
 import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
-         buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta } from '@/lib/inventoryView';
+         buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline } from '@/lib/inventoryView';
 import { buildSoListSheets, buildSoRecordSheets, buildPoListSheets, buildPoRecordSheets, ordersListFileName, orderFileName, ordersCsvName, ordersPdfMeta, orderPdfMeta, orderRef } from '@/lib/ordersExport';
 import { lclBidTotal, bidEffective } from '@/lib/freightBids';
 import { buildShipmentsSheets, shipmentsFileName, SHIPMENTS_ALL, shipmentsCsvName, shipmentsPdfMeta, buildRecordSheets, recordFileName, recordPdfMeta } from '@/lib/shipmentsExport';
@@ -1489,7 +1489,7 @@ function Dashboard({ navigate, user, displayName = '' }) {
 // visual language exactly (#F5F5F7 ground, 20px cards, #1D1D1F ink), and
 // testing.jsx is also where FilterSelect is already used on such a page. Two
 // borrowed conventions from one place rather than one from each.
-const INV_TABS = [['overview', 'Overview'], ['breakdown', 'Inventory Breakdown']];
+const INV_TABS = [['overview', 'Overview'], ['breakdown', 'Inventory Breakdown'], ['product', 'By product'], ['timeline', 'Timeline']];
 
 // The same four buckets, colours and ordering as the Products page status filter,
 // because two controls in one app that spell the same states differently is a bug
@@ -1603,6 +1603,8 @@ function Inventory() {
   // EXPORT: the tab on screen, filtered as shown, through the PO/SO pages'
   // pipeline (startOrderExport -> deliverExport). lib/inventoryView builds the sheets.
   const [exporting, setExporting] = useState('');
+  // By product: which product's lines are open beneath it.
+  const [openProd, setOpenProd] = useState(null);
   const exportView = fmt => startOrderExport(exporting, setExporting, 'view', fmt, () => {
     const ctx = { exportedAt: new Date() }, day = stampToday();
     const view = { tab: ui.tab, ui, shown, range: invRange, noDate };
@@ -1781,6 +1783,62 @@ function Inventory() {
         {/* By the purchase order's stage, in the stages' order. */}
         <Bars title="Units on order by status" rows={byStatus} />
       </>
+      ) : ui.tab==='product' ? (
+        /* BY PRODUCT: every product + SKU across clients, largest first, with how
+           many clients and POs carry it. A row opens to the lines behind it. */
+        (() => {
+          const prods = byProduct(shown);
+          const COLS = '120px 1fr 80px 70px 100px';
+          const hd = {fontSize:'11px',fontWeight:500,letterSpacing:'-.004em',color:'#A0A0A4'};
+          return prods.length === 0 ? (
+            <div style={{background:'#fff',borderRadius:'20px',padding:'48px 32px',textAlign:'center',boxShadow:cardShadow}}>
+              <div style={{fontSize:'16px',fontWeight:600,color:'#1D1D1F',marginBottom:'6px'}}>Nothing matches</div>
+              <div style={{color:'#86868B',fontSize:'14px'}}>Try a different filter, period or search term.</div>
+            </div>
+          ) : (
+            <div style={{background:'#fff',borderRadius:'20px',boxShadow:cardShadow,overflow:'hidden'}}>
+              <div style={{display:'grid',gridTemplateColumns:COLS,gap:'16px',padding:'11px 24px',background:'#FAFAFA'}}>
+                <div style={hd}>SKU</div><div style={hd}>Product</div>
+                <div style={{...hd,textAlign:'right'}}>Clients</div><div style={{...hd,textAlign:'right'}}>POs</div>
+                <div style={{...hd,textAlign:'right'}}>On order</div>
+              </div>
+              {prods.map(g => {
+                const open = openProd === g.key;
+                return (
+                  <div key={g.key} style={{borderTop:'1px solid rgba(0,0,0,.06)'}}>
+                    <button type="button" onClick={()=>setOpenProd(open ? null : g.key)} aria-expanded={open}
+                      style={{display:'grid',gridTemplateColumns:COLS,gap:'16px',padding:'13px 24px',width:'100%',background:open?'#FAFAFA':'#fff',border:'none',cursor:'pointer',textAlign:'left',fontFamily:'inherit',alignItems:'center'}}>
+                      <span style={{fontSize:'13px',color:'#86868B',fontFamily:'var(--mono)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{g.sku||'—'}</span>
+                      <span style={{fontSize:'15px',color:'#1D1D1F',letterSpacing:'-.01em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{open ? '▾ ' : '▸ '}{g.prod}</span>
+                      <span style={{fontSize:'14px',color:'#1D1D1F',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{g.clients}</span>
+                      <span style={{fontSize:'14px',color:'#1D1D1F',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{g.pos}</span>
+                      <span style={{fontSize:'15px',fontWeight:600,color:'#1D1D1F',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{fmtNum(g.units)}</span>
+                    </button>
+                    {open && (
+                      <div style={{padding:'4px 24px 14px 48px',background:'#FAFAFA'}}>
+                        {g.lines.map((l,i)=>(
+                          <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 120px 110px 1fr 120px 80px',gap:'12px',padding:'7px 0',borderTop:i?'1px solid rgba(0,0,0,.05)':'none',fontSize:'13px',color:'#1D1D1F',alignItems:'center'}}>
+                            <span style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{l.client}</span>
+                            <span style={{fontFamily:'var(--mono)',fontSize:'12.5px',color:'#5A5A5E'}}>{l.po}</span>
+                            <span style={{color:'#5A5A5E'}}>{statusLabel(l.status)}</span>
+                            <span style={{color:'#86868B',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{l.factory}</span>
+                            <span style={{color:'#86868B',fontVariantNumeric:'tabular-nums'}}>{l.crd ? 'CRD ' + l.crd : l.etas[0] ? 'ETA ' + l.etas[0] : '—'}</span>
+                            <span style={{textAlign:'right',fontWeight:600,fontVariantNumeric:'tabular-nums'}}>{fmtNum(l.qty)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()
+      ) : ui.tab==='timeline' ? (
+        /* TIMELINE: units by month of the "Dates by" date, months in order; the
+           lines with no such date last. */
+        <Bars title={'Units on order by month of ' + INV_DATES_WORD[ui.datesBy]}
+              rows={timeline(shown, ui.datesBy).map(r => [r.label, r.units])} />
       ) : (
       <>
         {/* SAYS SO WHEN IT MATTERS. The factory is on the purchase order, not the
