@@ -251,14 +251,10 @@ export default function Codes({ canDeleteCodes = true }) {
   };
 
   return (
-    <div className="db-wrap" style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
-      {/* Title */}
+    <div className="db-wrap" style={{padding:'24px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
+      {/* No page title (the sidebar names it): the button row. */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'22px',gap:'14px',flexWrap:'wrap'}}>
-        <div>
-          <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#0A84FF'}}/><span style={{fontSize:'11px',fontWeight:700,letterSpacing:'.12em',textTransform:'uppercase',color:'#86868B'}}>Trade Classification</span></div>
-          <div style={{fontSize:'32px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.032em',lineHeight:1.02}}>Codes</div>
-          <div style={{fontSize:'14px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>{hts ? 'Tariff classifications used across quotes' : 'CPSC rules products are certified against'}</div>
-        </div>
+        <div />
         <button onClick={()=>setModal({})} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 16px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>{createLabel}</button>
       </div>
 
