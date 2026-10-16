@@ -133,7 +133,8 @@ import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel } from '@/lib/shipmentStatus';
 import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView } from '@/lib/ordersView';
-import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles } from '@/lib/inventoryView';
+import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
+         buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta } from '@/lib/inventoryView';
 import { buildSoListSheets, buildSoRecordSheets, buildPoListSheets, buildPoRecordSheets, ordersListFileName, orderFileName, ordersCsvName, ordersPdfMeta, orderPdfMeta, orderRef } from '@/lib/ordersExport';
 import { lclBidTotal, bidEffective } from '@/lib/freightBids';
 import { buildShipmentsSheets, shipmentsFileName, SHIPMENTS_ALL, shipmentsCsvName, shipmentsPdfMeta, buildRecordSheets, recordFileName, recordPdfMeta } from '@/lib/shipmentsExport';
@@ -1599,6 +1600,16 @@ function Inventory() {
   const toCustom = () => { if (ui.period !== 'custom') { setUi('from', invRange.from); setUi('to', invRange.to); setUi('period', 'custom'); } };
   const onDate = (k, v) => { toCustom(); setUi(k, v); };
 
+  // EXPORT: the tab on screen, filtered as shown, through the PO/SO pages'
+  // pipeline (startOrderExport -> deliverExport). lib/inventoryView builds the sheets.
+  const [exporting, setExporting] = useState('');
+  const exportView = fmt => startOrderExport(exporting, setExporting, 'view', fmt, () => {
+    const ctx = { exportedAt: new Date() }, day = stampToday();
+    const view = { tab: ui.tab, ui, shown, range: invRange, noDate };
+    return { sheets: buildInventorySheets(view, ctx), xlsxName: inventoryFileName(ui.tab, day, 'xlsx'),
+      csvName: inventoryCsvName(ui.tab, day), pdfMeta: inventoryPdfMeta(view, ctx) };
+  });
+
   // WHOLE-SET, deliberately, and this is the one place a filtered set would lie.
   // Status is a property of the PRODUCT while the display key is (client, name, sku),
   // so every line in a row normally shares one status -- measured across all 71 rows
@@ -1688,6 +1699,13 @@ function Inventory() {
           ))}
         </div>
         {filtered && <span style={{fontSize:'12px',fontWeight:700,color:'#7A4700',background:'#FFF3DC',borderRadius:'999px',padding:'4px 10px',letterSpacing:'.02em'}}>Filtered</span>}
+        {/* The view on screen, filtered as shown: Excel, CSV or PDF. */}
+        {lines.length > 0 && (
+          <div style={{marginLeft:'auto'}}>
+            <ExportMenu label="Export" className="export-pill" busy={!!exporting} disabled={!!exporting}
+              title="Export this view" ariaLabel="Export this Inventory view" onPick={exportView} />
+          </div>
+        )}
       </div>
 
       {/* THE FILTERS, on every tab: client, factory, PO status, catalog (whether
