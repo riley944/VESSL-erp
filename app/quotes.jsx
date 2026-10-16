@@ -11,7 +11,7 @@ import { SB } from "@/lib/supabase";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { QuoteList } from "@/app/components/QuoteList";
 import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
-import { productByKey, ensureProductForQuote, skuActivity } from "@/lib/products";
+import { productByKey, ensureProductForQuote, skuActivity, cleanName } from "@/lib/products";
 // The one door into the programs table. See the note at the top of lib/programs.js.
 import { createProgram } from "@/lib/programs";
 import { resolveQuoteLinks } from "@/lib/quoteCard";
@@ -713,7 +713,8 @@ function formToRow(f) {
   });
   const first = f.tiers && f.tiers[0] ? f.tiers[0] : {};
   return {
-    quote_date: f.quoteDate || null, product: f.product || null,
+    // The product name in its one written shape (lib/products cleanName).
+    quote_date: f.quoteDate || null, product: cleanName(f.product) || null,
     // text[] since the migration. An empty selection writes NULL, not '{}': NULL is
     // "this quote has no sizes", which is what every unsized quote has always said.
     sku: f.sku || null, size_scale: (f.sizeScales || []).length ? f.sizeScales : null, size_price_deltas: mapToDeltas(f.sizeDeltas, f.sizeScales), size_plate_fees: mapToPlates(f.sizePlateFees, f.sizeScales), size_cartons: mapToCartons(f.sizeCartons, f.sizeScales), qty: num(first.qty), notes: f.notes || null,

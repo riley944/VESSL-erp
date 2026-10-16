@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { SB } from '@/lib/supabase';
-import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
+import { prodKey, productByKey, ensureProductForQuote, cleanName } from '@/lib/products';
 
 // ── RenameSkuModal ───────────────────────────────────────────────────────────
 // One deliberate SKU rename, propagated to CHOSEN references in one transaction
@@ -254,7 +254,7 @@ export function QuoteSkuChoiceModal({ product, quote, updatedBy = null, onClose,
   const [result, setResult] = useState(null);
 
   const newSku = (quote?.sku || '').trim();
-  const name   = (quote?.product || '').trim();
+  const name   = cleanName(quote?.product);
 
   // Creates the product this quote now describes and points the quote at it.
   // The link is set unconditionally here -- unlike the passive linking elsewhere,

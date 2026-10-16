@@ -6,6 +6,7 @@ import { CodeModal } from '@/app/components/CodeModal';
 import { useDirtyGuard } from '@/app/components/ModalGuard';
 import { materialLabel } from '@/lib/materialLabel';
 import { LifecyclePanel } from '@/app/components/LifecyclePanel';
+import { cleanName } from '@/lib/products';
 
 // ── CreateProductModal (create or edit a row in vessl.products) ──────────────
 // Lifted out of page.jsx, where it was unreachable — it rendered only under a
@@ -169,7 +170,8 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
   };
   const submit = async () => {
     // Name identifies a product here; a SKU is nice to have and often assigned later.
-    const name = form.name.trim();
+    // Saved in its one written shape (lib/products cleanName).
+    const name = cleanName(form.name);
     const sku  = form.sku.trim();
     if (!name) { alert('Product name required'); return; }
     setSaving(true);

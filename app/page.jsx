@@ -128,7 +128,7 @@ import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompan
 // Filters that survive going into a detail view and coming back, and die on reload.
 // See the note at the top of lib/pageState.js for what may and may not go in it.
 import { usePageState } from '@/lib/pageState';
-import { prodKey, productByKey, ensureProductForQuote } from '@/lib/products';
+import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel } from '@/lib/shipmentStatus';
 import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
@@ -4328,9 +4328,12 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
     const factoryName = po.companies?.name||'';
     let saved=0, errors=[];
     for (const it of filled){
-      const name = it.desc.trim();
+      // The product name in its one written shape (lib/products cleanName); the
+      // line's own description is not changed. Matched ignoring case, so a
+      // lowercase typo finds the product rather than adding a second one.
+      const name = cleanName(it.desc);
       // Save to products catalog — check first to avoid duplicates
-      const { data: existing } = await SB.from('products').select('id').eq('name',name).maybeSingle();
+      const existing = await productByName(name);
       if (!existing) {
         const { error: pErr } = await SB.from('products').insert({name, sku:it.prodId||null});
         if (pErr) errors.push('Product: '+pErr.message);
@@ -5520,12 +5523,8 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   // Re-reads the row a 23505 says already exists. sku null needs .is(), not .eq() --
   // PostgREST renders .eq('sku', null) as sku=eq.null, which matches nothing, and the
   // insert would then repeat forever.
-  const fetchExisting = async (sku, name) => {
-    let qy = SB.from('products').select('id,sku,name,active').eq('name', name);
-    qy = sku ? qy.eq('sku', sku) : qy.is('sku', null);
-    const { data } = await qy.limit(1);
-    return (data && data[0]) || null;
-  };
+  // productByKey matches the name ignoring case, so it is the same lookup.
+  const fetchExisting = (sku, name) => productByKey(sku, name);
   // One write per interaction, never a delete or an overwrite of another product.
   // No optimistic update: prods is only touched after the database agrees, so a
   // rejected write leaves the cell showing what is actually stored.
@@ -5541,9 +5540,14 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
         if (!q.productOnly) await linkQuoteToProduct(q.id, prod.id);
         return;
       }
-      const sku = (q.sku||'').trim() || null, name = (q.product||'').trim();
+      // The cleaned name (lib/products cleanName). A product that differs from it
+      // only in case is that product: adopted below exactly as a 23505 is, not
+      // duplicated -- matchOf missed it only because the key once kept case.
+      const sku = (q.sku||'').trim() || null, name = cleanName(q.product);
       if (!name) return;
-      const { data, error } = await SB.from('products').insert({ sku, name, active:value }).select('id,sku,name,active').single();
+      const found = await fetchExisting(sku, name);
+      const { data, error } = found ? { data:null, error:{ code:'23505' } }
+        : await SB.from('products').insert({ sku, name, active:value }).select('id,sku,name,active').single();
       if (!error && data) {
         // Adopting the returned row is what turns the hollow ring filled without a
         // reload -- and proves the widened key matched it back.
@@ -6131,16 +6135,18 @@ function ProductDetailModal({quote:initQ, userEmail='', onClose, onCreatePO, pro
     // that is what vessl.products still holds at this moment, since nothing
     // here touches that table.
     const oldSku=q.sku||'', oldName=q.product||'';
-    const {error}=await SB.from('quotes').update({product:form.product,sku:form.sku||null,client:form.client||null,factory:form.factory||null,notes:form.notes||null,mold_fee:Number(form.mold_fee)||null,sample_fee:Number(form.sample_fee)||null,tiers,updated_at:new Date().toISOString()}).eq('id',q.id);
+    // The product name in its one written shape (lib/products cleanName).
+    const product=cleanName(form.product);
+    const {error}=await SB.from('quotes').update({product,sku:form.sku||null,client:form.client||null,factory:form.factory||null,notes:form.notes||null,mold_fee:Number(form.mold_fee)||null,sample_fee:Number(form.sample_fee)||null,tiers,updated_at:new Date().toISOString()}).eq('id',q.id);
     if(error){alert('Error: '+error.message);}
     else{
-      setQ(prev=>({...prev,...form,tiers}));setEditing(false);
+      setQ(prev=>({...prev,...form,product,tiers}));setEditing(false);
       // Link on the NEW key -- that is what this quote now claims to be -- and
       // only when it is not already linked, so a deliberate link is never moved.
       // Creates the product when none matches: quoting has never produced one,
       // which is why 48 quotes and 166 PO lines had nothing to point at.
       if(!q.product_id){
-        const match=await ensureProductForQuote(form.sku, form.product, {origin:'quote-save', updatedBy:userEmail||null});
+        const match=await ensureProductForQuote(form.sku, product, {origin:'quote-save', updatedBy:userEmail||null});
         if(match){ try{ await SB.from('quotes').update({product_id:match.id}).eq('id',q.id).is('product_id',null); }catch(e){} }
       }
       // A SKU moving off a product is ambiguous -- renamed, or repointed at a
@@ -6148,7 +6154,7 @@ function ProductDetailModal({quote:initQ, userEmail='', onClose, onCreatePO, pro
       // the OLD value, which is what vessl.products still holds.
       if((form.sku||'')!==oldSku){
         const target=await productByKey(oldSku, oldName);
-        if(target) setSkuChoice({product:target, quote:{id:q.id, sku:form.sku||'', product:form.product||'', product_id:q.product_id||null}});
+        if(target) setSkuChoice({product:target, quote:{id:q.id, sku:form.sku||'', product, product_id:q.product_id||null}});
       }
     }
     setSaving(false);
@@ -8114,8 +8120,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     const factoryName = (factories.find(fc=>fc.id===form.factoryId)||{}).name||'';
     let saved=0, errors=[];
     for (const it of filled){
-      const name = it.desc.trim();
-      const { data: existing } = await SB.from('products').select('id').eq('name',name).maybeSingle();
+      // As in PoEditModal: the cleaned name, matched ignoring case.
+      const name = cleanName(it.desc);
+      const existing = await productByName(name);
       if (!existing) {
         const { error: pErr } = await SB.from('products').insert({name, sku:it.prodId||null});
         if (pErr) errors.push('Product: '+pErr.message);
