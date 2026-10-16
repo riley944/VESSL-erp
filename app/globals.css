@@ -767,8 +767,9 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 }
 
 /* EXPORT BUTTONS: ONE THEME, EVERY PAGE.
-   .export-pill  a page's or a list's export -- white, a 1px #0066CC outline,
-                 #0066CC text, pill ends, the small download glyph on the left.
+   .export-pill  a page's or a list's export -- white, a 1px black outline,
+                 black text and glyph, pill ends, the glyph on the left (16 Oct:
+                 was #0066CC blue).
    .export-btn   the compact one, for a card or a section (30px, 12px text).
    Both share one hover, one focus ring and one disabled look, and both are at
    least 44px tall at phone width. The menus they open are .xm-menu / .xm-item
@@ -777,8 +778,8 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 .kva-card-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
 .export-btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:#1D1D1F;font-family:inherit;font-size:12px;font-weight:500;white-space:nowrap;cursor:pointer;box-sizing:border-box;}
 .export-btn:hover:not(:disabled),.export-btn[aria-expanded="true"]{background:#F5F5F7;}
-.export-pill{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#0066CC;border:1px solid #0066CC;border-radius:980px;padding:8px 16px;font-family:inherit;font-size:14px;font-weight:500;letter-spacing:-.01em;line-height:1.2;white-space:nowrap;cursor:pointer;box-sizing:border-box;}
-.export-pill:hover:not(:disabled),.export-pill[aria-expanded="true"]{background:#F0F6FF;}
+.export-pill{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#000;border:1px solid #000;border-radius:980px;padding:8px 16px;font-family:inherit;font-size:14px;font-weight:500;letter-spacing:-.01em;line-height:1.2;white-space:nowrap;cursor:pointer;box-sizing:border-box;}
+.export-pill:hover:not(:disabled),.export-pill[aria-expanded="true"]{background:#F2F2F4;}
 .export-btn:focus-visible,.export-pill:focus-visible{outline:2px solid #0A84FF;outline-offset:2px;}
 .export-btn:disabled,.export-pill:disabled{opacity:.55;cursor:default;}
 /* The export format menu (app/components/ExportMenu.jsx): Excel, CSV or PDF.
