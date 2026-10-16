@@ -38,7 +38,8 @@ import ExportMenu from "@/app/components/ExportMenu";
 import { loadExcelJS } from "@/lib/excel";
 import { buildPriceSheet } from "@/lib/workbook";
 import { safeName } from "@/lib/exportFormats";
-import { buildModel, toWorkbookSheet, toCsv, toHtml, longDate, DEFAULT_ACCENT, NOTE_DDP, NOTE_BREAKDOWN, NOTE_APPROVAL } from "@/lib/clientSheet";
+import { buildModel, toWorkbookSheet, toCsv, toHtml, longDate, NOTE_DDP, NOTE_BREAKDOWN, NOTE_APPROVAL } from "@/lib/clientSheet";
+import { logoDataUrl } from "@/lib/listDoc";
 import { CodeModal } from "@/app/components/CodeModal";
 // HtsField used to live in this file. It moved to app/components so the Edit
 // Product modal could use the same control rather than a second copy -- the
@@ -2724,7 +2725,6 @@ function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClo
 
   // ── THE SETTINGS STEP ──────────────────────────────────────────────────────
   const [view, setView] = useState("ddp");
-  const [accent, setAccent] = useState(DEFAULT_ACCENT);
   const [withPayment, setWithPayment] = useState(false);
   const [head, setHead] = useState(null);           // the header fields, filled on entering the step
   const [edits, setEdits] = useState({});           // { [quoteId]: { item, details, color } }
@@ -2819,17 +2819,26 @@ function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClo
         vendor,
         bank: BANK_FIELDS.map(([k, label]) => [label, String((settings || {})[k] ?? "").trim()]).filter(([, v]) => v !== ""),
       } : null;
-      const model = buildModel({ quotes: pickedQuotes, edits, header: head, view, accent, payment });
+      const model = buildModel({ quotes: pickedQuotes, edits, header: head, view, payment });
+      // The KUI logo under the sign-off: the image the SO confirmation uses
+      // (/logo.png, through logoDataUrl), about 120px wide. None, if it is not there.
+      const logoSrc = fmt === "csv" ? "" : await logoDataUrl();
+      const logoSize = logoSrc ? await new Promise((ok) => {
+        const img = new Image();
+        img.onload = () => ok(img.naturalWidth ? { width: 120, height: Math.round(120 * img.naturalHeight / img.naturalWidth) } : null);
+        img.onerror = () => ok(null);
+        img.src = logoSrc;
+      }) : null;
       const day = new Date().toISOString().slice(0, 10);
       const base = "KUI-Price-Sheet-" + safeName(chosenClient || "client") + "-" + day;
       if (fmt === "xlsx") {
         const ExcelJS = await loadExcelJS();
-        const buf = await buildPriceSheet(ExcelJS, toWorkbookSheet(model)).xlsx.writeBuffer();
+        const buf = await buildPriceSheet(ExcelJS, toWorkbookSheet(model, logoSize ? { base64: logoSrc, ...logoSize } : null)).xlsx.writeBuffer();
         downloadBlob(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), base + ".xlsx");
       } else if (fmt === "csv") {
         downloadBlob(new Blob(["﻿" + toCsv(model)], { type: "text/csv;charset=utf-8" }), base + ".csv");
       } else if (win) {
-        win.document.open(); win.document.write(toHtml(model)); win.document.close();
+        win.document.open(); win.document.write(toHtml(model, logoSize ? logoSrc : "")); win.document.close();
       }
       if (saveErr) setMsg(saveErr);
     } catch (e) {
@@ -2921,14 +2930,6 @@ function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClo
                     ))}
                   </div>
                 </div>
-                <label style={{ display: "block" }}>
-                  <span style={lbl}>Accent color</span>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                    <input data-noguard type="color" value={accent} onChange={(e) => setAccent(e.target.value)} style={{ width: 40, height: 32, border: "1px solid #e7eaf0", borderRadius: 8, padding: 2, background: "#fff" }} />
-                    <span style={{ fontSize: 12.5, color: "#6a7488", fontFamily: "monospace" }}>{accent}</span>
-                    {accent !== DEFAULT_ACCENT && <button type="button" style={S.taskJump} onClick={() => setAccent(DEFAULT_ACCENT)}>KUI navy</button>}
-                  </span>
-                </label>
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, color: "#0f1729", paddingBottom: 6 }}>
                   <input data-noguard type="checkbox" checked={withPayment} onChange={(e) => setWithPayment(e.target.checked)} />
                   Include payment details
