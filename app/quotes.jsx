@@ -1390,25 +1390,6 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
     <div style={{ ...S.shell, ...(isMobile ? { padding: "16px 12px 60px" } : {}) }}>
       <style>{CSS}</style>
 
-      <header style={{ ...S.header, ...(isMobile ? S.headerMobile : {}) }}>
-        {/* No page title or email (16 Oct): the sidebar names the page and the
-            top bar shows who is signed in. The buttons keep the row. */}
-        <div />
-        <div style={{ display: "flex", gap: isMobile ? 6 : 10, alignItems: "center", flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end" }}>
-          <button style={{ ...S.ghostBtn, position: "relative", ...(isMobile ? S.btnMobile : {}) }} onClick={openTasks}>
-            <Bell size={15} /> {isMobile ? "" : "Tasks"}
-            {myUnseenTaskCount > 0 && <span style={S.taskBadge}>{myUnseenTaskCount}</span>}
-          </button>
-          <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setShowSend(true)}><Send size={15} /> {isMobile ? "Send" : "Send to Client"}</button>
-          {/* The app's export pill (.export-pill in globals.css). On a phone it keeps
-              its glyph-only form, at 44px, with the label for screen readers. */}
-          <button type="button" className="export-pill" onClick={exportCSV} title="Export quotes as CSV" aria-label="Export"><Download size={13} strokeWidth={2.2} />{isMobile ? "" : "Export"}</button>
-          <button style={{ ...S.primaryBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), client: "", tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] })}>
-            <Plus size={16} /> {isMobile ? "New" : "New Quote"}
-          </button>
-        </div>
-      </header>
-
       {showTasks && (
         <TasksPanel
           tasks={tasks} userEmail={userEmail} isAdmin={isAdmin} newIds={newTaskIds}
@@ -1422,10 +1403,12 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
         <SendToClientModal clients={clients} staff={staff} userEmail={userEmail} onSaved={load} onClose={() => setShowSend(false)} />
       )}
 
-      {/* ── THE SECTION SWITCHER ── the Codes page's pill control, with a count
-          on each. Quotes is the default and is unchanged; Quote List is the flat,
-          filterable list of every quote. */}
-      <div style={{ maxWidth: 1280, margin: "0 auto 16px" }}>
+      {/* ── THE SECTION SWITCHER, AND THE PAGE'S BUTTONS ── the Codes page's
+          pill control, with a count on each: Quotes is the default, Quote List
+          the flat, filterable list of every quote. Tasks, Send to Client, Export
+          and New Quote share its row at the right (16 Oct: no header card, no
+          title), and wrap under the tabs on a phone. */}
+      <div style={{ maxWidth: 1280, margin: "0 auto 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div style={{ display: "inline-flex", background: "#ECECF0", borderRadius: 12, padding: 4 }}>
           {[["quotes", "Quotes"], ["list", "Quote List"]].map(([v, l]) => {
             const on = (ui.section || "quotes") === v;
@@ -1441,6 +1424,20 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
               </button>
             );
           })}
+        </div>
+        <div style={{ display: "flex", gap: isMobile ? 6 : 10, alignItems: "center", flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end",
+                      ...(isMobile ? { flexBasis: "100%" } : { marginLeft: "auto" }) }}>
+          <button style={{ ...S.ghostBtn, position: "relative", ...(isMobile ? S.btnMobile : {}) }} onClick={openTasks}>
+            <Bell size={15} /> {isMobile ? "" : "Tasks"}
+            {myUnseenTaskCount > 0 && <span style={S.taskBadge}>{myUnseenTaskCount}</span>}
+          </button>
+          <button style={{ ...S.ghostBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setShowSend(true)}><Send size={15} /> {isMobile ? "Send" : "Send to Client"}</button>
+          {/* The app's export pill (.export-pill in globals.css). On a phone it keeps
+              its glyph-only form, at 44px, with the label for screen readers. */}
+          <button type="button" className="export-pill" onClick={exportCSV} title="Export quotes as CSV" aria-label="Export"><Download size={13} strokeWidth={2.2} />{isMobile ? "" : "Export"}</button>
+          <button style={{ ...S.primaryBtn, ...(isMobile ? S.btnMobile : {}) }} onClick={() => setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), client: "", tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] })}>
+            <Plus size={16} /> {isMobile ? "New" : "New Quote"}
+          </button>
         </div>
       </div>
 
@@ -4875,8 +4872,6 @@ input::placeholder, textarea::placeholder { color: #cdd5e2; }
 const S = {
   shell: { minHeight: "100%", background: "#ffffff", padding: "24px 26px 70px", fontFamily: "'Spline Sans', system-ui, sans-serif", color: "#0f1729" },
   center: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh", fontSize: 16, color: "#6a7488" },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: 1280, margin: "0 auto 22px", flexWrap: "wrap", gap: 16, background: "#ffffff", padding: "16px 24px", borderRadius: 14, border: "1px solid #e7eaf0", boxShadow: "0 1px 3px rgba(15,23,41,0.05)" },
-  headerMobile: { flexDirection: "column", alignItems: "stretch", gap: 12, padding: "14px 16px", borderRadius: 14, margin: "0 0 16px" },
   btnMobile: { padding: "9px 12px", fontSize: 13 },
   logoLockup: { display: "flex", alignItems: "center", gap: 14 },
   title: { fontFamily: "'Fraunces', Georgia, serif", fontSize: 30, fontWeight: 600, margin: "2px 0 0", color: "#0f1729", letterSpacing: "-0.01em" },
