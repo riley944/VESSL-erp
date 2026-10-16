@@ -183,7 +183,7 @@ html,body{height:100%;overflow:hidden;font-family:var(--sans);font-size:14px;col
 
 /* ── MAIN (grid col 2, row 2 — only this scrolls) ─────── */
 .main-area{grid-column:2;grid-row:2;overflow-y:auto;background:var(--soft);}
-.page-header{padding:22px 32px 16px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+.page-header{padding:24px 32px 16px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
 .page-title{font-family:var(--serif);font-weight:500;font-size:26px;letter-spacing:-.02em;color:var(--ink);}
 .page-actions{display:flex;gap:10px;}
 /* A centred title with the actions still on the right edge. Three columns, the

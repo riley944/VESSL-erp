@@ -1309,18 +1309,16 @@ function Dashboard({ navigate, user, displayName = '' }) {
   const stageGrid = { display: 'grid', gridTemplateColumns: 'minmax(96px,130px) minmax(30px,1fr) auto minmax(24px,auto)', gap: '12px', alignItems: 'center' };
 
   return (
-    <div className="db-apple kva" style={{ padding: '30px clamp(14px,3vw,32px) 80px', background: '#F5F5F7', minHeight: 'calc(100vh - 54px)', marginTop: '-24px', boxSizing: 'border-box', overflowX: 'hidden', maxWidth: '100%' }}>
+    <div className="db-apple kva" style={{ padding: '24px clamp(14px,3vw,32px) 80px', background: '#F5F5F7', minHeight: 'calc(100vh - 54px)', boxSizing: 'border-box', overflowX: 'hidden', maxWidth: '100%' }}>
 
       {/* ── 1. Header, period buttons and View orders ── */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '16px', marginBottom: '16px', flexWrap: 'wrap' }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}><span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#0A84FF' }} /><span style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', color: muted }}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</span></div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 'clamp(26px,5vw,32px)', fontWeight: 700, color: '#1D1D1F', letterSpacing: '-.032em', lineHeight: 1.05 }}>KUI Vessl Analytics</div>
-            {/* So a filtered page is never read as the whole business. */}
-            {d.filtered && <span style={{ fontSize: '12px', fontWeight: 700, color: '#7A4700', background: '#FFF3DC', borderRadius: '999px', padding: '4px 10px', letterSpacing: '.02em' }}>Filtered</span>}
-          </div>
-          <div style={{ fontSize: '15px', color: muted, marginTop: '7px', letterSpacing: '-.01em' }}>{d.pipeCount} {!d.single ? 'open' : d.stageLabel} sales orders · {d.activeClients} active clients</div>
+        {/* No page title (the sidebar names the page): the live counts, as a
+            small muted line, and the Filtered tag beside them. */}
+        <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={{ fontSize: '13px', color: muted, letterSpacing: '-.01em' }}>{d.pipeCount} {!d.single ? 'open' : d.stageLabel} sales orders · {d.activeClients} active clients</div>
+          {/* So a filtered page is never read as the whole business. */}
+          {d.filtered && <span style={{ fontSize: '12px', fontWeight: 700, color: '#7A4700', background: '#FFF3DC', borderRadius: '999px', padding: '4px 10px', letterSpacing: '.02em' }}>Filtered</span>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           <div role="group" aria-label="Period" style={{ display: 'inline-flex', background: '#E8E8ED', borderRadius: '12px', padding: '3px', flexWrap: 'wrap' }}>
@@ -1700,16 +1698,14 @@ function Inventory() {
   };
 
   return (
-    <div className="db-apple" style={{padding:'34px 32px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
+    <div className="db-apple" style={{padding:'24px 32px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
 
       <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'20px',marginBottom:'22px',flexWrap:'wrap'}}>
         <div>
-          <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#BF5AF2'}}/><span style={{fontSize:'11px',fontWeight:700,letterSpacing:'.12em',textTransform:'uppercase',color:'#86868B'}}>Stock &amp; Production</span></div>
-          <div style={{fontSize:'32px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.032em',lineHeight:1.02}}>Inventory</div>
-          {/* "updated" is when this tab last loaded, not a live feed -- the page never
-              refetches on its own, so an open tab keeps saying the same time and
-              means it. Refresh is the only thing that moves it. */}
-          <div style={{fontSize:'15px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>Units on order across live production · updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+          {/* No page title. "Updated" is when this tab last loaded, not a live feed
+              -- the page never refetches on its own, so an open tab keeps saying
+              the same time and means it. Refresh is the only thing that moves it. */}
+          <div style={{fontSize:'13px',color:'#86868B',letterSpacing:'-.01em'}}>Updated {refreshed?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
         </div>
         <button onClick={load} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 18px',fontSize:'14px',fontWeight:500,letterSpacing:'-.01em',cursor:'pointer'}}>Refresh</button>
       </div>
@@ -1936,16 +1932,12 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
     { value:'crd_desc', label:'CRD latest' },
   ];
   return (
-    <div className="db-wrap" style={{padding:'26px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
+    <div className="db-wrap" style={{padding:'24px 28px 72px',background:'#FBFBFD',minHeight:'calc(100vh - 54px)',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
       {showCreate && <CreateSOModal onClose={()=>setShowCreate(false)} onCreated={(id)=>{setShowCreate(false);id?navigate('so-detail',{id}):load();}} />}
 
-      {/* Title */}
+      {/* No page title: the action row, the button at the right. */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'22px',gap:'14px',flexWrap:'wrap'}}>
-        <div>
-          <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#30D158'}}/><span style={{fontSize:'11px',fontWeight:700,letterSpacing:'.12em',textTransform:'uppercase',color:'#86868B'}}>Revenue Pipeline</span></div>
-          <div style={{fontSize:'32px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.032em',lineHeight:1.02}}>Sales Orders</div>
-          <div style={{fontSize:'14px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>Client POs received by KUI</div>
-        </div>
+        <div />
         <button onClick={()=>setShowCreate(true)} style={{display:'inline-flex',alignItems:'center',gap:'7px',background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',flexShrink:0,boxShadow:'0 1px 2px rgba(0,0,0,.08)'}}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           New Sales Order
@@ -4616,7 +4608,8 @@ const foldFactoryName = n => FACTORY_ALIASES[String(n || '').trim().toLowerCase(
 // create modal -- the one below that lands on the company just made. The shell
 // used to open a second copy that only closed on create and never refreshed the
 // list, so a new company did not appear until the page was left and re-entered.
-function Companies({ onTypeChange, createRequest = 0 }) {
+// action: the page's + New button, drawn at the right of the type tabs.
+function Companies({ onTypeChange, createRequest = 0, action = null }) {
   const TYPE_LABELS = { client:'Clients', factory:'Factories', carrier:'Carriers', freight_forwarder:'Freight Forwarders' };
   const TYPE_KEYS = Object.keys(TYPE_LABELS);
   // WHAT THE CLIENTS TAB SAYS ON SCREEN: "Companies". Wording only -- the stored
@@ -4936,13 +4929,16 @@ function Companies({ onTypeChange, createRequest = 0 }) {
 
   return (
     <>
-      {/* ── Type tabs ── */}
-      <div className="co-tabs">
+      {/* ── Type tabs, and + New at the right of their row ── */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'12px',flexWrap:'wrap',marginBottom:'22px'}}>
+      <div className="co-tabs" style={{marginBottom:0}}>
         {TYPE_KEYS.map((t,i) => (
           <button key={t} className={'co-tab' + (i===ui.tab?' active':'')} onClick={()=>setUi('tab', i)}>
             {TAB_TEXT[t]}
           </button>
         ))}
+      </div>
+      {action}
       </div>
 
       {/* ── Search + count ── */}
@@ -6674,14 +6670,12 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   ];
 
   return (
-    <div className="db-apple" style={{padding:'30px 28px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',marginTop:'-24px',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
+    <div className="db-apple" style={{padding:'24px 28px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
 
-      {/* ── Header ── */}
-      <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'16px',marginBottom:'22px',flexWrap:'wrap'}}>
+      {/* ── Header: no page title, the live counts as a small muted line ── */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'16px',marginBottom:'22px',flexWrap:'wrap'}}>
         <div>
-          <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}><span style={{width:'7px',height:'7px',borderRadius:'50%',background:'#0A84FF'}}/><span style={{fontSize:'11px',fontWeight:700,letterSpacing:'.12em',textTransform:'uppercase',color:'#86868B'}}>Freight &amp; Logistics</span></div>
-          <div style={{fontSize:'32px',fontWeight:700,color:'#1D1D1F',letterSpacing:'-.032em',lineHeight:1.02}}>Shipments</div>
-          <div style={{fontSize:'14.5px',color:'#86868B',marginTop:'7px',letterSpacing:'-.01em'}}>{String(quotesV.length)+' quotes \u00b7 '+String(activeShips.length)+' in motion'}</div>
+          <div style={{fontSize:'13px',color:'#86868B',letterSpacing:'-.01em'}}>{String(quotesV.length)+' quotes \u00b7 '+String(activeShips.length)+' in motion'}</div>
         </div>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>
@@ -10898,7 +10892,10 @@ export default function App() {
   // holds the screen steady for the render in between.
   if (hasProfile === false) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
 
-  const titles = {dashboard:'KUI Vessl Analytics','sales-orders':'Sales Orders','so-detail':'Sales Order',orders:'Purchase Orders','order-detail':'Purchase Order',companies:'Companies',products:'Products',testing:'Testing & Compliance',pricing:'Pricing & Landed Cost',programs:'Programs',shipments:'Shipments',quotes:'Quotes',codes:'HTS Codes','client-relations':'Client Relations','company-banking':'KUI Banking'};
+  // Pages that draw their own action row at the top; the shared row stays off.
+  const SELF_HEADED = ['dashboard','sales-orders','testing','codes','inventory','shipments','pricing','programs'];
+  const showActionsRow = !SELF_HEADED.includes(page) && page !== 'so-detail' && page !== 'order-detail'
+    && page !== 'companies' && !!pageActions[page];
   const badges = {'client-relations': crUnread, 'shipments': dreqOpen};
 
 
@@ -10921,16 +10918,20 @@ export default function App() {
         </div>
       ) : (
       <div className="main-area">
-        {/* codes draws its own heading, like testing — without it here the page
-            would show two stacked titles. */}
-        {/* page-header--center is Companies only: its title sits centred over the
-            tab strip while + New keeps the right edge. Every other page keeps the
-            shared left-aligned row. */}
-        <div className={'page-header'+(page==='companies'?' page-header--center':'')} style={(page==='dashboard'||page==='sales-orders'||page==='so-detail'||page==='order-detail'||page==='testing'||page==='codes'||page==='inventory'||page==='shipments'||page==='pricing'||page==='programs')?{display:'none'}:undefined}>
-          <h1 className="page-title">{titles[page]||''}</h1>
-          <div className="page-actions">{pageActions[page]}</div>
-        </div>
-        <div className="page-content" style={page==='dashboard'?{padding:0}:(page==='sales-orders'||page==='so-detail'||page==='order-detail')?{paddingTop:'24px'}:undefined}>
+        {/* NO PAGE TITLES (16 Oct): the sidebar already names the page. The
+            shared row is left holding only a page's actions, so it renders only
+            where there are some -- Purchase Orders' + New PO. Companies puts its
+            + New in its own tab row. The self-headed pages draw their own action
+            rows; the detail pages are unchanged. Every page's first element sits
+            24px down: this row's top padding, the content's top padding where
+            there is no row, or the self-headed page's own. */}
+        {showActionsRow && (
+          <div className="page-header">
+            <div />
+            <div className="page-actions">{pageActions[page]}</div>
+          </div>
+        )}
+        <div className="page-content" style={page==='dashboard'?{padding:0}:(page==='so-detail'||page==='order-detail')?{paddingTop:'24px'}:(SELF_HEADED.includes(page)||showActionsRow)?undefined:{paddingTop:'24px'}}>
           {/* canAnalytics again here, as banking does: the gate above already
               turns 'dashboard' into a landing page for anyone without access. */}
           {page==='dashboard' && canAnalytics && <Dashboard navigate={navigate} user={user} displayName={displayName} />}
@@ -10938,7 +10939,7 @@ export default function App() {
           {page==='so-detail'        && <SalesOrderDetail id={params.id} navigate={navigate} />}
           {page==='orders'           && <Orders navigate={navigate} role={role} user={user} displayName={displayName} />}
           {page==='order-detail'     && <OrderDetail id={params.id} navigate={navigate} />}
-          {page==='companies'        && <Companies onTypeChange={setCompanyType} createRequest={companyCreateReq} />}
+          {page==='companies'        && <Companies onTypeChange={setCompanyType} createRequest={companyCreateReq} action={pageActions.companies} />}
           {page==='products'         && <Products navigate={navigate} canCreateProducts={role !== 'limited_qc'} userEmail={user?.email||''} />}
           {page==='testing'          && <Testing userEmail={user?.email||''} />}
           {page==='codes'            && <Codes canDeleteCodes={role !== 'limited_qc'} />}
