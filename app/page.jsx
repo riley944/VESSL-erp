@@ -1597,9 +1597,9 @@ function Inventory() {
   // left out for having no such date -- said under the filters.
   const { shown, range: invRange, noDate } = filterInventory(lines, ui);
   const filtered = isInventoryFiltered(ui);
-  // Under All Dates the From / To are greyed; typing one picks Order Date, since
-  // a range has to be on some date.
-  const onDate = (k, v) => { if (!ui.dateBy) setUi('dateBy', 'order'); setUi(k, v); };
+  // Under All Dates the range is greyed and its inputs disabled; choosing a date
+  // in the picker beside it enables them.
+  const onDate = (k, v) => setUi(k, v);
   const datesByOptions = INV_DATES_BY.map(([v,l]) => ({ value:v, label:l }));
   const rangeIdle = !ui.dateBy;
   const rangeLabel = ui.dateBy ? INV_DATES_WORD[ui.dateBy] + ' range' : 'date range';
@@ -1723,9 +1723,10 @@ function Inventory() {
       {/* THE FILTERS, on every tab. The product/SKU search on its own row, full
           width, as the Quotes search is. Then the dropdowns -- client, factory, PO
           status, catalog (whether the product is still sold), shipping method, and
-          Dates by -- and after Dates by the From / To range on that date, as Quote
-          List lays it out, with how many lines are shown. Under All Dates (the
-          default) the range is greyed; typing a date picks Order Date. */}
+          Dates by -- and the date-type picker sits against the From / To range on
+          that date, the pair kept together and aligned on the inputs, as Quote List
+          lays it out, with how many lines are shown. Under All Dates (the default)
+          the range is greyed and its inputs disabled; Clear filters returns there. */}
       {lines.length > 0 && (
         <>
           <div style={{display:'flex',alignItems:'center',gap:'9px',background:'#fff',border:'1px solid #e7eaf0',borderRadius:'12px',padding:'11px 15px',boxShadow:'0 1px 3px rgba(26,34,56,0.05)',marginBottom:'12px'}}>
@@ -1741,20 +1742,24 @@ function Inventory() {
             <FilterSelect multiple label="All Statuses"  value={ui.poStatusF} onChange={v=>setUi('poStatusF', v)} options={poStatusOptions} />
             <FilterSelect multiple label="All Catalog"   value={ui.catalogF}  onChange={v=>setUi('catalogF', v)}  options={catalogOptions} />
             <FilterSelect multiple label="All Methods"   value={ui.methodF}   onChange={v=>setUi('methodF', v)}   options={methodOptions} />
+            {/* The date-type picker and its range, one unit: they wrap together,
+                and the picker lines up with the FROM / TO inputs, not the label. */}
+            <div style={{display:'flex',alignItems:'flex-end',gap:'10px'}}>
             <FilterSelect label="All Dates" value={ui.dateBy || ''} onChange={v=>setUi('dateBy', v)} options={datesByOptions} />
-            <div role="group" aria-label={rangeLabel} title={rangeIdle ? 'Choose a date under All Dates -- or type one, which uses Order Date' : undefined}
-              style={{display:'flex',flexDirection:'column',gap:'4px',marginLeft:'6px'}}>
+            <div role="group" aria-label={rangeLabel} aria-disabled={rangeIdle} title={rangeIdle ? 'Choose Order Date, Cargo Ready Date or ETA to set a range' : undefined}
+              style={{display:'flex',flexDirection:'column',gap:'4px',opacity:rangeIdle?.45:1}}>
               <span style={{fontSize:'11px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#9aa3b5'}}>{rangeLabel}</span>
               <div style={{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'10px',minHeight:'40px'}}>
                 <label style={{display:'inline-flex',alignItems:'center',gap:'6px'}}>
                   <span style={{fontSize:'11px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#9aa3b5'}}>From</span>
-                  <input type="date" value={ui.from} max={ui.to || undefined} onChange={e=>onDate('from', e.target.value)} aria-label={rangeLabel + ' from'} style={{border:'1px solid #e7eaf0',borderRadius:'10px',padding:'8px 10px',fontSize:'13px',fontFamily:'inherit',color:'#0f1729',background:'#fff',outline:'none',opacity:rangeIdle?.45:1}} />
+                  <input type="date" disabled={rangeIdle} value={ui.from} max={ui.to || undefined} onChange={e=>onDate('from', e.target.value)} aria-label={rangeLabel + ' from'} style={{border:'1px solid #e7eaf0',borderRadius:'10px',padding:'8px 10px',fontSize:'13px',fontFamily:'inherit',color:'#0f1729',background:'#fff',outline:'none',cursor:rangeIdle?'not-allowed':'text'}} />
                 </label>
                 <label style={{display:'inline-flex',alignItems:'center',gap:'6px'}}>
                   <span style={{fontSize:'11px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#9aa3b5'}}>To</span>
-                  <input type="date" value={ui.to} min={ui.from || undefined} onChange={e=>onDate('to', e.target.value)} aria-label={rangeLabel + ' to'} style={{border:'1px solid #e7eaf0',borderRadius:'10px',padding:'8px 10px',fontSize:'13px',fontFamily:'inherit',color:'#0f1729',background:'#fff',outline:'none',opacity:rangeIdle?.45:1}} />
+                  <input type="date" disabled={rangeIdle} value={ui.to} min={ui.from || undefined} onChange={e=>onDate('to', e.target.value)} aria-label={rangeLabel + ' to'} style={{border:'1px solid #e7eaf0',borderRadius:'10px',padding:'8px 10px',fontSize:'13px',fontFamily:'inherit',color:'#0f1729',background:'#fff',outline:'none',cursor:rangeIdle?'not-allowed':'text'}} />
                 </label>
               </div>
+            </div>
             </div>
             <span style={{display:'flex',alignItems:'center',height:'40px',fontSize:'12px',color:'#6a7488',fontVariantNumeric:'tabular-nums',marginLeft:'4px'}}>
               {fmtNum(shown.length)} line{shown.length === 1 ? '' : 's'} shown
