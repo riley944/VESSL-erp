@@ -1793,11 +1793,11 @@ function Inventory() {
             clients. */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'20px',marginBottom:'20px'}} className="inv-summary">
           {[
-            { k:'Total units on order', v:fmtNum(tiles.units), sub: filtered ? 'in this filter' : 'across all clients' },
-            { k:'Active SKUs', v:fmtNum(tiles.skus), sub:'distinct products' },
-            { k:'Active clients', v:String(tiles.clients), sub:'with live orders' },
+            { k:'Total units on order', v:fmtNum(tiles.units), sub: filtered ? 'In this filter' : 'Across all clients' },
+            { k:'Active SKUs', v:fmtNum(tiles.skus), sub: filtered ? 'Distinct products in this filter' : 'Distinct products' },
+            { k:'Active clients', v:String(tiles.clients), sub: filtered ? 'With live orders in this filter' : 'With live orders' },
           ].map(m=>(
-            <div key={m.k} style={{background:'#fff',borderRadius:'20px',padding:'22px 24px',boxShadow:cardShadow}}>
+            <div key={m.k} style={{background:'#fff',borderRadius:'20px',padding:'22px 24px',boxShadow:cardShadow,textAlign:'center'}}>
               <div style={{fontSize:'13px',color:'#86868B',fontWeight:400,letterSpacing:'-.006em',marginBottom:'14px'}}>{m.k}</div>
               <div style={{fontSize:'34px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.03em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
               <div style={{fontSize:'13px',color:'#A0A0A4',marginTop:'8px',letterSpacing:'-.006em'}}>{m.sub}</div>
