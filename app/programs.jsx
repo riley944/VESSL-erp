@@ -4928,7 +4928,7 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
   const waitingOn = b => board.filter(r => r.stage !== ARCHIVED && openTasks(r).some(t => t.blocker === b));
 
   return (
-    <div style={{padding:'26px 30px 60px'}}>
+    <div style={{padding:'24px 30px 60px'}}>
       {openRow && <ProgramDetail r={openRow} userEmail={userEmail} staff={staff}
                                  busy={saving === openRow.id} onStage={setStage} onOwner={setOwner} onLab={setTestingLab}
                                  onArchive={setArchived}
