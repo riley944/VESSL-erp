@@ -331,7 +331,7 @@ function distinctClients(rows){
 }
 // Read-only additions for the export: the PO's terms, fees and notes, and each
 // line's quantity, prices, size and SKUs. The cards still read only what they did.
-const PO_CARD_SELECT = 'id,order_number,client_po_number,status,production_pct,order_date,cargo_ready_date,requested_ship_date,cancel_date,payment_terms,incoterm,shipping_method,currency,mold_fee,sample_fee,deposit_percent,notes,delivery_address,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(id,description,quantity,unit_price,size,product_sku,product_id,vpn,master_sku,pack_sku,baby_sku,carton_info,ci_value,retail_price,products(sku,name))';
+const PO_CARD_SELECT = 'id,order_number,client_po_number,status,production_pct,order_date,updated_at,cargo_ready_date,requested_ship_date,cancel_date,payment_terms,incoterm,shipping_method,currency,mold_fee,sample_fee,deposit_percent,notes,delivery_address,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(id,description,quantity,unit_price,size,product_sku,product_id,vpn,master_sku,pack_sku,baby_sku,carton_info,ci_value,retail_price,products(sku,name))';
 
 function OrderCard({ p, navigate, onStatus, exportIcon = null }){
   const client = poClient(p), factory = poFactory(p);
@@ -3807,6 +3807,10 @@ function ProductionBoard({ rows, navigate, exportIcon = null }) {
                         {exportIcon && exportIcon(p)}
                       </div>
                       <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{client}</div>
+                      {/* When the PO last changed; with no updated_at, its order date, unlabelled. */}
+                      {(p.updated_at || p.order_date) && <div className="po-card-meta" style={{marginTop:'6px',fontVariantNumeric:'tabular-nums'}}>
+                        {p.updated_at ? 'Updated '+fmtDateShort(p.updated_at) : fmtDateShort(p.order_date)}
+                      </div>}
                     </div>
                   );
                 })}
