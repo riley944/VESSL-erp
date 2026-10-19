@@ -3738,7 +3738,7 @@ function Orders({ navigate, role = null, user = null, displayName = '', newActio
         ))}
       </div>
       {loading ? <div className="loading">Loading...</div> :
-        ui.view==='board' ? <ProductionBoard rows={shown} navigate={navigate} onStatus={setStat} exportIcon={exportIcon} />
+        ui.view==='board' ? <ProductionBoard rows={shown} navigate={navigate} exportIcon={exportIcon} />
         : shown.length ? (
         <div className="order-card-grid">
           {shown.map(p=><OrderCard key={p.id} p={p} navigate={navigate} onStatus={setStat} exportIcon={exportIcon(p)} />)}
@@ -3754,28 +3754,42 @@ function Orders({ navigate, role = null, user = null, displayName = '', newActio
 // POs the board view shows, and so what its export lists.
 // A card takes its column's pale background with a left edge in the column's
 // full colour -- the PO_STATUS colours the list's badges use.
-function ProductionBoard({ rows, navigate, onStatus, exportIcon = null }) {
-  const [dragId, setDragId] = useState(null);
-  const [overCol, setOverCol] = useState(null);
+//
+// READ-ONLY. The board shows where each PO stands; status is set on the list's
+// dropdown or the PO page. A card opens its PO.
+//
+// THE SCROLLBAR SITS ON TOP, directly under the List / Production Board toggle:
+// a thin strip as wide as the columns scrolls them, and the columns' own
+// scrollbar is hidden (no-scrollbar). Each keeps the other's scrollLeft, so a
+// trackpad or shift-wheel on the columns moves the strip too.
+function ProductionBoard({ rows, navigate, exportIcon = null }) {
   const byCol = {};
   PROD_COLUMNS.forEach(c=>{ byCol[c.key]=[]; });
-  const other = [];
-  rows.forEach(p=>{ if(byCol[p.status]) byCol[p.status].push(p); else other.push(p); });
+  rows.forEach(p=>{ if(byCol[p.status]) byCol[p.status].push(p); });
 
-  const drop = (colKey) => {
-    if(dragId){ const p=rows.find(r=>r.id===dragId); if(p && p.status!==colKey) onStatus(dragId,colKey); }
-    setDragId(null); setOverCol(null);
-  };
+  const topRef = useRef(null), bodyRef = useRef(null), innerRef = useRef(null);
+  const [scrollW, setScrollW] = useState(0);
+  useEffect(() => {
+    const el = innerRef.current; if (!el) return;
+    const measure = () => setScrollW(el.scrollWidth);
+    measure();
+    const ro = new ResizeObserver(measure); ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const sync = (from, to) => { if (from.current && to.current && to.current.scrollLeft !== from.current.scrollLeft) to.current.scrollLeft = from.current.scrollLeft; };
 
   return (
-    <div style={{overflowX:'auto',paddingBottom:'8px'}}>
-      <div style={{display:'flex',gap:'12px',minWidth:'min-content'}}>
+    <div>
+      <div ref={topRef} onScroll={()=>sync(topRef, bodyRef)} style={{overflowX:'auto',overflowY:'hidden',marginBottom:'8px'}}>
+        <div style={{width:scrollW+'px',height:'1px'}} />
+      </div>
+      <div ref={bodyRef} className="no-scrollbar" onScroll={()=>sync(bodyRef, topRef)} style={{overflowX:'auto'}}>
+      <div ref={innerRef} style={{display:'flex',gap:'12px',minWidth:'min-content'}}>
         {PROD_COLUMNS.map(col=>{
           const items=byCol[col.key];
-          const on=overCol===col.key;
           return (
-            <div key={col.key} onDragOver={e=>{e.preventDefault();setOverCol(col.key);}} onDragLeave={()=>setOverCol(o=>o===col.key?null:o)} onDrop={()=>drop(col.key)}
-              style={{width:'270px',flexShrink:0,background:on?'#F0F4FF':'#F7F7F9',borderRadius:'14px',padding:'12px',transition:'.12s',border:'1px solid '+(on?col.color:'transparent')}}>
+            <div key={col.key}
+              style={{width:'270px',flexShrink:0,background:'#F7F7F9',borderRadius:'14px',padding:'12px'}}>
               <div style={{display:'flex',alignItems:'center',gap:'8px',padding:'2px 4px 12px'}}>
                 <span style={{width:'8px',height:'8px',borderRadius:'50%',background:col.color}} />
                 <span style={{fontSize:'12.5px',fontWeight:700,color:'#1A1A1C'}}>{col.label}</span>
@@ -3786,8 +3800,8 @@ function ProductionBoard({ rows, navigate, onStatus, exportIcon = null }) {
                   const ref=p.client_po_number||p.order_number||'—';
                   const client=p.client?.name||'—';
                   return (
-                    <div key={p.id} draggable onDragStart={()=>setDragId(p.id)} onDragEnd={()=>{setDragId(null);setOverCol(null);}} onClick={()=>navigate('order-detail',{id:p.id})}
-                      style={{background:col.bg,borderRadius:'11px',padding:'12px 13px',cursor:'grab',boxShadow:'0 1px 2px rgba(0,0,0,.05),0 1px 3px rgba(0,0,0,.04)',border:'1px solid #EFEFF1',borderLeft:'4px solid '+col.color,opacity:dragId===p.id?.5:1}}>
+                    <div key={p.id} onClick={()=>navigate('order-detail',{id:p.id})}
+                      style={{background:col.bg,borderRadius:'11px',padding:'12px 13px',cursor:'pointer',boxShadow:'0 1px 2px rgba(0,0,0,.05),0 1px 3px rgba(0,0,0,.04)',border:'1px solid #EFEFF1',borderLeft:'4px solid '+col.color}}>
                       <div style={{display:'flex',alignItems:'center',gap:'4px',minWidth:0}}>
                         <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1,minWidth:0}}>{ref}</div>
                         {exportIcon && exportIcon(p)}
@@ -3796,11 +3810,11 @@ function ProductionBoard({ rows, navigate, onStatus, exportIcon = null }) {
                     </div>
                   );
                 })}
-                {items.length===0 && <div style={{fontSize:'11.5px',color:'#C0C0C4',textAlign:'center',padding:'14px 0'}}>Drop here</div>}
               </div>
             </div>
           );
         })}
+      </div>
       </div>
     </div>
   );
