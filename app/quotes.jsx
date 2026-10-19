@@ -67,7 +67,7 @@ import { useDirtyGuard } from "@/app/components/ModalGuard";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 import { notifyTaskAssigned as notifyTask } from "@/lib/taskNotify";
 import { PeoplePills } from "@/app/components/PeoplePills";
-import { joinNames } from "@/lib/people";
+import { joinNames, personName, peopleFromStaff } from "@/lib/people";
 import { isUnseen, markSeen, insertTask, unseenCount, taskDay, byCreated, TASK_TONE } from "@/lib/taskSeen";
 
 // ============================================================
@@ -77,29 +77,13 @@ import { isUnseen, markSeen, insertTask, unseenCount, taskDay, byCreated, TASK_T
 // ============================================================
 const supabase = SB;
 
-// team members for task assignment
-const TEAM = [
-  { name: "Kristy", email: "kristy@kinguniversal.com" },
-  { name: "Loren", email: "loren@kinguniversal.com" },
-  { name: "Riley", email: "riley@kinguniversal.com" },
-  { name: "Steven", email: "steven@kinguniversal.com" },
-  { name: "Carmela", email: "carmela@kinguniversal.com" },
-  // The task pickers read staff_profiles now; this list is their fallback if
-  // that read fails, and still names people on task lines.
-  { name: "Matt", email: "mattdillon@kinguniversal.com" },
-];
-// NAMES FROM staff_profiles FIRST. loadStaff fills this map with each profile's
-// full name; the hard-coded TEAM list answers only for an address with no
-// profile, or before (or without) that read. Module-level so every component in
-// the file reads the same names without a prop -- loadStaff's setStaff re-renders
+// NAMES FROM staff_profiles ONLY (lib/people personName). loadStaff fills
+// STAFF_ROWS; an address with no profile, or one asked about before that read
+// lands, reads as the part before the @. Module-level so every component in the
+// file reads the same names without a prop -- loadStaff's setStaff re-renders
 // them once it lands.
-const STAFF_NAMES = new Map();
-function nameForEmail(email) {
-  const k = (email || "").trim().toLowerCase();
-  if (STAFF_NAMES.has(k)) return STAFF_NAMES.get(k);
-  const t = TEAM.find((m) => m.email.toLowerCase() === k);
-  return t ? t.name : (email || "").split("@")[0];
-}
+let STAFF_ROWS = [];
+const nameForEmail = (email) => personName(STAFF_ROWS, email);
 // "Kristy Thomas & Riley King" for a list of addresses.
 const namesFor = (emails) => joinNames((emails || []).map(nameForEmail));
 // ALL N PICKED makes N task rows and N emails, so it is confirmed first -- the
@@ -1006,21 +990,14 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
     const { data, error } = await supabase.from("staff_profiles").select("id,email,full_name,job_title")
       .order("full_name", { nullsFirst: false });
     if (!error) {
-      STAFF_NAMES.clear();
-      (data || []).forEach((p) => { const n = (p.full_name || "").trim(); if (p.email && n) STAFF_NAMES.set(p.email.trim().toLowerCase(), n); });
+      STAFF_ROWS = data || [];
       setStaff(data || []);
     }
-    setStaffFailed(!!error);
   }, []);
-  // WHO A TASK CAN BE ASSIGNED TO: everyone with a staff profile, by full name.
-  // The hard-coded TEAM list only if that read failed or came back empty.
-  const [staffFailed, setStaffFailed] = useState(false);
-  const assignees = useMemo(() => {
-    const fromProfiles = staffFailed ? [] : staff.filter((p) => p.email)
-      .map((p) => ({ email: p.email, name: (p.full_name || "").trim() || nameForEmail(p.email) }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-    return fromProfiles.length ? fromProfiles : TEAM;
-  }, [staff, staffFailed]);
+  // WHO A TASK CAN BE ASSIGNED TO: everyone with a staff profile, by full name
+  // (lib/people peopleFromStaff). Nobody until that read lands -- the pills are
+  // simply empty, and Assign stays disabled with nobody picked.
+  const assignees = useMemo(() => peopleFromStaff(staff), [staff]);
 
   // saveContact is gone with the quote form button that called it. It upserted a
   // client_contacts row and then UPSERTED A COMPANY from the typed client name,
@@ -2298,7 +2275,7 @@ function ContainerPackout({ q, cbmPerCarton }) {
   );
 }
 
-function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTask, userEmail, staff = [], assignees = TEAM, isMobile = false, onEdit, onDuplicate, onDelete }) {
+function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTask, userEmail, staff = [], assignees = [], isMobile = false, onEdit, onDuplicate, onDelete }) {
   const [taskText, setTaskText] = useState("");
   // WHO THE TASK IS FOR: the people picked on the name pills (PeoplePills), as
   // emails -- one task row each. No default: nobody is picked until somebody is,
@@ -3282,7 +3259,7 @@ function SelectField({ label, k, placeholder, options, hint, f, set }) {
 // staff went with the PLM tick. It fed the owner picker that appeared when the
 // box was ticked, and nothing else in this form ever read it -- the quote CARD
 // still passes its own staff to MarkWonButton, which is a different binding.
-function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], assignees = TEAM }) {
+function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], assignees = [] }) {
   // The form this guard exists for. About eleven of its edits are click-driven --
   // the saved-factory chips, the client suggestions, picking an HTS code, Add
   // tier, Preset qtys, auto, the Air/Ocean toggles -- and not one of them fires
