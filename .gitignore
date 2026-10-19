@@ -3,6 +3,7 @@
 !.env.example
 node_modules/
 .next/
+.next-build/
 # SQL scripts stay untracked while the repo is public. Files already tracked
 # under sql/ stay tracked; anything new needs a deliberate git add -f.
 sql/*
