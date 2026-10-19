@@ -136,7 +136,7 @@ import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName 
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel } from '@/lib/shipmentStatus';
 import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
-import { SO_STATUSES, SO_SM, alignStatus, statusLabel, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView } from '@/lib/ordersView';
+import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
          buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline, timelineBy, monthColor, INV_STATUS_COLORS } from '@/lib/inventoryView';
 import { buildSoListSheets, buildSoRecordSheets, buildPoListSheets, buildPoRecordSheets, ordersListFileName, orderFileName, ordersCsvName, ordersPdfMeta, orderPdfMeta, orderRef } from '@/lib/ordersExport';
@@ -298,12 +298,12 @@ async function shipmentAsk(poId, poNo, via) {
 }
 const fmtNum = n => n == null ? '—' : new Intl.NumberFormat('en-US').format(n);
 const nowDate = () => new Date().toISOString().slice(0,10);
-const STATUSES = ['draft','confirmed','sampling','sample_approved','in_production','ready_to_ship','shipped','delivered','closed','cancelled'];
 
 // label, when given, replaces the words only -- the colour still follows status.
-function Badge({ status, label }) {
-  const a = alignStatus(status);
-  const m = SO_SM[a] || {label:(status||'—').replace(/_/g,' '),color:'#64748b',bg:'#f8fafc'};
+// po: a purchase order's status, read from PO_STATUS as it is -- not folded onto
+// the sales order set by alignStatus.
+function Badge({ status, label, po = false }) {
+  const m = (po && PO_STATUS[status]) || SO_SM[alignStatus(status)] || {label:(status||'—').replace(/_/g,' '),color:'#64748b',bg:'#f8fafc'};
   return <span style={{display:'inline-flex',alignItems:'center',gap:'5px',padding:'3px 10px',borderRadius:'20px',fontSize:'11px',fontWeight:700,letterSpacing:'.03em',textTransform:'uppercase',background:m.bg,color:m.color,whiteSpace:'nowrap'}}>
     <span style={{width:'6px',height:'6px',borderRadius:'50%',background:m.color}} />{label || m.label}
   </span>;
@@ -349,7 +349,7 @@ function OrderCard({ p, navigate, onStatus, exportIcon = null }){
           </div>
           {/* The order's export icon, after its status; it stops its own clicks. */}
           <div style={{display:'flex',alignItems:'center',gap:'4px',flexShrink:0}}>
-            <Badge status={p.status} />
+            <Badge status={p.status} po />
             {exportIcon}
           </div>
         </div>
@@ -381,7 +381,7 @@ function OrderCard({ p, navigate, onStatus, exportIcon = null }){
           {itemCount>0?' · '+itemCount+' item'+(itemCount!==1?'s':''):''}
         </span>
         {onStatus
-          ? <select className="po-card-select" value={p.status} onClick={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();onStatus(p.id,e.target.value);}}>{SO_STATUSES.map(s=><option key={s} value={s}>{(SO_SM[s]?.label)||s.replace(/_/g,' ')}</option>)}</select>
+          ? <select className="po-card-select" value={p.status} onClick={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();onStatus(p.id,e.target.value);}}>{poStatusChoices(p.status).map(s=><option key={s} value={s}>{(PO_STATUS[s]?.label)||s.replace(/_/g,' ')}</option>)}</select>
           : <span className="po-card-meta">Ship {fmtDate(p.requested_ship_date)}</span>}
       </div>
     </div>
@@ -398,7 +398,7 @@ function PoToolbar({ rows, search, setSearch, client, setClient, status, setStat
   ];
   const statusOptions = [
     { value:'', label:'All Statuses' },
-    ...SO_STATUSES.map(s=>{ const m=SO_SM[s]; return { value:s, label:(m&&m.label)||s.replace(/_/g,' '), color:m&&m.color, bg:m&&m.bg }; }),
+    ...PO_STATUS_ORDER.map(s=>{ const m=PO_STATUS[s]; return { value:s, label:m.label, color:m.color, bg:m.bg }; }),
   ];
   return (
     <div className="po-toolbar">
@@ -2414,7 +2414,7 @@ function SalesOrderDetail({id,navigate}){
         {linkedPos.length ? linkedPos.map(po=>{ const poCost=(po.purchase_order_items||[]).reduce((a,i)=>a+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0); return (
           <div key={po.id} style={{display:'flex',alignItems:'center',gap:'14px',padding:'14px 18px',borderBottom:'1px solid var(--line-2)',cursor:'pointer'}} onClick={()=>navigate('order-detail',{id:po.id})}>
             <div style={{flex:1,minWidth:0}}>
-              <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'3px'}}><span style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:'13px',color:'var(--ink)'}}>{po.client_po_number||po.order_number}</span><Badge status={po.status} /></div>
+              <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'3px'}}><span style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:'13px',color:'var(--ink)'}}>{po.client_po_number||po.order_number}</span><Badge status={po.status} po /></div>
               <div style={{fontSize:'12px',color:'var(--muted)'}}>{po.companies?.name||'—'}</div>
             </div>
             <div style={{textAlign:'right'}}><div style={{fontFamily:'var(--mono)',fontWeight:600,fontSize:'13px'}}>{money(poCost,po.currency)}</div><div style={{fontSize:'11px',color:'var(--muted)'}}>factory cost</div></div>
@@ -3072,7 +3072,7 @@ function CreateSOModal({onClose,onCreated}){
                   <div style={{width:'16px',height:'16px',borderRadius:'4px',border:'2px solid '+(on?'var(--accent)':'var(--line-2)'),background:on?'var(--accent)':'transparent',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>{on&&<svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/></svg>}</div>
                   <span style={{fontFamily:'var(--mono)',fontWeight:600,fontSize:'12px',color:'var(--ink)'}}>{po.client_po_number||po.order_number}</span>
                   <span style={{fontSize:'12px',color:'var(--muted)',flex:1}}>{po.companies?.name||'—'}</span>
-                  <Badge status={po.status} />
+                  <Badge status={po.status} po />
                 </div>
               ); })}
             </div>
@@ -3255,7 +3255,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
                   </div>
                   <span style={{fontFamily:'var(--mono)',fontWeight:600,fontSize:'12px',color:'var(--ink)'}}>{po.client_po_number||po.order_number}</span>
                   <span style={{fontSize:'12px',color:'var(--muted)',flex:1}}>{po.companies?.name||'—'}</span>
-                  <Badge status={po.status} />
+                  <Badge status={po.status} po />
                 </div>
               ); })}
             </div>
@@ -3685,14 +3685,19 @@ function Orders({ navigate, role = null, user = null, displayName = '', newActio
     }
     applyStat(pid, st);
   };
+  // The write is checked: on an error the card goes back to what the database
+  // still holds, and a toast says why. It used to update the screen regardless,
+  // so a refused status looked saved until the next reload.
   const applyStat = async (pid, st) => {
-    await SB.from('purchase_orders').update({status:st,updated_at:new Date().toISOString()}).eq('id',pid);
+    const before = (rows.find(r=>r.id===pid)||{}).status;
     setRows(prev=>prev.map(p=>p.id===pid?{...p,status:st}:p));
+    const { error } = await SB.from('purchase_orders').update({status:st,updated_at:new Date().toISOString()}).eq('id',pid);
+    if (error) {
+      setRows(prev=>prev.map(p=>p.id===pid?{...p,status:before}:p));
+      window._toast?.('Status not saved — '+error.message,'err');
+      return;
+    }
     if (st==='shipped'){ const r=await createShipmentForPO(pid); if(r?.ok) window._toast?.('Shipment '+r.shipmentNumber+' created','ok'); else if(r?.error) window._toast?.(r.error,'err'); }
-  };
-  const setPct = async (pid, pct) => {
-    setRows(prev=>prev.map(p=>p.id===pid?{...p,production_pct:pct}:p));
-    await SB.from('purchase_orders').update({production_pct:pct,updated_at:new Date().toISOString()}).eq('id',pid);
   };
   // The list comes from poListView in lib/ordersView.js, which the export reads too.
   const { shown, onScreen, offBoard } = poListView(rows, ui);
@@ -3733,7 +3738,7 @@ function Orders({ navigate, role = null, user = null, displayName = '', newActio
         ))}
       </div>
       {loading ? <div className="loading">Loading...</div> :
-        ui.view==='board' ? <ProductionBoard rows={shown} navigate={navigate} onStatus={setStat} onPct={setPct} exportIcon={exportIcon} />
+        ui.view==='board' ? <ProductionBoard rows={shown} navigate={navigate} onStatus={setStat} exportIcon={exportIcon} />
         : shown.length ? (
         <div className="order-card-grid">
           {shown.map(p=><OrderCard key={p.id} p={p} navigate={navigate} onStatus={setStat} exportIcon={exportIcon(p)} />)}
@@ -3747,7 +3752,9 @@ function Orders({ navigate, role = null, user = null, displayName = '', newActio
 // ── Production Board ──────────────────────────────────────────────────────────
 // PROD_COLUMNS lives in lib/ordersView.js: the board's columns decide which
 // POs the board view shows, and so what its export lists.
-function ProductionBoard({ rows, navigate, onStatus, onPct, exportIcon = null }) {
+// A card takes its column's pale background with a left edge in the column's
+// full colour -- the PO_STATUS colours the list's badges use.
+function ProductionBoard({ rows, navigate, onStatus, exportIcon = null }) {
   const [dragId, setDragId] = useState(null);
   const [overCol, setOverCol] = useState(null);
   const byCol = {};
@@ -3759,7 +3766,6 @@ function ProductionBoard({ rows, navigate, onStatus, onPct, exportIcon = null })
     if(dragId){ const p=rows.find(r=>r.id===dragId); if(p && p.status!==colKey) onStatus(dragId,colKey); }
     setDragId(null); setOverCol(null);
   };
-  const bump = (e,p,delta) => { e.stopPropagation(); const cur=Number(p.production_pct)||0; const next=Math.max(0,Math.min(100,cur+delta)); onPct(p.id,next); };
 
   return (
     <div style={{overflowX:'auto',paddingBottom:'8px'}}>
@@ -3777,28 +3783,16 @@ function ProductionBoard({ rows, navigate, onStatus, onPct, exportIcon = null })
               </div>
               <div style={{display:'flex',flexDirection:'column',gap:'9px',minHeight:'40px'}}>
                 {items.map(p=>{
-                  const pct=Number(p.production_pct)||0;
                   const ref=p.client_po_number||p.order_number||'—';
                   const client=p.client?.name||'—';
                   return (
                     <div key={p.id} draggable onDragStart={()=>setDragId(p.id)} onDragEnd={()=>{setDragId(null);setOverCol(null);}} onClick={()=>navigate('order-detail',{id:p.id})}
-                      style={{background:'#fff',borderRadius:'11px',padding:'12px 13px',cursor:'grab',boxShadow:'0 1px 2px rgba(0,0,0,.05),0 1px 3px rgba(0,0,0,.04)',border:'1px solid #EFEFF1',opacity:dragId===p.id?.5:1}}>
+                      style={{background:col.bg,borderRadius:'11px',padding:'12px 13px',cursor:'grab',boxShadow:'0 1px 2px rgba(0,0,0,.05),0 1px 3px rgba(0,0,0,.04)',border:'1px solid #EFEFF1',borderLeft:'4px solid '+col.color,opacity:dragId===p.id?.5:1}}>
                       <div style={{display:'flex',alignItems:'center',gap:'4px',minWidth:0}}>
                         <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1,minWidth:0}}>{ref}</div>
                         {exportIcon && exportIcon(p)}
                       </div>
-                      <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'2px',marginBottom:'10px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{client}</div>
-                      {/* % complete */}
-                      <div style={{display:'flex',alignItems:'center',gap:'7px'}}>
-                        <div style={{flex:1,height:'6px',background:'#F0F0F2',borderRadius:'3px',overflow:'hidden'}}>
-                          <div style={{height:'100%',width:pct+'%',background:col.color,borderRadius:'3px',transition:'width .3s'}} />
-                        </div>
-                        <span style={{fontSize:'11px',fontWeight:700,color:'#4A4A4E',fontVariantNumeric:'tabular-nums',minWidth:'30px',textAlign:'right'}}>{pct}%</span>
-                      </div>
-                      <div style={{display:'flex',gap:'4px',marginTop:'8px'}}>
-                        <button onClick={e=>bump(e,p,-10)} style={{flex:1,border:'1px solid #EAEAEE',background:'#FAFAFB',borderRadius:'7px',padding:'4px 0',fontSize:'12px',fontWeight:600,color:'#8A8A8E',cursor:'pointer'}}>−10</button>
-                        <button onClick={e=>bump(e,p,10)} style={{flex:1,border:'1px solid #EAEAEE',background:'#FAFAFB',borderRadius:'7px',padding:'4px 0',fontSize:'12px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>+10</button>
-                      </div>
+                      <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{client}</div>
                     </div>
                   );
                 })}
@@ -4068,7 +4062,7 @@ function OrderDetail({ id, navigate }) {
         <div style={{fontSize:'10px',fontWeight:700,letterSpacing:'.14em',textTransform:'uppercase',color:'var(--muted)',marginBottom:'6px'}}>Purchase Order</div>
         <div style={{display:'flex',alignItems:'center',gap:'14px',flexWrap:'wrap'}}>
           <h1 style={{fontFamily:'var(--mono)',fontSize:'30px',fontWeight:700,color:'var(--ink)',letterSpacing:'-.01em',lineHeight:1}}>{po.client_po_number||po.order_number||'—'}</h1>
-          <Badge status={po.status} />
+          <Badge status={po.status} po />
         </div>
         {po.client?.name && <div style={{fontSize:'14px',color:'var(--muted)',marginTop:'6px'}}>{po.client.name}{po.companies?.name?' · '+po.companies.name:''}</div>}
       </div>
@@ -4093,8 +4087,8 @@ function OrderDetail({ id, navigate }) {
       <div className="detail-block" style={{marginBottom:'20px'}}>
         <div className="blabel">Status &mdash; tap to change</div>
         <div className="status-pills">
-          {STATUSES.map(s=>(
-            <button key={s} className={'status-pill '+(po.status===s?'on':'')+' sp-'+s} onClick={()=>updateStatus(s)}>{s.replace(/_/g,' ')}</button>
+          {poStatusChoices(po.status).map(s=>(
+            <button key={s} className={'status-pill '+(po.status===s?'on':'')+' sp-'+s} onClick={()=>updateStatus(s)}>{(PO_STATUS[s]||{}).label||s.replace(/_/g,' ')}</button>
           ))}
         </div>
         {po.notes && <div style={{marginTop:'12px',fontSize:'12.5px',color:'var(--muted)',paddingTop:'12px',borderTop:'1px solid var(--line)'}}>{po.notes}</div>}
@@ -4394,7 +4388,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>PO Number *</label><input className="form-input" value={form.num} onChange={e=>f('num')(e.target.value)} /></div>
-            <div><label>Status</label><select className="form-select" value={form.status} onChange={e=>f('status')(e.target.value)}>{SO_STATUSES.map(s=><option key={s} value={s}>{(SO_SM[s]?.label)||s.replace(/_/g,' ')}</option>)}</select></div>
+            <div><label>Status</label><select className="form-select" value={form.status} onChange={e=>f('status')(e.target.value)}>{poStatusChoices(po.status).map(s=><option key={s} value={s}>{(PO_STATUS[s]?.label)||s.replace(/_/g,' ')}</option>)}</select></div>
           </div>
           <div className="form-row-2">
             <div><label>Order Date</label><input type="date" className="form-input" value={form.date} onChange={e=>f('date')(e.target.value)} /></div>
