@@ -9015,7 +9015,7 @@ function buildPODoc(d, opts={}) {
         + '<div style="display:flex;justify-content:space-between;align-items:baseline;border-top:1.5px solid #0c1322;margin-top:6px;padding-top:8px;">'
           + '<span style="font-size:14px;font-weight:600;color:#111827;">Total '+esc(cur)+'</span>'
           + '<span class="mono" style="font-size:18px;font-weight:700;color:#0c1322;">'+m(grandTotal,cur)+'</span></div>'
-        + (t.deposit_amount ? totLine(esc(d.deposit_percent||'')+'% deposit due', m(t.deposit_amount,cur)) : '')
+        + (t.deposit_amt ? totLine(esc(t.deposit_pct||'')+'% deposit due', m(t.deposit_amt,cur)) : '')
       + '</div>'
     + '</div>'
 
