@@ -2240,6 +2240,9 @@ function SalesOrderDetail({id,navigate}){
   if(loading) return <div className="loading">Loading…</div>;
   if(!so) return null;
   const rev=items.reduce((a,i)=>a+(Number(i.quantity)||0)*(Number(i.client_price)||0),0);
+  // The client's deposit (script 126), a percent of revenue -- an SO has no mold
+  // fee, so revenue is its total. null when none is set.
+  const soDep=so.deposit_percent?rev*(so.deposit_percent/100):null;
   const factoryCost=linkedPos.reduce((a,po)=>a+(po.purchase_order_items||[]).reduce((b,i)=>b+(Number(i.quantity)||0)*(Number(i.unit_price)||0),0),0);
   const addlCost=costs.reduce((a,c)=>a+(Number(c.amount)||0),0);
   const cost=factoryCost+addlCost;
@@ -2278,6 +2281,8 @@ function SalesOrderDetail({id,navigate}){
       indc_date: so.indc_date || so.required_ship_date,
       cancel_date: so.cancel_date,
       payment_terms: so.payment_terms || '',
+      // Same names the PO document reads (genPO's totals).
+      deposit_pct: so.deposit_percent || 0, deposit_amt: soDep || 0,
       shipping_method: so.shipping_method || '',
       ship_to: so.delivery_address || '',
       notes: so.notes || '',
@@ -2395,7 +2400,11 @@ function SalesOrderDetail({id,navigate}){
               <tfoot><tr style={{borderTop:'2px solid var(--line-2)'}}>
                 <td colSpan="4" style={{padding:'12px 16px',textAlign:'right',fontWeight:700,fontSize:'11px',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--muted)'}}>Total</td>
                 <td style={{padding:'12px 16px',textAlign:'right',fontFamily:'var(--mono)',fontWeight:700,fontSize:'15px'}}>{money(rev,so.currency)}</td>
-              </tr></tfoot>
+              </tr>
+              {soDep!=null && <tr>
+                <td colSpan="4" style={{padding:'0 16px 12px',textAlign:'right',fontSize:'12.5px',color:'var(--muted)'}}>{so.deposit_percent}% deposit</td>
+                <td style={{padding:'0 16px 12px',textAlign:'right',fontFamily:'var(--mono)',fontSize:'13px',color:'var(--ink-2)'}}>{money(soDep,so.currency)}</td>
+              </tr>}</tfoot>
             </table>
           </div>
         ) : <div style={{padding:'24px',textAlign:'center',color:'var(--muted)',fontSize:'13px'}}>No line items. <button className="btn btn-ghost btn-sm" onClick={()=>setEditing(true)}>Add items →</button></div>}
@@ -2657,7 +2666,7 @@ function CreateSOModal({onClose,onCreated}){
   const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
   const nd=()=>new Date().toISOString().split('T')[0];
   const [mode,setMode]=useState('catalog');
-  const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',crd:'',cancel:'',payment:'',currency:'USD',notes:'',shipTo:'',shipMethod:'',shipOther:''});
+  const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',crd:'',cancel:'',payment:'',dep:'',currency:'USD',notes:'',shipTo:'',shipMethod:'',shipOther:''});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const setShip=v=>setForm(prev=>({...prev,shipMethod:v,shipOther:v==='Other'?prev.shipOther:''}));
   const [items,setItems]=useState([]);
@@ -2815,7 +2824,7 @@ function CreateSOModal({onClose,onCreated}){
     setLoading(true);
     // auto-generate so_number from client PO if not set
     const soNum = form.num.trim() || ('KUI-'+form.clientPO.trim().replace(/[^A-Za-z0-9]/g,'-').slice(0,20).toUpperCase());
-    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:ship.value,status:'received'}).select().single();
+    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,deposit_percent:Number(form.dep)||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:ship.value,status:'received'}).select().single();
     if(e0||!so){alert('Error: '+(e0?.message||'unknown'));setLoading(false);return;}
     // A line with a size scale expands into one row per size carrying a quantity;
     // an unsized line still writes exactly one row, with size NULL. Sizes left blank
@@ -3000,8 +3009,9 @@ function CreateSOModal({onClose,onCreated}){
             <div><label>Internal SO # <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>auto-generated if blank</span></label><input className="form-input" style={{fontFamily:'var(--mono)'}} value={form.num} onChange={e=>f('num')(e.target.value)} placeholder="KUI-..." /></div>
             <div></div>
           </div>
-          <div className="form-row-2">
+          <div className="form-row-3">
             <div><label>Payment Terms</label><PaymentTermsSelect value={form.payment} onChange={f('payment')} /></div>
+            <div><label>Deposit %</label><input type="number" className="form-input" placeholder="30" min="0" max="100" value={form.dep} onChange={e=>f('dep')(e.target.value)} /></div>
             <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}>{['USD','CAD','EUR','GBP','AUD'].map(c=><option key={c} value={c}>{c}</option>)}</select></div>
           </div>
           <div className="form-row-2">
@@ -3085,7 +3095,7 @@ function CreateSOModal({onClose,onCreated}){
 function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved}){
   // markDirty for togglePO, same as CreateSOModal: the linked-PO ticks are divs.
   const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
-  const [form,setForm]=useState({num:so.so_number||'',clientId:so.client_company_id||'',clientPO:so.client_po_number||'',date:so.order_date||'',ship:so.indc_date||so.required_ship_date||'',crd:so.cargo_ready_date||'',cancel:so.cancel_date||'',payment:so.payment_terms||'',currency:so.currency||'USD',notes:so.notes||'',shipTo:so.delivery_address||'',shipMethod:shipChoiceOf(so.shipping_method),shipOther:shipOtherOf(so.shipping_method)});
+  const [form,setForm]=useState({num:so.so_number||'',clientId:so.client_company_id||'',clientPO:so.client_po_number||'',date:so.order_date||'',ship:so.indc_date||so.required_ship_date||'',crd:so.cargo_ready_date||'',cancel:so.cancel_date||'',payment:so.payment_terms||'',dep:so.deposit_percent!=null?String(so.deposit_percent):'',currency:so.currency||'USD',notes:so.notes||'',shipTo:so.delivery_address||'',shipMethod:shipChoiceOf(so.shipping_method),shipOther:shipOtherOf(so.shipping_method)});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const setShip=v=>setForm(prev=>({...prev,shipMethod:v,shipOther:v==='Other'?prev.shipOther:''}));
   const [items,setItems]=useState((initItems||[]).map(it=>({id:it.id,desc:it.description||'',sku:it.client_sku||'',qty:it.quantity!=null?String(it.quantity):'',price:it.client_price!=null?String(it.client_price):''})));
@@ -3130,7 +3140,7 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
     const ship=shipSaveValue(form.shipMethod,form.shipOther,so.shipping_method||'');
     if(ship.error){window._toast?.(ship.error,'err');return;}
     setLoading(true);
-    const {error}=await SB.from('sales_orders').update({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:ship.value,updated_at:new Date().toISOString()}).eq('id',so.id);
+    const {error}=await SB.from('sales_orders').update({so_number:form.num.trim(),client_company_id:form.clientId||null,client_po_number:form.clientPO||null,order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,deposit_percent:Number(form.dep)||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:ship.value,updated_at:new Date().toISOString()}).eq('id',so.id);
     if(error){alert('Error: '+error.message);setLoading(false);return;}
     const filled=items.filter(it=>it.desc.trim());
     // SAFETY: never wipe all line items. If the form somehow has none but the
@@ -3206,7 +3216,10 @@ function EditSOModal({so,items:initItems,linkedPos:initLinkedPos,onClose,onSaved
             <div><label>Cargo Ready Date <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>when goods are picked up — shown to client</span></label><input type="date" className="form-input" value={form.crd} onChange={e=>f('crd')(e.target.value)} /></div>
             <div><label>Cancel Date</label><input type="date" className="form-input" value={form.cancel} onChange={e=>f('cancel')(e.target.value)} /></div>
           </div>
-          <div><label>Payment Terms</label><PaymentTermsSelect value={form.payment} onChange={f('payment')} keep={so.payment_terms||''} /></div>
+          <div className="form-row-2">
+            <div><label>Payment Terms</label><PaymentTermsSelect value={form.payment} onChange={f('payment')} keep={so.payment_terms||''} /></div>
+            <div><label>Deposit %</label><input type="number" className="form-input" placeholder="30" min="0" max="100" value={form.dep} onChange={e=>f('dep')(e.target.value)} /></div>
+          </div>
           <div className="form-row-2">
             <ShippingMethodField choice={form.shipMethod} other={form.shipOther} onChoice={setShip} onOther={f('shipOther')} />
           </div>
@@ -4393,7 +4406,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
           </div>
           <div className="form-row-2">
             <div><label>Payment Terms</label><PaymentTermsSelect value={form.pay} onChange={f('pay')} keep={po.payment_terms||''} /></div>
-            <div></div>
+            <div><label>Deposit %</label><input type="number" className="form-input" placeholder="30" min="0" max="100" value={form.dep} onChange={e=>f('dep')(e.target.value)} /></div>
           </div>
           <span className="form-section-label">Line Items</span>
           <table className="items-table">
@@ -10010,6 +10023,10 @@ function buildSODoc(d) {
         +'<div style="display:flex;justify-content:space-between;align-items:baseline;border-top:1.5px solid #0c1322;margin-top:6px;padding-top:8px;">'
           +'<span style="font-size:14px;font-weight:600;color:#111827;">Order total '+esc(cur)+'</span>'
           +'<span class="mono" style="font-size:18px;font-weight:700;color:#0c1322;">'+m(orderTotal)+'</span></div>'
+        // The deposit, straight under the total and inside the same block, so a
+        // page break cannot separate them (script 126).
+        +(d.deposit_amt ? '<div style="display:flex;justify-content:space-between;font-size:13.5px;color:#4b5563;padding:5px 0;">'
+          +'<span>'+esc(String(d.deposit_pct))+'% deposit due</span><span class="mono">'+m(d.deposit_amt)+'</span></div>' : '')
       +'</div>'
     +'</div>'
 
