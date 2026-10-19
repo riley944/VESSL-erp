@@ -3,7 +3,7 @@ import { Resend } from 'resend';
 import { TEAM } from '@/lib/team';
 
 // ── POST /api/orders/notify ──────────────────────────────────────────────────
-// Emails the team, or the one person it is assigned to, about a note just
+// Emails the team, or the people picked on the NOTIFY pills, about a note just
 // posted on a purchase order. Built the way /api/tasks/notify is: the caller's
 // own Supabase session, a staff gate, and only the note's id across the wire --
 // the route re-reads the note and writes the email itself, so it can only ever
@@ -63,7 +63,7 @@ export async function POST(req) {
     if (!noteId) return json({ ok:false, error:'No note given.' }, 400);
 
     const { data:note, error:nErr } = await sb.from('order_notes')
-      .select('id,purchase_order_id,body,author_email,assigned_to,created_at')
+      .select('id,purchase_order_id,body,author_email,notify_to,assigned_to,created_at')
       .eq('id', noteId).maybeSingle();
     if (nErr) return json({ ok:false, error:'Could not read the note: '+(nErr.message||nErr.code) }, 502);
     if (!note) return json({ ok:false, error:'That note could not be read — it may not exist, or your session may not have access to it.' }, 404);
@@ -74,12 +74,28 @@ export async function POST(req) {
     const ageMin = (Date.now() - new Date(note.created_at).getTime()) / 60000;
     if (!(ageMin <= FRESH_MINUTES)) return json({ ok:false, error:'That note is not new; no email is sent for it.' }, 409);
 
-    // Assigned: that one person, who must be on the team -- the author included,
-    // as /api/tasks/notify mails a task you give yourself (the inbox is where
-    // people keep their list). Otherwise the whole team, never the author.
-    const assignee = note.assigned_to ? onTeam(note.assigned_to) : null;
-    if (note.assigned_to && !assignee) return json({ ok:false, error:'The note is assigned to someone not on the team list.' }, 400);
-    const recipients = assignee ? [assignee.email] : TEAM.map(m => m.email).filter(e => !same(e, note.author_email));
+    // THE PICKS: notify_to (script 121), or the one assigned_to of a note from
+    // before it; neither is All. Every pick must be on the team, and each counts
+    // once whatever its case.
+    const raw = Array.isArray(note.notify_to) && note.notify_to.length ? note.notify_to
+      : (note.assigned_to ? [note.assigned_to] : []);
+    const picks = [];
+    for (const e of raw) {
+      const m = onTeam(e);
+      if (!m) return json({ ok:false, error:'The note names someone not on the team list.' }, 400);
+      if (!picks.some(p => p.email === m.email)) picks.push(m);
+    }
+    // Picked: those people, the author left out -- unless the author is the only
+    // pick, who is then mailed, as /api/tasks/notify mails a task you give
+    // yourself (the inbox is where people keep their list). All: the whole team,
+    // never the author.
+    let recipients;
+    if (picks.length) {
+      const others = picks.filter(m => !same(m.email, note.author_email)).map(m => m.email);
+      recipients = others.length ? others : picks.map(m => m.email);
+    } else {
+      recipients = TEAM.map(m => m.email).filter(e => !same(e, note.author_email));
+    }
     if (!recipients.length) return json({ ok:true, sent:[], skipped:true }, 200);
 
     // ── 4. THE WORDS ─────────────────────────────────────────────────────────
@@ -95,13 +111,14 @@ export async function POST(req) {
       clientName = (po && po.client && po.client.name) || '';
     }
     const whoName = (note.author_email || '').split('@')[0] || 'Someone';
-    const assigneeName = assignee ? assignee.name : 'team';
+    // "@Riley, @Matt" -- everyone picked, as the note on the page names them.
+    const atNames = picks.map(m => '@' + m.name).join(', ');
 
     const testTo = (process.env.ORDER_NOTIFY_TEST_TO || '').trim();
-    const subject = (testTo ? '[TEST] ' : '') + (assignee ? 'Task for you' : 'Order note') + ' · ' + orderNumber;
+    const subject = (testTo ? '[TEST] ' : '') + (picks.length ? 'Task for you' : 'Order note') + ' · ' + orderNumber;
 
     const text = [
-      assignee ? '@' + assigneeName + ' — task from ' + orderNumber : 'Note on order ' + orderNumber,
+      picks.length ? atNames + ' — task from ' + orderNumber : 'Note on order ' + orderNumber,
       clientName ? 'Client: ' + clientName : null,
       '',
       note.body || '',
@@ -111,8 +128,8 @@ export async function POST(req) {
       'Open in Vessl: ' + APP_URL,
     ].filter(l => l !== null).join('\n');
 
-    const prefix = assignee
-      ? '<strong style="color:#3461e0">@' + esc(assigneeName) + '</strong> — task from '
+    const prefix = picks.length
+      ? '<strong style="color:#3461e0">' + esc(atNames) + '</strong> — task from '
       : 'Note on order ';
     const clientSuffix = clientName ? ' &middot; ' + esc(clientName) : '';
     const html = '<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;margin:0 auto;padding:8px">'

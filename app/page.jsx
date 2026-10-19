@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { SB } from '@/lib/supabase';
-import { TEAM } from '@/lib/team';
+import { TEAM, teamNames } from '@/lib/team';
 import { notifyOrderNote } from '@/lib/orderNotify';
 import { SBQ } from '@/lib/supabaseQuotes';
 import Quotes from '@/app/quotes';
@@ -3792,7 +3792,9 @@ function OrderDetail({ id, navigate }) {
   const [noteText, setNoteText] = useState('');
   const [noteMsg, setNoteMsg]   = useState('');
   const [posting, setPosting]   = useState(false);
-  const [noteAssignee, setNoteAssignee] = useState('all');
+  // Who the next note notifies: the emails picked on the NOTIFY pills. Empty is
+  // All, the whole team (notify_to NULL, script 121).
+  const [noteTo, setNoteTo] = useState([]);
   const [attachments, setAttachments] = useState([]);
   const [uploading, setUploading] = useState(false);
   const load = async () => {
@@ -3921,16 +3923,18 @@ function OrderDetail({ id, navigate }) {
     const body = (noteText||'').trim(); if(!body) return;
     setPosting(true);
     let author=null; try{ const { data } = await SB.auth.getUser(); author=data?.user?.email||null; }catch(e){}
-    const assignedTo = noteAssignee==='all' ? null : noteAssignee;
-    const { data:n, error } = await SB.from('order_notes').insert({ purchase_order_id:id, body, author_email:author, assigned_to:assignedTo }).select().single();
+    const { data:n, error } = await SB.from('order_notes').insert({ purchase_order_id:id, body, author_email:author, notify_to: noteTo.length ? noteTo : null }).select().single();
     if (error){ setPosting(false); alert('Couldn\u2019t post note: '+error.message); return; }
     setNotes(prev=>[n,...prev]); setNoteText('');
     // The email is written and sent by /api/orders/notify from the saved note
     // (lib/orderNotify); nothing but the note's id leaves the browser.
-    const assigneeName = noteAssignee==='all' ? 'team' : (TEAM.find(m=>m.email===noteAssignee)?.name||noteAssignee.split('@')[0]);
-    const r = await notifyOrderNote(n.id, assigneeName);
-    setNoteMsg(r.skipped ? 'Note posted.' : r.ok ? 'Note posted & '+assigneeName+' notified.' : 'Note posted (email skipped).');
-    setNoteAssignee('all');
+    // The status names who the route actually mailed -- the picks minus the
+    // author -- read from its reply; with the local test address on, the people
+    // it would have mailed.
+    const r = await notifyOrderNote(n.id, noteTo.length ? teamNames(noteTo) : 'team');
+    const mailed = r.wouldHaveSent || r.sent || [];
+    setNoteMsg(r.skipped ? 'Note posted.' : r.ok ? 'Note posted & '+(noteTo.length ? teamNames(mailed) : 'team')+' notified.' : 'Note posted (email skipped).');
+    setNoteTo([]);
     setTimeout(()=>setNoteMsg(''),3000);
     setPosting(false);
   };
@@ -4035,7 +4039,6 @@ function OrderDetail({ id, navigate }) {
   const lineBlocks = poLineBlocks(items, PO_ITEM_FIELDS);
   const sizeLabel = new Map();
   lineBlocks.forEach(b => { if (b.labels) b.labels.forEach((v, k) => sizeLabel.set(k, v)); });
-  const notifyLabel = posting ? 'Posting...' : noteAssignee==='all' ? 'Post & notify team' : 'Post & notify '+((TEAM.find(m=>m.email===noteAssignee)||{}).name||'person');
   const onFileChange = (e) => { const f = e.target.files && e.target.files[0]; if (f) uploadFile(f); e.target.value = ''; };
   return (
     <>
@@ -4170,7 +4173,7 @@ function OrderDetail({ id, navigate }) {
 
       <OrderNotes
         notes={notes} noteText={noteText} setNoteText={setNoteText}
-        noteAssignee={noteAssignee} setNoteAssignee={setNoteAssignee}
+        noteTo={noteTo} setNoteTo={setNoteTo}
         postNote={postNote} posting={posting} noteMsg={noteMsg}
       />
       <OrderAttachments
@@ -4182,8 +4185,13 @@ function OrderDetail({ id, navigate }) {
   );
 }
 
-function OrderNotes({ notes, noteText, setNoteText, noteAssignee, setNoteAssignee, postNote, posting, noteMsg }) {
-  const btnLabel = posting ? 'Posting...' : noteAssignee === 'all' ? 'Post & notify team' : 'Post & notify ' + ((TEAM.find(m => m.email === noteAssignee) || {}).name || 'person');
+// THE NOTIFY PILLS pick any number of people; All is the empty pick and stands
+// alone -- choosing it clears the people, choosing a person clears it, and
+// clearing the last person returns to it.
+function OrderNotes({ notes, noteText, setNoteText, noteTo, setNoteTo, postNote, posting, noteMsg }) {
+  const picked = email => noteTo.includes(email);
+  const toggle = email => setNoteTo(prev => prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email]);
+  const btnLabel = posting ? 'Posting...' : !noteTo.length ? 'Post & notify team' : 'Post & notify ' + teamNames(noteTo);
   return (
     <div className="section-card" style={{marginTop:'20px'}}>
       <div className="section-head"><h3>Notes &amp; Activity</h3></div>
@@ -4191,9 +4199,9 @@ function OrderNotes({ notes, noteText, setNoteText, noteAssignee, setNoteAssigne
         <div style={{marginBottom:'10px'}}>
           <div style={{fontSize:'11px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)',marginBottom:'6px'}}>Notify</div>
           <div className="filters" style={{flexWrap:'wrap',gap:'6px'}}>
-            <button className={'filter-btn' + (noteAssignee === 'all' ? ' active' : '')} onClick={() => setNoteAssignee('all')}>All</button>
+            <button className={'filter-btn' + (!noteTo.length ? ' active' : '')} aria-pressed={!noteTo.length} onClick={() => setNoteTo([])}>All</button>
             {TEAM.map(m => (
-              <button key={m.email} className={'filter-btn' + (noteAssignee === m.email ? ' active' : '')} onClick={() => setNoteAssignee(m.email)}>{m.name}</button>
+              <button key={m.email} className={'filter-btn' + (picked(m.email) ? ' active' : '')} aria-pressed={picked(m.email)} onClick={() => toggle(m.email)}>{m.name}</button>
             ))}
           </div>
         </div>
@@ -4205,7 +4213,9 @@ function OrderNotes({ notes, noteText, setNoteText, noteAssignee, setNoteAssigne
       </div>
       <div className="note-list">
         {notes.length > 0 ? notes.map(n => {
-          const assigneeName = n.assigned_to && n.assigned_to !== 'all' ? ((TEAM.find(m => m.email === n.assigned_to) || {}).name || n.assigned_to.split('@')[0]) : null;
+          // notify_to, or a note from before script 121 with its one assigned_to.
+          const to = n.notify_to && n.notify_to.length ? n.notify_to : (n.assigned_to && n.assigned_to !== 'all' ? [n.assigned_to] : []);
+          const assigneeName = to.length ? teamNames(to) : null;
           return (
             <div key={n.id} className="note-item">
               <div className="note-avatar" style={{background:companyColor(n.author_email || '?')}}>{initials(n.author_email || '?')}</div>
