@@ -8551,9 +8551,10 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
             <div><label>Incoterm (EXW / FOB)</label><input className="form-input" placeholder="e.g. FOB HCMC" value={form.inco} onChange={e=>f('inco')(e.target.value)} /></div>
             <div></div>
           </div>
-          <div className="form-row-2">
+          <div className="form-row-3">
             <div><label>Payment Terms</label><PaymentTermsSelect value={form.pay} onChange={f('pay')} /></div>
             <div><label>Deposit %</label><input type="number" className="form-input" placeholder="30" value={form.dep} onChange={e=>f('dep')(e.target.value)} /></div>
+            <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}><option>USD</option><option>CNY</option><option>VND</option><option>EUR</option></select></div>
           </div>
           <span className="form-section-label">Line Items</span>
           <table className="items-table">
@@ -8674,11 +8675,10 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
               </>
             )}
           </div>
-          <span className="form-section-label">Fees &amp; Currency</span>
+          <span className="form-section-label">Fees</span>
           <div className="form-row-3">
             <div><label>Mold / Tooling</label><input type="number" className="form-input" placeholder="0" value={form.mold} onChange={e=>f('mold')(e.target.value)} /></div>
             <div><label>Sample Fee</label><input type="number" className="form-input" placeholder="0" value={form.sample} onChange={e=>f('sample')(e.target.value)} /></div>
-            <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}><option>USD</option><option>CNY</option><option>VND</option><option>EUR</option></select></div>
           </div>
           <OrderNoteDraft staff={staff} text={noteText} setText={setNoteText} to={noteTo} setTo={setNoteTo} />
           <div className="form-row"><label>Notes</label><textarea className="form-textarea" placeholder="Special instructions..." value={form.notes} onChange={e=>f('notes')(e.target.value)} /></div>
