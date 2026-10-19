@@ -4404,9 +4404,10 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
             <div><label>Cancel Date</label><input type="date" className="form-input" value={form.cancel} onChange={e=>f('cancel')(e.target.value)} /></div>
             <div><label>Incoterm</label><input className="form-input" value={form.inco} onChange={e=>f('inco')(e.target.value)} /></div>
           </div>
-          <div className="form-row-2">
+          <div className="form-row-3">
             <div><label>Payment Terms</label><PaymentTermsSelect value={form.pay} onChange={f('pay')} keep={po.payment_terms||''} /></div>
             <div><label>Deposit %</label><input type="number" className="form-input" placeholder="30" min="0" max="100" value={form.dep} onChange={e=>f('dep')(e.target.value)} /></div>
+            <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}><option>USD</option><option>CNY</option><option>VND</option><option>EUR</option></select></div>
           </div>
           <span className="form-section-label">Line Items</span>
           <table className="items-table">
@@ -4483,11 +4484,10 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
               </>
             )}
           </div>
-          <span className="form-section-label">Fees & Currency</span>
+          <span className="form-section-label">Fees</span>
           <div className="form-row-3">
             <div><label>Mold / Tooling</label><input type="number" className="form-input" value={form.mold} onChange={e=>f('mold')(e.target.value)} /></div>
             <div><label>Sample Fee</label><input type="number" className="form-input" value={form.sample} onChange={e=>f('sample')(e.target.value)} /></div>
-            <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}><option>USD</option><option>CNY</option><option>VND</option><option>EUR</option></select></div>
           </div>
           <div className="form-row"><label>Client <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(for tracking &amp; inventory)</span></label>
             <select className="form-select" value={form.clientId} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setForm(prev=>({...prev,clientId:e.target.value,pallet:(c?.pallet_info&&!prev.pallet)?c.pallet_info:prev.pallet,delivery_address:(c?.shipping_address&&!prev.delivery_address)?c.shipping_address:prev.delivery_address}));}}>
