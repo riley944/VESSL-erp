@@ -3,8 +3,8 @@ import { Resend } from 'resend';
 import { personName, isEveryone } from '@/lib/people';
 
 // ── POST /api/orders/notify ──────────────────────────────────────────────────
-// Emails the people picked on a note just posted on a purchase order or a sales
-// order. Built the way /api/tasks/notify is: the caller's own Supabase session,
+// Emails the people picked on a note just posted on a purchase order, a sales
+// order, a shipment or a freight quote (scripts 122, 123). Built the way /api/tasks/notify is: the caller's own Supabase session,
 // a staff gate, and only the note's id across the wire -- the route re-reads
 // the note and writes the email itself, so it can only ever describe a real
 // note and cannot be handed a message or an address to relay.
@@ -67,7 +67,7 @@ export async function POST(req) {
     if (!noteId) return json({ ok:false, error:'No note given.' }, 400);
 
     const { data:note, error:nErr } = await sb.from('order_notes')
-      .select('id,purchase_order_id,sales_order_id,body,author_email,notify_to,assigned_to,created_at')
+      .select('id,purchase_order_id,sales_order_id,shipment_id,shipment_quote_id,body,author_email,notify_to,assigned_to,created_at')
       .eq('id', noteId).maybeSingle();
     if (nErr) return json({ ok:false, error:'Could not read the note: '+(nErr.message||nErr.code) }, 502);
     if (!note) return json({ ok:false, error:'That note could not be read — it may not exist, or your session may not have access to it.' }, 404);
@@ -103,9 +103,30 @@ export async function POST(req) {
     if (!recipients.length) return json({ ok:true, sent:[], skipped:true }, 200);
 
     // ── 4. THE WORDS ─────────────────────────────────────────────────────────
-    // The order number and its CLIENT -- a purchase order or a sales order.
+    // The record's number and its CLIENT -- a purchase order, a sales order, a
+    // shipment or a freight quote.
     let orderNumber = '', clientName = '', kind = 'order';
-    if (note.sales_order_id) {
+    if (note.shipment_quote_id) {
+      // A freight quote: its number, client and forwarder.
+      kind = 'freight quote';
+      const { data:q } = await sb.from('shipment_quotes')
+        .select('quote_number,client:companies!client_company_id(name),forwarder:companies!forwarder_company_id(name)')
+        .eq('id', note.shipment_quote_id).maybeSingle();
+      orderNumber = (q && q.quote_number) || '';
+      clientName = [(q && q.client && q.client.name) || '', q && q.forwarder && q.forwarder.name ? '(' + q.forwarder.name + ')' : '']
+        .filter(Boolean).join(' ');
+    } else if (note.shipment_id) {
+      // A shipment: its own number and client, and where either is blank the
+      // first linked purchase order's -- the fallback the shipment modal uses.
+      kind = 'shipment';
+      const [{ data:sh }, { data:links }] = await Promise.all([
+        sb.from('shipments').select('shipment_number,client:companies!client_company_id(name)').eq('id', note.shipment_id).maybeSingle(),
+        sb.from('shipment_pos').select('purchase_orders(order_number,client:companies!client_company_id(name))').eq('shipment_id', note.shipment_id).limit(1),
+      ]);
+      const po = links && links[0] && links[0].purchase_orders;
+      orderNumber = (sh && sh.shipment_number) || (po && po.order_number) || '';
+      clientName = (sh && sh.client && sh.client.name) || (po && po.client && po.client.name) || '';
+    } else if (note.sales_order_id) {
       kind = 'sales order';
       const { data:so } = await sb.from('sales_orders')
         .select('so_number,client:companies!client_company_id(name)')

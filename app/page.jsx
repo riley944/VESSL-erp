@@ -7915,6 +7915,7 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
             <div><label>ETD</label><input type="date" className="form-input" value={dval(s.estimated_departure)} onChange={e=>set('estimated_departure',e.target.value)} /></div>
             <div><label>ETA</label><input type="date" className="form-input" value={dval(s.estimated_arrival)} onChange={e=>set('estimated_arrival',e.target.value)} /></div>
           </div>
+          <OrderNotesPanel shipmentId={id} compact />
         </div>
         )}
         <div className="modal-foot"><button className="btn btn-ghost btn-sm" style={{color:'var(--hot)',marginRight:'auto'}} onClick={()=>setConfirmDel(true)}>Delete</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={save} disabled={saving||!s}>{saving?'Saving…':'Save shipment'}</button></div>
@@ -8709,6 +8710,11 @@ function CreateShipmentModal({ onClose, onCreated }) {
     client:'', carrier:'', bol:'', etd:'', eta:'', status:'created', inco:'', poId:''
   });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
+  // A note to post once the record exists (OrderNoteDraft): nothing is saved
+  // until then, and an empty box posts nothing.
+  const staff=useStaff();
+  const [noteText,setNoteText]=useState('');
+  const [noteTo,setNoteTo]=useState([]);
   useEffect(()=>{
     SB.from('companies').select('id,name,type').order('name').then(({data})=>setCompanies(data||[]));
     SB.from('purchase_orders').select('id,order_number').order('created_at',{ascending:false}).limit(200).then(({data})=>setPos(data||[]));
@@ -8729,6 +8735,9 @@ function CreateShipmentModal({ onClose, onCreated }) {
     }).select('id').single();
     if (error) { alert('Error: '+error.message); return; }
     if (form.poId) await SB.from('shipment_pos').insert({ shipment_id: ship.id, purchase_order_id: form.poId });
+    // The note typed here, now that the shipment exists. It cannot fail the
+    // shipment: whatever happens is said in a toast.
+    await postNoteAfterCreate({ what:'Shipment', column:'shipment_id', orderId:ship.id, body:noteText, picked:noteTo, staff });
     onCreated();
   };
   return (
@@ -8753,6 +8762,7 @@ function CreateShipmentModal({ onClose, onCreated }) {
             <div><label>Incoterm</label><input className="form-input" value={form.inco} onChange={e=>f('inco')(e.target.value)} placeholder="FOB, DDP…" /></div>
             <div><label>Link to PO (optional)</label><select className="form-select" value={form.poId} onChange={e=>f('poId')(e.target.value)}><option value="">None</option>{pos.map(p=><option key={p.id} value={p.id}>{p.order_number||p.id.slice(0,8)}</option>)}</select></div>
           </div>
+          <OrderNoteDraft staff={staff} text={noteText} setText={setNoteText} to={noteTo} setTo={setNoteTo} />
         </div>
         <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={submit}>Save Shipment</button></div>
       </div>
@@ -9121,6 +9131,19 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
       sku:l.sku||'', quoteId:l.quote_id||'', quoteCode:l.quote_code||'' }));
   });
   const [saving, setSaving] = useState(false);
+  // A note to post once the record exists (OrderNoteDraft): nothing is saved
+  // until then, and an empty box posts nothing.
+  const staff=useStaff();
+  const [noteText,setNoteText]=useState('');
+  const [noteTo,setNoteTo]=useState([]);
+  // EDITING: every row of this quote's RFQ group, so the card shows the whole
+  // RFQ's notes -- one row per forwarder, sharing rfq_group_id.
+  const [groupIds, setGroupIds] = useState([]);
+  useEffect(() => {
+    if (!editing || !data.rfq_group_id) return;
+    SB.from('shipment_quotes').select('id').eq('rfq_group_id', data.rfq_group_id)
+      .then(({ data: rows }) => setGroupIds((rows || []).map(r => r.id)));
+  }, [editing, data && data.rfq_group_id]);
   const [quotesReady, setQuotesReady] = useState(false);
   // What the SKU lookup has to say about a line, by its _k:
   // { kind:'none', text } | { kind:'pick', options } | { kind:'confirm', quote, fill, clash, others }
@@ -9387,21 +9410,24 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
   const save = async (status) => {
     if (!form.client) { alert('Pick a client'); return; }
     setSaving(true);
-    const { error } = editing
+    const { data: made, error } = editing
       ? await SB.from('shipment_quotes').update(editPayload()).eq('id', data.id)
-      : await SB.from('shipment_quotes').insert(buildPayload(status));
+      : await SB.from('shipment_quotes').insert(buildPayload(status)).select('id').single();
     setSaving(false);
     // Checked, and the modal stays open on failure so the entry is not lost.
     if (error) { alert('Error: '+error.message); return; }
+    // A new quote: the note typed here, now that it exists.
+    if (!editing && made) await postNoteAfterCreate({ what:'Freight quote', column:'shipment_quote_id', orderId:made.id, body:noteText, picked:noteTo, staff });
     onSaved();
   };
   const generate = async () => {
     if (!form.client) { alert('Pick a client'); return; }
     const payload = buildPayload('sent');
     setSaving(true);
-    const { data, error } = await SB.from('shipment_quotes').insert(payload).select('id').single();
+    const { data: made, error } = await SB.from('shipment_quotes').insert(payload).select('id').single();
     setSaving(false);
     if (error) { alert('Error: '+error.message); return; }
+    await postNoteAfterCreate({ what:'Freight quote', column:'shipment_quote_id', orderId:made.id, body:noteText, picked:noteTo, staff });
     const clientName = clients.find(c=>c.id===form.client)?.name || '';
     const forwarderName = forwarders.find(c=>c.id===form.forwarder)?.name || '';
     openFreightSheet(payload, clientName, forwarderName);
@@ -9627,6 +9653,9 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
           <div style={{marginTop:'12px'}}><label style={lblS}>Notes for forwarder</label><textarea style={{...inputS,minHeight:'56px',resize:'vertical'}} value={form.notes} onChange={e=>f('notes')(e.target.value)} placeholder="Special handling, stackability, delivery requirements…" /></div>
           </>
           )}
+          {editing
+            ? <OrderNotesPanel quoteId={data.id} quoteIds={groupIds} compact />
+            : picked && <OrderNoteDraft staff={staff} text={noteText} setText={setNoteText} to={noteTo} setTo={setNoteTo} disabled={saving} />}
         </div>
         <div className="modal-foot" style={{display:'flex',justifyContent:'space-between',gap:'10px'}}>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>

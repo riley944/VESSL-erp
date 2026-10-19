@@ -8,9 +8,18 @@ import { PeoplePills } from '@/app/components/PeoplePills';
 import { useStaff } from '@/app/components/OrderNoteDraft';
 
 // ── NOTES & ACTIVITY on an order ────────────────────────────────────────────
-// One self-contained card for a purchase order or a sales order -- pass
-// purchaseOrderId or salesOrderId. It loads the order's notes and the staff
-// list, posts a note, and asks /api/orders/notify to email the people picked.
+// One self-contained card for the record it is given -- purchaseOrderId,
+// salesOrderId, shipmentId, or quoteId for a freight quote (scripts 122, 123).
+// It loads the record's notes and the staff list, posts a note, and asks
+// /api/orders/notify to email the people picked.
+//
+// A FREIGHT QUOTE sent to several forwarders is several shipment_quotes rows
+// sharing rfq_group_id. A note is posted on quoteId, the row open; quoteIds
+// lists every row in its group, and the card shows all their notes together.
+//
+// compact: inside a modal -- a tighter card, the list scrolls in place. The
+// note box is data-noguard everywhere: posting saves it, so a modal's
+// unsaved-changes guard has nothing to keep.
 //
 // THE PEOPLE PILLS are every staff_profiles row by full name, with an All
 // shortcut that picks everyone. Nothing is picked to start with:
@@ -19,9 +28,15 @@ import { useStaff } from '@/app/components/OrderNoteDraft';
 //   some people    -- "Post & notify A & B": saved as that list
 // The route mails the picks minus the author, or the author alone when they are
 // the only pick (script 122 gave NULL its quiet meaning).
-export function OrderNotesPanel({ purchaseOrderId = null, salesOrderId = null }) {
-  const col = salesOrderId ? 'sales_order_id' : 'purchase_order_id';
-  const orderId = salesOrderId || purchaseOrderId;
+export function OrderNotesPanel({ purchaseOrderId = null, salesOrderId = null, shipmentId = null,
+                                  quoteId = null, quoteIds = null, compact = false }) {
+  const [col, orderId] = quoteId ? ['shipment_quote_id', quoteId]
+    : shipmentId ? ['shipment_id', shipmentId]
+    : salesOrderId ? ['sales_order_id', salesOrderId]
+    : ['purchase_order_id', purchaseOrderId];
+  // The rows whose notes are shown: the whole group for a freight quote.
+  const readIds = quoteId ? [...new Set([quoteId, ...(quoteIds || [])])] : [orderId];
+  const readKey = readIds.join(',');
   const [notes, setNotes] = useState([]);
   const staff = useStaff();
   const [noteText, setNoteText] = useState('');
@@ -31,9 +46,10 @@ export function OrderNotesPanel({ purchaseOrderId = null, salesOrderId = null })
 
   const load = useCallback(async () => {
     if (!orderId) return;
-    const { data: ns } = await SB.from('order_notes').select('*').eq(col, orderId).order('created_at', { ascending:false });
+    const ids = readKey.split(',');
+    const { data: ns } = await SB.from('order_notes').select('*').in(col, ids).order('created_at', { ascending:false });
     setNotes(ns || []);
-  }, [col, orderId]);
+  }, [col, orderId, readKey]);
   useEffect(() => { load(); }, [load]);
 
   const people = peopleFromStaff(staff);
@@ -60,7 +76,7 @@ export function OrderNotesPanel({ purchaseOrderId = null, salesOrderId = null })
     : 'Post & notify ' + names(noteTo);
 
   return (
-    <div className="section-card" style={{marginTop:'20px'}}>
+    <div className="section-card" style={{marginTop: compact ? '16px' : '20px', marginBottom: compact ? 0 : undefined}}>
       <div className="section-head"><h3>Notes &amp; Activity</h3></div>
       <div className="note-composer">
         <div style={{marginBottom:'10px'}}>
@@ -68,13 +84,13 @@ export function OrderNotesPanel({ purchaseOrderId = null, salesOrderId = null })
           <PeoplePills people={people} value={noteTo} onChange={setNoteTo} showAll disabled={posting} label="Notify" />
           {!noteTo.length && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'6px'}}>Nobody picked — the note is saved without an email.</div>}
         </div>
-        <textarea className="form-input" rows={3} placeholder="Add a note or task..." value={noteText} onChange={e => setNoteText(e.target.value)} />
+        <textarea className="form-input" data-noguard rows={compact ? 2 : 3} placeholder="Add a note or task..." value={noteText} onChange={e => setNoteText(e.target.value)} />
         <div style={{display:'flex',alignItems:'center',gap:'12px',marginTop:'10px'}}>
           <button className="btn btn-dark btn-sm" onClick={postNote} disabled={posting || !noteText.trim()}>{btnLabel}</button>
           {noteMsg && <span style={{fontSize:'12.5px',color:'var(--accent)'}}>{noteMsg}</span>}
         </div>
       </div>
-      <div className="note-list">
+      <div className="note-list" style={compact ? { maxHeight:'220px', overflowY:'auto' } : undefined}>
         {notes.length > 0 ? notes.map(n => {
           // notify_to, or a note from before script 121 with its one assigned_to.
           const to = n.notify_to && n.notify_to.length ? n.notify_to : (n.assigned_to && n.assigned_to !== 'all' ? [n.assigned_to] : []);
