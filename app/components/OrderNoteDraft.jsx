@@ -23,11 +23,16 @@ export function useStaff() {
 // held in the modal until the order is created -- then lib/orderNotes
 // postNoteAfterCreate saves it and emails whoever was picked. An empty box
 // posts nothing.
+//
+// Headed like the modals' other sections (Preproduction Samples, Fees &
+// Currency): the global form-section-label -- label, rule underneath, its own
+// top and bottom margin -- then the body with the same 14px foot those leave.
 export function OrderNoteDraft({ staff, text, setText, to, setTo, disabled = false }) {
   return (
-    <div className="form-row">
-      <label>Notes &amp; Activity</label>
-      <div style={{fontSize:'11px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)',margin:'2px 0 6px'}}>Notify</div>
+    <>
+    <span className="form-section-label">Notes &amp; Activity</span>
+    <div style={{padding:'0 0 14px'}}>
+      <div style={{fontSize:'11px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)',margin:'0 0 6px'}}>Notify</div>
       <PeoplePills people={peopleFromStaff(staff)} value={to} onChange={setTo} showAll disabled={disabled} label="Notify" />
       <textarea className="form-textarea" rows={3} style={{marginTop:'8px'}} placeholder="Add a note or task..."
         value={text} onChange={e => setText(e.target.value)} disabled={disabled} aria-label="Note" />
@@ -37,5 +42,6 @@ export function OrderNoteDraft({ staff, text, setText, to, setTo, disabled = fal
           : 'Posted once the order is created, and emailed to the people picked.'}
       </div>
     </div>
+    </>
   );
 }
