@@ -1,10 +1,11 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { SB } from '@/lib/supabase';
-import { notifyOrderNote } from '@/lib/orderNotify';
+import { postOrderNote, noteOutcome } from '@/lib/orderNotes';
 import { personName, peopleNames, peopleFromStaff, isEveryone } from '@/lib/people';
 import { companyColor, initials, fmtDateTime } from '@/lib/display';
 import { PeoplePills } from '@/app/components/PeoplePills';
+import { useStaff } from '@/app/components/OrderNoteDraft';
 
 // ── NOTES & ACTIVITY on an order ────────────────────────────────────────────
 // One self-contained card for a purchase order or a sales order -- pass
@@ -22,7 +23,7 @@ export function OrderNotesPanel({ purchaseOrderId = null, salesOrderId = null })
   const col = salesOrderId ? 'sales_order_id' : 'purchase_order_id';
   const orderId = salesOrderId || purchaseOrderId;
   const [notes, setNotes] = useState([]);
-  const [staff, setStaff] = useState([]);
+  const staff = useStaff();
   const [noteText, setNoteText] = useState('');
   const [noteTo, setNoteTo] = useState([]);
   const [posting, setPosting] = useState(false);
@@ -30,12 +31,8 @@ export function OrderNotesPanel({ purchaseOrderId = null, salesOrderId = null })
 
   const load = useCallback(async () => {
     if (!orderId) return;
-    const [{ data: ns }, { data: st }] = await Promise.all([
-      SB.from('order_notes').select('*').eq(col, orderId).order('created_at', { ascending:false }),
-      SB.from('staff_profiles').select('email,full_name').order('full_name', { nullsFirst:false }),
-    ]);
+    const { data: ns } = await SB.from('order_notes').select('*').eq(col, orderId).order('created_at', { ascending:false });
     setNotes(ns || []);
-    setStaff(st || []);
   }, [col, orderId]);
   useEffect(() => { load(); }, [load]);
 
@@ -44,25 +41,15 @@ export function OrderNotesPanel({ purchaseOrderId = null, salesOrderId = null })
   const everyone = isEveryone(staff, noteTo);
 
   const postNote = async () => {
-    const body = (noteText || '').trim(); if (!body || !orderId) return;
+    if (!(noteText || '').trim() || !orderId) return;
     setPosting(true);
-    let author = null; try { const { data } = await SB.auth.getUser(); author = data?.user?.email || null; } catch (e) {}
     const picked = noteTo;
-    const { data:n, error } = await SB.from('order_notes')
-      .insert({ [col]: orderId, body, author_email: author, notify_to: picked.length ? picked : null }).select().single();
-    if (error) { setPosting(false); alert('Couldn’t post note: ' + error.message); return; }
-    setNotes(prev => [n, ...prev]); setNoteText(''); setNoteTo([]);
-    if (!picked.length) {
-      setNoteMsg('Note posted.');
-    } else {
-      // Named from the route's reply -- who was actually mailed, the author
-      // left out -- or, with the local test address on, who would have been.
-      const r = await notifyOrderNote(n.id, names(picked));
-      const mailed = r.wouldHaveSent || r.sent || [];
-      setNoteMsg(r.skipped ? 'Note posted.'
-        : r.ok ? 'Note posted & ' + (isEveryone(staff, picked) ? 'everyone' : names(mailed)) + ' notified.'
-        : 'Note posted (email skipped).');
-    }
+    // lib/orderNotes: the insert, then the email when anyone was picked -- the
+    // same path the Create PO / SO modals take.
+    const res = await postOrderNote({ column: col, orderId, body: noteText, picked });
+    if (!res.saved) { setPosting(false); alert('Couldn’t post note: ' + res.error); return; }
+    setNotes(prev => [res.note, ...prev]); setNoteText(''); setNoteTo([]);
+    setNoteMsg(noteOutcome(res, staff, picked));
     setTimeout(() => setNoteMsg(''), 3000);
     setPosting(false);
   };

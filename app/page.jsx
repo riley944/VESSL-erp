@@ -3,6 +3,8 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom';
 import { SB } from '@/lib/supabase';
 import { OrderNotesPanel } from '@/app/components/OrderNotesPanel';
+import { OrderNoteDraft, useStaff } from '@/app/components/OrderNoteDraft';
+import { postNoteAfterCreate } from '@/lib/orderNotes';
 import { companyColor, initials, fmtDateTime } from '@/lib/display';
 import { SBQ } from '@/lib/supabaseQuotes';
 import Quotes from '@/app/quotes';
@@ -2680,6 +2682,11 @@ function CreateSOModal({onClose,onCreated}){
   const [showNC,setShowNC]=useState(false);
   const [ncName,setNcName]=useState('');
   const [loading,setLoading]=useState(false);
+  // A note to post once the order exists (OrderNoteDraft): nothing is saved
+  // until then, and an empty box posts nothing.
+  const staff=useStaff();
+  const [noteText,setNoteText]=useState('');
+  const [noteTo,setNoteTo]=useState([]);
   const tOf=q=>{try{return Array.isArray(q.tiers)?q.tiers:(q.tiers?JSON.parse(q.tiers):[]);}catch{return [];}};
   const clientPriceRange=q=>{const ps=tOf(q).map(t=>Number(t.client)||0).filter(Boolean);if(!ps.length)return null;const mn=Math.min(...ps),mx=Math.max(...ps);return mn===mx?money(mn):money(mn)+' – '+money(mx);};
   useEffect(()=>{
@@ -2888,6 +2895,9 @@ function CreateSOModal({onClose,onCreated}){
     // card for every product and client pair on it. PLM is kept by hand now, on
     // Riley decision, and the only door is the Create PLM Card button on the quote
     // card -- a board that fills itself is the thing the rework exists to stop.
+    // The note typed here, now that the order exists. It cannot fail the order:
+    // whatever happens is said in a toast.
+    await postNoteAfterCreate({ what:'Sales order', column:'sales_order_id', orderId:so.id, body:noteText, picked:noteTo, staff });
     setLoading(false); onCreated(so.id);
   };
   return (
@@ -3041,6 +3051,7 @@ function CreateSOModal({onClose,onCreated}){
             </div>
             {linkedPOIds.length>0&&<div style={{fontSize:'12px',color:'var(--accent)',marginTop:'6px',fontWeight:600}}>{linkedPOIds.length+' PO'+(linkedPOIds.length!==1?'s':'')+' linked'}</div>}
           </div>
+          <OrderNoteDraft staff={staff} text={noteText} setText={setNoteText} to={noteTo} setTo={setNoteTo} disabled={loading} />
           <div className="form-row"><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>f('notes')(e.target.value)} placeholder="Internal notes…" rows={3} /></div>
 
           </>)}
@@ -7965,6 +7976,11 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
   const [form, setForm]  = useState({ factoryId:'', clientId:'', shipping_method:'', shipOther:'', num:'', date:nowDate(), ship:'', cancel:'', inco:'', pay:'', dep:'', mold:'', sample:'', currency:'USD', notes:'', pallet:'', needs_samples:false, sample_type:'', sample_qty:'', sample_date:'' });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   const setShip = v => setForm(prev=>({...prev, shipping_method:v, shipOther: v==='Other' ? prev.shipOther : ''}));
+  // A note to post once the order exists (OrderNoteDraft): nothing is saved
+  // until then, and an empty box posts nothing.
+  const staff=useStaff();
+  const [noteText,setNoteText]=useState('');
+  const [noteTo,setNoteTo]=useState([]);
 
   // Build the next sequential PO number, e.g. KUI-PO-2026-007, from existing ones.
   const genNum = (list=[]) => {
@@ -8332,6 +8348,9 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
     // PO, sitting before Production, moves there with a note. No card is created.
     // After the lines, and never able to fail the PO -- it is already saved.
     await notePlmCardsForPO(po.client_company_id, savedProducts, po.order_number || orderNumber);
+    // The note typed here, now that the order exists. It cannot fail the order:
+    // whatever happens is said in a toast.
+    await postNoteAfterCreate({ what:'Purchase order', column:'purchase_order_id', orderId:po.id, body:noteText, picked:noteTo, staff });
     onCreated(po.id);
   };
 
@@ -8630,6 +8649,7 @@ function CreatePOModal({ onClose, onCreated, initialQuote=null }) {
             <div><label>Sample Fee</label><input type="number" className="form-input" placeholder="0" value={form.sample} onChange={e=>f('sample')(e.target.value)} /></div>
             <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}><option>USD</option><option>CNY</option><option>VND</option><option>EUR</option></select></div>
           </div>
+          <OrderNoteDraft staff={staff} text={noteText} setText={setNoteText} to={noteTo} setTo={setNoteTo} />
           <div className="form-row"><label>Notes</label><textarea className="form-textarea" placeholder="Special instructions..." value={form.notes} onChange={e=>f('notes')(e.target.value)} /></div>
           <span className="form-section-label">Compliance & Delivery</span>
           <div className="form-row-2">
