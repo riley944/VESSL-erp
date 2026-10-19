@@ -74,11 +74,12 @@ export async function POST(req) {
     const ageMin = (Date.now() - new Date(note.created_at).getTime()) / 60000;
     if (!(ageMin <= FRESH_MINUTES)) return json({ ok:false, error:'That note is not new; no email is sent for it.' }, 409);
 
-    // Assigned: that one person, who must be on the team. Otherwise the whole
-    // team. The author is never mailed their own note -- as before.
+    // Assigned: that one person, who must be on the team -- the author included,
+    // as /api/tasks/notify mails a task you give yourself (the inbox is where
+    // people keep their list). Otherwise the whole team, never the author.
     const assignee = note.assigned_to ? onTeam(note.assigned_to) : null;
     if (note.assigned_to && !assignee) return json({ ok:false, error:'The note is assigned to someone not on the team list.' }, 400);
-    const recipients = (assignee ? [assignee.email] : TEAM.map(m => m.email)).filter(e => !same(e, note.author_email));
+    const recipients = assignee ? [assignee.email] : TEAM.map(m => m.email).filter(e => !same(e, note.author_email));
     if (!recipients.length) return json({ ok:true, sent:[], skipped:true }, 200);
 
     // ── 4. THE WORDS ─────────────────────────────────────────────────────────
