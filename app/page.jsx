@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { SB } from '@/lib/supabase';
+import { TEAM } from '@/lib/team';
+import { notifyOrderNote } from '@/lib/orderNotify';
 import { SBQ } from '@/lib/supabaseQuotes';
 import Quotes from '@/app/quotes';
 import Codes from '@/app/codes';
@@ -305,13 +307,6 @@ async function shipmentAsk(poId, poNo, via) {
 const fmtNum = n => n == null ? '—' : new Intl.NumberFormat('en-US').format(n);
 const nowDate = () => new Date().toISOString().slice(0,10);
 const STATUSES = ['draft','confirmed','sampling','sample_approved','in_production','ready_to_ship','shipped','delivered','closed','cancelled'];
-const TEAM = [
-  { name:'Kristy',  email:'kristy@kinguniversal.com' },
-  { name:'Loren',   email:'loren@kinguniversal.com' },
-  { name:'Riley',   email:'riley@kinguniversal.com' },
-  { name:'Steven',  email:'steven@kinguniversal.com' },
-  { name:'Carmela', email:'carmela@kinguniversal.com' },
-];
 
 // label, when given, replaces the words only -- the colour still follows status.
 function Badge({ status, label }) {
@@ -3930,28 +3925,11 @@ function OrderDetail({ id, navigate }) {
     const { data:n, error } = await SB.from('order_notes').insert({ purchase_order_id:id, body, author_email:author, assigned_to:assignedTo }).select().single();
     if (error){ setPosting(false); alert('Couldn\u2019t post note: '+error.message); return; }
     setNotes(prev=>[n,...prev]); setNoteText('');
-    try {
-      const whoName = author ? author.split('@')[0] : 'Someone';
-      const assigneeName = noteAssignee==='all' ? 'team' : (TEAM.find(m=>m.email===noteAssignee)?.name||noteAssignee.split('@')[0]);
-      const recipients = noteAssignee==='all'
-        ? TEAM.map(t=>t.email).filter(e=>e!==author)
-        : [noteAssignee].filter(e=>e!==author);
-      const esc = s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-      const taskPrefix = noteAssignee!=='all' ? '<strong style="color:#3461e0">@'+esc(assigneeName)+'</strong> \u2014 task from ' : 'Note on order ';
-      const clientSuffix = po?.companies?.name ? ' &middot; '+esc(po.companies.name) : '';
-      const html = '<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;margin:0 auto;padding:8px">'
-        +'<p style="font-size:13px;color:#64748b;margin:0 0 4px">'+taskPrefix+'<strong style="color:#0b1120">'+esc(po?.order_number||'')+'</strong>'+clientSuffix+'</p>'
-        +'<div style="background:#f6f8fb;border:1px solid #e6eaf0;border-radius:10px;padding:16px 18px;margin:10px 0 16px">'
-        +'<p style="margin:0;font-size:15px;color:#0b1120;line-height:1.55">'+esc(body)+'</p></div>'
-        +'<p style="font-size:12px;color:#94a3b8;margin:0 0 16px">Posted by '+esc(whoName)+'</p>'
-        +'<a href="https://orders.vessl.io" style="display:inline-block;background:#0b1530;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 18px;border-radius:8px">Open in Vessl &rarr;</a>'
-        +'</div>';
-      if (recipients.length){
-        const subj = (noteAssignee!=='all'?'Task for you':'Order note')+' \u00b7 '+(po?.order_number||'');
-        const { error:mailErr } = await SB.functions.invoke('send-email',{ body:{ to:recipients, replyTo:author||undefined, subject:subj, html } });
-        setNoteMsg(mailErr ? 'Note posted (email skipped).' : 'Note posted & '+assigneeName+' notified.');
-      } else setNoteMsg('Note posted.');
-    } catch(e){ setNoteMsg('Note posted (email skipped).'); }
+    // The email is written and sent by /api/orders/notify from the saved note
+    // (lib/orderNotify); nothing but the note's id leaves the browser.
+    const assigneeName = noteAssignee==='all' ? 'team' : (TEAM.find(m=>m.email===noteAssignee)?.name||noteAssignee.split('@')[0]);
+    const r = await notifyOrderNote(n.id, assigneeName);
+    setNoteMsg(r.skipped ? 'Note posted.' : r.ok ? 'Note posted & '+assigneeName+' notified.' : 'Note posted (email skipped).');
     setNoteAssignee('all');
     setTimeout(()=>setNoteMsg(''),3000);
     setPosting(false);

@@ -6,9 +6,6 @@ import { Resend } from 'resend';
 // /api/rfq/send is: the caller's own Supabase session, a staff gate, and only an
 // id across the wire -- the route re-reads the task, so it can only ever
 // describe a real row and cannot be handed a message to relay.
-//
-// Replaces the Supabase edge function send-email, which took to, from and html
-// from any signed-in caller -- an open relay on a verified domain.
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
