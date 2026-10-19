@@ -66,6 +66,8 @@ import { ProductCpscRules, useProductCpscRules, matchSkuToProduct } from "@/app/
 import { useDirtyGuard } from "@/app/components/ModalGuard";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 import { notifyTaskAssigned as notifyTask } from "@/lib/taskNotify";
+import { PeoplePills } from "@/app/components/PeoplePills";
+import { joinNames } from "@/lib/team";
 import { isUnseen, markSeen, insertTask, unseenCount, taskDay, byCreated, TASK_TONE } from "@/lib/taskSeen";
 
 // ============================================================
@@ -86,10 +88,20 @@ const TEAM = [
   // that read fails, and still names people on task lines.
   { name: "Matt", email: "mattdillon@kinguniversal.com" },
 ];
+// NAMES FROM staff_profiles FIRST. loadStaff fills this map with each profile's
+// full name; the hard-coded TEAM list answers only for an address with no
+// profile, or before (or without) that read. Module-level so every component in
+// the file reads the same names without a prop -- loadStaff's setStaff re-renders
+// them once it lands.
+const STAFF_NAMES = new Map();
 function nameForEmail(email) {
-  const t = TEAM.find((m) => m.email.toLowerCase() === (email || "").toLowerCase());
+  const k = (email || "").trim().toLowerCase();
+  if (STAFF_NAMES.has(k)) return STAFF_NAMES.get(k);
+  const t = TEAM.find((m) => m.email.toLowerCase() === k);
   return t ? t.name : (email || "").split("@")[0];
 }
+// "Kristy Thomas & Riley King" for a list of addresses.
+const namesFor = (emails) => joinNames((emails || []).map(nameForEmail));
 
 // The phone switch (720px or narrower) lives in lib/useIsMobile.js so the Quote
 // List tab reads the same one.
@@ -933,19 +945,36 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
     return () => window.removeEventListener("focus", onFocus);
   }, [loadTasks]);
 
-  const addTask = async (task) => {
-    const { data, error } = await insertTask(task, "id");
-    if (error) { flash("Couldn't add task: " + error.message); return false; }
-    await loadTasks();
-    flash("Task assigned to " + nameForEmail(task.assigned_to));
-    notifyTaskAssigned(data && data.id, task); // best-effort email; never blocks task creation
-    return true;
+  // ONE TASK ROW PER PERSON PICKED -- the same text, the same quote, each with its
+  // own assignee, seen state and done box, so the bell and both task lists work
+  // exactly as they did. Returns the emails whose row did NOT land ([] is all of
+  // them), so the card keeps just those picked and the words for a retry.
+  const addTask = async (base, emails) => {
+    const made = [], failed = [];
+    for (const email of emails) {
+      const task = { ...base, assigned_to: email };
+      const { data, error } = await insertTask(task, "id");
+      if (error) failed.push({ email, error: error.message });
+      else made.push({ id: data && data.id, task });
+    }
+    if (made.length) await loadTasks();
+    const ok = made.map((m) => m.task.assigned_to);
+    if (!failed.length) flash("Task assigned to " + namesFor(ok));
+    else flash((ok.length ? "Task assigned to " + namesFor(ok) + "; " : "")
+      + "couldn't add it for " + namesFor(failed.map((f) => f.email)) + ": " + failed[0].error);
+    sendTaskEmails(made);
+    return failed.map((f) => f.email);
   };
 
   // The assignee's email -- every assignment, a task you give yourself included.
-  // lib/taskNotify.js; the bell panel's Add box makes the same call.
-  const notifyTaskAssigned = (taskId, task) => {
-    if (task.assigned_to) notifyTask(taskId, nameForEmail(task.assigned_to));
+  // lib/taskNotify.js; the bell panel's Add box makes the same call. ONE AFTER
+  // ANOTHER, each awaited: Resend allows about two requests a second, and a task
+  // for five people fired at once would see some refused. Not awaited by the
+  // caller, so the card and the form never wait on mail.
+  const sendTaskEmails = (made) => {
+    (async () => {
+      for (const m of made) if (m.task.assigned_to) await notifyTask(m.id, nameForEmail(m.task.assigned_to));
+    })();
   };
 
   const toggleTask = async (t) => {
@@ -971,7 +1000,11 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
   const loadStaff = useCallback(async () => {
     const { data, error } = await supabase.from("staff_profiles").select("id,email,full_name,job_title")
       .order("full_name", { nullsFirst: false });
-    if (!error) setStaff(data || []);
+    if (!error) {
+      STAFF_NAMES.clear();
+      (data || []).forEach((p) => { const n = (p.full_name || "").trim(); if (p.email && n) STAFF_NAMES.set(p.email.trim().toLowerCase(), n); });
+      setStaff(data || []);
+    }
     setStaffFailed(!!error);
   }, []);
   // WHO A TASK CAN BE ASSIGNED TO: everyone with a staff profile, by full name.
@@ -1106,8 +1139,10 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
     return () => { supabase.removeChannel(ch); };
   }, [load]);
 
-  // queuedTasks: tasks added on the form before saving, as { assigned_to, task }.
-  // Returns { savedId, failed } so the form can keep any task that did not land.
+  // queuedTasks: tasks added on the form before saving, as { key, assigned_to,
+  // task } with assigned_to a LIST of emails -- one task row per person.
+  // Returns { savedId, failed } so the form can keep any task that did not land;
+  // failed holds one entry per person, assigned_to a single email.
   const saveQuote = async (f, queuedTasks = []) => {
     lastSaveRef.current = Date.now();
     // The pre-edit row, read from state rather than re-fetched. The rename keys
@@ -1180,21 +1215,25 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
     let assignedCount = 0;
     if (savedRow && queuedTasks.length) {
       const label = `${savedRow.product || "Quote"}${savedRow.sku ? " · " + savedRow.sku : ""}`;
+      const made = [];
       for (const t of queuedTasks) {
-        const task = { quote_id: savedRow.id, quote_label: label, assigned_to: t.assigned_to,
-                       assigned_by: userEmail, task: t.task, done: false };
-        const { data: made, error } = await insertTask(task, "id");
-        if (error) failedTasks.push({ ...t, error: error.message });
-        else { assignedCount += 1; notifyTaskAssigned(made && made.id, task); }
+        for (const email of [].concat(t.assigned_to || [])) {
+          const task = { quote_id: savedRow.id, quote_label: label, assigned_to: email,
+                         assigned_by: userEmail, task: t.task, done: false };
+          const { data, error } = await insertTask(task, "id");
+          if (error) failedTasks.push({ key: t.key, assigned_to: email, task: t.task, error: error.message });
+          else { assignedCount += 1; made.push({ id: data && data.id, task }); }
+        }
       }
       await loadTasks();
+      sendTaskEmails(made);
     }
 
     if (!failedTasks.length) setEditing(null);
     if (!savedRow) await load();
     else if (failedTasks.length) {
       flash("Quote saved, but " + failedTasks.length + " task" + (failedTasks.length === 1 ? "" : "s")
-        + " did not: " + failedTasks.map((t) => "“" + t.task + "”").join(", ") + " — Save again to retry");
+        + " did not: " + failedTasks.map((t) => "“" + t.task + "” for " + nameForEmail(t.assigned_to)).join(", ") + " — Save again to retry");
     }
     else flash((!f.id && savedRow.quote_code ? "Saved as " + savedRow.quote_code : "Quote saved")
                + (assignedCount ? " · " + assignedCount + " task" + (assignedCount === 1 ? "" : "s") + " assigned" : ""));
@@ -2256,12 +2295,10 @@ function ContainerPackout({ q, cbmPerCarton }) {
 
 function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTask, userEmail, staff = [], assignees = TEAM, isMobile = false, onEdit, onDuplicate, onDelete }) {
   const [taskText, setTaskText] = useState("");
-  // No default person: the picker starts on "Assign to…" and goes back there
-  // after each task, so nobody is assigned a task by not looking. Only that
-  // placeholder is grey; the names, in the list and once picked, are the ink
-  // colour -- set on each option, since an option otherwise takes the grey the
-  // empty select is drawn in.
-  const [taskWho, setTaskWho] = useState("");
+  // WHO THE TASK IS FOR: the people picked on the name pills (PeoplePills), as
+  // emails -- one task row each. No default: nobody is picked until somebody is,
+  // and the picks clear after each task, so nobody is assigned one by not looking.
+  const [taskWho, setTaskWho] = useState([]);
   const [assigning, setAssigning] = useState(false);
   // Said, not silent, when Enter is pressed on an empty box. Cleared by typing.
   const [taskHint, setTaskHint] = useState("");
@@ -2272,20 +2309,21 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
   // silently doing nothing.
   const submitTask = async () => {
     if (assigning) return;
-    if (!taskWho) { setTaskHint("Pick who the task is for"); return; }
+    if (!taskWho.length) { setTaskHint("Pick at least one person"); return; }
     if (!taskText.trim()) { setTaskHint("Type a task first"); return; }
     setTaskHint("");
     setAssigning(true);
-    const ok = await onAddTask({
+    const failed = await onAddTask({
       quote_id: q.id,
       quote_label: `${q.product || "Quote"}${q.sku ? " · " + q.sku : ""}`,
-      assigned_to: taskWho,
       assigned_by: userEmail,
       task: taskText.trim(),
       done: false,
-    });
+    }, taskWho);
     setAssigning(false);
-    if (ok) { setTaskText(""); setTaskWho(""); }
+    // All landed: clear both. Some did not: keep the words and only those people
+    // picked, so Assign again retries just them.
+    if (!failed.length) { setTaskText(""); setTaskWho([]); } else setTaskWho(failed);
   };
   // ON A PHONE, ONE COLUMN, AND LONG VALUES WRAP. Two columns of about 140px
   // could not hold an email or an address, and the panel clips what overflows,
@@ -2461,15 +2499,14 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
             ))}
           </div>
         )}
+        <div style={{ marginBottom: 8 }}>
+          <PeoplePills people={assignees} value={taskWho} disabled={assigning} label="Assign to"
+            onChange={(v) => { setTaskWho(v); if (taskHint) setTaskHint(""); }} />
+        </div>
         <div style={S.taskAddRow}>
-          <select style={{ ...S.input, flex: "0 0 130px", color: taskWho ? "#0f1729" : "#9aa3b5" }} value={taskWho}
-            onChange={(e) => { setTaskWho(e.target.value); if (taskHint) setTaskHint(""); }} aria-label="Assign to">
-            <option value="" disabled style={{ color: "#9aa3b5" }}>Assign to…</option>
-            {assignees.map((m) => <option key={m.email} value={m.email} style={{ color: "#0f1729" }}>{m.name}</option>)}
-          </select>
           <input style={{ ...S.input, flex: 1 }} value={taskText} disabled={assigning} onChange={(e) => { setTaskText(e.target.value); if (taskHint) setTaskHint(""); }} onKeyDown={(e) => e.key === "Enter" && submitTask()} placeholder="e.g. Get freight quotes" />
-          <button className="press-feedback" onClick={submitTask} disabled={assigning || !taskWho || !taskText.trim()}
-            style={{ ...S.primaryBtnSm, ...(assigning || !taskWho || !taskText.trim() ? { opacity: 0.45, cursor: "default" } : { cursor: "pointer" }) }}>
+          <button className="press-feedback" onClick={submitTask} disabled={assigning || !taskWho.length || !taskText.trim()}
+            style={{ ...S.primaryBtnSm, ...(assigning || !taskWho.length || !taskText.trim() ? { opacity: 0.45, cursor: "default" } : { cursor: "pointer" }) }}>
             {assigning ? "Assigning…" : "Assign"}
           </button>
         </div>
@@ -3926,15 +3963,15 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
   // asks first. Text typed in the box but not yet added is sent too: somebody
   // who typed a task and pressed Save meant it.
   const [queued, setQueued] = useState([]);
-  // No default person, as on the quote card: blank until chosen, blank again
-  // after each task is queued.
-  const [qWho, setQWho] = useState("");
+  // No default person, as on the quote card: nobody picked until chosen, and the
+  // picks clear after each task is queued. A queued task holds the LIST picked.
+  const [qWho, setQWho] = useState([]);
   const [qText, setQText] = useState("");
   const [qHint, setQHint] = useState("");
   const queueTask = () => {
-    if (!qWho || !qText.trim()) return;
+    if (!qWho.length || !qText.trim()) return;
     setQueued((prev) => [...prev, { key: Date.now() + "-" + prev.length, assigned_to: qWho, task: qText.trim() }]);
-    setQText(""); setQWho(""); setQHint("");
+    setQText(""); setQWho([]); setQHint("");
     markDirty();
   };
   const unqueueTask = (key) => { setQueued((prev) => prev.filter((t) => t.key !== key)); markDirty(); };
@@ -3946,7 +3983,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
     if (skuBlocked || saving) return;
     // A task typed but with nobody picked would be assigned to no one. Say so
     // rather than save it, or drop the words.
-    if (qText.trim() && !qWho) { setQHint("Pick who the task is for, or clear the task box, then save."); return; }
+    if (qText.trim() && !qWho.length) { setQHint("Pick at least one person, or clear the task box, then save."); return; }
     const out = { ...f };
     out.freightDutyUpdatedAt = stamp();
     const toSend = [...queued, ...(qText.trim() ? [{ key: "typed", assigned_to: qWho, task: qText.trim() }] : [])];
@@ -3954,10 +3991,12 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
     const res = await onSave(out, toSend.map(({ assigned_to, task, key }) => ({ assigned_to, task, key })));
     setSaving(false);
     // Only reached with the form still open when a task did not land. Keep
-    // exactly those, and point the form at the saved quote so the next Save
-    // updates it rather than inserting it again.
+    // exactly those -- one queued item per person who missed out, keyed
+    // key|email so a second failure keeps the same key -- and point the form at
+    // the saved quote so the next Save updates it rather than inserting it again.
     if (res && res.failed && res.failed.length) {
-      setQueued(res.failed.map(({ key, assigned_to, task }) => ({ key, assigned_to, task })));
+      setQueued(res.failed.map(({ key, assigned_to, task }) => ({
+        key: String(key).endsWith("|" + assigned_to) ? key : key + "|" + assigned_to, assigned_to: [assigned_to], task })));
       setQText("");
       if (res.savedId) setF((prev) => ({ ...prev, id: res.savedId }));
     }
@@ -4809,22 +4848,21 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
                 <span style={{ display: "inline-flex", marginTop: 1 }}><Clock size={15} color="#9aa3b5" /></span>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13.5, color: "#0f1729", fontWeight: 500 }}>{t.task}</div>
-                  <div style={S.taskMeta}>For {nameForEmail(t.assigned_to)} · assigned when the quote is saved</div>
+                  <div style={S.taskMeta}>For {namesFor([].concat(t.assigned_to || []))} · assigned when the quote is saved</div>
                 </div>
                 <button type="button" style={S.tierDel} title="Remove" onClick={() => unqueueTask(t.key)}><X size={14} /></button>
               </div>
             ))}
+            <div style={{ marginBottom: 8 }}>
+              <PeoplePills people={assignees} value={qWho} label="Assign to"
+                onChange={(v) => { setQWho(v); if (qHint) setQHint(""); }} />
+            </div>
             <div style={S.taskAddRow}>
-              <select style={{ ...S.input, flex: "0 0 130px", color: qWho ? "#0f1729" : "#9aa3b5" }} value={qWho}
-                onChange={(e) => { setQWho(e.target.value); if (qHint) setQHint(""); }} aria-label="Assign to">
-                <option value="" disabled style={{ color: "#9aa3b5" }}>Assign to…</option>
-                {assignees.map((m) => <option key={m.email} value={m.email} style={{ color: "#0f1729" }}>{m.name}</option>)}
-              </select>
               <input style={{ ...S.input, flex: 1 }} value={qText} onChange={(e) => { setQText(e.target.value); if (qHint) setQHint(""); }}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); queueTask(); } }}
                 placeholder="e.g. Get freight quotes" aria-label="Task" />
-              <button type="button" className="press-feedback" onClick={queueTask} disabled={!qWho || !qText.trim()}
-                style={{ ...S.primaryBtnSm, ...(qWho && qText.trim() ? { cursor: "pointer" } : { opacity: 0.45, cursor: "default" }) }}>Assign</button>
+              <button type="button" className="press-feedback" onClick={queueTask} disabled={!qWho.length || !qText.trim()}
+                style={{ ...S.primaryBtnSm, ...(qWho.length && qText.trim() ? { cursor: "pointer" } : { opacity: 0.45, cursor: "default" }) }}>Assign</button>
             </div>
             {qHint && <div style={{ fontSize: 11.5, color: "#c2683a", marginTop: 6 }}>{qHint}</div>}
           </div>
