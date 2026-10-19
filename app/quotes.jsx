@@ -67,7 +67,7 @@ import { useDirtyGuard } from "@/app/components/ModalGuard";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 import { notifyTaskAssigned as notifyTask } from "@/lib/taskNotify";
 import { PeoplePills } from "@/app/components/PeoplePills";
-import { joinNames } from "@/lib/team";
+import { joinNames } from "@/lib/people";
 import { isUnseen, markSeen, insertTask, unseenCount, taskDay, byCreated, TASK_TONE } from "@/lib/taskSeen";
 
 // ============================================================
@@ -102,6 +102,11 @@ function nameForEmail(email) {
 }
 // "Kristy Thomas & Riley King" for a list of addresses.
 const namesFor = (emails) => joinNames((emails || []).map(nameForEmail));
+// ALL N PICKED makes N task rows and N emails, so it is confirmed first -- the
+// All pill makes that one press away. True to go ahead.
+const confirmAll = (picked, people) =>
+  !(people.length > 1 && people.every((p) => picked.includes(p.email)))
+  || window.confirm("Assign to all " + people.length + "? Each gets their own task and an email.");
 
 // The phone switch (720px or narrower) lives in lib/useIsMobile.js so the Quote
 // List tab reads the same one.
@@ -2311,6 +2316,7 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
     if (assigning) return;
     if (!taskWho.length) { setTaskHint("Pick at least one person"); return; }
     if (!taskText.trim()) { setTaskHint("Type a task first"); return; }
+    if (!confirmAll(taskWho, assignees)) return;
     setTaskHint("");
     setAssigning(true);
     const failed = await onAddTask({
@@ -2500,7 +2506,7 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
           </div>
         )}
         <div style={{ marginBottom: 8 }}>
-          <PeoplePills people={assignees} value={taskWho} disabled={assigning} label="Assign to"
+          <PeoplePills people={assignees} value={taskWho} disabled={assigning} label="Assign to" showAll
             onChange={(v) => { setTaskWho(v); if (taskHint) setTaskHint(""); }} />
         </div>
         <div style={S.taskAddRow}>
@@ -3970,6 +3976,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
   const [qHint, setQHint] = useState("");
   const queueTask = () => {
     if (!qWho.length || !qText.trim()) return;
+    if (!confirmAll(qWho, assignees)) return;
     setQueued((prev) => [...prev, { key: Date.now() + "-" + prev.length, assigned_to: qWho, task: qText.trim() }]);
     setQText(""); setQWho([]); setQHint("");
     markDirty();
@@ -3984,6 +3991,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
     // A task typed but with nobody picked would be assigned to no one. Say so
     // rather than save it, or drop the words.
     if (qText.trim() && !qWho.length) { setQHint("Pick at least one person, or clear the task box, then save."); return; }
+    if (qText.trim() && !confirmAll(qWho, assignees)) return;
     const out = { ...f };
     out.freightDutyUpdatedAt = stamp();
     const toSend = [...queued, ...(qText.trim() ? [{ key: "typed", assigned_to: qWho, task: qText.trim() }] : [])];
@@ -4854,7 +4862,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
               </div>
             ))}
             <div style={{ marginBottom: 8 }}>
-              <PeoplePills people={assignees} value={qWho} label="Assign to"
+              <PeoplePills people={assignees} value={qWho} label="Assign to" showAll
                 onChange={(v) => { setQWho(v); if (qHint) setQHint(""); }} />
             </div>
             <div style={S.taskAddRow}>
