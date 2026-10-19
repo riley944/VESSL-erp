@@ -477,7 +477,24 @@ const UNIVERSAL_PAGES = ['settings'];
 // NOT AT POSITION 0, deliberately, whatever else moves around it. allowedPages[0]
 // is the fallback a limited role lands on when a hash names a page it may not
 // see, and that has always been testing.
-const ROLE_PAGES = { limited_qc: ['testing', 'products', 'programs', 'shipments', 'codes', ...UNIVERSAL_PAGES] };
+//
+// LIMITED_OPS (Monica, 19 Oct) is every sidebar page but the orders and the
+// numbers: Purchase Orders and Sales Orders (with their detail pages,
+// order-detail and so-detail, which are not on the list either) and Analytics.
+// Samples first, so a disallowed hash lands where everyone else lands. Company
+// Banking is not listed: its own allowlist (COMPANY_TAB_ROLES, admin and staff)
+// would refuse it anyway. Pricing ('pricing', PRICING_PAGE below) is listed so
+// it appears if PRICING_ENABLED is ever turned on.
+//
+// A PAGE LIST, NOT A LOCK ON THE DATA. limited_ops is a staff profile, so RLS
+// lets it read what staff read -- Inventory, Shipments and Quotes show PO
+// details on their own pages, and the API would answer an order query. This
+// keeps the order pages out of the way; it does not make orders private.
+const ROLE_PAGES = {
+  limited_qc: ['testing', 'products', 'programs', 'shipments', 'codes', ...UNIVERSAL_PAGES],
+  limited_ops: ['programs', 'companies', 'products', 'testing', 'pricing', 'shipments', 'inventory', 'quotes', 'codes',
+                'client-relations', ...UNIVERSAL_PAGES],
+};
 // Returns the allowed page ids for a limited role, or null meaning unrestricted.
 // hasOwnProperty guard: role is free text, so a value like 'constructor' must
 // not pick up an inherited Object.prototype member and read as limited.
@@ -493,7 +510,7 @@ const allowedPagesFor = role =>
 // silently, on the day it is invented.
 //
 // IT HAS TO BE A POSITIVE TEST HERE IN PARTICULAR, because allowedPagesFor above
-// returns null -- meaning UNRESTRICTED -- for every role except limited_qc. An
+// returns null -- meaning UNRESTRICTED -- for every role but the limited ones. An
 // unrecognised role string on a real profile row reads as unrestricted and sees
 // every link. A denylist would show it the bank account number; an allowlist
 // simply does not match, so a role nobody has heard of gets nothing.
@@ -10892,7 +10909,7 @@ export default function App() {
   const allowedPages = allowedPagesFor(role);
   const rawAllowed = (allowedPages && !allowedPages.includes(rawPage)) ? allowedPages[0] : rawPage;
   // GATE 2 of 3, and it has to be SEPARATE from allowedPages rather than folded
-  // into it. allowedPages only constrains limited_qc; every other role -- an
+  // into it. allowedPages only constrains the limited roles; every other role -- an
   // unrecognised one included -- gets null, meaning unrestricted, so the line
   // above would happily let #company-banking through. This one asks the positive
   // question instead, and sends anyone who cannot see the page back to the
