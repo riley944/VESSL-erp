@@ -10145,9 +10145,12 @@ function ConfirmModal({ title, message, confirmLabel='Delete', danger=true, onCo
         </div>
         <h3 style={{fontFamily:'var(--sans)',fontSize:'16px',fontWeight:600,color:'var(--ink)',marginBottom:'8px'}}>{title}</h3>
         {message && <p style={{fontSize:'13.5px',color:'var(--muted)',lineHeight:1.55,marginBottom:'28px'}}>{message}</p>}
-        <div style={{display:'flex',gap:'10px',justifyContent:'center'}}>
-          <button className="btn btn-ghost" style={{minWidth:'90px'}} onClick={onCancel}>Cancel</button>
-          <button className="btn" style={{minWidth:'90px',background:danger?'#e53935':'var(--accent)',color:'#fff',fontWeight:600}} onClick={onConfirm}>{confirmLabel}</button>
+        {/* CENTRED PAIR. .btn is inline-flex with no justify-content, so a label
+            sat at the left of its min-width button and the pair read left of
+            centre. Both buttons are one width, labels centred, 10px apart. */}
+        <div style={{display:'flex',gap:'10px',justifyContent:'center',width:'100%'}}>
+          <button className="btn btn-ghost" style={{width:'120px',justifyContent:'center'}} onClick={onCancel}>Cancel</button>
+          <button className="btn" style={{width:'120px',justifyContent:'center',background:danger?'#e53935':'var(--accent)',color:'#fff',fontWeight:600}} onClick={onConfirm}>{confirmLabel}</button>
         </div>
       </div>
     </div>
