@@ -331,7 +331,27 @@ function distinctClients(rows){
 }
 // Read-only additions for the export: the PO's terms, fees and notes, and each
 // line's quantity, prices, size and SKUs. The cards still read only what they did.
-const PO_CARD_SELECT = 'id,order_number,client_po_number,status,production_pct,order_date,updated_at,cargo_ready_date,requested_ship_date,cancel_date,payment_terms,incoterm,shipping_method,currency,mold_fee,sample_fee,deposit_percent,notes,delivery_address,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(id,description,quantity,unit_price,size,product_sku,product_id,vpn,master_sku,pack_sku,baby_sku,carton_info,ci_value,retail_price,products(sku,name))';
+const PO_CARD_SELECT = 'id,order_number,client_po_number,status,production_pct,order_date,updated_at,cargo_ready_date,requested_ship_date,cancel_date,payment_terms,incoterm,shipping_method,currency,mold_fee,sample_fee,deposit_percent,notes,delivery_address,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(id,description,quantity,unit_price,size,product_sku,product_id,vpn,master_sku,pack_sku,baby_sku,carton_info,ci_value,retail_price,products(sku,name)),sales_order_pos(sales_orders(id,so_number,client_po_number,created_at))';
+
+// ── THE LINKED ORDER, on a card ─────────────────────────────────────────────
+// A PO card names its sales order and an SO card its PO, through
+// sales_order_pos. One link reads "SO 29000/5440"; several read "2 SOs". It is
+// a link inside a clickable card, so it stops the card's own click.
+const linkedSOs = p => (p.sales_order_pos||[]).map(l=>l.sales_orders).filter(Boolean)
+  .sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')));
+const linkedPOs = so => (so.sales_order_pos||[]).map(l=>l.purchase_orders).filter(Boolean);
+function LinkedRef({ label, onGo, style }) {
+  const go = e => { e.stopPropagation(); onGo(); };
+  return <span role="link" tabIndex={0} onClick={go} onKeyDown={e=>{ if (e.key==='Enter') go(e); }}
+    style={{cursor:'pointer',textDecoration:'underline',textDecorationColor:'var(--line-2)',textUnderlineOffset:'2px',...style}}>{label}</span>;
+}
+// The PO card's: its sales order, or the first of several (oldest first).
+function SoRef({ p, navigate }) {
+  const sos = linkedSOs(p);
+  if (!sos.length) return null;
+  const label = sos.length===1 ? 'SO '+(sos[0].so_number||sos[0].client_po_number||'—') : sos.length+' SOs';
+  return <LinkedRef label={label} onGo={()=>navigate('so-detail',{id:sos[0].id})} />;
+}
 
 function OrderCard({ p, navigate, onStatus, exportIcon = null }){
   const client = poClient(p), factory = poFactory(p);
@@ -379,6 +399,7 @@ function OrderCard({ p, navigate, onStatus, exportIcon = null }){
             ? 'CRD '+fmtDate(p.cargo_ready_date)
             : <span style={{color:'var(--faint)'}}>No CRD</span>}
           {itemCount>0?' · '+itemCount+' item'+(itemCount!==1?'s':''):''}
+          {linkedSOs(p).length>0 && <>{' · '}<SoRef p={p} navigate={navigate} /></>}
         </span>
         {onStatus
           ? <select className="po-card-select" value={p.status} onClick={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();onStatus(p.id,e.target.value);}}>{poStatusChoices(p.status).map(s=><option key={s} value={s}>{(PO_STATUS[s]?.label)||s.replace(/_/g,' ')}</option>)}</select>
@@ -2170,6 +2191,12 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
                       <div style={{fontSize:'15px',fontWeight:700,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{money(m.rev)}</div>
                     </div>
                   </div>
+                  {/* Its PO: one opens the PO; several open this SO, whose page lists them. */}
+                  {(()=>{ const pos=linkedPOs(so); if(!pos.length) return null;
+                    return <div className="po-card-meta" style={{marginTop:'10px'}}>
+                      <LinkedRef label={pos.length===1 ? 'PO '+(pos[0].order_number||pos[0].client_po_number||'—') : pos.length+' POs'}
+                        onGo={()=>pos.length===1 ? navigate('order-detail',{id:pos[0].id}) : navigate('so-detail',{id:so.id})} />
+                    </div>; })()}
                 </div>
               </div>
             );
@@ -3807,6 +3834,7 @@ function ProductionBoard({ rows, navigate, exportIcon = null }) {
                         {exportIcon && exportIcon(p)}
                       </div>
                       <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{client}</div>
+                      {linkedSOs(p).length>0 && <div className="po-card-meta" style={{marginTop:'6px'}}><SoRef p={p} navigate={navigate} /></div>}
                       {/* When the PO last changed; with no updated_at, its order date, unlabelled. */}
                       {(p.updated_at || p.order_date) && <div className="po-card-meta" style={{marginTop:'6px',fontVariantNumeric:'tabular-nums'}}>
                         {p.updated_at ? 'Updated '+fmtDateShort(p.updated_at) : fmtDateShort(p.order_date)}
