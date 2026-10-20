@@ -335,7 +335,7 @@ const PO_CARD_SELECT = 'id,order_number,client_po_number,status,production_pct,o
 
 // ── THE LINKED ORDER, on a card ─────────────────────────────────────────────
 // A PO card names its sales order and an SO card its PO, through
-// sales_order_pos. One link reads "SO 29000/5440"; several read "2 SOs". It is
+// sales_order_pos. One link reads "SO: 29000/5440"; several read "2 SOs". It is
 // a link inside a clickable card, so it stops the card's own click.
 const linkedSOs = p => (p.sales_order_pos||[]).map(l=>l.sales_orders).filter(Boolean)
   .sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')));
@@ -349,7 +349,7 @@ function LinkedRef({ label, onGo, style }) {
 function SoRef({ p, navigate }) {
   const sos = linkedSOs(p);
   if (!sos.length) return null;
-  const label = sos.length===1 ? 'SO '+(sos[0].so_number||sos[0].client_po_number||'—') : sos.length+' SOs';
+  const label = sos.length===1 ? 'SO: '+(sos[0].so_number||sos[0].client_po_number||'—') : sos.length+' SOs';
   return <LinkedRef label={label} onGo={()=>navigate('so-detail',{id:sos[0].id})} />;
 }
 
@@ -396,7 +396,7 @@ function OrderCard({ p, navigate, onStatus, exportIcon = null }){
             confident wrong date on cards that genuinely have no CRD. */}
         <span className="po-card-meta">
           {p.cargo_ready_date
-            ? 'CRD '+fmtDate(p.cargo_ready_date)
+            ? 'CRD: '+fmtDate(p.cargo_ready_date)
             : <span style={{color:'var(--faint)'}}>No CRD</span>}
           {itemCount>0?' · '+itemCount+' item'+(itemCount!==1?'s':''):''}
           {linkedSOs(p).length>0 && <>{' · '}<SoRef p={p} navigate={navigate} /></>}
@@ -2181,7 +2181,7 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
                         kind of quiet wrong that costs more than a blank. 26 of 68
                         sales orders have no CRD and will say so. */}
                     <div style={{textAlign:'center'}}>
-                      <div style={{fontSize:'10px',color:'#A0A0A4',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:'2px'}}>CRD</div>
+                      <div style={{fontSize:'10px',color:'#A0A0A4',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:'2px'}}>CRD:</div>
                       <div style={{fontSize:'13px',fontWeight:500,color:so.cargo_ready_date?'#4A4A4E':'#B0B0B4'}}>
                         {so.cargo_ready_date?fmtDateShort(so.cargo_ready_date):'No CRD'}
                       </div>
@@ -2194,7 +2194,7 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
                   {/* Its PO: one opens the PO; several open this SO, whose page lists them. */}
                   {(()=>{ const pos=linkedPOs(so); if(!pos.length) return null;
                     return <div className="po-card-meta" style={{marginTop:'10px'}}>
-                      <LinkedRef label={pos.length===1 ? 'PO '+(pos[0].order_number||pos[0].client_po_number||'—') : pos.length+' POs'}
+                      <LinkedRef label={pos.length===1 ? 'PO: '+(pos[0].order_number||pos[0].client_po_number||'—') : pos.length+' POs'}
                         onGo={()=>pos.length===1 ? navigate('order-detail',{id:pos[0].id}) : navigate('so-detail',{id:so.id})} />
                     </div>; })()}
                 </div>
