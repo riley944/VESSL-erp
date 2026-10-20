@@ -8,6 +8,7 @@ import {
 // The SBQ import went with the htscodes fetch -- that was this file's last use of it.
 // lib/supabaseQuotes still exists; page.jsx and pricing.jsx both import it.
 import { SB } from "@/lib/supabase";
+import { PDF_BUCKET, PDF_MAX_BYTES, PDF_DIRECT_MAX_BYTES, pdfPathFor } from "@/lib/quotePdf";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { QuoteList } from "@/app/components/QuoteList";
 import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
@@ -673,6 +674,9 @@ function rowToForm(r) {
     // The client price sheet's Details and Color (script 116), in words meant for
     // the client. Set on the form or in the sheet's settings step.
     clientDetails: r.client_details || "", clientColor: r.client_color || "",
+    // The factory quote PDF this quote was imported from (script 129), a path in
+    // the private quote-pdfs bucket.
+    pdfPath: r.pdf_path || "",
     tiers: tiers || [],
     updatedAt: r.updated_at || "", updatedBy: r.updated_by || "",
   };
@@ -729,6 +733,9 @@ function formToRow(f) {
     freight_duty_updated_at: f.freightDutyUpdatedAt || null, freight_duty_updated_by: f.freightDutyUpdatedBy || null,
     mold_fee: num(f.moldFee), sample_fee: num(f.sampleFee),
     client_details: (f.clientDetails || "").trim() || null, client_color: (f.clientColor || "").trim() || null,
+    // Sent only when there is one, so a quote that never imported a PDF saves the
+    // same columns it always has -- and keeps saving before script 129 has run.
+    ...(f.pdfPath ? { pdf_path: f.pdfPath } : {}),
     tiers: tiers,
     updated_at: stamp(), updated_by: f.updatedBy || null,
   };
@@ -751,7 +758,7 @@ const BLANK = {
   factory: "", factoryContact: "", factoryEmail: "", factoryPhone: "", country: "", leadTime: "", hts: "",
   unitsPerCarton: "", cartonL: "", cartonW: "", cartonH: "", cartonWeight: "",
   freightDutyUpdatedAt: "", freightDutyUpdatedBy: "",
-  moldFee: "", sampleFee: "",
+  moldFee: "", sampleFee: "", pdfPath: "",
   tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }],
 };
 
@@ -3184,15 +3191,41 @@ function FactoryList({ factories, onUpdate, onDelete, onAdd }) {
   );
 }
 
-function Field({ label, k, type = "text", placeholder = "", suffix, f, set }) {
+// hl is the PDF import's word on this field, from QuoteForm's hl(): a border
+// colour, the evidence as a tooltip, and "PDF says X" when the box holds
+// something else. Absent everywhere the import has nothing to say.
+function Field({ label, k, type = "text", placeholder = "", suffix, f, set, hl }) {
   return (
     <label style={S.field}>
       <span style={S.fieldLabel}>{label}</span>
       <div style={{ position: "relative" }}>
-        <input style={S.input} type={type} value={f[k] ?? ""} onChange={set(k)} placeholder={placeholder} />
+        <input style={xStyle(S.input, hl)} title={hl ? hl.title : undefined} type={type} value={f[k] ?? ""} onChange={set(k)} placeholder={placeholder} />
         {suffix && <span style={S.inputSuffix}>{suffix}</span>}
       </div>
+      <PdfSays h={hl} />
     </label>
+  );
+}
+
+// ── PDF IMPORT HIGHLIGHTS (prototype, script 129) ──────────────────────────
+// Green: the box holds what the PDF says, stated plainly. Amber: it holds what
+// the PDF says, but the reading was interpreted or weak -- check it. Red: the
+// PDF said something the form could not apply (no such factory, no such code).
+// A box holding something different gets no colour, only "PDF says X".
+const XC = { high: "#3f9d64", medium: "#d39a2c", low: "#d39a2c", red: "#d0574a" };
+const xStyle = (base, h) => (h && h.color ? { ...base, borderColor: h.color, boxShadow: "0 0 0 2px " + h.color + "33" } : base);
+function PdfSays({ h, small }) {
+  if (!h || !h.says) return null;
+  return (
+    <span style={{ fontSize: small ? 11 : 11.5, color: h.color === XC.red ? XC.red : "#a66f12", lineHeight: 1.4 }} title={h.title}>
+      PDF says {h.says}
+      {h.onUse && (
+        <button type="button" onClick={(e) => { e.preventDefault(); h.onUse(); }}
+          style={{ background: "none", border: "none", padding: "0 0 0 6px", color: "#3461e0", fontSize: "inherit", fontWeight: 600, cursor: "pointer" }}>
+          Use
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -3306,7 +3339,190 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
   const [pickContact, setPickContact] = useState(null);
   const set = (k) => (e) => {
     const v = e && e.target ? (e.target.type === "checkbox" ? e.target.checked : e.target.value) : e;
+    dismissX(k);
     setF((p) => ({ ...p, [k]: v }));
+  };
+
+  // ── IMPORT FROM PDF (prototype, script 129) ───────────────────────────────
+  // ext holds what the PDF said, per field: { value, conf, evidence, page, note }
+  // plus red/says for what could not be applied, and companyId on the factory.
+  // Tier keys are tier<index>.qty and tier<index>.landed. Each import replaces
+  // the whole map; typing in a box dismisses that box's entry.
+  const [ext, setExt] = useState({});
+  const [pdfInfo, setPdfInfo] = useState(null);
+  const pdfInputRef = useRef(null);
+  // The response arrives seconds after the click; the apply reads the form as
+  // it is THEN, not as it was when the file was picked.
+  const fRef = useRef(f);
+  useEffect(() => { fRef.current = f; }, [f]);
+  const dismissX = (k) => setExt((x) => (x[k] && !x[k].dismissed ? { ...x, [k]: { ...x[k], dismissed: true } } : x));
+
+  const xTitle = (e) => "From the PDF" + (e.page ? ", page " + e.page : "") + " (" + (e.conf || "medium") + " confidence)"
+    + (e.evidence ? ": \u201c" + e.evidence + "\u201d" : "") + (e.note ? " -- " + e.note : "");
+  // What a field shows, worked out at render so it is always against what the
+  // box holds now -- a fill from the directory, a Use, an edit.
+  const hl = (k, current) => {
+    const e = ext[k];
+    if (!e || e.dismissed) return null;
+    const title = xTitle(e);
+    if (e.red) return { color: XC.red, title, says: e.says };
+    const now = String(current !== undefined ? (current ?? "") : (f[k] ?? "")).trim();
+    const same = now === e.value || (now !== "" && e.value !== "" && isFinite(Number(now)) && isFinite(Number(e.value)) && Number(now) === Number(e.value));
+    if (same) return { color: XC[e.conf] || XC.medium, title };
+    const shown = e.value.length > 60 ? e.value.slice(0, 57) + "\u2026" : e.value;
+    return { title, says: k.endsWith(".landed") || k === "moldFee" || k === "sampleFee" ? "$" + shown : shown, onUse: () => takeX(k) };
+  };
+  const takeX = (k) => {
+    const e = ext[k];
+    if (!e) return;
+    markDirty();
+    const tm = /^tier(\d+)\.(qty|landed)$/.exec(k);
+    if (tm) setTier(Number(tm[1]), tm[2], e.value);
+    else if (k === "hts") pickHts(e.value);
+    else if (k === "factory") { const c = factoryCompanies.find((x) => x.id === e.companyId); if (c) onPickFactory(c); }
+    else if (k === "notes") setF((p) => ({ ...p, notes: (p.notes ? p.notes.replace(/\s+$/, "") + "\n" : "") + e.value }));
+    else setF((p) => ({ ...p, [k]: e.value }));
+    // notes appends, so it never reads "the same" -- once used, it is done.
+    setExt((x) => ({ ...x, [k]: { ...x[k], dismissed: k === "notes" } }));
+  };
+
+  const importPdf = async (file) => {
+    if (!file) return;
+    const fileName = file.name || "quote.pdf";
+    if (!/[.]pdf$/i.test(fileName) && file.type !== "application/pdf") { setPdfInfo({ fileName, error: "That file is not a PDF." }); return; }
+    if (file.size > PDF_MAX_BYTES) { setPdfInfo({ fileName, error: "That PDF is larger than 25 MB." }); return; }
+    const { data: { session } } = await SB.auth.getSession();
+    const token = session && session.access_token;
+    if (!token) { setPdfInfo({ fileName, error: "Your session has expired. Sign in again before importing." }); return; }
+
+    // Stored first, whatever happens next: the PDF is the record of what the
+    // factory quoted, and its path goes on the quote when it is saved.
+    setPdfInfo({ fileName, busy: "Uploading\u2026" });
+    const path = pdfPathFor(f.id, fileName);
+    const up = await SB.storage.from(PDF_BUCKET).upload(path, file, { upsert: false, contentType: "application/pdf" });
+    if (up.error) { setPdfInfo({ fileName, error: "Upload failed: " + up.error.message }); return; }
+    markDirty();
+    setF((p) => ({ ...p, pdfPath: path }));
+
+    setPdfInfo({ fileName, busy: "Reading the PDF \u2014 this can take a minute\u2026" });
+    let out = null;
+    try {
+      let res;
+      if (file.size <= PDF_DIRECT_MAX_BYTES) {
+        const fd = new FormData();
+        fd.append("file", file);
+        res = await fetch("/api/quotes/extract", { method: "POST", headers: { Authorization: "Bearer " + token }, body: fd });
+      } else {
+        res = await fetch("/api/quotes/extract", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: JSON.stringify({ path }) });
+      }
+      try { out = await res.json(); } catch { out = null; }
+      if (!res.ok || !out || !out.ok) { setPdfInfo({ fileName, error: (out && out.error) || ("The PDF could not be read (" + res.status + ").") }); return; }
+    } catch (e) {
+      setPdfInfo({ fileName, error: "Could not reach the server." });
+      return;
+    }
+    applyExtract(out, fileName);
+  };
+
+  const applyExtract = (out, fileName) => {
+    const cur = fRef.current;
+    const F = out.fields || {};
+    const nx = {};
+    const patch = {};
+    const warnings = [...(out.warnings || [])];
+    const entry = (src, extra) => ({ value: String(src.value).trim(), conf: src.confidence, evidence: src.evidence, page: src.page, note: src.note, ...extra });
+    // Filled only where the box is empty; a filled box gets "PDF says X".
+    const put = (k, opts = {}) => {
+      const src = F[opts.from || k];
+      if (!src || src.value == null || String(src.value).trim() === "") return;
+      nx[k] = entry(src);
+      if (opts.suggestOnly) return;
+      if (String(cur[k] ?? "").trim() === "" || (opts.replaceIf && opts.replaceIf())) patch[k] = nx[k].value;
+    };
+
+    // A new quote opens on today, which is a default rather than a choice.
+    if (F.quoteDate && /^\d{4}-\d{2}-\d{2}$/.test(String(F.quoteDate.value).trim()))
+      put("quoteDate", { replaceIf: () => !cur.id && cur.quoteDate === new Date().toISOString().slice(0, 10) });
+    // A catalogue name is locked for a reason; the PDF only suggests.
+    put("product", { suggestOnly: nameLocked });
+    // The SKU is ours; a factory item number is a suggestion at most.
+    put("sku", { suggestOnly: true });
+    ["moldFee", "sampleFee", "unitsPerCarton", "cartonL", "cartonW", "cartonH", "cartonWeight"].forEach((k) => put(k));
+    put("notes");
+
+    // ── The factory: matched to the directory or not at all ──
+    const fm = out.factory || {};
+    let pickCompany = null;
+    const company = fm.match ? factoryCompanies.find((c) => c.id === fm.match.id) : null;
+    if (company) {
+      const how = fm.match.matchedBy === "name" ? null : "matched by " + (fm.match.matchedBy === "email" ? "email domain" : "a partial name") + " to the PDF's \u201c" + (fm.name || "") + "\u201d";
+      nx.factory = { value: company.name, conf: fm.match.matchedBy === "partial" ? "medium" : ((F.factoryName && F.factoryName.confidence) || "medium"),
+                     evidence: F.factoryName ? F.factoryName.evidence : "", page: F.factoryName ? F.factoryName.page : 0, note: how, companyId: company.id };
+      if (!cur.factory) pickCompany = company;
+    } else if (fm.name) {
+      nx.factory = { value: fm.name, red: true, says: fm.name + " \u2014 not in the factory directory", conf: F.factoryName ? F.factoryName.confidence : "medium",
+                     evidence: F.factoryName ? F.factoryName.evidence : "", page: F.factoryName ? F.factoryName.page : 0 };
+    }
+    // Picking a factory refills these from the directory, so then the PDF only
+    // suggests; otherwise an empty box takes the PDF's value.
+    ["factoryContact", "factoryEmail", "factoryPhone", "country", "leadTime"].forEach((k) => put(k, { suggestOnly: !!pickCompany }));
+
+    // ── HTS: a library code or nothing ──
+    const h = out.hts || {};
+    let htsToPick = null;
+    if (h.code) {
+      nx.hts = { value: h.code, conf: h.status === "prefix" ? "medium" : ((F.hts && F.hts.confidence) || "medium"), evidence: F.hts ? F.hts.evidence : "", page: F.hts ? F.hts.page : 0,
+                 note: h.status === "prefix" ? "the PDF printed " + h.printed + "; this is the one library code under it" : undefined };
+      if (!cur.hts) htsToPick = h.code;
+    } else if (h.printed) {
+      nx.hts = { value: h.printed, red: true, conf: F.hts ? F.hts.confidence : "medium", evidence: F.hts ? F.hts.evidence : "", page: F.hts ? F.hts.page : 0,
+                 says: "HTS " + h.printed + " \u2014 " + (h.status === "ambiguous" ? h.candidates + " library codes start with it; pick one" : "not in the codes library") };
+    }
+
+    // ── Tiers: a quantity the form has gets its EXW if blank; a new one is added ──
+    const base = cur.tiers || [];
+    const empty = (v) => v === "" || v == null;
+    const allBlank = base.every((t) => empty(t.qty) && empty(t.landed));
+    const pdfTiers = (out.tiers || []).filter((t) => t.qty != null || t.unitPrice != null);
+    let tiers = null;
+    if (pdfTiers.length) {
+      tiers = allBlank ? [] : base.map((t) => ({ ...t }));
+      pdfTiers.forEach((pt) => {
+        const ev = { value: "", conf: pt.confidence, evidence: pt.evidence, page: pt.page,
+                     note: pt.currency && pt.currency !== "USD" ? "price in " + pt.currency : undefined };
+        let i = pt.qty == null ? -1 : tiers.findIndex((t) => Number(t.qty) === pt.qty);
+        if (i === -1) { tiers.push(blankTier(pt.qty ?? "")); i = tiers.length - 1; }
+        const t = tiers[i];
+        if (pt.unitPrice != null && empty(t.landed)) {
+          t.landed = String(pt.unitPrice);
+          if (!t.dutyManual) t.duty = computeDuty(t.landed, dutyRate.rate);
+        }
+        if (pt.qty != null) nx["tier" + i + ".qty"] = { ...ev, value: String(pt.qty) };
+        if (pt.unitPrice != null) nx["tier" + i + ".landed"] = { ...ev, value: String(pt.unitPrice) };
+      });
+      if ((cur.sizeScales || []).length) warnings.push("This quote has sizes. The PDF prices went on the tiers; size quantities and prices were not imported.");
+    }
+
+    // Applied in this order so each step sees the last: plain fields, the
+    // factory (its fill writes the five boxes under it), the tiers, and the HTS
+    // code LAST -- pickHts recomputes duty on every tier, the new ones included.
+    setExt(nx);
+    if (Object.keys(patch).length) setF((p) => ({ ...p, ...patch }));
+    if (pickCompany) onPickFactory(pickCompany);
+    if (tiers) setF((p) => ({ ...p, tiers }));
+    if (htsToPick) pickHts(htsToPick);
+    markDirty();
+    setPdfInfo({ fileName, done: true, warnings, factoryName: fm.name || "", factoryMissing: !!(nx.factory && nx.factory.red),
+                 count: Object.keys(nx).length });
+  };
+
+  const viewPdf = async () => {
+    if (!f.pdfPath) return;
+    // Opened before the await so the browser does not treat it as a popup.
+    const w = window.open("", "_blank");
+    const { data, error } = await SB.storage.from(PDF_BUCKET).createSignedUrl(f.pdfPath, 600);
+    if (error || !data) { if (w) w.close(); setPdfInfo((p) => ({ ...(p || {}), error: "Could not open the PDF: " + (error ? error.message : "no link") })); return; }
+    if (w) w.location.href = data.signedUrl;
   };
   // Warn only -- the user may be part-way through stripping the suffix off the SKU.
   const sizeClash = (f.sizeScales || []).length > 0 && skuLooksSized(f.sku);
@@ -3751,13 +3967,20 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
   };
   // duty starts blank on a new tier and stays blank until an EXW is typed -- there is
   // nothing to take a percentage of yet.
-  const addTier = (qty = "") => setF((p) => ({ ...p, tiers: [...p.tiers, { qty, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "", duty: "", dutyManual: false }] }));
+  // One shape for a new tier, shared by Add tier, the presets and the PDF import.
+  const blankTier = (qty = "") => ({ qty, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "", duty: "", dutyManual: false });
+  const addTier = (qty = "") => setF((p) => ({ ...p, tiers: [...p.tiers, blankTier(qty)] }));
   const addPresets = () => setF((p) => {
     const have = new Set(p.tiers.map((t) => Number(t.qty)));
-    const additions = PRESET_QTYS.filter((q) => !have.has(q)).map((q) => ({ qty: q, landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "", duty: "", dutyManual: false }));
+    const additions = PRESET_QTYS.filter((q) => !have.has(q)).map((q) => blankTier(q));
     return { ...p, tiers: [...p.tiers, ...additions] };
   });
-  const removeTier = (i) => setF((p) => ({ ...p, tiers: p.tiers.filter((_, idx) => idx !== i) }));
+  // Removing a tier moves the ones after it up, so the PDF highlights keyed by
+  // tier position go with it rather than land on the wrong row.
+  const removeTier = (i) => {
+    setExt((x) => Object.fromEntries(Object.entries(x).filter(([k]) => !k.startsWith("tier"))));
+    setF((p) => ({ ...p, tiers: p.tiers.filter((_, idx) => idx !== i) }));
+  };
 
   // ── TAKING BACK A NAME THIS FORM WROTE ─────────────────────────────────────
   // Two paths end with the catalogue no longer answering for the SKU in the box
@@ -4042,8 +4265,42 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
           <button style={S.iconBtn} onClick={guardedClose}><X size={18} /></button>
         </div>
         <div style={S.modalBody}>
+          {/* IMPORT FROM PDF (prototype, script 129). Uploads to the private
+              quote-pdfs bucket, has Claude read it, and fills what it can.
+              Nothing is saved until Save. */}
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 16, padding: "10px 12px", border: "1px dashed #d5dae4", borderRadius: 10, background: "#fafbfc" }}>
+            <button type="button" style={{ ...S.ghostBtnSm, display: "inline-flex", alignItems: "center", gap: 6, opacity: pdfInfo && pdfInfo.busy ? 0.6 : 1 }}
+              disabled={!!(pdfInfo && pdfInfo.busy)} onClick={() => pdfInputRef.current && pdfInputRef.current.click()}>
+              <FileText size={14} /> Import from PDF
+            </button>
+            <input ref={pdfInputRef} type="file" accept="application/pdf,.pdf" style={{ display: "none" }}
+              onChange={(e) => { const file = e.target.files && e.target.files[0]; e.target.value = ""; importPdf(file); }} />
+            {f.pdfPath && (
+              <button type="button" onClick={viewPdf} style={{ background: "none", border: "none", padding: 0, color: "#3461e0", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                View PDF
+              </button>
+            )}
+            <span style={{ fontSize: 12.5, color: pdfInfo && pdfInfo.error ? XC.red : "#6a7488" }}>
+              {!pdfInfo ? "A factory quote PDF fills the fields it can; you check them before saving."
+                : pdfInfo.error ? (pdfInfo.fileName ? pdfInfo.fileName + ": " : "") + pdfInfo.error
+                : pdfInfo.busy ? pdfInfo.fileName + ": " + pdfInfo.busy
+                : pdfInfo.fileName + ": " + pdfInfo.count + " fields read. Hover a highlighted box for where it came from."}
+            </span>
+            {pdfInfo && pdfInfo.done && (
+              <span style={{ display: "flex", gap: 12, fontSize: 11.5, color: "#6a7488", width: "100%" }}>
+                <span><span style={{ color: XC.high }}>{"\u25a0"}</span> from the PDF</span>
+                <span><span style={{ color: XC.medium }}>{"\u25a0"}</span> from the PDF, check it</span>
+                <span><span style={{ color: XC.red }}>{"\u25a0"}</span> could not be applied</span>
+              </span>
+            )}
+            {pdfInfo && pdfInfo.done && pdfInfo.warnings && pdfInfo.warnings.length > 0 && (
+              <ul style={{ margin: 0, paddingLeft: 18, width: "100%", fontSize: 12, color: "#a66f12", lineHeight: 1.5 }}>
+                {pdfInfo.warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            )}
+          </div>
           <FormSection icon={<Box size={15} />} title="Product">
-            <Field label="SKU" k="sku" placeholder="Internal SKU" f={f} set={set} />
+            <Field label="SKU" k="sku" placeholder="Internal SKU" f={f} set={set} hl={hl("sku")} />
             {/* Inline, directly under the field it is about, so it cannot be
                 mistaken for a note about the quote as a whole. Amber when it
                 blocks, muted when it is only telling you what you already have --
@@ -4183,11 +4440,13 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
             <label style={S.field}>
               <span style={S.fieldLabel}>Product</span>
               <input
-                style={nameLocked ? { ...S.input, background: "#f6f7f9", color: "#4a5262" } : S.input}
+                style={xStyle(nameLocked ? { ...S.input, background: "#f6f7f9", color: "#4a5262" } : S.input, hl("product"))}
+                title={hl("product") ? hl("product").title : undefined}
                 value={f.product ?? ""}
                 onChange={set("product")}
                 readOnly={nameLocked}
                 placeholder="e.g. Needlepoint Belt" />
+              <PdfSays h={hl("product")} />
               {/* Not a warning. The name came from the catalogue and is right;
                   the link is there because a quote occasionally describes a
                   variant the catalogue row does not name. */}
@@ -4219,14 +4478,22 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
             {/* The three style props reproduce exactly what this file used to apply
                 inline, so the row renders the same as before the extraction. Its
                 list opens as wide as the field, which is the middle column. */}
-            <HtsField value={f.hts} onChange={pickHts} codes={htsCodes}
+            <HtsField value={f.hts} onChange={(code, extra) => { dismissX("hts"); pickHts(code, extra); }} codes={htsCodes}
               onAdd={(seed) => setAddingCode({ code: seed || "" })}
-              fieldStyle={S.field} labelStyle={S.fieldLabel} inputStyle={S.input} />
+              fieldStyle={S.field} labelStyle={S.fieldLabel} inputStyle={xStyle(S.input, hl("hts"))} />
             {/* The third column of the Product / HTS / Quote Date row. It lives in
                 that row's own grid, so no block appearing elsewhere in the section
                 -- the duty notice, the rule hints -- can move it off the row. */}
-            <Field label="Quote Date" k="quoteDate" type="date" f={f} set={set} />
+            <Field label="Quote Date" k="quoteDate" type="date" f={f} set={set} hl={hl("quoteDate")} />
             </div>
+            {/* The HTS field renders its own control, so what the PDF said about
+                the code sits under the row, full width. */}
+            {hl("hts") && (hl("hts").says || hl("hts").title) && (
+              <div style={{ gridColumn: "1 / -1", marginTop: -4 }}>
+                {hl("hts").says ? <PdfSays h={hl("hts")} />
+                  : <span style={{ fontSize: 11.5, color: "#6a7488" }} title={hl("hts").title}>HTS {f.hts} from the PDF{ext.hts && ext.hts.note ? " (" + ext.hts.note + ")" : ""}</span>}
+              </div>
+            )}
             {/* Non-blocking, and it occupies no row of its own when silent. Under
                 the Product / HTS / Quote Date row, full width. */}
             {dutyNotice && <div style={{ gridColumn: "1 / -1", marginTop: -4, fontSize: 11.5, color: "#3461e0" }}>{dutyNotice}</div>}
@@ -4326,34 +4593,49 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
             <div style={{ gridColumn: "1 / -1", display: "grid", gap: 12,
                           gridTemplateColumns: "minmax(0, 2.7fr) minmax(0, 1.15fr) minmax(0, 1.15fr)" }}>
             <FactorySelect value={f.factory} companies={factoryCompanies}
-              onPick={onPickFactory}
+              onPick={(c) => { dismissX("factory"); onPickFactory(c); }}
               onAddNew={(seed) => setAddingFactory({ name: seed || "" })}
               fieldStyle={S.field}
-              labelStyle={S.fieldLabel} inputStyle={S.input} />
+              labelStyle={S.fieldLabel} inputStyle={xStyle(S.input, hl("factory"))} />
             {/* All five stay editable after a fill. The fill is a starting point
                 from the directory, not a claim that this quote must match it --
                 a factory contact changes more often than a company record does. */}
-            <Field label="Contact" k="factoryContact" placeholder="Name" f={f} set={set} />
-            <Field label="Email" k="factoryEmail" placeholder="email@factory.com" f={f} set={set} />
+            <Field label="Contact" k="factoryContact" placeholder="Name" f={f} set={set} hl={hl("factoryContact")} />
+            <Field label="Email" k="factoryEmail" placeholder="email@factory.com" f={f} set={set} hl={hl("factoryEmail")} />
             </div>
+            {/* What the PDF said about the factory. Matched to the directory, or
+                named and left for a person -- the import never creates one. */}
+            {hl("factory") && (
+              <div style={{ gridColumn: "1 / -1", marginTop: -4, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline" }}>
+                {hl("factory").says
+                  ? <PdfSays h={hl("factory")} />
+                  : <span style={{ fontSize: 11.5, color: "#6a7488" }} title={hl("factory").title}>Factory from the PDF{ext.factory && ext.factory.note ? " (" + ext.factory.note + ")" : ""}</span>}
+                {ext.factory && ext.factory.red && (
+                  <button type="button" onClick={() => setAddingFactory({ name: ext.factory.value })}
+                    style={{ background: "none", border: "none", padding: 0, color: "#3461e0", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>
+                    + Add new factory
+                  </button>
+                )}
+              </div>
+            )}
             {/* The second row. Each row being its own grid is what holds the
                 split at every modal width -- the job the hidden row-break item
                 did when these sat in the section's auto-fit grid. The row gap
                 between the two is the section's 12px, like every other. */}
             <div style={{ gridColumn: "1 / -1", display: "grid", gap: 12,
                           gridTemplateColumns: "minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.85fr)" }}>
-            <Field label="Phone" k="factoryPhone" placeholder="Phone" f={f} set={set} />
-            <Field label="Country" k="country" placeholder="e.g. China" f={f} set={set} />
-            <Field label="Lead Time" k="leadTime" placeholder="e.g. 45 days" f={f} set={set} />
+            <Field label="Phone" k="factoryPhone" placeholder="Phone" f={f} set={set} hl={hl("factoryPhone")} />
+            <Field label="Country" k="country" placeholder="e.g. China" f={f} set={set} hl={hl("country")} />
+            <Field label="Lead Time" k="leadTime" placeholder="e.g. 45 days" f={f} set={set} hl={hl("leadTime")} />
             </div>
           </FormSection>
 
           <FormSection icon={<Package size={15} />} title="Carton Info">
-            <Field label="Units / Carton" k="unitsPerCarton" type="number" f={f} set={set} />
-            <Field label="Carton L (cm)" k="cartonL" type="number" f={f} set={set} />
-            <Field label="Carton W (cm)" k="cartonW" type="number" f={f} set={set} />
-            <Field label="Carton H (cm)" k="cartonH" type="number" f={f} set={set} />
-            <Field label="Carton Weight (kg)" k="cartonWeight" type="number" f={f} set={set} />
+            <Field label="Units / Carton" k="unitsPerCarton" type="number" f={f} set={set} hl={hl("unitsPerCarton")} />
+            <Field label="Carton L (cm)" k="cartonL" type="number" f={f} set={set} hl={hl("cartonL")} />
+            <Field label="Carton W (cm)" k="cartonW" type="number" f={f} set={set} hl={hl("cartonW")} />
+            <Field label="Carton H (cm)" k="cartonH" type="number" f={f} set={set} hl={hl("cartonH")} />
+            <Field label="Carton Weight (kg)" k="cartonWeight" type="number" f={f} set={set} hl={hl("cartonWeight")} />
           </FormSection>
 
           {/* What the client price sheet (Send to Client) prints in its Details
@@ -4369,8 +4651,9 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
             <label style={{ ...S.field, marginBottom: 12, maxWidth: 320 }}>
               <span style={S.fieldLabel}>Sample Fee <span style={{ color: "#6a7488", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>(not included in total cost)</span></span>
               <div style={{ position: "relative" }}>
-                <input style={S.input} type="number" value={f.sampleFee ?? ""} onChange={set("sampleFee")} placeholder="$ sample cost — tracked only" />
+                <input style={xStyle(S.input, hl("sampleFee"))} title={hl("sampleFee") ? hl("sampleFee").title : undefined} type="number" value={f.sampleFee ?? ""} onChange={set("sampleFee")} placeholder="$ sample cost — tracked only" />
               </div>
+              <PdfSays h={hl("sampleFee")} />
             </label>
             <div style={S.tierScroll}>
             {/* The gutter is added to the minimum, not taken from it, so on a phone
@@ -4479,9 +4762,9 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
                       ? <TotalCell value={sizeTotal.toLocaleString()} label="total qty" />
                       : sizeTotal != null
                         ? <div style={S.qtyFromSizes} title="Quantity comes from the size rows below"><span style={S.qfsV}>{sizeTotal.toLocaleString()}</span><span style={S.qfsK}>from sizes</span></div>
-                        : <input style={S.tierInput} type="number" value={t.qty ?? ""} onChange={(e) => setTier(i, "qty", e.target.value)} placeholder="Qty" />}</div>
+                        : <><input style={xStyle(S.tierInput, hl("tier" + i + ".qty", t.qty))} title={hl("tier" + i + ".qty", t.qty) ? hl("tier" + i + ".qty", t.qty).title : undefined} type="number" value={t.qty ?? ""} onChange={(e) => { dismissX("tier" + i + ".qty"); setTier(i, "qty", e.target.value); }} placeholder="Qty" /><PdfSays small h={hl("tier" + i + ".qty", t.qty)} /></>}</div>
                     <div style={tierCol("exw")}>{!greyed
-                      ? <input style={S.tierInput} type="number" value={t.landed ?? ""} onChange={(e) => setTier(i, "landed", e.target.value)} placeholder="$ EXW" />
+                      ? <><input style={xStyle(S.tierInput, hl("tier" + i + ".landed", t.landed))} title={hl("tier" + i + ".landed", t.landed) ? hl("tier" + i + ".landed", t.landed).title : undefined} type="number" value={t.landed ?? ""} onChange={(e) => { dismissX("tier" + i + ".landed"); setTier(i, "landed", e.target.value); }} placeholder="$ EXW" /><PdfSays small h={hl("tier" + i + ".landed", t.landed)} /></>
                       : <TotalCell value={"$" + fmt(sized.totals.exw)} label="total EXW" />}</div>
                     <div style={{ ...tierCol("method"), display: "flex", gap: 3, alignItems: "center" }}>
                       <button type="button" style={{ ...S.shipToggle, ...(ship === "air" ? S.shipOn : {}) }} onClick={() => setTier(i, "ship", "air")}>Air</button>
@@ -4761,8 +5044,9 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
             <label style={{ ...S.field, marginTop: 14, maxWidth: 320 }}>
               <span style={S.fieldLabel}>Mold / Tooling Fee <span style={{ color: "#6a7488", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>(amortized per unit into total cost)</span></span>
               <div style={{ position: "relative" }}>
-                <input style={S.input} type="number" value={f.moldFee ?? ""} onChange={set("moldFee")} placeholder="$ one-time mold cost" />
+                <input style={xStyle(S.input, hl("moldFee"))} title={hl("moldFee") ? hl("moldFee").title : undefined} type="number" value={f.moldFee ?? ""} onChange={set("moldFee")} placeholder="$ one-time mold cost" />
               </div>
+              <PdfSays h={hl("moldFee")} />
             </label>
             {Number(f.moldFee) > 0 && (
               <div style={{ fontSize: 12, color: "#6a7488", marginTop: 6 }}>Divided across each tier's quantity and added to that tier's total cost (e.g. ${fmt(f.moldFee)} ÷ 1,000 units = ${fmt(moldPerUnit(f.moldFee, 1000))}/unit).</div>
@@ -4778,7 +5062,16 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
 
           <label style={{ ...S.field, marginTop: 4 }}>
             <span style={S.fieldLabel}>Notes</span>
-            <textarea style={{ ...S.input, minHeight: 64, resize: "vertical" }} value={f.notes} onChange={set("notes")} placeholder="MOQ notes, tooling, pricing assumptions, etc." />
+            <textarea style={xStyle({ ...S.input, minHeight: 64, resize: "vertical" }, hl("notes"))} title={hl("notes") ? hl("notes").title : undefined} value={f.notes} onChange={set("notes")} placeholder="MOQ notes, tooling, pricing assumptions, etc." />
+            {hl("notes") && hl("notes").says && (
+              <span style={{ fontSize: 11.5, color: "#a66f12", lineHeight: 1.4, whiteSpace: "pre-line" }} title={hl("notes").title}>
+                {"The PDF also says:\n" + ext.notes.value}
+                <button type="button" onClick={(e) => { e.preventDefault(); takeX("notes"); }}
+                  style={{ display: "block", background: "none", border: "none", padding: "2px 0 0", color: "#3461e0", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>
+                  Add to notes
+                </button>
+              </span>
+            )}
           </label>
 
           {/* ── TASKS ──────────────────────────────────────────────────────

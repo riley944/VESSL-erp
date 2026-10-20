@@ -10,6 +10,7 @@
     "lint": "eslint app lib"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.136.0",
     "@supabase/supabase-js": "^2.43.4",
     "exceljs": "^4.4.0",
     "lucide-react": "0.383.0",
