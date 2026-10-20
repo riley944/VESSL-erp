@@ -131,12 +131,12 @@ import { ExportButton } from '@/app/components/ExportButton';
 import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompanyModal';
 // Filters that survive going into a detail view and coming back, and die on reload.
 // See the note at the top of lib/pageState.js for what may and may not go in it.
-import { usePageState } from '@/lib/pageState';
+import { usePageState, clearPageState } from '@/lib/pageState';
 import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel } from '@/lib/shipmentStatus';
 import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
-import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView } from '@/lib/ordersView';
+import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
          buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline, timelineBy, monthColor, INV_STATUS_COLORS } from '@/lib/inventoryView';
 import { buildSoListSheets, buildSoRecordSheets, buildPoListSheets, buildPoRecordSheets, ordersListFileName, orderFileName, ordersCsvName, ordersPdfMeta, orderPdfMeta, orderRef } from '@/lib/ordersExport';
@@ -411,8 +411,24 @@ function OrderCard({ p, navigate, onStatus, exportIcon = null }){
 
 // ── PO toolbar (search + client chips + status chips), shared UI ────────────────
 // actions: the page's buttons (Export, + New PO), on the search bar's row.
-function PoToolbar({ rows, search, setSearch, client, setClient, status, setStatus, actions = null }){
+// ui and setUi are the Orders page store: client, status, factory, crd, from, to
+// and search. onReset is shown, as Reset filters, only while any of them is off
+// its default.
+function PoToolbar({ rows, ui, setUi, onReset, actions = null }){
+  const { search, client, status } = ui;
   const clients = distinctClients(rows);
+  const facCount = {}; (rows||[]).forEach(p=>{ const f=poFactory(p); if(f) facCount[f]=(facCount[f]||0)+1; });
+  const factoryOptions = [
+    { value:'', label:'All Factories' },
+    ...Object.entries(facCount).sort((a,b)=>a[0].localeCompare(b[0])).map(([f,n])=>({ value:f, label:f, color:companyColor(f), count:n })),
+  ];
+  const crdOptions = [
+    { value:'', label:'All CRD' },
+    { value:'has',  label:PO_CRD_LABEL.has,  count:(rows||[]).filter(p=>p.cargo_ready_date).length },
+    { value:'none', label:PO_CRD_LABEL.none, count:(rows||[]).filter(p=>!p.cargo_ready_date).length },
+  ];
+  const lbl = {fontSize:'11px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#9aa3b5'};
+  const dateInp = {border:'1px solid #e7eaf0',borderRadius:'10px',padding:'8px 10px',fontSize:'13px',fontFamily:'inherit',color:'#0f1729',background:'#fff',outline:'none'};
   const clientOptions = [
     { value:'', label:'All Clients' },
     ...clients.map(([c,n])=>({ value:c, label:c, color:companyColor(c), count:n })),
@@ -424,12 +440,22 @@ function PoToolbar({ rows, search, setSearch, client, setClient, status, setStat
   return (
     <div className="po-toolbar">
       <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
-        <input className="po-search" style={{flex:'1 1 240px',width:'auto',minWidth:0}} placeholder="Search PO #, client, or product…" value={search} onChange={e=>setSearch(e.target.value)} />
+        <input className="po-search" style={{flex:'1 1 240px',width:'auto',minWidth:0}} placeholder="Search PO #, client, or product…" value={search} onChange={e=>setUi('search', e.target.value)} />
         {actions}
       </div>
-      <div className="fs-row">
-        <FilterSelect multiple label="All Clients"  value={client} onChange={setClient} options={clientOptions} />
-        <FilterSelect multiple label="All Statuses" value={status} onChange={setStatus} options={statusOptions} />
+      <div className="fs-row" style={{alignItems:'center'}}>
+        <FilterSelect multiple label="All Clients"   value={client}     onChange={v=>setUi('client', v)}  options={clientOptions} />
+        <FilterSelect multiple label="All Statuses"  value={status}     onChange={v=>setUi('status', v)}  options={statusOptions} />
+        <FilterSelect multiple label="All Factories" value={ui.factory} onChange={v=>setUi('factory', v)} options={factoryOptions} />
+        <FilterSelect multiple label="All CRD"       value={ui.crd}     onChange={v=>setUi('crd', v)}     options={crdOptions} />
+        {/* Order date, From and To, either end optional and both inclusive. */}
+        <div role="group" aria-label="Order date range" style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
+          <span style={lbl}>Order date</span>
+          <input type="date" value={ui.from} max={ui.to || undefined} onChange={e=>setUi('from', e.target.value)} aria-label="Order date from" style={dateInp} />
+          <span style={lbl}>to</span>
+          <input type="date" value={ui.to} min={ui.from || undefined} onChange={e=>setUi('to', e.target.value)} aria-label="Order date to" style={dateInp} />
+        </div>
+        {isPoFiltered(ui) && <button className="btn btn-ghost btn-sm" onClick={onReset} style={{marginLeft:'auto'}}>Reset filters</button>}
       </div>
     </div>
   );
@@ -3668,7 +3694,16 @@ function Orders({ navigate, role = null, user = null, displayName = '', newActio
   // two views they are in -- kept in the page store so opening an order and coming
   // back does not throw it away. rows and loading stay plain useState on purpose,
   // because the page refetches on mount and stale rows would be a lie.
-  const [ui, setUi] = usePageState('orders', { status:[], search:'', client:[], view:'list' });
+  const [ui, setUi] = usePageState('orders', { ...PO_FILTER_DEFAULTS, view:'list' });
+  // RESET FILTERS asks first. On Reset every filter and the search go back to
+  // their defaults and the page store forgets them; the List / Production Board
+  // choice is a view, not a filter, and stays.
+  const [askReset, setAskReset] = useState(false);
+  const resetFilters = () => {
+    clearPageState('orders');
+    Object.entries(PO_FILTER_DEFAULTS).forEach(([k, d]) => setUi(k, d));
+    setAskReset(false);
+  };
   // Which export is being built: 'list', 'rec:'+id, or ''.
   const [exporting, setExporting] = useState('');
   const load = async () => {
@@ -3753,7 +3788,7 @@ function Orders({ navigate, role = null, user = null, displayName = '', newActio
           current view shows), then + New PO at the right. The client and status
           filters sit under it, then the List / Production Board toggle. */}
       <div style={{marginBottom:'2px'}}>
-        <PoToolbar rows={rows} search={ui.search} setSearch={v=>setUi('search',v)} client={ui.client} setClient={v=>setUi('client',v)} status={ui.status} setStatus={v=>setUi('status',v)}
+        <PoToolbar rows={rows} ui={ui} setUi={setUi} onReset={()=>setAskReset(true)}
           actions={<>
             <ExportMenu label="Export" className="export-pill" busy={exporting==='list'} disabled={!!exporting} title="Export Purchase Orders" ariaLabel="Export Purchase Orders" onPick={exportList} />
             {newAction}
@@ -3772,6 +3807,7 @@ function Orders({ navigate, role = null, user = null, displayName = '', newActio
         </div>
       ) : <div className="section-card"><div className="empty"><h3>No orders</h3><p>No purchase orders match your search or filters.</p></div></div>}
       {shipAsk && <ConfirmModal title={shipAsk.title} message={shipAsk.message} confirmLabel={shipAsk.confirmLabel} danger={false} onConfirm={shipAsk.onConfirm} onCancel={()=>setShipAsk(null)} />}
+      {askReset && <ConfirmModal title="Reset all filters to default?" message="Clients, statuses, factories, CRD, the order dates and the search all go back to All." confirmLabel="Reset" danger={false} onConfirm={resetFilters} onCancel={()=>setAskReset(false)} />}
     </>
   );
 }
