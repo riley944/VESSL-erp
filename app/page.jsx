@@ -734,6 +734,20 @@ const storeRail = v => {
 // having.
 const SO_SORT_KEY = 'vessl.so.sort';
 const SO_CRD_KEY  = 'vessl.so.crd';
+// The rest of the Sales Orders filters -- search, clients, statuses and the
+// order-date range -- on one key beside them, as JSON, so every filter on that
+// page outlives a reload the way sort and CRD always have (Riley, 21 Sep).
+const SO_FILTERS_KEY = 'vessl.so.filters';
+const SO_FILTER_DEFAULTS = { search:'', statusF:[], clientF:[], from:'', to:'' };
+const readSoFilters = () => {
+  if (typeof window === 'undefined') return SO_FILTER_DEFAULTS;
+  try {
+    const v = JSON.parse(window.localStorage.getItem(SO_FILTERS_KEY) || '{}') || {};
+    const arr = a => (Array.isArray(a) ? a.filter(x => typeof x === 'string') : []);
+    const str = s => (typeof s === 'string' ? s : '');
+    return { search:str(v.search), statusF:arr(v.statusF), clientF:arr(v.clientF), from:str(v.from), to:str(v.to) };
+  } catch (e) { return SO_FILTER_DEFAULTS; }
+};
 // Unrecognised values fall back to the default rather than being trusted: the
 // stored string is whatever was in localStorage, which is not necessarily
 // something this build still understands.
@@ -2018,11 +2032,15 @@ function Inventory() {
 function SalesOrders({navigate, role=null, user=null, displayName=''}){
   const [rows,setRows]=useState([]);
   const [loading,setLoading]=useState(true);
-  // Search and the two membership filters survive going into an order and back. The
-  // sort and the CRD chips below do NOT live here -- they are on their own
-  // localStorage keys, on Kristy word, because those are meant to outlive a reload
-  // and this store deliberately does not.
-  const [ui, setUi] = usePageState('sales-orders', { search:'', statusF:[], clientF:[] });
+  // Search, clients, statuses and the order dates survive going into an order and
+  // back (the page store), and a reload too: they start from SO_FILTERS_KEY and
+  // are written back on every change, beside the sort and CRD keys below.
+  const soFilterStart = useMemo(readSoFilters, []);
+  const [ui, setUi] = usePageState('sales-orders', soFilterStart);
+  useEffect(() => {
+    try { window.localStorage.setItem(SO_FILTERS_KEY, JSON.stringify(
+      { search:ui.search, statusF:ui.statusF, clientF:ui.clientF, from:ui.from||'', to:ui.to||'' })); } catch (e) {}
+  }, [ui.search, ui.statusF, ui.clientF, ui.from, ui.to]);
   // Lazy initialisers: localStorage is read once on mount rather than on every
   // render, and never during the server pass.
   // Never empty. Nothing stored, a stored value this build no longer knows, or
@@ -2044,6 +2062,19 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
     setSortByRaw(final); writeStore(SO_SORT_KEY, final.join(','));
   };
   const setCrdF  =v=>{ setCrdFRaw(v);   writeStore(SO_CRD_KEY,  (v||[]).join(',')); };
+  // RESET FILTERS asks first, then puts every filter, the search and the sort
+  // back to their defaults -- Newest SO -- and forgets them, in the page store
+  // and in localStorage.
+  const soFiltered = !!((ui.search||'').trim() || ui.from || ui.to || (ui.statusF||[]).length || (ui.clientF||[]).length
+    || crdF.length || !(sortBy.length===1 && sortBy[0]==='newest'));
+  const [askReset,setAskReset]=useState(false);
+  const resetFilters=()=>{
+    clearPageState('sales-orders');
+    Object.entries(SO_FILTER_DEFAULTS).forEach(([k,d])=>setUi(k,d));
+    setCrdF([]);
+    setSortByRaw(['newest']); writeStore(SO_SORT_KEY, 'newest');
+    setAskReset(false);
+  };
   const [showCreate,setShowCreate]=useState(false);
   // Which export is being built: 'list', 'rec:'+id, or ''.
   const [exporting,setExporting]=useState('');
@@ -2076,7 +2107,7 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
   ];
   const statusOptions = [
     { value:'', label:'All Statuses' },
-    ...SO_STATUSES.map(s=>{ const m=SO_SM[s]; return { value:s, label:(m&&m.label)||s.replace(/_/g,' '), color:m&&m.color, bg:m&&m.bg }; }),
+    ...SO_STATUSES.map(s=>{ const m=SO_SM[s]; return { value:s, label:(m&&m.label)||s.replace(/_/g,' '), color:m&&m.color, bg:m&&m.bg, count:rows.filter(r=>r.status===s).length }; }),
   ];
   // Counted off the OTHER filters, not off shown, so the numbers do not collapse
   // to "n and 0" the moment a CRD option is picked.
@@ -2141,15 +2172,27 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
         </button>
       </div>
 
-      {/* Client + status filters */}
-      <div className="fs-row" style={{marginBottom:'18px'}}>
+      {/* Client, status, CRD, sort and order-date filters */}
+      <div className="fs-row" style={{marginBottom:'18px',alignItems:'center'}}>
         {clients.length>1 && (
           <FilterSelect multiple label="All Clients" value={ui.clientF} onChange={v=>setUi('clientF', v)} options={clientOptions} />
         )}
         <FilterSelect multiple label="All Statuses" value={ui.statusF} onChange={v=>setUi('statusF', v)} options={statusOptions} />
         <FilterSelect multiple label="All CRD" value={crdF} onChange={setCrdF} options={crdOptions} />
         <FilterSelect multiple ordered label="Newest SO" value={sortBy} onChange={setSortBy} options={sortOptions} />
+        {/* Order date, From and To, either end optional and both inclusive -- as
+            on the Purchase Orders page. */}
+        <div role="group" aria-label="Order date range" style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
+          <span style={{fontSize:'11px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#9aa3b5'}}>Order date</span>
+          <input type="date" value={ui.from||''} max={ui.to || undefined} onChange={e=>setUi('from', e.target.value)} aria-label="Order date from"
+            style={{border:'1px solid #e7eaf0',borderRadius:'10px',padding:'8px 10px',fontSize:'13px',fontFamily:'inherit',color:'#0f1729',background:'#fff',outline:'none'}} />
+          <span style={{fontSize:'11px',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'#9aa3b5'}}>to</span>
+          <input type="date" value={ui.to||''} min={ui.from || undefined} onChange={e=>setUi('to', e.target.value)} aria-label="Order date to"
+            style={{border:'1px solid #e7eaf0',borderRadius:'10px',padding:'8px 10px',fontSize:'13px',fontFamily:'inherit',color:'#0f1729',background:'#fff',outline:'none'}} />
+        </div>
+        {soFiltered && <button className="btn btn-ghost btn-sm" onClick={()=>setAskReset(true)} style={{marginLeft:'auto'}}>Reset filters</button>}
       </div>
+      {askReset && <ConfirmModal title="Reset all filters to default?" message="Clients, statuses, CRD, the order dates and the search go back to All, and the sort to Newest SO." confirmLabel="Reset" danger={false} onConfirm={resetFilters} onCancel={()=>setAskReset(false)} />}
 
       {/* Orders — distinct 2-col card grid */}
       {loading ? (
