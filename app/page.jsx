@@ -735,19 +735,10 @@ const storeRail = v => {
 const SO_SORT_KEY = 'vessl.so.sort';
 const SO_CRD_KEY  = 'vessl.so.crd';
 // The rest of the Sales Orders filters -- search, clients, statuses and the
-// order-date range -- on one key beside them, as JSON, so every filter on that
-// page outlives a reload the way sort and CRD always have (Riley, 21 Sep).
-const SO_FILTERS_KEY = 'vessl.so.filters';
+// order-date range. These live in the page store only, as the Purchase Orders
+// filters do: they survive opening an order and coming back, and a reload
+// starts them fresh. Sort and CRD keep their localStorage keys above.
 const SO_FILTER_DEFAULTS = { search:'', statusF:[], clientF:[], from:'', to:'' };
-const readSoFilters = () => {
-  if (typeof window === 'undefined') return SO_FILTER_DEFAULTS;
-  try {
-    const v = JSON.parse(window.localStorage.getItem(SO_FILTERS_KEY) || '{}') || {};
-    const arr = a => (Array.isArray(a) ? a.filter(x => typeof x === 'string') : []);
-    const str = s => (typeof s === 'string' ? s : '');
-    return { search:str(v.search), statusF:arr(v.statusF), clientF:arr(v.clientF), from:str(v.from), to:str(v.to) };
-  } catch (e) { return SO_FILTER_DEFAULTS; }
-};
 // Unrecognised values fall back to the default rather than being trusted: the
 // stored string is whatever was in localStorage, which is not necessarily
 // something this build still understands.
@@ -2033,14 +2024,10 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
   const [rows,setRows]=useState([]);
   const [loading,setLoading]=useState(true);
   // Search, clients, statuses and the order dates survive going into an order and
-  // back (the page store), and a reload too: they start from SO_FILTERS_KEY and
-  // are written back on every change, beside the sort and CRD keys below.
-  const soFilterStart = useMemo(readSoFilters, []);
-  const [ui, setUi] = usePageState('sales-orders', soFilterStart);
-  useEffect(() => {
-    try { window.localStorage.setItem(SO_FILTERS_KEY, JSON.stringify(
-      { search:ui.search, statusF:ui.statusF, clientF:ui.clientF, from:ui.from||'', to:ui.to||'' })); } catch (e) {}
-  }, [ui.search, ui.statusF, ui.clientF, ui.from, ui.to]);
+  // back (the page store); a reload starts them fresh, as on Purchase Orders.
+  // The sort and the CRD chips below are on their own localStorage keys, on
+  // Kristy word, because those are meant to outlive a reload.
+  const [ui, setUi] = usePageState('sales-orders', SO_FILTER_DEFAULTS);
   // Lazy initialisers: localStorage is read once on mount rather than on every
   // render, and never during the server pass.
   // Never empty. Nothing stored, a stored value this build no longer knows, or
@@ -2063,8 +2050,8 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
   };
   const setCrdF  =v=>{ setCrdFRaw(v);   writeStore(SO_CRD_KEY,  (v||[]).join(',')); };
   // RESET FILTERS asks first, then puts every filter, the search and the sort
-  // back to their defaults -- Newest SO -- and forgets them, in the page store
-  // and in localStorage.
+  // back to their defaults -- Newest SO -- and forgets them: the page store, and
+  // the sort and CRD localStorage keys.
   const soFiltered = !!((ui.search||'').trim() || ui.from || ui.to || (ui.statusF||[]).length || (ui.clientF||[]).length
     || crdF.length || !(sortBy.length===1 && sortBy[0]==='newest'));
   const [askReset,setAskReset]=useState(false);
