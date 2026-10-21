@@ -44,7 +44,7 @@ const json = (body, status) => Response.json(body, { status });
 const FIELD_KEYS = [
   'quoteDate', 'product', 'sku', 'factoryName', 'factoryContact', 'factoryEmail', 'factoryPhone',
   'country', 'leadTime', 'hts', 'currency', 'moldFee', 'sampleFee',
-  'unitsPerCarton', 'cartonL', 'cartonW', 'cartonH', 'cartonWeight', 'notes',
+  'unitsPerCarton', 'cartonL', 'cartonW', 'cartonH', 'cartonWeight', 'details', 'validity', 'notes',
 ];
 const UNIT_KEYS = ['cartonDimUnit', 'cartonWeightUnit'];
 const CONF = { type: 'string', enum: ['high', 'medium', 'low'] };
@@ -136,7 +136,9 @@ Field meanings:
 - cartonDimUnit: the unit of those dimensions: cm, mm or in.
 - cartonWeight: gross weight of one master carton as a plain number.
 - cartonWeightUnit: the unit of that weight: kg, g or lb.
-- notes: short lines, separated by newlines, for terms a buyer needs that fit no field above: MOQ, payment terms, price validity, price basis (FOB/EXW and port), material, packaging, and anything conditional about the prices.
+- details: the material or specification and the product sizes, short, separated by semicolons, e.g. "PVC 0.3mm; Slide 500x210cm, Surfboard 40x60cm".
+- validity: how long the prices hold: a date as YYYY-MM-DD, or as written (e.g. "30 days").
+- notes: short lines, separated by newlines, for terms a buyer needs that fit no field above: MOQ, payment terms, price basis (FOB/EXW and port), packaging, and anything conditional about the prices.
 
 tiers: one entry per quantity break for the PER-UNIT factory price, lowest quantity first. qty and unitPrice are plain numbers without symbols or thousands separators. A single price with an MOQ is one tier at the MOQ. Do not include freight, duty or totals as tiers.
 
@@ -152,6 +154,30 @@ const toNum = (s) => {
 const round = (n, dp) => (n == null ? null : Math.round(n * 10 ** dp) / 10 ** dp);
 const DIM_TO_CM = { cm: 1, mm: 0.1, in: 2.54 };
 const WT_TO_KG = { kg: 1, g: 0.001, lb: 0.45359237 };
+
+// ── WHICH FIELDS A WARNING IS ABOUT ─────────────────────────────────────────
+// Matched on the words a warning uses, so a field it names shows amber rather
+// than green. 'tiers' stands for every tier box.
+const WARN_WORDS = {
+  unitsPerCarton: /units?\s*(\/|per)\s*(master\s*)?(carton|ctn)|pcs\s*\/\s*ctn|carton\s*(qty|quantity)|unitsPerCarton/i,
+  cartonL: /carton\s*(size|dimension|measurement)|dimension|cartonL\b/i,
+  cartonW: /carton\s*(size|dimension|measurement)|dimension|cartonW\b/i,
+  cartonH: /carton\s*(size|dimension|measurement)|dimension|cartonH\b/i,
+  cartonWeight: /weight|gross|\bg\.?\s*w\b|cartonWeight/i,
+  moldFee: /mou?ld|tooling|plate\s*(fee|charge)|moldFee/i,
+  sampleFee: /sample\s*(fee|cost|charge)|sampleFee/i,
+  leadTime: /lead\s*time|leadTime/i,
+  hts: /\bhts\b|\bhs\b|tariff/i,
+  country: /country|origin/i,
+  sku: /\bsku\b|item\s*(no|number)|article|style\s*(no|number)/i,
+  product: /more than one product|product\s*name/i,
+  details: /material|specification|\bspec\b|product\s*sizes?/i,
+  validity: /validity|valid\s*(until|to|for)|expir/i,
+  factoryName: /factory|supplier|seller|manufacturer/i,
+  tiers: /tier|unit\s*price|price\s*break|per[- ]unit|totals?\b|moq|quantit/i,
+};
+const warnedFieldsOf = (warnings) =>
+  Object.keys(WARN_WORDS).filter((k) => warnings.some((w) => WARN_WORDS[k].test(w)));
 
 // ── MATCHING A FACTORY ───────────────────────────────────────────────────────
 // Against existing factory companies only. Never creates one: the quote form
@@ -333,6 +359,7 @@ export async function POST(req) {
     hts,
     factory,
     warnings,
+    warnedFields: warnedFieldsOf(warnings),
     model: msg.model,
     usage: { input: msg.usage?.input_tokens ?? null, output: msg.usage?.output_tokens ?? null },
   }, 200);

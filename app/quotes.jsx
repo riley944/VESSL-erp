@@ -3351,6 +3351,10 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
   const [ext, setExt] = useState({});
   const [pdfInfo, setPdfInfo] = useState(null);
   const pdfInputRef = useRef(null);
+  // What the PDF said about the matched factory's contact, country and lead
+  // time: { companyId, values }. applyFactory fills a box the directory left
+  // blank from it. Set by applyExtract; picking a factory by hand clears it.
+  const pdfFillRef = useRef(null);
   // The response arrives seconds after the click; the apply reads the form as
   // it is THEN, not as it was when the file was picked.
   const fRef = useRef(f);
@@ -3440,15 +3444,28 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
       if (String(cur[k] ?? "").trim() === "" || (opts.replaceIf && opts.replaceIf())) patch[k] = nx[k].value;
     };
 
-    // A new quote opens on today, which is a default rather than a choice.
-    if (F.quoteDate && /^\d{4}-\d{2}-\d{2}$/.test(String(F.quoteDate.value).trim()))
-      put("quoteDate", { replaceIf: () => !cur.id && cur.quoteDate === new Date().toISOString().slice(0, 10) });
     // A catalogue name is locked for a reason; the PDF only suggests.
     put("product", { suggestOnly: nameLocked });
     // The SKU is ours; a factory item number is a suggestion at most.
     put("sku", { suggestOnly: true });
     ["moldFee", "sampleFee", "unitsPerCarton", "cartonL", "cartonW", "cartonH", "cartonWeight"].forEach((k) => put(k));
+    // Material, spec and sizes go to the client sheet Details box.
+    put("clientDetails", { from: "details" });
     put("notes");
+    // The quote date and validity are the factory's, not this quote's, so they
+    // go into Notes rather than the Quote Date box. Appended -- never replacing
+    // what is there -- and only once, however often the same PDF is imported.
+    const qd = F.quoteDate ? String(F.quoteDate.value).trim() : "";
+    const vt = F.validity ? String(F.validity.value).trim() : "";
+    const dateLine = qd ? "Factory quote dated " + qd + (vt ? ", valid to " + vt : "") : (vt ? "Factory quote valid to " + vt : "");
+    if (dateLine) {
+      const before = patch.notes !== undefined ? patch.notes : (cur.notes || "");
+      if (!before.includes(dateLine)) {
+        patch.notes = (before ? before.replace(/\s+$/, "") + "\n" : "") + dateLine;
+        // A blank Notes box filled from the PDF now holds both, and reads as filled.
+        if (nx.notes && !String(cur.notes || "").trim()) nx.notes = { ...nx.notes, value: patch.notes };
+      }
+    }
 
     // ── The factory: matched to the directory or not at all ──
     const fm = out.factory || {};
@@ -3466,6 +3483,10 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
     // Picking a factory refills these from the directory, so then the PDF only
     // suggests; otherwise an empty box takes the PDF's value.
     ["factoryContact", "factoryEmail", "factoryPhone", "country", "leadTime"].forEach((k) => put(k, { suggestOnly: !!pickCompany }));
+    // For applyFactory: a box the directory leaves blank takes these. Kept while
+    // the matched factory is offered, so "Use" on it fills blanks the same way.
+    pdfFillRef.current = company ? { companyId: company.id, values: Object.fromEntries(
+      ["factoryContact", "factoryEmail", "factoryPhone", "country", "leadTime"].filter((k) => nx[k]).map((k) => [k, nx[k].value])) } : null;
 
     // ── HTS: a library code or nothing ──
     const h = out.hts || {};
@@ -3502,6 +3523,15 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
       });
       if ((cur.sizeScales || []).length) warnings.push("This quote has sizes. The PDF prices went on the tiers; size quantities and prices were not imported.");
     }
+
+    // A field a warning names is never green: it shows amber, whatever the
+    // reading's own confidence. The route says which fields its warnings name.
+    const warned = new Set(out.warnedFields || []);
+    const warnKey = (k) => (k.startsWith("tier") ? "tiers" : k === "clientDetails" ? "details" : k === "factory" ? "factoryName" : k);
+    Object.keys(nx).forEach((k) => {
+      if (warned.has(warnKey(k)) && nx[k].conf === "high")
+        nx[k] = { ...nx[k], conf: "medium", note: (nx[k].note ? nx[k].note + "; " : "") + "a warning mentions it" };
+    });
 
     // Applied in this order so each step sees the last: plain fields, the
     // factory (its fill writes the five boxes under it), the tiers, and the HTS
@@ -3718,6 +3748,17 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
       country: fill.country,
       leadTime: fill.leadTime,
     }));
+    // PDF IMPORT. The directory wins where it has a value; where it has none,
+    // the PDF fills the box. Queued after the fill above, so it sees its result
+    // -- and it runs on the contact-choice path too, which also ends here.
+    const pdf = pdfFillRef.current;
+    if (pdf && company && pdf.companyId === company.id) {
+      setF((p) => {
+        const n = { ...p };
+        Object.entries(pdf.values).forEach(([k, v]) => { if (String(n[k] ?? "").trim() === "") n[k] = v; });
+        return n;
+      });
+    }
   };
 
   // The select hands back a company, or null when cleared. One contact fills
@@ -4593,7 +4634,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
             <div style={{ gridColumn: "1 / -1", display: "grid", gap: 12,
                           gridTemplateColumns: "minmax(0, 2.7fr) minmax(0, 1.15fr) minmax(0, 1.15fr)" }}>
             <FactorySelect value={f.factory} companies={factoryCompanies}
-              onPick={(c) => { dismissX("factory"); onPickFactory(c); }}
+              onPick={(c) => { dismissX("factory"); pdfFillRef.current = null; onPickFactory(c); }}
               onAddNew={(seed) => setAddingFactory({ name: seed || "" })}
               fieldStyle={S.field}
               labelStyle={S.fieldLabel} inputStyle={xStyle(S.input, hl("factory"))} />
@@ -4642,7 +4683,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
               and Color columns -- client wording, not the internal notes. Also
               editable in the sheet's settings step, which saves back here. */}
           <FormSection icon={<FileText size={15} />} title="Client Price Sheet">
-            <Field label="Details" k="clientDetails" placeholder="e.g. 100% cotton, 180gsm" f={f} set={set} />
+            <Field label="Details" k="clientDetails" placeholder="e.g. 100% cotton, 180gsm" f={f} set={set} hl={hl("clientDetails")} />
             <Field label="Color" k="clientColor" placeholder="e.g. Red / Black / Grey" f={f} set={set} />
           </FormSection>
 
