@@ -38,7 +38,7 @@ import ExportMenu from "@/app/components/ExportMenu";
 import { loadExcelJS } from "@/lib/excel";
 import { buildPriceSheet } from "@/lib/workbook";
 import { safeName } from "@/lib/exportFormats";
-import { buildModel, toWorkbookSheet, toCsv, toHtml, longDate, NOTE_DDP, NOTE_BREAKDOWN, NOTE_APPROVAL } from "@/lib/clientSheet";
+import { buildModel, toWorkbookSheet, toCsv, toHtml, longDate, NOTE_DDP, NOTE_APPROVAL } from "@/lib/clientSheet";
 import { logoDataUrl } from "@/lib/listDoc";
 import { CodeModal } from "@/app/components/CodeModal";
 // HtsField used to live in this file. It moved to app/components so the Edit
@@ -2712,9 +2712,10 @@ async function printQuote(q, dutyRate = null) {
 
 // ---------- Send to Client: the client price sheet ----------
 // Company, then the quotes, then the sheet's settings, then Excel, PDF or CSV.
-// The sheet itself -- tables by quantity set, size bands, the Delivered and
-// Breakdown views -- is lib/clientSheet.js; the Excel layout is buildPriceSheet
-// in lib/workbook.js. Nothing here shows a cost or a margin.
+// The sheet itself -- tables by quantity set, size bands -- is lib/clientSheet.js;
+// the Excel layout is buildPriceSheet in lib/workbook.js. DDP ONLY: the sheet
+// shows delivered prices and never freight, duty, EXW, a cost or a margin
+// (Riley, 21 Oct) -- there is no Breakdown view any more.
 //
 // Item, Details and Color are editable per quote in the settings step. Details
 // and Color save back to the quote (client_details, client_color, script 116)
@@ -2745,7 +2746,6 @@ function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClo
   };
 
   // ── THE SETTINGS STEP ──────────────────────────────────────────────────────
-  const [view, setView] = useState("ddp");
   const [withPayment, setWithPayment] = useState(false);
   const [head, setHead] = useState(null);           // the header fields, filled on entering the step
   const [edits, setEdits] = useState({});           // { [quoteId]: { item, details, color } }
@@ -2794,16 +2794,6 @@ function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClo
       return next;
     });
   };
-  // The first footer line follows the view, unless somebody has rewritten it.
-  const pickView = (v) => {
-    setView(v);
-    setHead((h) => {
-      if (!h) return h;
-      const [first, ...rest] = h.notes;
-      const swap = v === "breakdown" && first === NOTE_DDP ? NOTE_BREAKDOWN : v === "ddp" && first === NOTE_BREAKDOWN ? NOTE_DDP : first;
-      return { ...h, notes: [swap, ...rest] };
-    });
-  };
 
   // Details and Color that differ from the quote, written back before export.
   const saveBack = async () => {
@@ -2839,7 +2829,7 @@ function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClo
         vendor,
         bank: BANK_FIELDS.map(([k, label]) => [label, String((settings || {})[k] ?? "").trim()]).filter(([, v]) => v !== ""),
       } : null;
-      const model = buildModel({ quotes: pickedQuotes, edits, header: head, view, payment });
+      const model = buildModel({ quotes: pickedQuotes, edits, header: head, payment });
       // The KUI logo under the sign-off: the image the SO confirmation uses
       // (/logo.png, through logoDataUrl), about 120px wide. None, if it is not there.
       const logoSrc = fmt === "csv" ? "" : await logoDataUrl();
@@ -2940,26 +2930,11 @@ function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClo
                 <ChevronLeft size={15} /> Back to quotes
               </button>
               <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
-                <div>
-                  <span style={lbl}>View</span>
-                  <div style={{ display: "inline-flex", background: "#ECECF0", borderRadius: 10, padding: 3 }}>
-                    {[["ddp", "Delivered (DDP)"], ["breakdown", "Breakdown"]].map(([v, l]) => (
-                      <button key={v} type="button" onClick={() => pickView(v)} aria-pressed={view === v}
-                        style={{ border: "none", borderRadius: 8, padding: "7px 13px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-                                 background: view === v ? "#0f1729" : "transparent", color: view === v ? "#fff" : "#5A5A5E" }}>{l}</button>
-                    ))}
-                  </div>
-                </div>
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, color: "#0f1729", paddingBottom: 6 }}>
                   <input data-noguard type="checkbox" checked={withPayment} onChange={(e) => setWithPayment(e.target.checked)} />
                   Include payment details
                 </label>
               </div>
-              {view === "breakdown" && (
-                <p style={{ fontSize: 12.5, color: "#6a7488", margin: "0 0 14px" }}>
-                  Breakdown shows each quantity as product price, freight, duty and delivered total, using the quote's own freight and duty. Where those cannot be worked out the three read "—"; size rows show the delivered price only.
-                </p>
-              )}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 12 }}>
                 {field("Company title", head.company, (v) => setH("company", v))}
                 {field("Program title", head.programme, (v) => setH("programme", v))}
