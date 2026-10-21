@@ -81,7 +81,20 @@ const SCHEMA = {
         additionalProperties: false,
       },
     },
-    warnings: { type: 'array', items: { type: 'string' } },
+    // Each warning names the fields it is about, so those show amber -- the
+    // model knows what it meant; matching its wording afterwards missed some.
+    warnings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          text: { type: 'string' },
+          fields: { type: 'array', items: { type: 'string', enum: [...FIELD_KEYS, 'tiers'] } },
+        },
+        required: ['text', 'fields'],
+        additionalProperties: false,
+      },
+    },
   },
   required: ['fields', 'tiers', 'warnings'],
   additionalProperties: false,
@@ -144,7 +157,9 @@ tiers: one entry per quantity break for the PER-UNIT factory price, lowest quant
 
 Plain numbers: "1,250.50" becomes "1250.50"; "$0.85/pc" becomes "0.85".
 
-warnings: short sentences about anything a person should check before relying on this, for example more than one product in the document (report the first one only), prices in more than one currency, prices that are totals rather than per unit, or pages that could not be read.`;
+warnings: anything a person should check before relying on this, for example more than one product in the document (report the first one only), prices in more than one currency, prices that are totals rather than per unit, packing or carton figures that look inconsistent, or pages that could not be read. Each warning has:
+- text: one short sentence.
+- fields: every field the warning is about, by the names above; "tiers" when it concerns the quantity breaks or unit prices. A warning about packing names unitsPerCarton and whichever carton dimensions or weight it mentions. Empty only when it concerns no field.`;
 
 // ── NUMBERS AND UNITS ────────────────────────────────────────────────────────
 const toNum = (s) => {
@@ -156,8 +171,9 @@ const DIM_TO_CM = { cm: 1, mm: 0.1, in: 2.54 };
 const WT_TO_KG = { kg: 1, g: 0.001, lb: 0.45359237 };
 
 // ── WHICH FIELDS A WARNING IS ABOUT ─────────────────────────────────────────
-// Matched on the words a warning uses, so a field it names shows amber rather
-// than green. 'tiers' stands for every tier box.
+// The model tags each warning with its fields. These patterns are only the
+// FALLBACK, for a warning it left untagged and for the warnings this route adds
+// itself: matched on the words a warning uses. 'tiers' stands for every tier box.
 const WARN_WORDS = {
   unitsPerCarton: /units?\s*(\/|per)\s*(master\s*)?(carton|ctn)|pcs\s*\/\s*ctn|carton\s*(qty|quantity)|unitsPerCarton/i,
   cartonL: /carton\s*(size|dimension|measurement)|dimension|cartonL\b/i,
@@ -300,7 +316,18 @@ export async function POST(req) {
 
   // ── 4. CHECKED AGAINST WHAT WE HAVE ────────────────────────────────────────
   const F = fieldsFrom(out.fields);
-  const warnings = Array.isArray(out.warnings) ? out.warnings.filter((w) => typeof w === 'string' && w.trim()) : [];
+  // The form reads warnings as plain sentences; the fields they name become
+  // warnedFields below. A warning tagged with no field falls back to WARN_WORDS.
+  const tagged = (Array.isArray(out.warnings) ? out.warnings : [])
+    .filter((w) => w && typeof w.text === 'string' && w.text.trim());
+  const warnings = tagged.map((w) => w.text.trim());
+  const warned = new Set();
+  const allowed = new Set([...FIELD_KEYS, 'tiers']);
+  tagged.forEach((w) => {
+    const fs = Array.isArray(w.fields) ? w.fields.filter((k) => allowed.has(k)) : [];
+    (fs.length ? fs : warnedFieldsOf([w.text])).forEach((k) => warned.add(k));
+  });
+  const modelTexts = new Set(warnings);
   const units = { dimension: unitOf(F.cartonDimUnit), weight: unitOf(F.cartonWeightUnit) };
   delete F.cartonDimUnit; delete F.cartonWeightUnit;
 
@@ -359,7 +386,9 @@ export async function POST(req) {
     hts,
     factory,
     warnings,
-    warnedFields: warnedFieldsOf(warnings),
+    // The model's own tags, plus the fallback patterns on the warnings this
+    // route added (currency, lookups), which carry no tags.
+    warnedFields: [...new Set([...warned, ...warnedFieldsOf(warnings.filter((w) => !modelTexts.has(w)))])],
     model: msg.model,
     usage: { input: msg.usage?.input_tokens ?? null, output: msg.usage?.output_tokens ?? null },
   }, 200);
