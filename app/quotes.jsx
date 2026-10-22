@@ -2830,12 +2830,13 @@ function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClo
         bank: BANK_FIELDS.map(([k, label]) => [label, String((settings || {})[k] ?? "").trim()]).filter(([, v]) => v !== ""),
       } : null;
       const model = buildModel({ quotes: pickedQuotes, edits, header: head, payment });
-      // The KUI logo under the sign-off: the image the SO confirmation uses
-      // (/logo.png, through logoDataUrl), about 120px wide. None, if it is not there.
+      // The KUI logo: the image the SO confirmation uses (/logo.png, through
+      // logoDataUrl). The Excel letterhead sets it 160px wide; the PDF page sizes
+      // it in its own CSS and takes only the image. None, if it is not there.
       const logoSrc = fmt === "csv" ? "" : await logoDataUrl();
       const logoSize = logoSrc ? await new Promise((ok) => {
         const img = new Image();
-        img.onload = () => ok(img.naturalWidth ? { width: 120, height: Math.round(120 * img.naturalHeight / img.naturalWidth) } : null);
+        img.onload = () => ok(img.naturalWidth ? { width: 160, height: Math.round(160 * img.naturalHeight / img.naturalWidth) } : null);
         img.onerror = () => ok(null);
         img.src = logoSrc;
       }) : null;
