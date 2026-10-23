@@ -141,6 +141,7 @@ import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryL
          buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline, timelineBy, monthColor, INV_STATUS_COLORS } from '@/lib/inventoryView';
 import { buildSoListSheets, buildSoRecordSheets, buildPoListSheets, buildPoRecordSheets, ordersListFileName, orderFileName, ordersCsvName, ordersPdfMeta, orderPdfMeta, orderRef } from '@/lib/ordersExport';
 import { lclBidTotal, bidEffective } from '@/lib/freightBids';
+import { matches, normalizeTerm } from '@/lib/textFilter';
 import { buildShipmentsSheets, shipmentsFileName, SHIPMENTS_ALL, shipmentsCsvName, shipmentsPdfMeta, buildRecordSheets, recordFileName, recordPdfMeta } from '@/lib/shipmentsExport';
 import { sheetsToCsvFiles, sheetsToPdfHtml } from '@/lib/exportFormats';
 import ExportMenu from './components/ExportMenu';
@@ -7759,30 +7760,82 @@ function ImportBidsModal({ quotes, onClose, onApplied }) {
 // ── Apply a winning bid into the product quote's freight builder ─────────────
 const APPLY_CAPS = { '20GP':32, '40GP':58, '40HQ':68, '45HQ':83 };
 
+// ── THE PRODUCT QUOTE PICKER ─────────────────────────────────────────────────
+// A searchable combobox in the manner of HtsField: type to filter by product,
+// client or SKU, then pick -- by click, or up/down and Enter. Nothing is chosen
+// until somebody chooses; the old <select> preselected a best guess, and a guess
+// left in place wrote one bid's freight onto the wrong product. The freight
+// quote's own product quote, when it has one, is listed first and tagged.
+const quoteLabel = q => [(q.sku||'').trim(), (q.product||'').trim(), (q.client||'').trim()].filter(Boolean).join(' \u2014 ') || q.id.slice(0,8);
+function QuotePicker({ quotes, value, onPick, linkedId }) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [active, setActive] = useState(0);
+  const listRef = useRef(null);
+  const term = normalizeTerm(typed);
+  const hits = useMemo(() => {
+    const list = term ? quotes.filter(q => matches(term, q.product, q.client, q.sku)) : quotes;
+    return linkedId ? [...list.filter(q => q.id === linkedId), ...list.filter(q => q.id !== linkedId)] : list;
+  }, [quotes, term, linkedId]);
+  useEffect(() => { setActive(0); }, [term, open]);
+  // The highlighted row stays in view as the arrows move it.
+  useEffect(() => {
+    const el = open && listRef.current && listRef.current.children[active];
+    if (el) el.scrollIntoView({ block:'nearest' });
+  }, [active, open]);
+  const chosen = quotes.find(q => q.id === value) || null;
+  const commit = q => { setTyped(''); setOpen(false); onPick(q.id); };
+  const onKey = e => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); if (!open) setOpen(true); else setActive(a => Math.min(a+1, Math.max(hits.length-1, 0))); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a-1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (open && hits[active]) commit(hits[active]); }
+    else if (e.key === 'Escape' && open) { e.stopPropagation(); setOpen(false); setTyped(''); }
+  };
+  return (
+    <div style={{position:'relative'}}>
+      {/* data-noguard: typing here only filters. Choosing is what counts, and
+          the host marks that. */}
+      <input data-noguard value={open ? typed : (chosen ? quoteLabel(chosen) : '')}
+        placeholder={chosen ? quoteLabel(chosen) : 'Type to search by product, client or SKU\u2026'}
+        onFocus={() => setOpen(true)} onClick={() => setOpen(true)}
+        onChange={e => { setTyped(e.target.value); setOpen(true); }} onKeyDown={onKey}
+        onBlur={() => { setOpen(false); setTyped(''); }}
+        role="combobox" aria-expanded={open} aria-autocomplete="list"
+        style={{width:'100%',border:'1px solid '+(open?'#0071E3':'#E5E7EB'),borderRadius:'9px',padding:'9px 12px',fontSize:'13px',outline:'none',boxSizing:'border-box',background:'#fff'}} />
+      {open && (
+        <div ref={listRef} role="listbox" style={{position:'absolute',top:'100%',left:0,right:0,zIndex:20,marginTop:'4px',maxHeight:'260px',overflowY:'auto',background:'#fff',border:'1px solid #E5E7EB',borderRadius:'10px',boxShadow:'0 10px 30px rgba(15,23,41,.16)',padding:'4px'}}>
+          {hits.length === 0 && <div style={{padding:'9px 10px',fontSize:'12.5px',color:'#8A8A8E'}}>{typed.trim() ? 'No quotes match \u201c'+typed.trim()+'\u201d.' : 'No quotes.'}</div>}
+          {hits.map((q, i) => (
+            // onMouseDown, not onClick: the input's blur closes the list before
+            // a click would land.
+            <button key={q.id} type="button" role="option" aria-selected={i === active}
+              onMouseDown={e => { e.preventDefault(); commit(q); }} onMouseEnter={() => setActive(i)}
+              style={{display:'block',width:'100%',textAlign:'left',border:'none',borderRadius:'7px',padding:'7px 9px',fontSize:'12.5px',cursor:'pointer',fontFamily:'inherit',
+                      background: i === active ? '#EAF3FE' : 'transparent', color:'#1A1A1C'}}>
+              <span style={{fontWeight:600}}>{(q.product||'').trim() || '\u2014'}</span>
+              {q.id === linkedId && <span style={{fontSize:'10px',fontWeight:700,color:'#15803D',background:'#DCFCE7',borderRadius:'5px',padding:'1px 6px',marginLeft:'7px'}}>LINKED</span>}
+              <span style={{display:'block',fontSize:'11.5px',color:'#8A8A8E'}}>{[(q.sku||'').trim(), (q.client||'').trim()].filter(Boolean).join(' \u00b7 ') || '\u00a0'}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
-  // Its one control is a <select>, which fires change, so events alone cover it.
-  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
+  // The picker's filter box is data-noguard, so choosing a quote is marked by hand.
+  const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
   const [pq, setPq] = useState([]);           // product quotes from the quotes DB
   const [selId, setSelId] = useState('');
   const [busy, setBusy] = useState(false);
   const [loadingQ, setLoadingQ] = useState(true);
 
   useEffect(()=>{
+    // Nothing is preselected -- see QuotePicker. Apply stays off until a quote
+    // is chosen.
     SBQ.from('quotes').select('id,product,sku,client,units_per_carton,carton_l,carton_w,carton_h,tiers').order('created_at',{ascending:false}).limit(400).then(({data})=>{
-      const list = data||[];
-      setPq(list);
-      // best match: explicit source link → sku/product text → client
-      let best = '';
-      if (shipQuote.source_quote_id && list.some(q=>q.id===shipQuote.source_quote_id)) best = shipQuote.source_quote_id;
-      if (!best) {
-        const d = (((shipQuote.line_items||[])[0]||{}).desc||'').toLowerCase().trim();
-        if (d) { const hit = list.find(q=>{ const t=((q.product||'')+' '+(q.sku||'')).toLowerCase(); return t.includes(d)||d.includes((q.sku||'').toLowerCase()&& (q.sku||'').toLowerCase()); }); if (hit) best = hit.id; }
-      }
-      if (!best) {
-        const cn = ((shipQuote.client||{}).name||'').toLowerCase().trim();
-        if (cn) { const hit = list.find(q=>(q.client||'').toLowerCase().trim()===cn); if (hit) best = hit.id; }
-      }
-      setSelId(best || (list[0]? list[0].id : ''));
+      setPq(data||[]);
       setLoadingQ(false);
     });
   },[]);
@@ -7860,9 +7913,8 @@ function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
         <div style={{padding:'18px 24px'}}>
           <label style={{display:'block',fontSize:'10px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'5px'}}>Product quote</label>
           {loadingQ ? <div style={{fontSize:'13px',color:'#8A8A8E'}}>Loading quotes…</div> : (
-            <select value={selId} onChange={e=>setSelId(e.target.value)} style={{width:'100%',border:'1px solid #E5E7EB',borderRadius:'9px',padding:'9px 12px',fontSize:'13px',outline:'none',boxSizing:'border-box',background:'#fff'}}>
-              {pq.map(q=><option key={q.id} value={q.id}>{[(q.sku||'').trim(),(q.product||'').trim(),(q.client||'').trim()].filter(Boolean).join(' — ')||q.id.slice(0,8)}</option>)}
-            </select>
+            <QuotePicker quotes={pq} value={selId} linkedId={shipQuote.source_quote_id||null}
+              onPick={id => { markDirty(); setSelId(id); }} />
           )}
           {chosen && shipQuote.source_quote_id===chosen.id && <div style={{fontSize:'11.5px',color:'#15803D',marginTop:'6px',fontWeight:500}}>Linked — this freight quote was generated from this product quote.</div>}
           {lcl && <div style={{fontSize:'12.5px',color:'#B45309',marginTop:'10px',lineHeight:1.5,background:'#FEF3C7',borderRadius:'9px',padding:'9px 12px'}}>LCL freight is entered on the quote by hand. Apply is not available for LCL bids.</div>}
