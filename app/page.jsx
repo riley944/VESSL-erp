@@ -3398,7 +3398,7 @@ function SettingsPage({ role, user, displayName, onDisplayName }) {
                     fontSize:'13.5px',padding:'9px 14px',marginBottom:'-1px',cursor:'pointer'}}>{label}</button>
         ))}
       </div>
-      {tab === 'general' ? <GeneralSettings user={user} />
+      {tab === 'general' ? <GeneralSettings user={user} role={role} />
         : <MyAccount user={user} displayName={displayName} onDisplayName={onDisplayName} />}
     </>
   );
@@ -3551,7 +3551,7 @@ function MyAccount({ user, displayName, onDisplayName }) {
 // added by script 31 -- which must be committed before this deploys, or the column
 // comes back undefined and an undefined toggle renders OFF, showing everybody
 // opted out of something they are opted in to.
-function GeneralSettings({ user }) {
+function GeneralSettings({ user, role }) {
   const email = user?.email || '';
   // ON UNTIL PROVEN OTHERWISE, and that is the whole state model. true is both the
   // column default and the value this holds while loading, on a read error, and on
@@ -3600,6 +3600,7 @@ function GeneralSettings({ user }) {
   };
 
   return (
+    <>
     <div className="section-card" style={{marginBottom:'20px'}}>
       <div className="section-head"><h3>Notifications</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Applies to your account only</span></div>
       <div style={{padding:'18px',maxWidth:'520px'}}>
@@ -3629,6 +3630,69 @@ function GeneralSettings({ user }) {
         {msg && <p style={{fontSize:'12.5px',color:'var(--hot)',marginTop:'10px'}}>{msg}</p>}
       </div>
     </div>
+    {/* Business configuration on a per-person page, so shown only to the roles
+        whose saves the database accepts (can_write_settings, admin and staff) --
+        the same allowlist as Company Banking. */}
+    {canSeeBanking(role) && <LandedCostRates />}
+    </>
+  );
+}
+
+// ── Landed cost rates (script 133) ───────────────────────────────────────────
+// The seven rates the landed-cost estimate on freight quote bids uses
+// (lib/landedCost.js), on kui_settings. One row of seven equal columns, labels
+// on one line so every input sits on the same baseline. Saved on their own,
+// with an update of just these columns -- the Company Banking form drops them
+// from its upsert, so neither page can write the other's values back.
+// CBP resets the MPF minimum and maximum every 1 October.
+function LandedCostRates() {
+  // undefined while loading; null when the columns do not exist yet (before 133).
+  const [rates, setRates] = useState(undefined);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  useEffect(()=>{
+    SB.from('kui_settings').select('*').eq('id',1).maybeSingle().then(({data})=>{
+      setRates(hasRateColumns(data) ? Object.fromEntries(RATE_KEYS.map(k => [k, String(data[k])])) : null);
+    });
+  },[]);
+  const save = async () => {
+    const parsed = parseRates(rates);
+    if (parsed.error) { setMsg(parsed.error); return; }
+    setSaving(true);
+    const { error } = await SB.from('kui_settings').update({ ...parsed.values, updated_at:new Date().toISOString() }).eq('id',1);
+    setSaving(false);
+    setMsg(error ? 'Error: '+error.message : 'Saved.'); if (!error) setTimeout(()=>setMsg(''),2500);
+  };
+  return (
+    <div className="section-card" style={{marginBottom:'20px'}}>
+      <div className="section-head"><h3>Landed cost rates</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Used by the landed-cost estimate on freight quote bids</span></div>
+      {rates === undefined ? (
+        <div style={{padding:'0 18px 16px',fontSize:'12.5px',color:'var(--muted)'}}>Loading…</div>
+      ) : rates === null ? (
+        <div style={{padding:'0 18px 16px',fontSize:'12.5px',color:'var(--muted)'}}>Not set up yet — script 133 adds these rates to the database.</div>
+      ) : (
+        <div style={{padding:'0 18px 16px'}}>
+          <div style={{overflowX:'auto'}}>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(7, minmax(0, 1fr))',gap:'10px',minWidth:'700px',alignItems:'end'}}>
+              {RATE_FIELDS.map(fd=>(
+                <div key={fd.key} style={{minWidth:0}}>
+                  <label style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{fd.short}</label>
+                  <input className="form-input" inputMode="decimal" aria-label={fd.label} value={rates[fd.key]} style={{width:'100%',boxSizing:'border-box'}}
+                    onChange={e=>{ const v = e.target.value; setRates(prev=>({ ...prev, [fd.key]:v })); }} />
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'8px'}}>
+            MPF and HMF are a percent of the CI value; DIS of MPF + HMF + duty; insurance of the insured value; insured value is a percent of the landed value.
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:'14px',marginTop:'12px'}}>
+            <button className="btn btn-dark" onClick={save} disabled={saving}>{saving?'Saving…':'Save rates'}</button>
+            {msg && <span style={{fontSize:'13px',color:msg==='Saved.'?'var(--accent)':'var(--hot)'}}>{msg}</span>}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3649,32 +3713,20 @@ function CompanyBanking() {
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
-  // LANDED COST RATES (script 133), held APART from form: the cards above save
-  // with an upsert of the whole form, and these seven have their own Save and
-  // their own checks, so neither save can carry the other's half-typed values.
-  // undefined while loading; null when the columns do not exist yet.
-  const [rates, setRates] = useState(undefined);
-  const [ratesSaving, setRatesSaving] = useState(false);
-  const [ratesMsg, setRatesMsg] = useState('');
   useEffect(()=>{
     // .single() reports an error rather than a row when the table is empty, which
     // is the NORMAL state until somebody saves for the first time. The fallback
     // is the blank shape, so an empty table renders an empty form rather than a
     // spinner that never resolves.
+    // THE LANDED COST RATES (script 133) ARE DROPPED from this form. They are
+    // edited in Settings, General Settings, and saved there on their own; left
+    // in, this page's whole-form upsert would write back whatever it loaded and
+    // undo a rate saved in Settings since.
     SB.from('kui_settings').select('*').eq('id',1).single().then(({data})=>{
       const rest = data ? Object.fromEntries(Object.entries(data).filter(([k]) => !RATE_KEYS.includes(k))) : null;
       setForm(rest || { ...BLANK_SETTINGS });
-      setRates(hasRateColumns(data) ? Object.fromEntries(RATE_KEYS.map(k => [k, String(data[k])])) : null);
     });
   },[]);
-  const saveRates = async () => {
-    const parsed = parseRates(rates);
-    if (parsed.error) { setRatesMsg(parsed.error); return; }
-    setRatesSaving(true);
-    const { error } = await SB.from('kui_settings').update({ ...parsed.values, updated_at:new Date().toISOString() }).eq('id',1);
-    setRatesSaving(false);
-    setRatesMsg(error ? 'Error: '+error.message : 'Saved.'); if (!error) setTimeout(()=>setRatesMsg(''),2500);
-  };
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   const save = async () => {
     setSaving(true);
@@ -3729,30 +3781,6 @@ function CompanyBanking() {
       <div style={{display:'flex',alignItems:'center',gap:'14px'}}>
         <button className="btn btn-dark" onClick={save} disabled={saving}>{saving?'Saving…':'Save changes'}</button>
         {msg && <span style={{fontSize:'13px',color:'var(--accent)'}}>{msg}</span>}
-      </div>
-      {/* LANDED COST RATES. Read by the landed-cost panel on freight quote bids
-          (lib/landedCost.js). CBP resets the MPF minimum and maximum every
-          1 October, so they are kept here rather than in code. */}
-      <div className="section-card" style={{margin:'28px 0 20px'}}>
-        <div className="section-head"><h3>Landed cost rates</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Used by the landed-cost estimate on freight quote bids</span></div>
-        {rates === undefined ? (
-          <div style={{padding:'0 18px 16px',fontSize:'12.5px',color:'var(--muted)'}}>Loading…</div>
-        ) : rates === null ? (
-          <div style={{padding:'0 18px 16px',fontSize:'12.5px',color:'var(--muted)'}}>Not set up yet — script 133 adds these rates to the database.</div>
-        ) : (
-          <>
-            <div className="logi-grid">
-              {RATE_FIELDS.map(fd=>(
-                <div key={fd.key} className="logi-field"><label>{fd.label} <span style={{textTransform:'none',letterSpacing:0,color:'var(--faint)'}}>{fd.unit}</span></label>
-                  <input className="form-input" inputMode="decimal" value={rates[fd.key]} onChange={e=>{ const v = e.target.value; setRates(prev=>({ ...prev, [fd.key]:v })); }} /></div>
-              ))}
-            </div>
-            <div style={{padding:'0 18px 16px',display:'flex',alignItems:'center',gap:'14px'}}>
-              <button className="btn btn-dark" onClick={saveRates} disabled={ratesSaving}>{ratesSaving?'Saving…':'Save rates'}</button>
-              {ratesMsg && <span style={{fontSize:'13px',color:ratesMsg==='Saved.'?'var(--accent)':'var(--hot)'}}>{ratesMsg}</span>}
-            </div>
-          </>
-        )}
       </div>
     </>
   );
