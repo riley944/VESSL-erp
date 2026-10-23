@@ -8388,7 +8388,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
         <div style={{display:'flex',alignItems:'baseline',gap:'8px',flexWrap:'wrap',fontSize:'12.5px'}}>
           {incomplete
             ? <span style={{fontWeight:700,color:'#B45309'}}>Landed — incomplete</span>
-            : <span style={{fontWeight:700,color:'#1A1A1C'}}>{'Landed \u2248 '+money2(L.total)+(L.perUnit!=null?' \u00b7 '+money2(L.perUnit)+'/unit':'')}</span>}
+            : <span style={{fontWeight:700,color:'#1A1A1C'}}>{'Landed freight + fees \u2248 '+money2(L.total)+(L.perUnit!=null?' \u00b7 '+money2(L.perUnit)+'/unit':'')}</span>}
           <button onClick={()=>setOpenLanded(open ? null : b.id)} style={{background:'none',border:'none',padding:0,color:'#0071E3',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>{open ? 'Hide breakdown' : 'Breakdown'}</button>
         </div>
         {open && (
@@ -8425,7 +8425,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
               </div>
             ))}
             <div style={{marginTop:'6px'}}>
-              {row('CI value', money2(L.ci))}
+              {row('Goods value (fee base)', money2(L.ci), 'not in total')}
               {row('Freight', money2(L.freight), b.all_in ? 'all-in' : null)}
               {row('MPF', L.allIn ? inc : money2(L.mpf), L.allIn ? null : r.mpf_rate+'%'+(L.mpfClamped ? ', CBP '+(L.mpfClamped==='min'?'minimum':'maximum')+' applies' : ''))}
               {row('HMF', L.allIn ? inc : money2(L.hmf), L.allIn ? null : r.hmf_rate+'%')}
@@ -8433,8 +8433,8 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
               {row('DIS', L.allIn ? inc : money2(L.dis), L.allIn ? null : r.dis_rate+'% of MPF + HMF + duty')}
               {row('Insurance', L.allIn ? inc : money2(L.insurance), L.allIn ? null : r.insurance_rate+'% \u00d7 '+r.insurance_uplift+'%')}
               <div style={{borderTop:'2px solid #ECECEE',marginTop:'4px',paddingTop:'4px'}}>
-                {row(L.allIn ? 'Landed total (the all-in price)' : 'Landed total', incomplete ? 'incomplete' : money2(L.total))}
-                {row('Per unit', incomplete || L.perUnit==null ? '\u2014' : money2(L.perUnit), L.units ? L.units.toLocaleString()+' units' : null)}
+                {row(L.allIn ? 'Landed freight + fees (the all-in price)' : 'Landed freight + fees', incomplete ? 'incomplete' : money2(L.total))}
+                {row('Freight + fees per unit', incomplete || L.perUnit==null ? '\u2014' : money2(L.perUnit), L.units ? L.units.toLocaleString()+' units' : null)}
               </div>
               {incomplete && <div style={{fontSize:'11.5px',color:'#B45309',marginTop:'4px'}}>
                 {[L.missing.some(m=>m.what==='freight') ? 'this bid has no freight figure' : null,
