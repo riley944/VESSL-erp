@@ -7889,6 +7889,11 @@ function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
   },[]);
 
   const chosen = pq.find(q=>q.id===selId) || null;
+  // THE PRODUCT QUOTE THIS FREIGHT QUOTE CAME FROM. shipment_quotes has no
+  // source_quote_id column -- reading one gave undefined, so LINKED never showed.
+  // The link is on the line items (line_items[].quote_id), written by the
+  // freight generator; the first line that carries one is the one offered.
+  const linkedId = ((shipQuote.line_items||[]).find(l => l && l.quote_id) || {}).quote_id || null;
   // LCL: one total for one shipment, with no container to spread it across.
   // The per-container build-up below does not apply, so nothing is offered.
   const lcl = isLCL(shipQuote);
@@ -7961,10 +7966,10 @@ function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
         <div style={{padding:'18px 24px'}}>
           <label style={{display:'block',fontSize:'10px',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'5px'}}>Product quote</label>
           {loadingQ ? <div style={{fontSize:'13px',color:'#8A8A8E'}}>Loading quotes…</div> : (
-            <QuotePicker quotes={pq} value={selId} linkedId={shipQuote.source_quote_id||null}
+            <QuotePicker quotes={pq} value={selId} linkedId={linkedId}
               onPick={id => { markDirty(); setSelId(id); }} />
           )}
-          {chosen && shipQuote.source_quote_id===chosen.id && <div style={{fontSize:'11.5px',color:'#15803D',marginTop:'6px',fontWeight:500}}>Linked — this freight quote was generated from this product quote.</div>}
+          {chosen && linkedId===chosen.id && <div style={{fontSize:'11.5px',color:'#15803D',marginTop:'6px',fontWeight:500}}>Linked — this freight quote was generated from this product quote.</div>}
           {lcl && <div style={{fontSize:'12.5px',color:'#B45309',marginTop:'10px',lineHeight:1.5,background:'#FEF3C7',borderRadius:'9px',padding:'9px 12px'}}>LCL freight is entered on the quote by hand. Apply is not available for LCL bids.</div>}
           {!lcl && cartonMsg && <div style={{fontSize:'12.5px',color:'#B45309',marginTop:'10px',lineHeight:1.5,background:'#FEF3C7',borderRadius:'9px',padding:'9px 12px'}}>{cartonMsg}</div>}
           {!lcl && chosen && unitsPerCtr>0 && (
