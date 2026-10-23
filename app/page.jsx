@@ -3938,7 +3938,7 @@ function LandedCostRates() {
             </div>
           </div>
           <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'8px'}}>
-            MPF and HMF are a percent of the CI value; DIS of MPF + HMF + duty; insurance of the insured value; insured value is a percent of the landed value.
+            MPF and HMF are a percent of the CI value; DIS of MPF + HMF + duty; insurance of the insured value; insured value is a percent of goods value + freight + fees.
           </div>
           <div style={{display:'flex',alignItems:'center',gap:'14px',marginTop:'12px'}}>
             <button className="btn btn-dark" onClick={save} disabled={saving}>{saving?'Saving…':'Save rates'}</button>
