@@ -4,7 +4,8 @@ import ExcelJS from 'exceljs';
 import { buildRfqWorkbook, rfqFileName, rfqSubject, rfqBody } from '@/lib/rfqSheet';
 
 // ── POST /api/rfq/send ───────────────────────────────────────────────────────
-// Emails the freight RFQ workbook to one forwarder contact, via Resend.
+// Emails the freight RFQ workbook to one or more contacts at ONE forwarder, or
+// to one typed address, via Resend.
 //
 // THIS IS THE APP'S FIRST SERVER-SIDE CODE, and the first thing in it that a
 // stranger could reach. Everything else runs in the browser behind a Supabase
@@ -94,12 +95,46 @@ export async function POST(req) {
   let body;
   try { body = await req.json(); } catch { return json({ ok:false, error:'Malformed request.' }, 400); }
   const quoteId = body && body.quoteId;
-  const contact = (body && body.contact) || {};
-  const to = typeof contact.email === 'string' ? contact.email.trim() : '';
   if (!quoteId) return json({ ok:false, error:'No quote given.' }, 400);
-  // Deliberately shallow -- a real address is Resend's to judge, and a regex
-  // here would reject valid ones while a determined caller passes anything.
-  if (!to || !to.includes('@')) return json({ ok:false, error:'No valid recipient address.' }, 400);
+  // `contacts` is the list the modal sends; a lone `contact` is the older shape.
+  const list = Array.isArray(body && body.contacts) ? body.contacts : [(body && body.contact) || {}];
+  if (!list.length || list.length > 10) return json({ ok:false, error:'Pick between one and ten recipients.' }, 400);
+
+  // ┌───────────────────────────────────────────────────────────────────────┐
+  // │ SEVERAL RECIPIENTS ONLY AT ONE FORWARDER, CHECKED HERE.               │
+  // │                                                                       │
+  // │ Forwarders compete for the same freight, so one email must never show │
+  // │ a bidder who else was asked. Directory contacts are looked up by id,  │
+  // │ as the caller, and must all belong to one company -- and the address  │
+  // │ each is sent to is the one stored, not the one posted. A typed        │
+  // │ address has no id and no company, so it goes alone.                   │
+  // └───────────────────────────────────────────────────────────────────────┘
+  let to;
+  if (list.some(c => c && c.contactId)) {
+    const ids = [...new Set(list.map(c => c && c.contactId))];
+    if (ids.some(id => typeof id !== 'string' || !id)) {
+      return json({ ok:false, error:'A typed address cannot go with directory contacts -- send it separately.' }, 400);
+    }
+    const { data:rows, error:cErr } = await sb.from('contacts').select('id,company_id,email').in('id', ids);
+    if (cErr) return json({ ok:false, error:'Could not read the contacts: '+(cErr.message||cErr.code) }, 502);
+    if (!rows || rows.length !== ids.length) return json({ ok:false, error:'One of those contacts could not be found.' }, 400);
+    const company = rows[0].company_id;
+    if (!company || rows.some(r => r.company_id !== company) || list.some(c => c.companyId && c.companyId !== company)) {
+      return json({ ok:false, error:'Every recipient must be at the same forwarder.' }, 400);
+    }
+    const emails = rows.map(r => String(r.email || '').trim());
+    if (emails.some(e => !e.includes('@'))) {
+      return json({ ok:false, error:'A contact has no valid email address on file.' }, 400);
+    }
+    to = [...new Set(emails)];
+  } else {
+    if (list.length !== 1) return json({ ok:false, error:'Send to one typed address at a time.' }, 400);
+    const e = list[0] && typeof list[0].email === 'string' ? list[0].email.trim() : '';
+    // Deliberately shallow -- a real address is Resend's to judge, and a regex
+    // here would reject valid ones while a determined caller passes anything.
+    if (!e || !e.includes('@')) return json({ ok:false, error:'No valid recipient address.' }, 400);
+    to = [e];
+  }
   // Sanitised unconditionally: a malformed reply-to falls back to the default
   // rather than reaching Resend. There is no environment-gated variant of this
   // line -- a dev-only pass-through lived here to exercise the rejection path
@@ -142,7 +177,7 @@ export async function POST(req) {
     const resend = new Resend(apiKey);
     const { data, error } = await resend.emails.send({
       from: FROM,
-      to: [to],
+      to,
       bcc: [ARCHIVE_BCC],
       replyTo: replyTo,
       subject: rfqSubject(quote),
@@ -163,7 +198,7 @@ export async function POST(req) {
     // the status, the timestamp, the forwarder and the message id all land
     // together under one session -- and a send whose row-write fails is visible
     // to the person who pressed the button rather than swallowed on the server.
-    return json({ ok:true, id:data.id, to }, 200);
+    return json({ ok:true, id:data.id, to: to.join(', ') }, 200);
   } catch (e) {
     return json({ ok:false, error:'Send failed: '+(e && e.message ? e.message : String(e)) }, 502);
   }

@@ -7310,9 +7310,9 @@ const FQ_ICON = { background:'none', border:'none', cursor:'pointer', padding:'3
 // Shipments export reads a bid's amount exactly as these cards do.
 
 function ForwarderRFQModal({ quote, onClose, onSent }) {
-  // markDirty on the recipient radios: the chosen contact renders as row styling
-  // and a text summary, never as a control's value, so picking one is invisible to
-  // the dirty guard's snapshot. The manual-email box beside them is a real input
+  // markDirty on the recipient checkboxes: the chosen contacts render as row
+  // styling and a text summary, never as a control's value, so picking one is
+  // invisible to the dirty guard's snapshot. The manual-email box beside them is a real input
   // and needs no help.
   const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
   const [groups, setGroups] = useState([]);
@@ -7329,8 +7329,18 @@ function ForwarderRFQModal({ quote, onClose, onSent }) {
   // │ writes no forwarder. That is correct: nobody can say which company an    │
   // │ arbitrary address belongs to, and guessing would attach a bid to the     │
   // │ wrong forwarder.                                                        │
+  // │                                                                         │
+  // │ SEVERAL CONTACTS, ONE FORWARDER. picks is a list of those objects, all   │
+  // │ at the same company (Ben Butler and the pricing desk at CargoBrokers),   │
+  // │ or a single typed address. Ticking someone at a different company       │
+  // │ replaces the list rather than joining it -- forwarders compete, and one  │
+  // │ email must never show a bidder who else was asked. The send route       │
+  // │ checks the same rule against the directory.                             │
   // └─────────────────────────────────────────────────────────────────────────┘
-  const [pick, setPick] = useState(null);
+  const [picks, setPicks] = useState([]);
+  // The first pick stands for the company -- every pick shares it.
+  const pick = picks[0] || null;
+  const pickNames = picks.map(p => p.name).join(', ');
   const [extra, setExtra] = useState('');
   const [busy, setBusy] = useState(false);
   // CONTACTS, not companies. companies.email is null on all four forwarders, so
@@ -7363,13 +7373,22 @@ function ForwarderRFQModal({ quote, onClose, onSent }) {
     return ()=>{ alive = false; };
   },[]);
 
-  const choose = (co, ct) => { markDirty(); setPick({ contactId:ct.id, email:String(ct.email), companyId:co.id, name:ct.full_name||String(ct.email), company:co.name }); };
+  // Toggles one contact. Picks at another company, or a typed address, are
+  // dropped first, so the list only ever holds one forwarder.
+  const choose = (co, ct) => {
+    markDirty();
+    setPicks(prev => {
+      const same = prev.filter(p => p.companyId === co.id);
+      if (same.some(p => p.contactId === ct.id)) return same.filter(p => p.contactId !== ct.id);
+      return [...same, { contactId:ct.id, email:String(ct.email), companyId:co.id, name:ct.full_name||String(ct.email), company:co.name }];
+    });
+  };
   // A typed address is a valid recipient with no identity -- see the box above.
   const useTyped = () => {
     const e = extra.trim();
     if (!e || !e.includes('@')) return;
     markDirty();
-    setPick({ contactId:null, email:e, companyId:null, name:e, company:null });
+    setPicks([{ contactId:null, email:e, companyId:null, name:e, company:null }]);
   };
 
   // The workbook, built in the browser for the DOWNLOAD only. The attachment
@@ -7439,7 +7458,7 @@ function ForwarderRFQModal({ quote, onClose, onSent }) {
       const res = await fetch('/api/rfq/send', {
         method:'POST',
         headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
-        body: JSON.stringify({ quoteId: quote.id, contact: pick }),
+        body: JSON.stringify({ quoteId: quote.id, contacts: picks }),
       });
       let out = null;
       try { out = await res.json(); } catch { out = null; }
@@ -7470,7 +7489,7 @@ function ForwarderRFQModal({ quote, onClose, onSent }) {
         // above -- it was sent, and the record would silently disagree.
         alert('The RFQ was sent to '+out.to+', but recording it failed: '+updErr.message+'\n\nThe quote still reads as a draft.');
       } else {
-        window._toast?.('RFQ sent to '+pick.name, 'ok');
+        window._toast?.('RFQ sent to '+pickNames, 'ok');
       }
       onSent && onSent();
     } catch (e) {
@@ -7489,11 +7508,12 @@ function ForwarderRFQModal({ quote, onClose, onSent }) {
           </div>
         </div>
         <div style={{padding:'18px 24px'}}>
-          {/* ONE recipient, chosen by radio rather than toggled as chips. These
-              forwarders compete for the same freight, so the multi-select this
-              replaces was not a convenience -- it built a comma-joined To: that
-              showed each bidder who else had been asked. Send to one, then use
-              Duplicate on the card and send the copy to the next. */}
+          {/* ONE FORWARDER, one or more of its contacts, by checkbox. These
+              forwarders compete for the same freight, so the old multi-select
+              across companies was not a convenience -- it built a comma-joined
+              To: that showed each bidder who else had been asked. Ticking a
+              contact at another company clears the rest (see choose). Send to
+              one forwarder, then use Duplicate on the card for the next. */}
           <div style={{fontSize:'10px',fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em',color:'#8A8A8E',marginBottom:'8px'}}>Send to</div>
           {groups.length === 0 && (
             <div style={{fontSize:'13px',color:'#8A8A8E',marginBottom:'14px'}}>No forwarders on file. Add one under Companies, then add a contact with an email address.</div>
@@ -7508,10 +7528,10 @@ function ForwarderRFQModal({ quote, onClose, onSent }) {
               {co.contacts.length === 0 ? (
                 <div style={{fontSize:'12px',color:'#B0B0B4',paddingLeft:'2px'}}>No contact on file — add one under Companies to send here.</div>
               ) : co.contacts.map(ct=>{
-                const on = !!pick && pick.contactId === ct.id;
+                const on = picks.some(p => p.contactId === ct.id);
                 return (
                   <label key={ct.id} style={{display:'flex',alignItems:'center',gap:'9px',padding:'7px 9px',borderRadius:'9px',cursor:'pointer',background:on?'#EAF3FE':'transparent',border:'1px solid '+(on?'#0071E3':'transparent'),margin:0,fontFamily:'inherit',fontSize:'13px',letterSpacing:0,textTransform:'none',color:'#1A1A1C'}}>
-                    <input type="radio" name="rfq-contact" checked={on} onChange={()=>choose(co, ct)} style={{margin:0,cursor:'pointer'}} />
+                    <input type="checkbox" checked={on} onChange={()=>choose(co, ct)} style={{margin:0,cursor:'pointer'}} />
                     <span style={{minWidth:0,flex:1}}>
                       <span style={{fontWeight:600}}>{ct.full_name || String(ct.email)}</span>
                       {ct.is_primary && <span style={{fontSize:'10px',fontWeight:700,color:'#0071E3',background:'#DBEAFE',borderRadius:'5px',padding:'1px 6px',marginLeft:'7px'}}>PRIMARY</span>}
@@ -7531,7 +7551,7 @@ function ForwarderRFQModal({ quote, onClose, onSent }) {
           </div>
           {pick && (
             <div style={{fontSize:'12px',color:'#4A4A4E',marginTop:'12px',lineHeight:1.6}}>
-              Sending to <b>{pick.name}</b>{pick.company ? ' at '+pick.company : ''} — {pick.email}
+              Sending to <b>{pickNames}</b>{pick.company ? ' at '+pick.company : ''} — {picks.map(p => p.email).join(', ')}
               {!pick.companyId && <span style={{color:'#B45309'}}> · not a directory contact, so no forwarder will be recorded on the quote</span>}
             </div>
           )}
@@ -7544,7 +7564,7 @@ function ForwarderRFQModal({ quote, onClose, onSent }) {
               point: a failed send used to leave no file behind, because the
               download was a side effect of the same button. */}
           <button onClick={download} disabled={busy} style={{background:'#F2F2F6',border:'none',borderRadius:'10px',padding:'9px 17px',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',cursor:busy?'not-allowed':'pointer'}}>Download sheet</button>
-          <button onClick={send} disabled={busy||!pick} style={{background:pick?'#0071E3':'#C7C7CC',color:'#fff',border:'none',borderRadius:'10px',padding:'9px 18px',fontSize:'13.5px',fontWeight:600,cursor:pick?'pointer':'not-allowed'}}>{busy?'Sending…':(pick?('Send to '+pick.name):'Send')}</button>
+          <button onClick={send} disabled={busy||!pick} style={{background:pick?'#0071E3':'#C7C7CC',color:'#fff',border:'none',borderRadius:'10px',padding:'9px 18px',fontSize:'13.5px',fontWeight:600,cursor:pick?'pointer':'not-allowed'}}>{busy?'Sending…':(pick?(picks.length > 1 ? 'Send to '+picks.length+' contacts' : 'Send to '+pick.name):'Send')}</button>
         </div>
       </div>
     </div>
