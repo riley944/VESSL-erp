@@ -142,6 +142,7 @@ import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryL
 import { buildSoListSheets, buildSoRecordSheets, buildPoListSheets, buildPoRecordSheets, ordersListFileName, orderFileName, ordersCsvName, ordersPdfMeta, orderPdfMeta, orderRef } from '@/lib/ordersExport';
 import { lclBidTotal, bidEffective } from '@/lib/freightBids';
 import { matches, normalizeTerm } from '@/lib/textFilter';
+import { RATE_FIELDS, RATE_KEYS, hasRateColumns, parseRates } from '@/lib/landedCost';
 import { buildShipmentsSheets, shipmentsFileName, SHIPMENTS_ALL, shipmentsCsvName, shipmentsPdfMeta, buildRecordSheets, recordFileName, recordPdfMeta } from '@/lib/shipmentsExport';
 import { sheetsToCsvFiles, sheetsToPdfHtml } from '@/lib/exportFormats';
 import ExportMenu from './components/ExportMenu';
@@ -3648,15 +3649,32 @@ function CompanyBanking() {
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  // LANDED COST RATES (script 133), held APART from form: the cards above save
+  // with an upsert of the whole form, and these seven have their own Save and
+  // their own checks, so neither save can carry the other's half-typed values.
+  // undefined while loading; null when the columns do not exist yet.
+  const [rates, setRates] = useState(undefined);
+  const [ratesSaving, setRatesSaving] = useState(false);
+  const [ratesMsg, setRatesMsg] = useState('');
   useEffect(()=>{
     // .single() reports an error rather than a row when the table is empty, which
     // is the NORMAL state until somebody saves for the first time. The fallback
     // is the blank shape, so an empty table renders an empty form rather than a
     // spinner that never resolves.
     SB.from('kui_settings').select('*').eq('id',1).single().then(({data})=>{
-      setForm(data || { ...BLANK_SETTINGS });
+      const rest = data ? Object.fromEntries(Object.entries(data).filter(([k]) => !RATE_KEYS.includes(k))) : null;
+      setForm(rest || { ...BLANK_SETTINGS });
+      setRates(hasRateColumns(data) ? Object.fromEntries(RATE_KEYS.map(k => [k, String(data[k])])) : null);
     });
   },[]);
+  const saveRates = async () => {
+    const parsed = parseRates(rates);
+    if (parsed.error) { setRatesMsg(parsed.error); return; }
+    setRatesSaving(true);
+    const { error } = await SB.from('kui_settings').update({ ...parsed.values, updated_at:new Date().toISOString() }).eq('id',1);
+    setRatesSaving(false);
+    setRatesMsg(error ? 'Error: '+error.message : 'Saved.'); if (!error) setTimeout(()=>setRatesMsg(''),2500);
+  };
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   const save = async () => {
     setSaving(true);
@@ -3711,6 +3729,30 @@ function CompanyBanking() {
       <div style={{display:'flex',alignItems:'center',gap:'14px'}}>
         <button className="btn btn-dark" onClick={save} disabled={saving}>{saving?'Saving…':'Save changes'}</button>
         {msg && <span style={{fontSize:'13px',color:'var(--accent)'}}>{msg}</span>}
+      </div>
+      {/* LANDED COST RATES. Read by the landed-cost panel on freight quote bids
+          (lib/landedCost.js). CBP resets the MPF minimum and maximum every
+          1 October, so they are kept here rather than in code. */}
+      <div className="section-card" style={{margin:'28px 0 20px'}}>
+        <div className="section-head"><h3>Landed cost rates</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Used by the landed-cost estimate on freight quote bids</span></div>
+        {rates === undefined ? (
+          <div style={{padding:'0 18px 16px',fontSize:'12.5px',color:'var(--muted)'}}>Loading…</div>
+        ) : rates === null ? (
+          <div style={{padding:'0 18px 16px',fontSize:'12.5px',color:'var(--muted)'}}>Not set up yet — script 133 adds these rates to the database.</div>
+        ) : (
+          <>
+            <div className="logi-grid">
+              {RATE_FIELDS.map(fd=>(
+                <div key={fd.key} className="logi-field"><label>{fd.label} <span style={{textTransform:'none',letterSpacing:0,color:'var(--faint)'}}>{fd.unit}</span></label>
+                  <input className="form-input" inputMode="decimal" value={rates[fd.key]} onChange={e=>{ const v = e.target.value; setRates(prev=>({ ...prev, [fd.key]:v })); }} /></div>
+              ))}
+            </div>
+            <div style={{padding:'0 18px 16px',display:'flex',alignItems:'center',gap:'14px'}}>
+              <button className="btn btn-dark" onClick={saveRates} disabled={ratesSaving}>{ratesSaving?'Saving…':'Save rates'}</button>
+              {ratesMsg && <span style={{fontSize:'13px',color:ratesMsg==='Saved.'?'var(--accent)':'var(--hot)'}}>{ratesMsg}</span>}
+            </div>
+          </>
+        )}
       </div>
     </>
   );
