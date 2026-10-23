@@ -142,7 +142,7 @@ import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryL
 import { buildSoListSheets, buildSoRecordSheets, buildPoListSheets, buildPoRecordSheets, ordersListFileName, orderFileName, ordersCsvName, ordersPdfMeta, orderPdfMeta, orderRef } from '@/lib/ordersExport';
 import { lclBidTotal, bidEffective } from '@/lib/freightBids';
 import { matches, normalizeTerm } from '@/lib/textFilter';
-import { RATE_FIELDS, RATE_KEYS, hasRateColumns, parseRates } from '@/lib/landedCost';
+import { RATE_FIELDS, RATE_KEYS, hasRateColumns, parseRates, landedCost, tierUnitCost, dutyRateFor } from '@/lib/landedCost';
 import { buildShipmentsSheets, shipmentsFileName, SHIPMENTS_ALL, shipmentsCsvName, shipmentsPdfMeta, buildRecordSheets, recordFileName, recordPdfMeta } from '@/lib/shipmentsExport';
 import { sheetsToCsvFiles, sheetsToPdfHtml } from '@/lib/exportFormats';
 import ExportMenu from './components/ExportMenu';
@@ -7993,6 +7993,55 @@ function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
   );
 }
 
+// ── WHAT A FREIGHT QUOTE'S GOODS ARE, FOR THE LANDED-COST ESTIMATE ──────────
+// The lines landedCost (lib/landedCost.js) works from, and the rates, read once
+// per freight quote. Every bid on the quote shares them; only the freight moves.
+//   From a PO (po_id): each PO item's quantity and unit_price. The HTS code is
+//     the product's own, else a product quote for the same product or SKU.
+//   Otherwise: each line item's pieces, priced from the product quote it came
+//     from (line_items[].quote_id) at its nearest tier, HTS from that quote.
+// The duty rate is the HTS library's total_duty for the code; a line with none
+// is left null for the panel to ask about. A line with no source has no cost.
+async function loadLandedInputs(sq) {
+  const [{ data: settings }, { data: codes }] = await Promise.all([
+    SB.from('kui_settings').select('*').eq('id', 1).maybeSingle(),
+    SB.from('htscodes').select('code,total_duty').eq('active', true),
+  ]);
+  let lines = [];
+  if (sq.po_id) {
+    let { data: items, error } = await SB.from('purchase_order_items')
+      .select('description,quantity,unit_price,master_sku,product_id,products(name,sku,hts_code)').eq('purchase_order_id', sq.po_id);
+    if (error) {
+      const retry = await SB.from('purchase_order_items').select('description,quantity,unit_price,master_sku,product_id').eq('purchase_order_id', sq.po_id);
+      items = retry.data;
+    }
+    const { data: qs } = await SBQ.from('quotes').select('id,quote_code,sku,product_id,hts').not('hts', 'is', null);
+    lines = (items || []).map(it => {
+      const sku = it.master_sku || (it.products && it.products.sku) || '';
+      const q = (qs || []).find(x => (it.product_id && x.product_id === it.product_id) || (sku && x.sku === sku)) || null;
+      const hts = (it.products && it.products.hts_code) || (q && q.hts) || '';
+      return { label: it.description || (it.products && it.products.name) || sku || 'Item', sku,
+               qty: Number(it.quantity) || 0, unitCost: Number(it.unit_price) > 0 ? Number(it.unit_price) : null,
+               hts, dutyRate: dutyRateFor(hts, codes) };
+    });
+  } else {
+    const li = (sq.line_items || []).filter(Boolean);
+    const ids = li.map(l => l.quote_id).filter(Boolean);
+    const { data: qs } = ids.length
+      ? await SBQ.from('quotes').select('id,quote_code,sku,product,hts,tiers').in('id', ids)
+      : { data: [] };
+    lines = li.map(l => {
+      const q = (qs || []).find(x => x.id === l.quote_id) || null;
+      const qty = Number(l.pieces) || 0;
+      return { label: l.desc || (q && q.product) || 'Item', sku: l.sku || (q && q.sku) || '',
+               quoteCode: (q && q.quote_code) || l.quote_code || '',
+               qty, unitCost: q ? tierUnitCost(q.tiers, qty) : null,
+               hts: (q && q.hts) || '', dutyRate: q ? dutyRateFor(q.hts, codes) : null };
+    });
+  }
+  return { lines, rates: settings || null };
+}
+
 function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
   // A viewer -- no controls at all, so it closes silently. ApplyBidModal opens
   // from here but renders outside this card, so it never joins this snapshot.
@@ -8000,6 +8049,95 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
   const [applyBid, setApplyBid] = useState(null);
   const ctType = quote.container_type||'40HQ';
   const ct = Math.max(1, Number(quote.containers_needed)||1);
+  // ── LANDED COST ──
+  // The goods and the rates, read once for the quote. A line whose HTS code has
+  // no duty rate gets a box in the breakdown; what is typed there lives for this
+  // session only (dutyIn, by line) and is never saved -- the HTS library is where
+  // a rate belongs. The boxes are data-noguard, so closing does not ask.
+  const [landedIn, setLandedIn] = useState(null);
+  const [dutyIn, setDutyIn] = useState({});
+  const [openLanded, setOpenLanded] = useState(null);   // the bid whose breakdown is open
+  useEffect(()=>{
+    let alive = true;
+    loadLandedInputs(quote).then(res => { if (alive) setLandedIn(res); }).catch(() => { if (alive) setLandedIn({ lines:[], rates:null, failed:true }); });
+    return () => { alive = false; };
+  },[quote.id]);
+  const landedLines = useMemo(() => (landedIn ? landedIn.lines.map((l, i) => {
+    if (l.dutyRate != null) return l;
+    const t = String(dutyIn[i] == null ? '' : dutyIn[i]).trim();
+    return { ...l, dutyRate: t !== '' && isFinite(Number(t)) && Number(t) >= 0 ? Number(t) : null, dutyTyped: true };
+  }) : []), [landedIn, dutyIn]);
+  const money2 = v => v==null ? '\u2014' : '$'+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  const landedRow = (b, per) => {
+    if (!landedIn) return <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'4px'}}>Landed cost — working it out…</div>;
+    if (!landedIn.lines.length) return <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'4px'}}>{landedIn.failed ? 'Landed cost could not be read.' : 'Landed cost — no goods on this quote to cost.'}</div>;
+    const freight = per == null ? null : (lcl ? per : per*ct);
+    const L = landedCost({ lines: landedLines, freight, rates: landedIn.rates, allIn: !!b.all_in });
+    const incomplete = L.missing.length > 0;
+    const open = openLanded === b.id;
+    const row = (label, value, note) => (
+      <div style={{display:'flex',justifyContent:'space-between',gap:'10px',padding:'3px 0',fontSize:'12px'}}>
+        <span style={{color:'#4A4A4E'}}>{label}{note && <span style={{color:'#8A8A8E'}}>{' \u00b7 '+note}</span>}</span>
+        <span style={{fontVariantNumeric:'tabular-nums',color:'#1A1A1C',fontWeight:500}}>{value}</span>
+      </div>
+    );
+    const r = L.rates;
+    const inc = 'included';
+    return (
+      <div style={{marginTop:'6px'}}>
+        <div style={{display:'flex',alignItems:'baseline',gap:'8px',flexWrap:'wrap',fontSize:'12.5px'}}>
+          {incomplete
+            ? <span style={{fontWeight:700,color:'#B45309'}}>Landed — incomplete</span>
+            : <span style={{fontWeight:700,color:'#1A1A1C'}}>{'Landed \u2248 '+money2(L.total)+(L.perUnit!=null?' \u00b7 '+money2(L.perUnit)+'/unit':'')}</span>}
+          <button onClick={()=>setOpenLanded(open ? null : b.id)} style={{background:'none',border:'none',padding:0,color:'#0071E3',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>{open ? 'Hide breakdown' : 'Breakdown'}</button>
+        </div>
+        {open && (
+          <div style={{marginTop:'8px',background:'#FAFAFB',border:'1px solid #ECECEE',borderRadius:'10px',padding:'10px 12px'}}>
+            {L.lines.map((l, i) => (
+              <div key={i} style={{padding:'4px 0',fontSize:'12px',borderBottom:'1px solid #F0F0F2'}}>
+                <div style={{display:'flex',justifyContent:'space-between',gap:'10px'}}>
+                  <span style={{color:'#1A1A1C',fontWeight:600,minWidth:0}}>{[l.quoteCode, l.sku].filter(Boolean).join(' \u00b7 ') || l.label}<span style={{color:'#8A8A8E',fontWeight:400}}>{(l.quoteCode||l.sku) && l.label ? ' \u00b7 '+l.label : ''}</span></span>
+                  <span style={{fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{l.value!=null ? Number(l.qty).toLocaleString()+' \u00d7 '+money2(l.unitCost)+' = '+money2(l.value) : <span style={{color:'#B45309'}}>no unit cost</span>}</span>
+                </div>
+                {!L.allIn && (
+                  <div style={{display:'flex',justifyContent:'space-between',gap:'10px',color:'#8A8A8E',marginTop:'2px',alignItems:'center'}}>
+                    <span>{'HTS '+(l.hts||'\u2014')}</span>
+                    {l.dutyTyped || l.dutyRate == null ? (
+                      <span style={{display:'inline-flex',alignItems:'center',gap:'5px'}}>
+                        <span style={{color:'#B45309'}}>duty</span>
+                        <input data-noguard inputMode="decimal" value={dutyIn[i]||''} placeholder="%" onChange={e=>{ const v = e.target.value; setDutyIn(prev=>({ ...prev, [i]:v })); }}
+                          style={{width:'58px',border:'1px solid '+(l.dutyRate==null?'#F59E0B':'#E5E7EB'),borderRadius:'6px',padding:'3px 6px',fontSize:'12px',textAlign:'right'}} />
+                        <span>%{l.duty!=null ? ' = '+money2(l.duty) : ''}</span>
+                      </span>
+                    ) : <span style={{fontVariantNumeric:'tabular-nums'}}>{'duty '+l.dutyRate+'% = '+money2(l.duty)}</span>}
+                  </div>
+                )}
+              </div>
+            ))}
+            <div style={{marginTop:'6px'}}>
+              {row('CI value', money2(L.ci))}
+              {row('Freight', money2(L.freight), b.all_in ? 'all-in' : null)}
+              {row('MPF', L.allIn ? inc : money2(L.mpf), L.allIn ? null : r.mpf_rate+'%'+(L.mpfClamped ? ', CBP '+(L.mpfClamped==='min'?'minimum':'maximum')+' applies' : ''))}
+              {row('HMF', L.allIn ? inc : money2(L.hmf), L.allIn ? null : r.hmf_rate+'%')}
+              {row('Duty', L.allIn ? inc : money2(L.duty))}
+              {row('DIS', L.allIn ? inc : money2(L.dis), L.allIn ? null : r.dis_rate+'% of MPF + HMF + duty')}
+              {row('Insurance', L.allIn ? inc : money2(L.insurance), L.allIn ? null : r.insurance_rate+'% \u00d7 '+r.insurance_uplift+'%')}
+              <div style={{borderTop:'2px solid #ECECEE',marginTop:'4px',paddingTop:'4px'}}>
+                {row(L.allIn ? 'Landed total (the all-in price)' : 'Landed total', incomplete ? 'incomplete' : money2(L.total))}
+                {row('Per unit', incomplete || L.perUnit==null ? '\u2014' : money2(L.perUnit), L.units ? L.units.toLocaleString()+' units' : null)}
+              </div>
+              {incomplete && <div style={{fontSize:'11.5px',color:'#B45309',marginTop:'4px'}}>
+                {[L.missing.some(m=>m.what==='freight') ? 'this bid has no freight figure' : null,
+                  L.missing.some(m=>m.what==='cost') ? 'a line has no unit cost' : null,
+                  L.missing.some(m=>m.what==='duty') ? 'enter the duty % for each line marked above' : null].filter(Boolean).join('; ')}
+              </div>}
+              <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'6px'}}>Estimate. Rates are set in Settings; typed duty rates are not saved.</div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
   // LCL: ranked by the shipment total; a bid with no total sorts last and says so.
   const lcl = isLCL(quote);
   const amountOf = b => lcl ? lclBidTotal(b) : bidEffective(b,ctType);
@@ -8103,6 +8241,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
                 <div style={{fontSize:'12px',color:'#4A4A4E',marginTop:'6px',lineHeight:1.6}}>
                   {(lcl ? '' : 'Shipment total \u2248 '+money(per*ct)+' \u00b7 ')+'Transit '+(b.transit_days||'\u2014')+'d \u00b7 Valid until '+(b.valid_until||'\u2014')}
                 </div>
+                {landedRow(b, per)}
                 {!lcl && <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'4px'}}>
                   {b.all_in ? 'All-in price \u00b7 no additional fees' : ['Ocean '+(b.ocean_per_container?money(b.ocean_per_container):'\u2014'), b.origin_costs?('Origin '+money(b.origin_costs)):null, b.dest_total?('Destination charges '+money(b.dest_total)):null, (b.accessorials||[]).length?String((b.accessorials||[]).length)+' if-needed fee(s)':null].filter(Boolean).join(' \u00b7 ')}
                 </div>}
