@@ -7556,6 +7556,12 @@ function ImportBidsModal({ quotes, onClose, onApplied }) {
   const [parsed, setParsed] = useState(null);
   const [busy, setBusy] = useState(false);
   const [applied, setApplied] = useState(0);
+  // ALL-IN (script 131). Ticked, the bid is saved as one total and nothing else:
+  // for FCL the effective figure the sheet adds up to, per container, with the
+  // ocean, origin and destination breakdown and the if-needed fees left behind;
+  // for LCL the total it already is, now marked. all_in is only ever SENT when
+  // ticked, so an ordinary import writes exactly the row it always did.
+  const [allIn, setAllIn] = useState(false);
   // Declared AFTER `applied` because it closes over it. The backdrop already
   // chose between two exits depending on whether anything was imported; the
   // guard wraps that whole decision rather than replacing it. Choosing a file
@@ -7566,7 +7572,7 @@ function ImportBidsModal({ quotes, onClose, onApplied }) {
   );
 
   const parse = async (file) => {
-    setBusy(true);
+    setBusy(true); setAllIn(false);
     try {
       const ExcelJS = await loadExcelJS();
       const wb = new ExcelJS.Workbook();
@@ -7643,11 +7649,20 @@ function ImportBidsModal({ quotes, onClose, onApplied }) {
   };
 
   const apply = async () => {
+    let row = parsed.bid;
+    if (allIn && parsed.lcl) row = { ...row, all_in:true };
+    else if (allIn) {
+      const ctType = parsed.quote.container_type||'40HQ';
+      const total = bidEffective(parsed.bid, ctType);
+      if (!(total > 0)) { alert('This sheet has no total for a '+ctType+', so it cannot be saved as an all-in price.'); return; }
+      row = { ...row, all_in:true, effective_per_container:total, ocean_per_container:null, origin_costs:null,
+              dest_total:null, rates:null, dest_charges:null, accessorials:null };
+    }
     setBusy(true);
-    const { error } = await SB.from('forwarder_bids').insert(parsed.bid);
+    const { error } = await SB.from('forwarder_bids').insert(row);
     setBusy(false);
     if (error) { alert('Could not save the bid: '+error.message); return; }
-    setApplied(a=>a+1); setParsed(null);
+    setApplied(a=>a+1); setParsed(null); setAllIn(false);
     if (fileRef.current) fileRef.current.value='';
   };
 
@@ -7675,7 +7690,7 @@ function ImportBidsModal({ quotes, onClose, onApplied }) {
                   <span style={{fontWeight:800,color:'#0071E3',fontVariantNumeric:'tabular-nums'}}>{money(lclBidTotal(parsed.bid))}</span>
                 </div>
               )}
-              {!parsed.lcl && parsed.bid.rates && Object.keys(parsed.bid.rates).map(function(k){
+              {!parsed.lcl && !allIn && parsed.bid.rates && Object.keys(parsed.bid.rates).map(function(k){
                 const r = parsed.bid.rates[k]; const req = k===(parsed.quote.container_type||'40HQ');
                 return (
                   <div key={k} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',fontSize:'12.5px',borderTop:'1px solid #F2F2F4'}}>
@@ -7684,7 +7699,7 @@ function ImportBidsModal({ quotes, onClose, onApplied }) {
                   </div>
                 );
               })}
-              {(parsed.bid.dest_charges||[]).map(function(d,i){
+              {!allIn && (parsed.bid.dest_charges||[]).map(function(d,i){
                 return (
                   <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:'12px',borderTop:i===0?'2px solid #ECECEE':'1px solid #F6F6F8'}}>
                     <span style={{color:'#4A4A4E'}}>{d.fee}{d.basis?' \u00b7 '+d.basis:''}</span>
@@ -7693,19 +7708,24 @@ function ImportBidsModal({ quotes, onClose, onApplied }) {
                 );
               })}
               {!parsed.lcl && <div style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderTop:'2px solid #ECECEE',marginTop:'4px',fontSize:'13px'}}>
-                <span style={{fontWeight:700,color:'#1A1A1C'}}>{'Effective per '+(parsed.quote.container_type||'40HQ')}</span>
+                <span style={{fontWeight:700,color:'#1A1A1C'}}>{(allIn?'All-in per ':'Effective per ')+(parsed.quote.container_type||'40HQ')}</span>
                 <span style={{fontWeight:800,color:'#0071E3',fontVariantNumeric:'tabular-nums'}}>{money(bidEffective(parsed.bid, parsed.quote.container_type||'40HQ'))}</span>
               </div>}
-              {(parsed.bid.accessorials||[]).length>0 && (
+              {!allIn && (parsed.bid.accessorials||[]).length>0 && (
                 <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'6px'}}>{String((parsed.bid.accessorials||[]).length)+' if-needed fee(s) recorded \u2014 excluded from the total'}</div>
               )}
               <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'4px'}}>{'Valid until: '+(parsed.bid.valid_until||'\u2014')}</div>
+              <label style={{display:'flex',alignItems:'center',gap:'8px',marginTop:'12px',fontSize:'13px',color:'#1A1A1C',cursor:'pointer'}}>
+                <input type="checkbox" checked={allIn} onChange={e=>setAllIn(e.target.checked)} />
+                All-in price (no additional fees)
+              </label>
+              {allIn && <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'4px',lineHeight:1.5}}>{parsed.lcl ? 'The total is marked all-in.' : 'Saved as one total per '+(parsed.quote.container_type||'40HQ')+' \u2014 the breakdown and any if-needed fees are not kept.'}</div>}
             </div>
           )}
           <input ref={fileRef} type="file" accept=".xlsx" style={{display:'none'}} onChange={e=>{ const f=e.target.files&&e.target.files[0]; if(f) parse(f); }} />
         </div>
         <div style={{padding:'0 24px 20px',display:'flex',justifyContent:'space-between',gap:'8px'}}>
-          <button onClick={()=>{setParsed(null); if(fileRef.current) fileRef.current.value='';}} style={{background:'none',border:'none',color:'#8A8A8E',fontSize:'13px',cursor:'pointer',visibility:parsed?'visible':'hidden'}}>Different file</button>
+          <button onClick={()=>{setParsed(null); setAllIn(false); if(fileRef.current) fileRef.current.value='';}} style={{background:'none',border:'none',color:'#8A8A8E',fontSize:'13px',cursor:'pointer',visibility:parsed?'visible':'hidden'}}>Different file</button>
           <div style={{display:'flex',gap:'8px'}}>
             <button onClick={()=>applied>0?onApplied():onClose()} style={{background:'#F2F2F6',border:'none',borderRadius:'10px',padding:'9px 17px',fontSize:'13.5px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>{applied>0?'Done':'Cancel'}</button>
             {parsed && <button onClick={apply} disabled={busy} style={{background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'9px 18px',fontSize:'13.5px',fontWeight:600,cursor:'pointer'}}>{busy?'Saving\u2026':'Save bid'}</button>}
@@ -7766,9 +7786,15 @@ function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
   // build legs from the bid (per-container basis, spread over unitsPerCtr)
   const rates = (bid.rates||{})[ctType] || {};
   const legsRaw = [];
-  if (Number(rates.ocean)>0)  legsRaw.push({ cat:'Ocean freight', amount:Number(rates.ocean) });
-  if (Number(rates.origin)>0) legsRaw.push({ cat:'Origin costs',  amount:Number(rates.origin) });
-  (bid.dest_charges||[]).forEach(d=>{ if(Number(d.amount)>0) legsRaw.push({ cat:d.fee||'Destination fee', amount:Number(d.amount), desc:d.basis||'' }); });
+  // An all-in bid (script 131) is one figure with no breakdown, so it is one leg.
+  if (bid.all_in) {
+    const total = bidEffective(bid, ctType);
+    if (total > 0) legsRaw.push({ cat:'Freight (all-in)', amount:total });
+  } else {
+    if (Number(rates.ocean)>0)  legsRaw.push({ cat:'Ocean freight', amount:Number(rates.ocean) });
+    if (Number(rates.origin)>0) legsRaw.push({ cat:'Origin costs',  amount:Number(rates.origin) });
+    (bid.dest_charges||[]).forEach(d=>{ if(Number(d.amount)>0) legsRaw.push({ cat:d.fee||'Destination fee', amount:Number(d.amount), desc:d.basis||'' }); });
+  }
   const legs = unitsPerCtr>0 ? legsRaw.map(l=>({ cat:l.cat, desc:l.desc||'', basis:'container', amount:l.amount, per:unitsPerCtr, perUnit:+(l.amount/unitsPerCtr).toFixed(4) })) : [];
   const freightPerUnit = legs.reduce((a,l)=>a+l.perUnit,0);
 
@@ -7863,28 +7889,51 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
     return x - y;
   });
   const best = sorted.length ? (amountOf(sorted[0])||0) : 0;
-  // ── ADD A BID BY HAND (LCL) ──
+  // ── ADD A BID BY HAND ──
   // Forwarders quote LCL as one total for the specific shipment, often by email
   // with no sheet, so the bid is typed in: forwarder and total required, the
   // rest optional. The total goes through readLclTotal, the same reader the
   // import uses, so "2,030" and "$2,030.00" are accepted and "about 2000" is not.
+  //
+  // FCL too. Ticked all-in (script 131), it takes one price per container and
+  // nothing else. Unticked, ocean per container (required), origin and the
+  // destination charges -- saved in the same shape the sheet import writes, so
+  // the bid card and Apply bid read it as they read an imported one. all_in is
+  // only ever SENT when ticked.
   const [manual, setManual] = useState(null);   // null, or the form's fields
   const [savingBid, setSavingBid] = useState(false);
   const setM = k => e => setManual(prev => ({ ...prev, [k]: e.target.value }));
   const saveManual = async () => {
     const name = (manual.name||'').trim();
-    const total = readLclTotal(manual.total||'');
     if (!name) { alert('Enter the forwarder.'); return; }
-    if (total == null) { alert('Enter the all-in total as one amount, e.g. 2030 or $2,030.00.'); return; }
     const transit = Number(manual.transit);
-    setSavingBid(true);
-    const { error } = await SB.from('forwarder_bids').insert({
+    const carrier = (manual.carrier||'').trim()||null;
+    const transitDays = isFinite(transit) && transit > 0 ? transit : null;
+    const common = {
       shipment_quote_id: quote.id, quote_number: quote.quote_number||null,
-      forwarder_name: name, carrier: (manual.carrier||'').trim()||null,
-      transit_days: isFinite(transit) && transit > 0 ? transit : null,
-      effective_per_container: total, rates: { LCL: { total } },
+      forwarder_name: name, carrier, transit_days: transitDays,
       valid_until: (manual.valid||'').trim()||null, notes: (manual.notes||'').trim()||null,
-    });
+      ...(manual.allIn ? { all_in:true } : {}),
+    };
+    let row;
+    if (lcl || manual.allIn) {
+      const total = readLclTotal(manual.total||'');
+      if (total == null) { alert(lcl ? 'Enter the all-in total as one amount, e.g. 2030 or $2,030.00.' : 'Enter the all-in price per '+ctType+' as one amount, e.g. 2030 or $2,030.00.'); return; }
+      row = lcl ? { ...common, effective_per_container: total, rates: { LCL: { total } } }
+                : { ...common, effective_per_container: total };
+    } else {
+      // Blank (or zero) is none; anything else must read as one amount.
+      const amt = (v, required) => { const t = String(v||'').trim(); if (!t || /^\$?0+(\.0+)?$/.test(t)) return required ? null : 0; return readLclTotal(t); };
+      const ocean = amt(manual.ocean, true), origin = amt(manual.origin), dest = amt(manual.dest);
+      if (ocean == null) { alert('Enter the ocean freight per '+ctType+' as one amount, e.g. 1850 or $1,850.00.'); return; }
+      if (origin == null || dest == null) { alert('Origin and destination charges must each be one amount, or left blank.'); return; }
+      row = { ...common, ocean_per_container: ocean, origin_costs: origin||null, dest_total: dest||null,
+              effective_per_container: ocean+origin+dest,
+              rates: { [ctType]: { ocean, origin, carrier: carrier||'', transit: transitDays } },
+              dest_charges: dest ? [{ fee:'Destination charges', amount:dest, basis:'entered by hand' }] : null };
+    }
+    setSavingBid(true);
+    const { error } = await SB.from('forwarder_bids').insert(row);
     setSavingBid(false);
     if (error) { alert('Could not save the bid: '+error.message); return; }
     setManual(null);
@@ -7910,7 +7959,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
           <button onClick={guardedClose} style={{background:'#F2F2F6',border:'none',borderRadius:'50%',width:'28px',height:'28px',fontSize:'15px',color:'#5A5A5E',cursor:'pointer'}}>×</button>
         </div>
         <div style={{padding:'14px 24px 20px'}}>
-          {sorted.length===0 && <div style={{fontSize:'13.5px',color:'#8A8A8E',textAlign:'center',padding:'26px 0'}}>{lcl ? 'No bids yet. Add each forwarder\u2019s all-in total by hand below, or import a returned sheet.' : 'No bids yet. Send the RFQ, then import the replies as they come back.'}</div>}
+          {sorted.length===0 && <div style={{fontSize:'13.5px',color:'#8A8A8E',textAlign:'center',padding:'26px 0'}}>{lcl ? 'No bids yet. Add each forwarder\u2019s all-in total by hand below, or import a returned sheet.' : 'No bids yet. Send the RFQ, then import the replies as they come back, or add one by hand below.'}</div>}
           {sorted.map((b,i)=>{
             const per = lcl ? lclBidTotal(b) : bidEffective(b,ctType);
             const isBest = i===0 && sorted.length>1;
@@ -7923,6 +7972,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
                     {b.forwarder_name}{b.carrier?' \u00b7 '+b.carrier:''}
                     {isSel && <span style={{fontSize:'10.5px',fontWeight:700,color:'#0071E3',background:'#DBEAFE',borderRadius:'6px',padding:'2px 8px',marginLeft:'8px',verticalAlign:'middle'}}>SELECTED</span>}
                     {!isSel && isBest && <span style={{fontSize:'10.5px',fontWeight:700,color:'#15803D',background:'#DCFCE7',borderRadius:'6px',padding:'2px 8px',marginLeft:'8px',verticalAlign:'middle'}}>BEST</span>}
+                    {b.all_in && <span title="All-in price, no additional fees" style={{fontSize:'10.5px',fontWeight:700,color:'#6D28D9',background:'#EDE9FE',borderRadius:'6px',padding:'2px 8px',marginLeft:'8px',verticalAlign:'middle'}}>ALL-IN</span>}
                   </div>
                   {lcl ? (
                   <div style={{fontSize:'16px',fontWeight:800,color:'#1A1A1C',fontVariantNumeric:'tabular-nums'}}>{per==null ? <span style={{fontSize:'12px',fontWeight:600,color:'#B45309'}}>no total</span> : money(per)}{per!=null && <span style={{fontSize:'11px',fontWeight:600,color:'#8A8A8E'}}> total</span>}{i>0 && per!=null && best>0 && <span style={{fontSize:'11px',fontWeight:600,color:'#B45309',marginLeft:'6px'}}>{'+'+delta.toFixed(0)+'%'}</span>}</div>
@@ -7934,7 +7984,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
                   {(lcl ? '' : 'Shipment total \u2248 '+money(per*ct)+' \u00b7 ')+'Transit '+(b.transit_days||'\u2014')+'d \u00b7 Valid until '+(b.valid_until||'\u2014')}
                 </div>
                 {!lcl && <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'4px'}}>
-                  {['Ocean '+(b.ocean_per_container?money(b.ocean_per_container):'\u2014'), b.origin_costs?('Origin '+money(b.origin_costs)):null, b.dest_total?('Destination charges '+money(b.dest_total)):null, (b.accessorials||[]).length?String((b.accessorials||[]).length)+' if-needed fee(s)':null].filter(Boolean).join(' \u00b7 ')}
+                  {b.all_in ? 'All-in price \u00b7 no additional fees' : ['Ocean '+(b.ocean_per_container?money(b.ocean_per_container):'\u2014'), b.origin_costs?('Origin '+money(b.origin_costs)):null, b.dest_total?('Destination charges '+money(b.dest_total)):null, (b.accessorials||[]).length?String((b.accessorials||[]).length)+' if-needed fee(s)':null].filter(Boolean).join(' \u00b7 ')}
                 </div>}
                 {!lcl && b.rates && Object.keys(b.rates).filter(k=>k!==ctType).length>0 && (
                   <div style={{fontSize:'11.5px',color:'#8A8A8E',marginTop:'4px'}}>
@@ -7952,15 +8002,23 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
               </div>
             );
           })}
-          {lcl && !manual && (
-            <button onClick={()=>setManual({ name:'', total:'', carrier:'', transit:'', valid:'', notes:'' })} style={{width:'100%',border:'1.5px dashed rgba(0,0,0,.15)',background:'#FAFAFA',borderRadius:'12px',padding:'12px',fontSize:'13px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>+ Add bid by hand</button>
+          {!manual && (
+            <button onClick={()=>setManual({ name:'', total:'', ocean:'', origin:'', dest:'', allIn:false, carrier:'', transit:'', valid:'', notes:'' })} style={{width:'100%',border:'1.5px dashed rgba(0,0,0,.15)',background:'#FAFAFA',borderRadius:'12px',padding:'12px',fontSize:'13px',fontWeight:600,color:'#1A1A1C',cursor:'pointer'}}>+ Add bid by hand</button>
           )}
-          {lcl && manual && (
+          {manual && (
             <div style={{border:'1.5px solid #ECECEE',borderRadius:'14px',padding:'14px 16px'}}>
-              <div style={{fontSize:'13px',fontWeight:700,color:'#1A1A1C',marginBottom:'10px'}}>Add an LCL bid</div>
+              <div style={{fontSize:'13px',fontWeight:700,color:'#1A1A1C',marginBottom:'10px'}}>{lcl ? 'Add an LCL bid' : 'Add a bid'}</div>
+              <label style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'10px',fontSize:'12.5px',color:'#1A1A1C',cursor:'pointer'}}>
+                <input type="checkbox" checked={!!manual.allIn} onChange={e=>{ const on = e.target.checked; setManual(prev => ({ ...prev, allIn:on })); }} />
+                All-in price (no additional fees)
+              </label>
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
                 <input style={mInput} placeholder="Forwarder *" value={manual.name} onChange={setM('name')} />
-                <input style={mInput} placeholder="All-in total, USD *" value={manual.total} onChange={setM('total')} />
+                {(lcl || manual.allIn)
+                  ? <input style={mInput} placeholder={lcl ? 'All-in total, USD *' : 'All-in per '+ctType+', USD *'} value={manual.total} onChange={setM('total')} />
+                  : <input style={mInput} placeholder={'Ocean per '+ctType+', USD *'} value={manual.ocean} onChange={setM('ocean')} />}
+                {!lcl && !manual.allIn && <input style={mInput} placeholder={'Origin per '+ctType+', USD'} value={manual.origin} onChange={setM('origin')} />}
+                {!lcl && !manual.allIn && <input style={mInput} placeholder={'Destination charges per '+ctType+', USD'} value={manual.dest} onChange={setM('dest')} />}
                 <input style={mInput} placeholder="Carrier" value={manual.carrier} onChange={setM('carrier')} />
                 <input style={mInput} placeholder="Transit days" value={manual.transit} onChange={setM('transit')} />
                 <input style={mInput} placeholder="Valid until" value={manual.valid} onChange={setM('valid')} />
