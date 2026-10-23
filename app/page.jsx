@@ -7762,11 +7762,14 @@ const APPLY_CAPS = { '20GP':32, '40GP':58, '40HQ':68, '45HQ':83 };
 
 // ── THE PRODUCT QUOTE PICKER ─────────────────────────────────────────────────
 // A searchable combobox in the manner of HtsField: type to filter by product,
-// client or SKU, then pick -- by click, or up/down and Enter. Nothing is chosen
-// until somebody chooses; the old <select> preselected a best guess, and a guess
-// left in place wrote one bid's freight onto the wrong product. The freight
-// quote's own product quote, when it has one, is listed first and tagged.
-const quoteLabel = q => [(q.sku||'').trim(), (q.product||'').trim(), (q.client||'').trim()].filter(Boolean).join(' \u2014 ') || q.id.slice(0,8);
+// client, SKU or quote ID, then pick -- by click, or up/down and Enter. Nothing
+// is chosen until somebody chooses; the old <select> preselected a best guess,
+// and a guess left in place wrote one bid's freight onto the wrong product.
+// Rows lead with the quote ID and SKU, newest quote first; the freight quote's
+// own product quote, when it has one, is listed first and tagged.
+const quoteHead = q => [(q.quote_code||'').trim(), (q.sku||'').trim()].filter(Boolean).join(' \u00b7 ');
+const quoteSub = q => [(q.product||'').trim(), (q.client||'').trim()].filter(Boolean).join(' \u00b7 ');
+const quoteLabel = q => [quoteHead(q), quoteSub(q)].filter(Boolean).join(' \u00b7 ') || q.id.slice(0,8);
 function QuotePicker({ quotes, value, onPick, linkedId }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState('');
@@ -7774,7 +7777,9 @@ function QuotePicker({ quotes, value, onPick, linkedId }) {
   const listRef = useRef(null);
   const term = normalizeTerm(typed);
   const hits = useMemo(() => {
-    const list = term ? quotes.filter(q => matches(term, q.product, q.client, q.sku)) : quotes;
+    // Q-0400 before Q-0399: numeric compare, so Q-1000 will sort above Q-0999.
+    const sorted = [...quotes].sort((a, b) => String(b.quote_code||'').localeCompare(String(a.quote_code||''), undefined, { numeric:true }));
+    const list = term ? sorted.filter(q => matches(term, q.quote_code, q.sku, q.product, q.client)) : sorted;
     return linkedId ? [...list.filter(q => q.id === linkedId), ...list.filter(q => q.id !== linkedId)] : list;
   }, [quotes, term, linkedId]);
   useEffect(() => { setActive(0); }, [term, open]);
@@ -7796,7 +7801,7 @@ function QuotePicker({ quotes, value, onPick, linkedId }) {
       {/* data-noguard: typing here only filters. Choosing is what counts, and
           the host marks that. */}
       <input data-noguard value={open ? typed : (chosen ? quoteLabel(chosen) : '')}
-        placeholder={chosen ? quoteLabel(chosen) : 'Type to search by product, client or SKU\u2026'}
+        placeholder={chosen ? quoteLabel(chosen) : 'Type a quote ID, SKU, product or client\u2026'}
         onFocus={() => setOpen(true)} onClick={() => setOpen(true)}
         onChange={e => { setTyped(e.target.value); setOpen(true); }} onKeyDown={onKey}
         onBlur={() => { setOpen(false); setTyped(''); }}
@@ -7812,9 +7817,9 @@ function QuotePicker({ quotes, value, onPick, linkedId }) {
               onMouseDown={e => { e.preventDefault(); commit(q); }} onMouseEnter={() => setActive(i)}
               style={{display:'block',width:'100%',textAlign:'left',border:'none',borderRadius:'7px',padding:'7px 9px',fontSize:'12.5px',cursor:'pointer',fontFamily:'inherit',
                       background: i === active ? '#EAF3FE' : 'transparent', color:'#1A1A1C'}}>
-              <span style={{fontWeight:600}}>{(q.product||'').trim() || '\u2014'}</span>
+              <span style={{fontWeight:600}}>{quoteHead(q) || (q.product||'').trim() || '\u2014'}</span>
               {q.id === linkedId && <span style={{fontSize:'10px',fontWeight:700,color:'#15803D',background:'#DCFCE7',borderRadius:'5px',padding:'1px 6px',marginLeft:'7px'}}>LINKED</span>}
-              <span style={{display:'block',fontSize:'11.5px',color:'#8A8A8E'}}>{[(q.sku||'').trim(), (q.client||'').trim()].filter(Boolean).join(' \u00b7 ') || '\u00a0'}</span>
+              <span style={{display:'block',fontSize:'11.5px',color:'#8A8A8E'}}>{quoteSub(q) || '\u00a0'}</span>
             </button>
           ))}
         </div>
@@ -7834,7 +7839,8 @@ function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
   useEffect(()=>{
     // Nothing is preselected -- see QuotePicker. Apply stays off until a quote
     // is chosen.
-    SBQ.from('quotes').select('id,product,sku,client,units_per_carton,carton_l,carton_w,carton_h,tiers').order('created_at',{ascending:false}).limit(400).then(({data})=>{
+    // 2000, not 400: there are 397 quotes, and the limit drops the oldest from the search.
+    SBQ.from('quotes').select('id,quote_code,product,sku,client,units_per_carton,carton_l,carton_w,carton_h,tiers').order('created_at',{ascending:false}).limit(2000).then(({data})=>{
       setPq(data||[]);
       setLoadingQ(false);
     });
