@@ -3398,7 +3398,7 @@ function SettingsPage({ role, user, displayName, onDisplayName }) {
                     fontSize:'13.5px',padding:'9px 14px',marginBottom:'-1px',cursor:'pointer'}}>{label}</button>
         ))}
       </div>
-      {tab === 'general' ? <GeneralSettings user={user} role={role} />
+      {tab === 'general' ? <GeneralSettings user={user} />
         : <MyAccount user={user} displayName={displayName} onDisplayName={onDisplayName} />}
     </>
   );
@@ -3551,7 +3551,7 @@ function MyAccount({ user, displayName, onDisplayName }) {
 // added by script 31 -- which must be committed before this deploys, or the column
 // comes back undefined and an undefined toggle renders OFF, showing everybody
 // opted out of something they are opted in to.
-function GeneralSettings({ user, role }) {
+function GeneralSettings({ user }) {
   const email = user?.email || '';
   // ON UNTIL PROVEN OTHERWISE, and that is the whole state model. true is both the
   // column default and the value this holds while loading, on a read error, and on
@@ -3600,7 +3600,6 @@ function GeneralSettings({ user, role }) {
   };
 
   return (
-    <>
     <div className="section-card" style={{marginBottom:'20px'}}>
       <div className="section-head"><h3>Notifications</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Applies to your account only</span></div>
       <div style={{padding:'18px',maxWidth:'520px'}}>
@@ -3630,20 +3629,16 @@ function GeneralSettings({ user, role }) {
         {msg && <p style={{fontSize:'12.5px',color:'var(--hot)',marginTop:'10px'}}>{msg}</p>}
       </div>
     </div>
-    {/* Business configuration on a per-person page, so shown only to the roles
-        whose saves the database accepts (can_write_settings, admin and staff) --
-        the same allowlist as Company Banking. */}
-    {canSeeBanking(role) && <LandedCostRates />}
-    </>
   );
 }
 
 // ── Landed cost rates (script 133) ───────────────────────────────────────────
 // The seven rates the landed-cost estimate on freight quote bids uses
-// (lib/landedCost.js), on kui_settings. One row of seven equal columns, labels
-// on one line so every input sits on the same baseline. Saved on their own,
-// with an update of just these columns -- the Company Banking form drops them
-// from its upsert, so neither page can write the other's values back.
+// (lib/landedCost.js), on kui_settings, shown on the KUI Banking page under the
+// company and bank cards. One row of seven equal columns, labels on one line so
+// every input sits on the same baseline. Saved on their own, with an update of
+// just these columns -- the bank form drops them from its whole-form upsert, so
+// neither save can write the other's values back.
 // CBP resets the MPF minimum and maximum every 1 October.
 function LandedCostRates() {
   // undefined while loading; null when the columns do not exist yet (before 133).
@@ -3664,8 +3659,9 @@ function LandedCostRates() {
     setMsg(error ? 'Error: '+error.message : 'Saved.'); if (!error) setTimeout(()=>setMsg(''),2500);
   };
   return (
-    <div className="section-card" style={{marginBottom:'20px'}}>
-      <div className="section-head"><h3>Landed cost rates</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Used by the landed-cost estimate on freight quote bids</span></div>
+    <div className="section-card" style={{margin:'28px 0 20px'}}>
+      {/* No rule under the head: the labels follow it directly. */}
+      <div className="section-head" style={{borderBottom:'none'}}><h3>Landed cost rates</h3><span style={{fontSize:'11px',color:'var(--muted)'}}>Used by the landed-cost estimate on freight quote bids</span></div>
       {rates === undefined ? (
         <div style={{padding:'0 18px 16px',fontSize:'12.5px',color:'var(--muted)'}}>Loading…</div>
       ) : rates === null ? (
@@ -3718,10 +3714,10 @@ function CompanyBanking() {
     // is the NORMAL state until somebody saves for the first time. The fallback
     // is the blank shape, so an empty table renders an empty form rather than a
     // spinner that never resolves.
-    // THE LANDED COST RATES (script 133) ARE DROPPED from this form. They are
-    // edited in Settings, General Settings, and saved there on their own; left
-    // in, this page's whole-form upsert would write back whatever it loaded and
-    // undo a rate saved in Settings since.
+    // THE LANDED COST RATES (script 133) ARE DROPPED from this form. They have
+    // their own card below (LandedCostRates) and their own Save; left in, this
+    // form's whole-form upsert would write back whatever it loaded and undo a
+    // rate saved in that card since.
     SB.from('kui_settings').select('*').eq('id',1).single().then(({data})=>{
       const rest = data ? Object.fromEntries(Object.entries(data).filter(([k]) => !RATE_KEYS.includes(k))) : null;
       setForm(rest || { ...BLANK_SETTINGS });
@@ -3782,6 +3778,9 @@ function CompanyBanking() {
         <button className="btn btn-dark" onClick={save} disabled={saving}>{saving?'Saving…':'Save changes'}</button>
         {msg && <span style={{fontSize:'13px',color:'var(--accent)'}}>{msg}</span>}
       </div>
+      {/* After the Save changes row, not between it and the cards it saves:
+          the rates have their own Save. */}
+      <LandedCostRates />
     </>
   );
 }
