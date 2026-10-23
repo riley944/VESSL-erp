@@ -17,7 +17,7 @@
 // /api/orders/extract; this file is the quote prompt, schema and checks.
 
 import { runExtract, json, fieldsFrom, toNum, normName, domainOf } from '@/lib/pdfExtract';
-import { PDF_BUCKET, PDF_MAX_BYTES, PDF_DIRECT_MAX_BYTES, PDF_PATH_RE } from '@/lib/quotePdf';
+import { PDF_BUCKET, PDF_MAX_BYTES, PDF_DIRECT_MAX_BYTES, PDF_PATH_RE, QUOTE_PDF_IMPORT } from '@/lib/quotePdf';
 
 export const runtime = 'nodejs';
 // Every call reads a different PDF for a different person; nothing to cache.
@@ -211,6 +211,9 @@ function matchHts(printed, codes) {
 }
 
 export async function POST(req) {
+  // Hidden unless NEXT_PUBLIC_QUOTE_PDF_IMPORT is '1' (lib/quotePdf.js): answered
+  // before the caller, the upload or the key are looked at.
+  if (!QUOTE_PDF_IMPORT) return json({ error:'disabled' }, 404);
   // Steps 1 to 3 -- configuration, the caller, the PDF, Claude reading it.
   const r = await runExtract(req, {
     bucket: PDF_BUCKET, pathRe: PDF_PATH_RE, maxBytes: PDF_MAX_BYTES, directMaxBytes: PDF_DIRECT_MAX_BYTES,

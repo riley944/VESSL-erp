@@ -8,7 +8,7 @@ import {
 // The SBQ import went with the htscodes fetch -- that was this file's last use of it.
 // lib/supabaseQuotes still exists; page.jsx and pricing.jsx both import it.
 import { SB } from "@/lib/supabase";
-import { PDF_BUCKET, PDF_MAX_BYTES, PDF_DIRECT_MAX_BYTES, pdfPathFor } from "@/lib/quotePdf";
+import { PDF_BUCKET, PDF_MAX_BYTES, PDF_DIRECT_MAX_BYTES, pdfPathFor, QUOTE_PDF_IMPORT } from "@/lib/quotePdf";
 import { XC, xStyle, xTitle, PdfSays } from "@/app/components/PdfSays";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { QuoteList } from "@/app/components/QuoteList";
@@ -4289,7 +4289,10 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
         <div style={S.modalBody}>
           {/* IMPORT FROM PDF (prototype, script 129). Uploads to the private
               quote-pdfs bucket, has Claude read it, and fills what it can.
-              Nothing is saved until Save. */}
+              Nothing is saved until Save. Behind QUOTE_PDF_IMPORT (lib/quotePdf.js):
+              off, nothing renders here at all, so the form is as it was before
+              the import -- and with no import, no box is ever highlighted. */}
+          {QUOTE_PDF_IMPORT && (
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 16, padding: "10px 12px", border: "1px dashed #d5dae4", borderRadius: 10, background: "#fafbfc" }}>
             <button type="button" style={{ ...S.ghostBtnSm, display: "inline-flex", alignItems: "center", gap: 6, opacity: pdfInfo && pdfInfo.busy ? 0.6 : 1 }}
               disabled={!!(pdfInfo && pdfInfo.busy)} onClick={() => pdfInputRef.current && pdfInputRef.current.click()}>
@@ -4321,6 +4324,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
               </ul>
             )}
           </div>
+          )}
           <FormSection icon={<Box size={15} />} title="Product">
             <Field label="SKU" k="sku" placeholder="Internal SKU" f={f} set={set} hl={hl("sku")} />
             {/* Inline, directly under the field it is about, so it cannot be
