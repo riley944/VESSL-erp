@@ -7806,20 +7806,20 @@ function QuotePicker({ quotes, value, onPick, linkedId }) {
         onChange={e => { setTyped(e.target.value); setOpen(true); }} onKeyDown={onKey}
         onBlur={() => { setOpen(false); setTyped(''); }}
         role="combobox" aria-expanded={open} aria-autocomplete="list"
-        style={{width:'100%',border:'1px solid '+(open?'#0071E3':'#E5E7EB'),borderRadius:'9px',padding:'9px 12px',fontSize:'13px',outline:'none',boxSizing:'border-box',background:'#fff'}} />
+        style={{width:'100%',border:'1px solid '+(open?'#0071E3':'#E5E7EB'),borderRadius:'9px',padding:'10px 12px',fontSize:'14px',outline:'none',boxSizing:'border-box',background:'#fff'}} />
       {open && (
-        <div ref={listRef} role="listbox" style={{position:'absolute',top:'100%',left:0,right:0,zIndex:20,marginTop:'4px',maxHeight:'260px',overflowY:'auto',background:'#fff',border:'1px solid #E5E7EB',borderRadius:'10px',boxShadow:'0 10px 30px rgba(15,23,41,.16)',padding:'4px'}}>
-          {hits.length === 0 && <div style={{padding:'9px 10px',fontSize:'12.5px',color:'#8A8A8E'}}>{typed.trim() ? 'No quotes match \u201c'+typed.trim()+'\u201d.' : 'No quotes.'}</div>}
+        <div ref={listRef} role="listbox" style={{position:'absolute',top:'100%',left:0,right:0,zIndex:20,marginTop:'4px',maxHeight:'360px',overflowY:'auto',background:'#fff',border:'1px solid #E5E7EB',borderRadius:'10px',boxShadow:'0 10px 30px rgba(15,23,41,.16)',padding:'4px'}}>
+          {hits.length === 0 && <div style={{padding:'10px 12px',fontSize:'13px',color:'#8A8A8E'}}>{typed.trim() ? 'No quotes match \u201c'+typed.trim()+'\u201d.' : 'No quotes.'}</div>}
           {hits.map((q, i) => (
             // onMouseDown, not onClick: the input's blur closes the list before
             // a click would land.
             <button key={q.id} type="button" role="option" aria-selected={i === active}
               onMouseDown={e => { e.preventDefault(); commit(q); }} onMouseEnter={() => setActive(i)}
-              style={{display:'block',width:'100%',textAlign:'left',border:'none',borderRadius:'7px',padding:'7px 9px',fontSize:'12.5px',cursor:'pointer',fontFamily:'inherit',
+              style={{display:'block',width:'100%',textAlign:'left',border:'none',borderRadius:'8px',padding:'10px 12px',fontSize:'14px',cursor:'pointer',fontFamily:'inherit',
                       background: i === active ? '#EAF3FE' : 'transparent', color:'#1A1A1C'}}>
-              <span style={{fontWeight:600}}>{quoteHead(q) || (q.product||'').trim() || '\u2014'}</span>
+              <span style={{fontWeight:700,fontSize:'14px'}}>{quoteHead(q) || (q.product||'').trim() || '\u2014'}</span>
               {q.id === linkedId && <span style={{fontSize:'10px',fontWeight:700,color:'#15803D',background:'#DCFCE7',borderRadius:'5px',padding:'1px 6px',marginLeft:'7px'}}>LINKED</span>}
-              <span style={{display:'block',fontSize:'11.5px',color:'#8A8A8E'}}>{quoteSub(q) || '\u00a0'}</span>
+              <span style={{display:'block',fontSize:'12.5px',color:'#8A8A8E',marginTop:'2px'}}>{quoteSub(q) || '\u00a0'}</span>
             </button>
           ))}
         </div>
