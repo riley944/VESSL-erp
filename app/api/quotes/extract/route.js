@@ -12,10 +12,11 @@
 //     here AS THE CALLER, so the bucket policy decides whether it can be.
 //
 // Same gate as /api/rfq/send: the caller's Supabase session, staff only, and a
-// missing key fails closed rather than surfacing as something else.
+// missing key fails closed rather than surfacing as something else. The gate,
+// the PDF handling and the model call are lib/pdfExtract.js, shared with
+// /api/orders/extract; this file is the quote prompt, schema and checks.
 
-import Anthropic from '@anthropic-ai/sdk';
-import { createClient } from '@supabase/supabase-js';
+import { runExtract, json, fieldsFrom, toNum, normName, domainOf } from '@/lib/pdfExtract';
 import { PDF_BUCKET, PDF_MAX_BYTES, PDF_DIRECT_MAX_BYTES, PDF_PATH_RE } from '@/lib/quotePdf';
 
 export const runtime = 'nodejs';
@@ -24,20 +25,13 @@ export const dynamic = 'force-dynamic';
 // A long scanned quote can take a minute or two to read.
 export const maxDuration = 300;
 
-const MODEL = 'claude-opus-5-5';
-
-const isStaffEmail = (email) =>
-  typeof email === 'string' && email.trim().toLowerCase().endsWith('@kinguniversal.com');
-
-const json = (body, status) => Response.json(body, { status });
-
 // ── THE SHAPE CLAUDE MUST ANSWER IN ──────────────────────────────────────────
 // Structured output: the reply is guaranteed to parse against this. KEPT FLAT
 // on purpose -- one object per field, nineteen times over, compiled to a
 // grammar the API refused as too large. Now every field is one entry in a
 // single array, named by `field`, and the units are two more such entries.
-// fieldsFrom() turns the array back into the per-field map the rest of this
-// route and the quote form read.
+// fieldsFrom() (lib/pdfExtract.js) turns the array back into the per-field map
+// the rest of this route and the quote form read.
 //
 // Every value is a STRING, "" when the PDF does not say -- numbers are parsed
 // here, where a "1,250.00" or a "$0.85" can be dealt with in one place.
@@ -100,18 +94,6 @@ const SCHEMA = {
   additionalProperties: false,
 };
 
-// The array back into { name: { value, confidence, evidence, page } }. Unknown
-// names and empty values are dropped; the first entry for a name wins.
-function fieldsFrom(list) {
-  const out = {};
-  for (const e of Array.isArray(list) ? list : []) {
-    if (!e || typeof e.field !== 'string' || out[e.field]) continue;
-    const value = String(e.value ?? '').trim();
-    if (!value) continue;
-    out[e.field] = { value, confidence: e.confidence || 'medium', evidence: String(e.evidence || ''), page: Number(e.page) || 0 };
-  }
-  return out;
-}
 const UNIT_WORDS = {
   cm: 'cm', centimeter: 'cm', centimeters: 'cm', centimetre: 'cm', centimetres: 'cm',
   mm: 'mm', millimeter: 'mm', millimeters: 'mm', millimetre: 'mm', millimetres: 'mm',
@@ -162,10 +144,6 @@ warnings: anything a person should check before relying on this, for example mor
 - fields: every field the warning is about, by the names above; "tiers" when it concerns the quantity breaks or unit prices. A warning about packing names unitsPerCarton and whichever carton dimensions or weight it mentions. Empty only when it concerns no field.`;
 
 // ── NUMBERS AND UNITS ────────────────────────────────────────────────────────
-const toNum = (s) => {
-  const m = String(s ?? '').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
-  return m ? Number(m[0]) : null;
-};
 const round = (n, dp) => (n == null ? null : Math.round(n * 10 ** dp) / 10 ** dp);
 const DIM_TO_CM = { cm: 1, mm: 0.1, in: 2.54 };
 const WT_TO_KG = { kg: 1, g: 0.001, lb: 0.45359237 };
@@ -198,12 +176,7 @@ const warnedFieldsOf = (warnings) =>
 // ── MATCHING A FACTORY ───────────────────────────────────────────────────────
 // Against existing factory companies only. Never creates one: the quote form
 // lost the ability to mint a company on purpose, and this must not give it back.
-const STOP = /\b(co|company|corp|corporation|ltd|limited|inc|llc|plc|factory|manufacturing|mfg|industrial|industry|industries|trading|group|international|intl|the)\b/g;
-const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(STOP, ' ').replace(/\s+/g, ' ').trim();
-const domainOf = (email) => {
-  const d = String(email || '').toLowerCase().split('@')[1] || '';
-  return /^(gmail|qq|163|126|yahoo|hotmail|outlook|foxmail|sina)\./.test(d) ? '' : d;
-};
+// normName and domainOf are lib/pdfExtract.js.
 
 function matchFactory(name, email, companies) {
   const want = normName(name);
@@ -238,81 +211,13 @@ function matchHts(printed, codes) {
 }
 
 export async function POST(req) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!apiKey || !url || !anon) return json({ ok:false, error:'Server is not configured to read PDFs.' }, 500);
-
-  // ── 1. WHO IS CALLING ──────────────────────────────────────────────────────
-  // As /api/rfq/send: the token goes ON the client, so every read below -- the
-  // bucket, the codes, the companies -- runs as the caller under RLS.
-  const authz = req.headers.get('authorization') || '';
-  const token = authz.startsWith('Bearer ') ? authz.slice(7) : '';
-  if (!token) return json({ ok:false, error:'Not signed in.' }, 401);
-  const sb = createClient(url, anon, {
-    db:{ schema:'vessl' },
-    auth:{ persistSession:false, autoRefreshToken:false },
-    global:{ headers:{ Authorization: 'Bearer '+token } },
+  // Steps 1 to 3 -- configuration, the caller, the PDF, Claude reading it.
+  const r = await runExtract(req, {
+    bucket: PDF_BUCKET, pathRe: PDF_PATH_RE, maxBytes: PDF_MAX_BYTES, directMaxBytes: PDF_DIRECT_MAX_BYTES,
+    system: SYSTEM, schema: SCHEMA, prompt: 'Report what this factory quotation says.',
   });
-  const { data:{ user }, error:authErr } = await sb.auth.getUser(token);
-  if (authErr || !user) return json({ ok:false, error:'Session is not valid.' }, 401);
-  if (!isStaffEmail(user.email)) return json({ ok:false, error:'Not authorised.' }, 401);
-
-  // ── 2. THE PDF ─────────────────────────────────────────────────────────────
-  let bytes;
-  const ctype = req.headers.get('content-type') || '';
-  if (ctype.startsWith('multipart/form-data')) {
-    let form;
-    try { form = await req.formData(); } catch { return json({ ok:false, error:'Malformed upload.' }, 400); }
-    const file = form.get('file');
-    if (!file || typeof file.arrayBuffer !== 'function') return json({ ok:false, error:'No file given.' }, 400);
-    if (file.size > PDF_DIRECT_MAX_BYTES) return json({ ok:false, error:'Too large to send directly; upload it first and send its path.' }, 413);
-    bytes = Buffer.from(await file.arrayBuffer());
-  } else {
-    let body;
-    try { body = await req.json(); } catch { return json({ ok:false, error:'Malformed request.' }, 400); }
-    const path = body && typeof body.path === 'string' ? body.path : '';
-    if (!PDF_PATH_RE.test(path)) return json({ ok:false, error:'No valid PDF path given.' }, 400);
-    const { data, error } = await sb.storage.from(PDF_BUCKET).download(path);
-    if (error || !data) return json({ ok:false, error:'That PDF could not be read from storage.' }, 404);
-    bytes = Buffer.from(await data.arrayBuffer());
-  }
-  if (bytes.length > PDF_MAX_BYTES) return json({ ok:false, error:'PDF is larger than 25 MB.' }, 413);
-  if (bytes.subarray(0, 5).toString('latin1') !== '%PDF-') return json({ ok:false, error:'That file is not a PDF.' }, 400);
-
-  // ── 3. CLAUDE READS IT ─────────────────────────────────────────────────────
-  // fallbacks "default": if the model declines, the API re-runs the request on
-  // its recommended fallback inside this same call. A refusal that survives the
-  // whole chain still arrives as stop_reason "refusal" and is handled below.
-  const client = new Anthropic({ apiKey });
-  let msg;
-  try {
-    msg = await client.beta.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      output_config: { effort: 'medium', format: { type: 'json_schema', schema: SCHEMA } },
-      system: SYSTEM,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: bytes.toString('base64') } },
-          { type: 'text', text: 'Report what this factory quotation says.' },
-        ],
-      }],
-    });
-  } catch (e) {
-    if (e instanceof Anthropic.RateLimitError) return json({ ok:false, error:'The PDF reader is busy; try again in a minute.' }, 429);
-    if (e instanceof Anthropic.BadRequestError) return json({ ok:false, error:'The PDF could not be read (' + (e.message || 'bad request') + ').' }, 422);
-    if (e instanceof Anthropic.APIError) return json({ ok:false, error:'The PDF reader failed (' + (e.status || 'error') + ').' }, 502);
-    return json({ ok:false, error:'Could not reach the PDF reader.' }, 502);
-  }
-  if (msg.stop_reason === 'refusal') return json({ ok:false, error:'The PDF reader declined this document.' }, 422);
-  if (msg.stop_reason === 'max_tokens') return json({ ok:false, error:'The PDF was too long to read in one go.' }, 422);
-  const text = (msg.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-  let out;
-  try { out = JSON.parse(text); } catch { return json({ ok:false, error:'The PDF reader answered in an unexpected shape.' }, 502); }
+  if (r.response) return r.response;
+  const { sb, out, msg } = r;
 
   // ── 4. CHECKED AGAINST WHAT WE HAVE ────────────────────────────────────────
   const F = fieldsFrom(out.fields);
