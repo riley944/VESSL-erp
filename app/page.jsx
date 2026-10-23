@@ -8056,22 +8056,32 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
   const ct = Math.max(1, Number(quote.containers_needed)||1);
   // ── LANDED COST ──
   // The goods and the rates, read once for the quote. A line whose HTS code has
-  // no duty rate gets a box in the breakdown; what is typed there lives for this
-  // session only (dutyIn, by line) and is never saved -- the HTS library is where
-  // a rate belongs. The boxes are data-noguard, so closing does not ask.
+  // no duty rate gets a box in the breakdown, and so does a line with no unit
+  // cost (no PO price, or a product quote with no priced tier). What is typed
+  // there lives for this session only (dutyIn and costIn, by line), applies to
+  // every bid on the quote, and is never saved -- the HTS library and the
+  // product quote are where those belong. The boxes are data-noguard, so
+  // closing does not ask.
   const [landedIn, setLandedIn] = useState(null);
   const [dutyIn, setDutyIn] = useState({});
+  const [costIn, setCostIn] = useState({});
   const [openLanded, setOpenLanded] = useState(null);   // the bid whose breakdown is open
   useEffect(()=>{
     let alive = true;
     loadLandedInputs(quote).then(res => { if (alive) setLandedIn(res); }).catch(() => { if (alive) setLandedIn({ lines:[], rates:null, failed:true }); });
     return () => { alive = false; };
   },[quote.id]);
+  const typedNum = (v, positive) => {
+    const t = String(v == null ? '' : v).replace(/[$,\s]/g, '');
+    const n = Number(t);
+    return t !== '' && isFinite(n) && (positive ? n > 0 : n >= 0) ? n : null;
+  };
   const landedLines = useMemo(() => (landedIn ? landedIn.lines.map((l, i) => {
-    if (l.dutyRate != null) return l;
-    const t = String(dutyIn[i] == null ? '' : dutyIn[i]).trim();
-    return { ...l, dutyRate: t !== '' && isFinite(Number(t)) && Number(t) >= 0 ? Number(t) : null, dutyTyped: true };
-  }) : []), [landedIn, dutyIn]);
+    let out = l;
+    if (l.unitCost == null) out = { ...out, unitCost: typedNum(costIn[i], true), costTyped: true };
+    if (l.dutyRate == null) out = { ...out, dutyRate: typedNum(dutyIn[i], false), dutyTyped: true };
+    return out;
+  }) : []), [landedIn, dutyIn, costIn]);
   const money2 = v => v==null ? '\u2014' : '$'+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
   const landedRow = (b, per) => {
     if (!landedIn) return <div style={{fontSize:'12px',color:'#8A8A8E',marginTop:'4px'}}>Landed cost — working it out…</div>;
@@ -8102,7 +8112,17 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
               <div key={i} style={{padding:'4px 0',fontSize:'12px',borderBottom:'1px solid #F0F0F2'}}>
                 <div style={{display:'flex',justifyContent:'space-between',gap:'10px'}}>
                   <span style={{color:'#1A1A1C',fontWeight:600,minWidth:0}}>{[l.quoteCode, l.sku].filter(Boolean).join(' \u00b7 ') || l.label}<span style={{color:'#8A8A8E',fontWeight:400}}>{(l.quoteCode||l.sku) && l.label ? ' \u00b7 '+l.label : ''}</span></span>
-                  <span style={{fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{l.value!=null ? Number(l.qty).toLocaleString()+' \u00d7 '+money2(l.unitCost)+' = '+money2(l.value) : <span style={{color:'#B45309'}}>no unit cost</span>}</span>
+                  {l.costTyped && !L.allIn ? (
+                    <span style={{display:'inline-flex',alignItems:'center',gap:'5px',whiteSpace:'nowrap',fontVariantNumeric:'tabular-nums'}}>
+                      <span style={{color:'#8A8A8E'}}>{Number(l.qty).toLocaleString()+' \u00d7'}</span>
+                      <span style={{color:'#B45309'}}>unit cost $</span>
+                      <input data-noguard inputMode="decimal" value={costIn[i]||''} placeholder="0.00" onChange={e=>{ const v = e.target.value; setCostIn(prev=>({ ...prev, [i]:v })); }}
+                        style={{width:'70px',border:'1px solid '+(l.unitCost==null?'#F59E0B':'#E5E7EB'),borderRadius:'6px',padding:'3px 6px',fontSize:'12px',textAlign:'right'}} />
+                      {l.value!=null && <span>{'= '+money2(l.value)}</span>}
+                    </span>
+                  ) : (
+                    <span style={{fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{l.value!=null ? Number(l.qty).toLocaleString()+' \u00d7 '+money2(l.unitCost)+' = '+money2(l.value) : <span style={{color:'#B45309'}}>{l.unitCost==null ? 'no unit cost' : 'no quantity'}</span>}</span>
+                  )}
                 </div>
                 {!L.allIn && (
                   <div style={{display:'flex',justifyContent:'space-between',gap:'10px',color:'#8A8A8E',marginTop:'2px',alignItems:'center'}}>
@@ -8133,10 +8153,10 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
               </div>
               {incomplete && <div style={{fontSize:'11.5px',color:'#B45309',marginTop:'4px'}}>
                 {[L.missing.some(m=>m.what==='freight') ? 'this bid has no freight figure' : null,
-                  L.missing.some(m=>m.what==='cost') ? 'a line has no unit cost' : null,
+                  L.missing.some(m=>m.what==='cost') ? 'enter the unit cost for each line marked above' : null,
                   L.missing.some(m=>m.what==='duty') ? 'enter the duty % for each line marked above' : null].filter(Boolean).join('; ')}
               </div>}
-              <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'6px'}}>Estimate. Rates are set in Settings; typed duty rates are not saved.</div>
+              <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'6px'}}>Estimate. Rates are set in Settings; typed unit costs and duty rates are not saved.</div>
             </div>
           </div>
         )}
