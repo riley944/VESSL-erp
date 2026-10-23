@@ -9,6 +9,7 @@ import {
 // lib/supabaseQuotes still exists; page.jsx and pricing.jsx both import it.
 import { SB } from "@/lib/supabase";
 import { PDF_BUCKET, PDF_MAX_BYTES, PDF_DIRECT_MAX_BYTES, pdfPathFor } from "@/lib/quotePdf";
+import { XC, xStyle, xTitle, PdfSays } from "@/app/components/PdfSays";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { QuoteList } from "@/app/components/QuoteList";
 import { QuoteSkuChoiceModal } from "@/app/components/RenameSkuModal";
@@ -3208,26 +3209,8 @@ function Field({ label, k, type = "text", placeholder = "", suffix, f, set, hl }
 }
 
 // ── PDF IMPORT HIGHLIGHTS (prototype, script 129) ──────────────────────────
-// Green: the box holds what the PDF says, stated plainly. Amber: it holds what
-// the PDF says, but the reading was interpreted or weak -- check it. Red: the
-// PDF said something the form could not apply (no such factory, no such code).
-// A box holding something different gets no colour, only "PDF says X".
-const XC = { high: "#3f9d64", medium: "#d39a2c", low: "#d39a2c", red: "#d0574a" };
-const xStyle = (base, h) => (h && h.color ? { ...base, borderColor: h.color, boxShadow: "0 0 0 2px " + h.color + "33" } : base);
-function PdfSays({ h, small }) {
-  if (!h || !h.says) return null;
-  return (
-    <span style={{ fontSize: small ? 11 : 11.5, color: h.color === XC.red ? XC.red : "#a66f12", lineHeight: 1.4 }} title={h.title}>
-      PDF says {h.says}
-      {h.onUse && (
-        <button type="button" onClick={(e) => { e.preventDefault(); h.onUse(); }}
-          style={{ background: "none", border: "none", padding: "0 0 0 6px", color: "#3461e0", fontSize: "inherit", fontWeight: 600, cursor: "pointer" }}>
-          Use
-        </button>
-      )}
-    </span>
-  );
-}
+// XC, xStyle, xTitle and PdfSays are app/components/PdfSays.jsx, shared with the
+// sales order form's Import from PO.
 
 // Field renders an <input>; this is its <select> sibling, sharing the same label
 // wrapper so the two sit together on a FormSection grid.
@@ -3361,8 +3344,6 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
   useEffect(() => { fRef.current = f; }, [f]);
   const dismissX = (k) => setExt((x) => (x[k] && !x[k].dismissed ? { ...x, [k]: { ...x[k], dismissed: true } } : x));
 
-  const xTitle = (e) => "From the PDF" + (e.page ? ", page " + e.page : "") + " (" + (e.conf || "medium") + " confidence)"
-    + (e.evidence ? ": \u201c" + e.evidence + "\u201d" : "") + (e.note ? " -- " + e.note : "");
   // What a field shows, worked out at render so it is always against what the
   // box holds now -- a fill from the directory, a Use, an edit.
   const hl = (k, current) => {

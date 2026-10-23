@@ -21,7 +21,9 @@ import { FilterSelect } from '@/app/components/FilterSelect';
 // do, since 1 Oct, is NOTE it on any existing card and mark the product
 // Production -- the card stays where it is; see noteCardsForPO in
 // lib/programs.js and its two call sites below.
-import { SizeGrid, sizesForSelection, toScaleList, skuToken, storedQtyToMap } from '@/app/components/SizeGrid';
+import { SizeGrid, sizesForSelection, toScaleList, skuToken, storedQtyToMap, SIZE_SCALES, sizeKey } from '@/app/components/SizeGrid';
+import { XC, xStyle, xTitle, PdfSays } from '@/app/components/PdfSays';
+import { ORDER_PDF_BUCKET, ORDER_PDF_MAX_BYTES, ORDER_PDF_DIRECT_MAX_BYTES, orderPdfPathFor } from '@/lib/orderPdf';
 // The SAME cost model the quote editor uses. This page carried a hand-written copy
 // that had drifted on both the mold divisor and the duty term; see lib/tierCost.js.
 import { tierTotalCost, tierHasSizeMold, tierMoldFee, effectiveQty } from '@/lib/tierCost';
@@ -2745,13 +2747,52 @@ function ShippingMethodField({ choice, other, onChoice, onOther }){
   );
 }
 
+// ── IMPORT FROM PO PDF: two translations the sales order form needs ─────────
+// A PO's payment terms as one of the five PAYMENT_TERMS_OPTS, or null when the
+// wording is not one of them ("NET 30 days" is Net 30; "Merlin standard terms"
+// is not anything).
+const poTermOf = raw => {
+  const t = String(raw||'').toLowerCase().replace(/\bdays?\b/g,'').replace(/\s+/g,' ').trim();
+  if (!t) return null;
+  const net = /^net\s*(\d+)$/.exec(t);
+  if (net) { const o = 'Net '+net[1]; return PAYMENT_TERMS_OPTS.includes(o) ? o : null; }
+  if (/2\s*%\s*\/?\s*10.*net\s*30/.test(t)) return '2%/10, Net 30';
+  if (/due (at once|on receipt|upon receipt)|^immediate/.test(t)) return 'Due at Once';
+  return PAYMENT_TERMS_OPTS.find(o => o.toLowerCase() === t) || null;
+};
+// A PO line's sizes as the size grid holds them: { scales, qty } keyed by
+// sizeKey, or null when they do not fit the scales (the line then goes in
+// unsized, its sizes written into the description). A prefix names the scale
+// ("Youth M"); bare labels take the first scale that has every one of them.
+const PO_SCALE_WORDS = { adult:'adult', youth:'youth', yth:'youth', toddler:'toddler', bag:'bag', collar:'collar' };
+const mapPoSizes = sizes => {
+  if (!sizes || !sizes.length) return null;
+  const parsed = sizes.map(sz => {
+    const m = /^(adult|youth|yth|toddler|bag|collar)\s+(.+)$/i.exec(String(sz.size||'').trim());
+    return { hint: m ? PO_SCALE_WORDS[m[1].toLowerCase()] : null, label: String(m ? m[2] : sz.size).trim().toUpperCase(), qty: sz.qty };
+  });
+  const sizesOf = key => (SIZE_SCALES.find(sc => sc.key === key) || {}).sizes || [];
+  const bare = parsed.filter(x => !x.hint).map(x => x.label);
+  const bareScale = bare.length ? (SIZE_SCALES.find(sc => bare.every(l => sc.sizes.some(z => z.toUpperCase() === l))) || {}).key : null;
+  if (bare.length && !bareScale) return null;
+  const scales = new Set(); const qty = {};
+  for (const x of parsed) {
+    const scale = x.hint || bareScale;
+    const size = sizesOf(scale).find(z => z.toUpperCase() === x.label);
+    if (!size) return null;
+    scales.add(scale);
+    qty[sizeKey(scale, size)] = x.qty == null ? '' : String(x.qty);
+  }
+  return { scales: toScaleList([...scales]), qty };
+};
+
 function CreateSOModal({onClose,onCreated}){
   // markDirty is needed here: togglePO writes linkedPOIds, which renders as a
   // styled div tick rather than a checkbox, so it never reaches a control value.
   const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
   const nd=()=>new Date().toISOString().split('T')[0];
   const [mode,setMode]=useState('catalog');
-  const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',crd:'',cancel:'',payment:'',dep:'',currency:'USD',notes:'',shipTo:'',shipMethod:'',shipOther:''});
+  const [form,setForm]=useState({num:'',clientId:'',clientPO:'',date:nd(),ship:'',crd:'',cancel:'',payment:'',dep:'',currency:'USD',notes:'',shipTo:'',shipMethod:'',shipOther:'',pdfPath:''});
   const f=k=>v=>setForm(prev=>({...prev,[k]:v}));
   const setShip=v=>setForm(prev=>({...prev,shipMethod:v,shipOther:v==='Other'?prev.shipOther:''}));
   const [items,setItems]=useState([]);
@@ -2895,6 +2936,181 @@ function CreateSOModal({onClose,onCreated}){
   const prevRev=items.reduce((a,it)=>a+lineAmt(it),0);
   const filtQ=qSearch?quotes.filter(q=>(q.product||'').toLowerCase().includes(qSearch.toLowerCase())||(q.client||'').toLowerCase().includes(qSearch.toLowerCase())||(q.factory||'').toLowerCase().includes(qSearch.toLowerCase())||(q.sku||'').toLowerCase().includes(qSearch.toLowerCase())):quotes;
   const filtPOs=availPOs.filter(p=>!poSearch||(p.client_po_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.order_number||'').toLowerCase().includes(poSearch.toLowerCase())||(p.companies?.name||'').toLowerCase().includes(poSearch.toLowerCase()));
+  // ── IMPORT FROM PO PDF (script 134) ──────────────────────────────────────
+  // The client's PO is stored first, in the private order-pdfs bucket, then
+  // /api/orders/extract reads it and this fills what it can, the quote form's
+  // way: a box the form left empty takes the PDF's value and is highlighted
+  // (green stated plainly, amber interpreted), a filled box keeps its value and
+  // shows "PDF says X . Use", and what could not be applied is red. Nothing is
+  // saved until Create Sales Order. so_number and status are never touched.
+  //   Filled only when empty: client PO, order date (today is the default, so
+  //     it counts as empty), INDC, cancel date, payment terms (when they are one
+  //     of the five), currency (over USD, the default, when the PDF's is listed).
+  //   Client: set only on a vendor number, exact name or same-words match; a
+  //     weaker match is offered, and no match is red with Add new client.
+  //   Suggestion only: ship-to, shipping method, deposit, the PDF's notes, and
+  //     a product quote for a line no SKU matched.
+  //   Lines: added only when the form has none, each with its size quantities;
+  //     a line no SKU matched has a blank SKU and the client's codes in its
+  //     description. quoteId stays null, so saving never writes a PO price back
+  //     into a quote; the product is linked by SKU on save, as for a typed line.
+  //   Notes: "Client PO dated X, buyer Y" appended once.
+  // poX holds what the PDF said per field; typing in a box dismisses its entry.
+  const [poX,setPoX]=useState({});
+  const [pdfInfo,setPdfInfo]=useState(null);
+  const pdfInputRef=useRef(null);
+  // The answer arrives seconds after the click; it applies to the form as it is THEN.
+  const formRef=useRef(form); useEffect(()=>{formRef.current=form;},[form]);
+  const itemsRef=useRef(items); useEffect(()=>{itemsRef.current=items;},[items]);
+  const dismissX=k=>setPoX(x=>(x[k]&&!x[k].dismissed?{...x,[k]:{...x[k],dismissed:true}}:x));
+  const fx=k=>v=>{dismissX(k);f(k)(v);};
+  // What a field shows, against what the box holds now.
+  const hl=(k,now)=>{
+    const e=poX[k]; if(!e||e.dismissed) return null;
+    const title=xTitle(e);
+    // Long values (the PO's notes) are cut short here; the tooltip has the words.
+    const t=String(e.shown||e.value); const says=t.length>90?t.slice(0,87)+'\u2026':t;
+    if(e.red) return {color:XC.red,title,says};
+    if(String(now??'').trim()===String(e.value).trim()) return {color:XC[e.conf]||XC.medium,title};
+    return {title,says,onUse:e.use?()=>{markDirty();e.use();setPoX(x=>({...x,[k]:{...x[k],dismissed:!!e.once}}));}:null};
+  };
+  const hlBox=h=>(h&&h.color?{borderColor:h.color,boxShadow:'0 0 0 2px '+h.color+'33'}:undefined);
+  const pickClientRow=c=>setForm(p=>({...p,clientId:c.id,shipTo:(c.shipping_address&&!p.shipTo)?c.shipping_address:p.shipTo}));
+
+  const importPo=async(file)=>{
+    if(!file) return;
+    const fileName=file.name||'po.pdf';
+    if(!/[.]pdf$/i.test(fileName)&&file.type!=='application/pdf'){setPdfInfo({fileName,error:'That file is not a PDF.'});return;}
+    if(file.size>ORDER_PDF_MAX_BYTES){setPdfInfo({fileName,error:'That PDF is larger than 25 MB.'});return;}
+    const {data:{session}}=await SB.auth.getSession();
+    const token=session&&session.access_token;
+    if(!token){setPdfInfo({fileName,error:'Your session has expired. Sign in again before importing.'});return;}
+    // Stored first, whatever happens next: the PO is the record of what the
+    // client ordered, and its path goes on the sales order when it is created.
+    setPdfInfo({fileName,busy:'Uploading\u2026'});
+    const path=orderPdfPathFor(null,fileName);
+    const up=await SB.storage.from(ORDER_PDF_BUCKET).upload(path,file,{upsert:false,contentType:'application/pdf'});
+    if(up.error){setPdfInfo({fileName,error:'Upload failed: '+up.error.message});return;}
+    markDirty();
+    setForm(p=>({...p,pdfPath:path}));
+    setPdfInfo({fileName,busy:'Reading the PO \u2014 this can take a minute\u2026'});
+    let out=null;
+    try{
+      let res;
+      if(file.size<=ORDER_PDF_DIRECT_MAX_BYTES){
+        const fd=new FormData(); fd.append('file',file);
+        res=await fetch('/api/orders/extract',{method:'POST',headers:{Authorization:'Bearer '+token},body:fd});
+      }else{
+        res=await fetch('/api/orders/extract',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({path})});
+      }
+      try{out=await res.json();}catch{out=null;}
+      if(!res.ok||!out||!out.ok){setPdfInfo({fileName,error:(out&&out.error)||('The PDF could not be read ('+res.status+').')});return;}
+    }catch(e){setPdfInfo({fileName,error:'Could not reach the server.'});return;}
+    applyPo(out,fileName);
+  };
+
+  const applyPo=(out,fileName)=>{
+    const cur=formRef.current;
+    const F=out.fields||{};
+    const warned=new Set(out.warnedFields||[]);
+    const warnings=[...(out.warnings||[])];
+    const nx={}; const patch={};
+    const confOf=(fk,src)=>(warned.has(fk)&&src.confidence==='high')?'medium':(src.confidence||'medium');
+    // One field: an entry for the highlight, and a fill when the box is empty.
+    const put=(k,fk,{fill=true,isEmpty,value,shown,use,once}={})=>{
+      const src=F[fk]; if(!src||!String(src.value||'').trim()) return;
+      const v=value!==undefined?value:String(src.value).trim();
+      nx[k]={value:v,conf:confOf(fk,src),evidence:src.evidence,page:src.page,note:src.note,shown,once,
+             use:use!==undefined?use:(()=>setForm(p=>({...p,[k]:v})))};
+      const empty=isEmpty?isEmpty(cur[k]):!String(cur[k]??'').trim();
+      if(fill&&empty) patch[k]=v;
+    };
+    const iso=fk=>F[fk]&&/^\d{4}-\d{2}-\d{2}$/.test(String(F[fk].value).trim());
+    put('clientPO','clientPO');
+    if(iso('orderDate')) put('date','orderDate',{isEmpty:v=>!v||v===nd()});
+    if(iso('shipDate')) put('ship','shipDate');
+    if(iso('cancelDate')) put('cancel','cancelDate');
+    // Payment terms: one of the five, or shown as written with nothing to apply.
+    if(F.paymentTerms){
+      const raw=String(F.paymentTerms.value).trim(); const term=poTermOf(raw);
+      if(term) put('payment','paymentTerms',{value:term,shown:term+(term.toLowerCase()!==raw.toLowerCase()?' (\u201c'+raw+'\u201d)':'')});
+      else put('payment','paymentTerms',{fill:false,use:null,shown:raw+' \u2014 not one of the listed terms'});
+    }
+    // Currency: over the USD default only when it is one the form lists.
+    if(F.currency){
+      const c=String(F.currency.value).trim().toUpperCase();
+      if(['USD','CAD','EUR','GBP','AUD'].includes(c)) put('currency','currency',{value:c,isEmpty:v=>!v||v==='USD'});
+      else put('currency','currency',{fill:false,use:null,value:c,shown:c+' \u2014 not a currency this form offers'});
+    }
+    // Suggestions only.
+    if(F.depositPercent) put('dep','depositPercent',{fill:false});
+    put('shipTo','shipTo',{fill:false});
+    if(F.shipMethod){
+      const raw=String(F.shipMethod.value).trim();
+      const opt=SHIPPING_METHOD_OPTS.find(o=>o!=='Other'&&o.toLowerCase()===raw.toLowerCase());
+      put('shipMethod','shipMethod',{fill:false,value:raw,use:()=>setForm(p=>({...p,shipMethod:opt||'Other',shipOther:opt?'':raw}))});
+    }
+    put('notes','notes',{fill:false,once:true,use:()=>setForm(p=>({...p,notes:(p.notes?p.notes.replace(/\s+$/,'')+'\n':'')+String(F.notes.value).trim()}))});
+
+    // The client: set only on a strong match, and only into an empty box.
+    const cm=out.client&&out.client.match; const cname=String((out.client&&out.client.name)||'').trim();
+    const company=cm?clients.find(c=>c.id===cm.id):null;
+    const csrc=F.clientName||{};
+    if(company){
+      const strong=['vendor number','name','name, any order'].includes(cm.matchedBy);
+      nx.clientId={value:company.id,conf:confOf('clientName',csrc),evidence:csrc.evidence,page:csrc.page,note:'matched by '+cm.matchedBy,
+                   shown:(cname||'the PO')+' \u2192 '+company.name+' ('+cm.matchedBy+')',use:()=>pickClientRow(company)};
+      if(strong&&!cur.clientId){patch.clientId=company.id; if(company.shipping_address&&!cur.shipTo) patch.shipTo=company.shipping_address;}
+    }else if(cname){
+      nx.clientId={value:'',red:true,noMatch:cname,conf:'low',evidence:csrc.evidence,page:csrc.page,shown:cname+' \u2014 no client matches'};
+    }
+
+    // One line in Notes, once, saying where the order came from.
+    const dated=F.orderDate?String(F.orderDate.value).trim():''; const buyer=F.buyerName?String(F.buyerName.value).trim():'';
+    const noteLine=(dated||buyer)?'Client PO dated '+(dated||'(no date)')+(buyer?', buyer '+buyer:''):'';
+    if(noteLine){
+      const before=cur.notes||'';
+      if(!before.includes(noteLine)) patch.notes=(before?before.replace(/\s+$/,'')+'\n':'')+noteLine;
+    }
+
+    // Lines, only into an empty order.
+    const lines=Array.isArray(out.lines)?out.lines:[];
+    const hasLines=itemsRef.current.some(it=>(it.desc||'').trim());
+    let added=[];
+    if(lines.length&&!hasLines){
+      added=lines.map(g=>{
+        const sized=mapPoSizes(g.sizes);
+        const codes=[g.supplierCode?'Supplier '+g.supplierCode:null,g.clientItem?'Item '+g.clientItem:null].filter(Boolean).join(' \u00b7 ');
+        const color=g.color&&!String(g.description||'').toLowerCase().includes(g.color.toLowerCase())?g.color:null;
+        const sizeNote=g.sizes&&g.sizes.length&&!sized?'sizes '+g.sizes.map(z=>z.size+' '+(z.qty??'?')).join(', '):null;
+        const desc=[g.description||g.productName||'Item',color,g.productId?null:codes,sizeNote].filter(Boolean).join(' \u00b7 ');
+        return {desc,sku:g.productId?(g.sku||''):'',qty:sized?'':(g.qty!=null?String(g.qty):''),price:g.unitPrice!=null?String(g.unitPrice):'',
+                quoteId:null,tierIdx:0,noPrice:false,sizeScales:sized?sized.scales:[],sizeQty:sized?sized.qty:{},sizePrice:{},
+                _x:{conf:g.confidence||'medium',title:xTitle({page:(g.pages||[])[0],conf:g.confidence,evidence:(g.evidence||[]).join(' | ')}),
+                    unmatched:!g.productId,retired:!!g.retired,suggestion:g.suggestion||null}};
+      });
+      if(added.some(it=>it.desc.includes(' \u00b7 sizes '))) warnings.push('A line\u2019s sizes do not fit the size scales, so it was added unsized with its sizes in the description.');
+    }else if(lines.length){
+      warnings.push('The PO has '+lines.length+' line'+(lines.length===1?'':'s')+'; none were added because this order already has lines.');
+    }
+
+    markDirty();
+    setForm(p=>({...p,...patch}));
+    if(added.length){ setItems(added); if(mode==='catalog'&&!picked) setMode('manual'); }
+    else if(mode==='catalog'&&!picked) setMode('manual');
+    setPoX(nx);
+    setPdfInfo({fileName,done:true,warnings,count:Object.keys(nx).length,lines:added.length});
+  };
+
+  const viewPo=async()=>{
+    if(!form.pdfPath) return;
+    // Opened before the await so the browser does not treat it as a popup.
+    const w=window.open('','_blank');
+    const {data,error}=await SB.storage.from(ORDER_PDF_BUCKET).createSignedUrl(form.pdfPath,600);
+    if(error||!data){ if(w) w.close(); setPdfInfo(p=>({...(p||{}),error:'Could not open the PDF: '+(error?error.message:'no link')})); return; }
+    if(w) w.location.href=data.signedUrl;
+  };
+
   const submit=async()=>{
     if(!form.clientId){window._toast?.('Client is required','err');return;}
     if(!form.clientPO.trim()){window._toast?.('Client PO number is required','err');return;}
@@ -2909,7 +3125,7 @@ function CreateSOModal({onClose,onCreated}){
     setLoading(true);
     // auto-generate so_number from client PO if not set
     const soNum = form.num.trim() || ('KUI-'+form.clientPO.trim().replace(/[^A-Za-z0-9]/g,'-').slice(0,20).toUpperCase());
-    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,deposit_percent:Number(form.dep)||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:ship.value,status:'received'}).select().single();
+    const {data:so,error:e0}=await SB.from('sales_orders').insert({so_number:soNum,client_company_id:form.clientId||null,client_po_number:form.clientPO.trim(),order_date:form.date||null,required_ship_date:form.ship||null,indc_date:form.ship||null,cargo_ready_date:form.crd||null,cancel_date:form.cancel||null,payment_terms:form.payment||null,deposit_percent:Number(form.dep)||null,currency:form.currency,notes:form.notes||null,delivery_address:form.shipTo||null,shipping_method:ship.value,status:'received',...(form.pdfPath?{pdf_path:form.pdfPath}:{})}).select().single();
     if(e0||!so){alert('Error: '+(e0?.message||'unknown'));setLoading(false);return;}
     // A line with a size scale expands into one row per size carrying a quantity;
     // an unsized line still writes exactly one row, with size NULL. Sizes left blank
@@ -3018,6 +3234,35 @@ function CreateSOModal({onClose,onCreated}){
         <div className="modal-head"><h3>New Sales Order</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
 
+          {/* IMPORT FROM PO PDF (script 134). Uploads to the private order-pdfs
+              bucket, has Claude read it, and fills what it can. Nothing is
+              saved until Create Sales Order. */}
+          <div style={{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'10px',marginBottom:'16px',padding:'10px 12px',border:'1px dashed #d5dae4',borderRadius:'10px',background:'#fafbfc'}}>
+            <button type="button" className="btn btn-ghost btn-sm" disabled={!!(pdfInfo&&pdfInfo.busy)} style={{opacity:pdfInfo&&pdfInfo.busy?.6:1}}
+              onClick={()=>pdfInputRef.current&&pdfInputRef.current.click()}>Import from PO PDF</button>
+            <input ref={pdfInputRef} type="file" accept="application/pdf,.pdf" style={{display:'none'}}
+              onChange={e=>{const file=e.target.files&&e.target.files[0];e.target.value='';importPo(file);}} />
+            {form.pdfPath && <button type="button" onClick={viewPo} style={{background:'none',border:'none',padding:0,color:'#3461e0',fontSize:'12.5px',fontWeight:600,cursor:'pointer'}}>View PDF</button>}
+            <span style={{fontSize:'12.5px',color:pdfInfo&&pdfInfo.error?XC.red:'#6a7488'}}>
+              {!pdfInfo ? "A client's PO PDF fills the fields it can; you check them before saving."
+                : pdfInfo.error ? (pdfInfo.fileName?pdfInfo.fileName+': ':'')+pdfInfo.error
+                : pdfInfo.busy ? pdfInfo.fileName+': '+pdfInfo.busy
+                : pdfInfo.fileName+': '+pdfInfo.count+' fields read'+(pdfInfo.lines?', '+pdfInfo.lines+' line'+(pdfInfo.lines===1?'':'s')+' added':'')+'. Hover a highlighted box for where it came from.'}
+            </span>
+            {pdfInfo&&pdfInfo.done&&(
+              <span style={{display:'flex',gap:'12px',fontSize:'11.5px',color:'#6a7488',width:'100%'}}>
+                <span><span style={{color:XC.high}}>{'\u25a0'}</span> from the PDF</span>
+                <span><span style={{color:XC.medium}}>{'\u25a0'}</span> from the PDF, check it</span>
+                <span><span style={{color:XC.red}}>{'\u25a0'}</span> could not be applied</span>
+              </span>
+            )}
+            {pdfInfo&&pdfInfo.done&&pdfInfo.warnings&&pdfInfo.warnings.length>0&&(
+              <ul style={{margin:0,paddingLeft:'18px',width:'100%',fontSize:'12px',color:'#a66f12',lineHeight:1.5}}>
+                {pdfInfo.warnings.map((w,i)=><li key={i}>{w}</li>)}
+              </ul>
+            )}
+          </div>
+
           <div className="qp-toggle">
             <button className={mode==='catalog'?'on':''} onClick={()=>setMode('catalog')}>Generate from Quote</button>
             <button className={mode==='manual'?'on':''} onClick={()=>{setMode('manual');setPicked(null);setItems([]);}} >Manual Entry</button>
@@ -3071,23 +3316,27 @@ function CreateSOModal({onClose,onCreated}){
           {(mode==='manual'||picked) && (<>
 
           <div className="form-row"><label>Client *</label>
-            <select className="form-select" value={form.clientId} onChange={e=>{const cid=e.target.value;const c=clients.find(x=>x.id===cid);setForm(prev=>({...prev,clientId:cid,shipTo:(c&&c.shipping_address&&!prev.shipTo)?c.shipping_address:prev.shipTo}));}}>
+            <select className="form-select" style={hlBox(hl('clientId',form.clientId))} title={hl('clientId',form.clientId)?.title} value={form.clientId} onChange={e=>{dismissX('clientId');const cid=e.target.value;const c=clients.find(x=>x.id===cid);setForm(prev=>({...prev,clientId:cid,shipTo:(c&&c.shipping_address&&!prev.shipTo)?c.shipping_address:prev.shipTo}));}}>
               <option value="">— Select Client —</option>
               {clients.sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=><option key={c.id} value={c.id}>{c.name}{c.vendor_number?' ('+c.vendor_number+')':''}</option>)}
             </select>
+            {poX.clientId&&!poX.clientId.dismissed&&poX.clientId.red
+              ? <div style={{fontSize:'11.5px',color:XC.red,marginTop:'4px'}} title={xTitle(poX.clientId)}>PDF says {poX.clientId.shown}
+                  <button type="button" onClick={()=>{setShowNC(true);setNcName(poX.clientId.noMatch||'');}} style={{background:'none',border:'none',padding:'0 0 0 6px',color:'#3461e0',fontSize:'inherit',fontWeight:600,cursor:'pointer'}}>+ Add new client</button></div>
+              : <div><PdfSays h={hl('clientId',form.clientId)} /></div>}
             {!showNC?<button className="btn btn-ghost btn-sm" style={{marginTop:'8px'}} onClick={()=>setShowNC(true)}>+ New client</button>:<div style={{display:'flex',gap:'8px',marginTop:'8px',alignItems:'center'}}><input className="form-input" style={{flex:1}} placeholder="Client name…" value={ncName} onChange={e=>setNcName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNC()} autoFocus /><button className="btn btn-dark btn-sm" onClick={addNC}>Add</button><button className="btn btn-ghost btn-sm" onClick={()=>{setShowNC(false);setNcName('');}}>✕</button></div>}
           </div>
 
           <div className="form-row-2">
-            <div><label>Client PO # *</label><input className="form-input" value={form.clientPO} onChange={e=>f('clientPO')(e.target.value)} placeholder="Client's PO number — this is the primary reference" autoFocus /></div>
-            <div><label>Order Date</label><input type="date" className="form-input" value={form.date} onChange={e=>f('date')(e.target.value)} /></div>
+            <div><label>Client PO # *</label><input className="form-input" style={hlBox(hl('clientPO',form.clientPO))} title={hl('clientPO',form.clientPO)?.title} value={form.clientPO} onChange={e=>fx('clientPO')(e.target.value)} placeholder="Client's PO number — this is the primary reference" autoFocus /><PdfSays h={hl('clientPO',form.clientPO)} /></div>
+            <div><label>Order Date</label><input type="date" className="form-input" style={hlBox(hl('date',form.date))} title={hl('date',form.date)?.title} value={form.date} onChange={e=>fx('date')(e.target.value)} /><PdfSays h={hl('date',form.date)} /></div>
           </div>
           <div className="form-row-2">
             <div><label>Cargo Ready Date <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>when goods are picked up — shown to client</span></label><input type="date" className="form-input" value={form.crd} onChange={e=>f('crd')(e.target.value)} /></div>
-            <div><label>INDC <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>in-DC / delivery date</span></label><input type="date" className="form-input" value={form.ship} onChange={e=>f('ship')(e.target.value)} /></div>
+            <div><label>INDC <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>in-DC / delivery date</span></label><input type="date" className="form-input" style={hlBox(hl('ship',form.ship))} title={hl('ship',form.ship)?.title} value={form.ship} onChange={e=>fx('ship')(e.target.value)} /><PdfSays h={hl('ship',form.ship)} /></div>
           </div>
           <div className="form-row-2">
-            <div><label>Cancel Date</label><input type="date" className="form-input" value={form.cancel} onChange={e=>f('cancel')(e.target.value)} /></div>
+            <div><label>Cancel Date</label><input type="date" className="form-input" style={hlBox(hl('cancel',form.cancel))} title={hl('cancel',form.cancel)?.title} value={form.cancel} onChange={e=>fx('cancel')(e.target.value)} /><PdfSays h={hl('cancel',form.cancel)} /></div>
             <div></div>
           </div>
           <div className="form-row-2">
@@ -3095,14 +3344,15 @@ function CreateSOModal({onClose,onCreated}){
             <div></div>
           </div>
           <div className="form-row-3">
-            <div><label>Payment Terms</label><PaymentTermsSelect value={form.payment} onChange={f('payment')} /></div>
-            <div><label>Deposit %</label><input type="number" className="form-input" placeholder="30" min="0" max="100" value={form.dep} onChange={e=>f('dep')(e.target.value)} /></div>
-            <div><label>Currency</label><select className="form-select" value={form.currency} onChange={e=>f('currency')(e.target.value)}>{['USD','CAD','EUR','GBP','AUD'].map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+            <div><label>Payment Terms</label><div style={{borderRadius:'8px',...(hlBox(hl('payment',form.payment))||{})}} title={hl('payment',form.payment)?.title}><PaymentTermsSelect value={form.payment} onChange={fx('payment')} /></div><PdfSays h={hl('payment',form.payment)} /></div>
+            <div><label>Deposit %</label><input type="number" className="form-input" style={hlBox(hl('dep',form.dep))} title={hl('dep',form.dep)?.title} placeholder="30" min="0" max="100" value={form.dep} onChange={e=>fx('dep')(e.target.value)} /><PdfSays h={hl('dep',form.dep)} /></div>
+            <div><label>Currency</label><select className="form-select" style={hlBox(hl('currency',form.currency))} title={hl('currency',form.currency)?.title} value={form.currency} onChange={e=>fx('currency')(e.target.value)}>{['USD','CAD','EUR','GBP','AUD'].map(c=><option key={c} value={c}>{c}</option>)}</select><PdfSays h={hl('currency',form.currency)} /></div>
           </div>
           <div className="form-row-2">
-            <ShippingMethodField choice={form.shipMethod} other={form.shipOther} onChoice={setShip} onOther={f('shipOther')} />
+            <ShippingMethodField choice={form.shipMethod} other={form.shipOther} onChoice={v=>{dismissX('shipMethod');setShip(v);}} onOther={v=>{dismissX('shipMethod');f('shipOther')(v);}} />
           </div>
-          <div><label>Ship-To Address <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>prints on order confirmation</span></label><textarea className="form-input" rows={3} value={form.shipTo} onChange={e=>f('shipTo')(e.target.value)} placeholder="Full ship-to address for the client" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
+          {poX.shipMethod&&<div style={{marginTop:'-8px',marginBottom:'10px'}}><PdfSays h={hl('shipMethod',form.shipMethod==='Other'?form.shipOther:form.shipMethod)} /></div>}
+          <div><label>Ship-To Address <span style={{color:'var(--faint)',fontWeight:400,letterSpacing:0,textTransform:'none'}}>prints on order confirmation</span></label><PdfSays h={hl('shipTo',form.shipTo)} /><textarea className="form-input" rows={3} title={hl('shipTo',form.shipTo)?.title} value={form.shipTo} onChange={e=>fx('shipTo')(e.target.value)} placeholder="Full ship-to address for the client" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
 
           <span className="form-section-label">Line Items</span>
           <table className="items-table">
@@ -3111,7 +3361,7 @@ function CreateSOModal({onClose,onCreated}){
               {items.map((it,i)=>(
                 <React.Fragment key={i}>
                   <tr>
-                    <td><input value={it.desc} onChange={e=>si(i,'desc',e.target.value)} placeholder="Description…" /></td>
+                    <td><input value={it.desc} onChange={e=>si(i,'desc',e.target.value)} placeholder="Description…" title={it._x?it._x.title:undefined} style={it._x?xStyle({},{color:XC[it._x.conf]||XC.medium}):undefined} /></td>
                     <td>{sizesForSelection(it.sizeScales).length
                       ? <div className="qty-from-sizes" title="Quantity comes from the size breakdown below"><span className="qfs-v">{lineQty(it).toLocaleString()}</span><span className="qfs-k">from sizes</span></div>
                       : <input type="number" value={it.qty} onChange={e=>si(i,'qty',e.target.value)} placeholder="0" />}</td>
@@ -3129,7 +3379,15 @@ function CreateSOModal({onClose,onCreated}){
                   <tr className="item-sub-row">
                     <td colSpan={5}>
                       <div style={{display:'flex',gap:'10px',flexWrap:'wrap',padding:'4px 0 8px'}}>
-                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 130px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Client SKU</span><input className="form-input" style={{padding:'5px 8px',fontSize:'12.5px'}} value={it.sku||''} onChange={e=>si(i,'sku',e.target.value)} placeholder="Client SKU" /></div>
+                        <div style={{display:'flex',flexDirection:'column',flex:'0 0 130px'}}><span style={{fontSize:'10px',textTransform:'uppercase',letterSpacing:'.05em',color:'var(--muted)'}}>Client SKU</span><input className="form-input" style={it._x&&it._x.unmatched&&!it.sku?xStyle({padding:'5px 8px',fontSize:'12.5px'},{color:XC.red}):{padding:'5px 8px',fontSize:'12.5px'}} title={it._x&&it._x.unmatched&&!it.sku?'No product SKU on file matched this PO line; the client\u2019s codes are in the description.':undefined} value={it.sku||''} onChange={e=>si(i,'sku',e.target.value)} placeholder="Client SKU" />
+                          {/* A product quote whose name matches the PO line: offered, never applied. */}
+                          {it._x&&it._x.unmatched&&!it.sku&&it._x.suggestion&&(
+                            <span style={{fontSize:'11px',color:'#a66f12',marginTop:'3px',lineHeight:1.35}} title={'Matched on the description, score '+it._x.suggestion.score}>
+                              {'Maybe '+[it._x.suggestion.quoteCode,it._x.suggestion.sku].filter(Boolean).join(' \u00b7 ')}
+                              {it._x.suggestion.sku&&<button type="button" onClick={()=>{markDirty();si(i,'sku',it._x.suggestion.sku);}} style={{background:'none',border:'none',padding:'0 0 0 5px',color:'#3461e0',fontSize:'inherit',fontWeight:600,cursor:'pointer'}}>Use</button>}
+                            </span>
+                          )}
+                          {it._x&&it._x.retired&&<span style={{fontSize:'11px',color:'#a66f12',marginTop:'3px'}}>Retired product</span>}</div>
                         <div style={{flex:'1 1 280px',minWidth:0}}>
                           <SizeGrid scales={it.sizeScales||[]} onScalesChange={ks=>setSizeScales(i,ks)} quantities={it.sizeQty||{}} onQuantityChange={(k,v)=>setSizeQty(i,k,v)} prices={it.sizePrice||{}} onPriceChange={(k,v)=>setSizePrice(i,k,v)} fallbackPrice={it.price} />
                         </div>
@@ -3164,7 +3422,7 @@ function CreateSOModal({onClose,onCreated}){
             {linkedPOIds.length>0&&<div style={{fontSize:'12px',color:'var(--accent)',marginTop:'6px',fontWeight:600}}>{linkedPOIds.length+' PO'+(linkedPOIds.length!==1?'s':'')+' linked'}</div>}
           </div>
           <OrderNoteDraft staff={staff} text={noteText} setText={setNoteText} to={noteTo} setTo={setNoteTo} disabled={loading} />
-          <div className="form-row"><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>f('notes')(e.target.value)} placeholder="Internal notes…" rows={3} /></div>
+          <div className="form-row"><label>Notes</label><textarea className="form-textarea" value={form.notes} onChange={e=>fx('notes')(e.target.value)} placeholder="Internal notes…" rows={3} /><PdfSays h={hl('notes',form.notes)} /></div>
 
           </>)}
         </div>
