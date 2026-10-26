@@ -4393,7 +4393,35 @@ function OrderDetail({ id, navigate }) {
   const deleteAttachment = async (name) => {
     setConfirmDel({title:'Remove attachment?',message:'This file will be permanently deleted.',onConfirm:()=>{ setConfirmDel(null); deleteAttachmentConfirmed(name); }});
   };
-  const attachUrl = (name) => SB.storage.from('po-attachments').getPublicUrl(id+'/'+name).data.publicUrl;
+  // Signed links (600s), so View keeps working once the bucket is private.
+  const signAttachment = async (name) => {
+    const { data, error } = await SB.storage.from('po-attachments').createSignedUrl(id+'/'+name, 600);
+    if (error || !data) throw new Error(error ? error.message : 'no link');
+    return data.signedUrl;
+  };
+  const viewAttachment = async (name) => {
+    // Opened before the await so the browser does not treat it as a popup.
+    const w = window.open('', '_blank');
+    try {
+      const url = await signAttachment(name);
+      if (w) w.location.href = url;
+    } catch(e) {
+      if (w) w.close();
+      window._toast?.('Could not open the attachment: '+e.message,'err');
+    }
+  };
+  // An image as a data: URI, so a saved or printed PO does not depend on a link that expires.
+  const attachmentDataUri = async (name) => {
+    const res = await fetch(await signAttachment(name));
+    if (!res.ok) throw new Error('HTTP '+res.status);
+    const blob = await res.blob();
+    return await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(blob);
+    });
+  };
   const [confirmDel, setConfirmDel] = useState(null); // {title,message,onConfirm}
   const deletePO = async () => {
     await SB.from('purchase_order_items').delete().eq('purchase_order_id',id);
@@ -4415,8 +4443,10 @@ function OrderDetail({ id, navigate }) {
     const artImages = []; const otherFiles = [];
     for (const f of (attachments||[])) {
       const ext = (f.name.split('.').pop()||'').toLowerCase();
-      if (imgExts.includes(ext)) artImages.push({ name: f.name, url: attachUrl(f.name) });
-      else otherFiles.push(f.name);
+      if (!imgExts.includes(ext)) { otherFiles.push(f.name); continue; }
+      // An image that cannot be fetched is listed with the other files instead.
+      try { artImages.push({ name: f.name, url: await attachmentDataUri(f.name) }); }
+      catch(e) { otherFiles.push(f.name); }
     }
     const { settings, logo } = await loadLetterhead();
     // Build doc data directly from already-loaded state — no RPC needed
@@ -4616,14 +4646,14 @@ function OrderDetail({ id, navigate }) {
       <OrderNotesPanel purchaseOrderId={id} />
       <OrderAttachments
         attachments={attachments} uploading={uploading}
-        onFileChange={onFileChange} attachUrl={attachUrl}
+        onFileChange={onFileChange} viewAttachment={viewAttachment}
         deleteAttachment={deleteAttachment}
       />
     </>
   );
 }
 
-function OrderAttachments({ attachments, uploading, onFileChange, attachUrl, deleteAttachment }) {
+function OrderAttachments({ attachments, uploading, onFileChange, viewAttachment, deleteAttachment }) {
   const borderVal = attachments.length > 0 ? '1px solid var(--line)' : 'none';
   const spanClass = 'btn btn-ghost btn-sm' + (uploading ? ' disabled' : '');
   return (
@@ -4644,11 +4674,10 @@ function OrderAttachments({ attachments, uploading, onFileChange, attachUrl, del
           {attachments.map(f => {
             const parts = f.name.split('-');
             const displayName = parts.length > 1 ? parts.slice(1).join('-') : f.name;
-            const href = attachUrl(f.name);
             return (
               <div key={f.name} style={{display:'flex',alignItems:'center',gap:'12px',padding:'11px 18px',borderBottom:'1px solid var(--line-2)'}}>
                 <span style={{flex:1,fontSize:'13px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{displayName}</span>
-                <a href={href} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">View</a>
+                <button className="btn btn-ghost btn-sm" onClick={() => viewAttachment(f.name)}>View</button>
                 <button className="btn btn-ghost btn-sm" style={{color:'var(--hot)'}} onClick={() => deleteAttachment(f.name)}>Remove</button>
               </div>
             );
