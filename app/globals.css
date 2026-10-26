@@ -860,7 +860,14 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   .fs-row{flex-direction:column;align-items:stretch;}
   /* full width when stacked; drop the min-width so it can never force overflow */
   .fs-btn{min-width:0;width:100%;}
+  /* Reset filters stacks under the dates at its own size, not stretched. */
+  .fs-row .tb-btn{align-self:flex-start;}
 }
+/* A list page's New button and the Reset filters under it: one height and one
+   width, whatever each one's font, border or label. -wide is Sales Orders,
+   whose New Sales Order carries an icon and a longer label. */
+.tb-btn{height:36px;min-width:140px;justify-content:center;}
+.tb-btn-wide{min-width:176px;}
 
 /* ── SIZE GRID (optional per-line size breakdown) ───────── */
 /* Caption + small input follows the .item-sub-row pattern used inside PO and

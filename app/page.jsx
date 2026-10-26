@@ -459,7 +459,9 @@ function PoToolbar({ rows, ui, setUi, onReset, actions = null }){
           <span style={lbl}>to</span>
           <input type="date" value={ui.to} min={ui.from || undefined} onChange={e=>setUi('to', e.target.value)} aria-label="Order date to" style={dateInp} />
         </div>
-        {isPoFiltered(ui) && <button className="btn btn-ghost btn-sm" onClick={onReset} style={{marginLeft:'auto'}}>Reset filters</button>}
+        {/* .tb-btn, as + New PO above it: the same height and width. Straight
+            after the order dates, at the row's gap. */}
+        {isPoFiltered(ui) && <button className="btn btn-ghost tb-btn" onClick={onReset}>Reset filters</button>}
       </div>
     </div>
   );
@@ -2157,7 +2159,7 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
         {ui.search && <button onClick={()=>setUi('search','')} style={{flexShrink:0,width:'20px',height:'20px',borderRadius:'50%',border:'none',background:'#F0F0F2',color:'#8A8A8E',fontSize:'14px',lineHeight:1,cursor:'pointer'}}>×</button>}
       </div>
         <ExportMenu label="Export" className="export-pill" busy={exporting==='list'} disabled={!!exporting} title="Export Sales Orders" ariaLabel="Export Sales Orders" onPick={exportList} />
-        <button onClick={()=>setShowCreate(true)} style={{display:'inline-flex',alignItems:'center',gap:'7px',background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',flexShrink:0,boxShadow:'0 1px 2px rgba(0,0,0,.08)'}}>
+        <button className="tb-btn tb-btn-wide" onClick={()=>setShowCreate(true)} style={{display:'inline-flex',alignItems:'center',gap:'7px',background:'#1A1A1C',color:'#fff',border:'none',borderRadius:'10px',padding:'10px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer',flexShrink:0,boxShadow:'0 1px 2px rgba(0,0,0,.08)'}}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           New Sales Order
         </button>
@@ -2181,7 +2183,7 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
           <input type="date" value={ui.to||''} min={ui.from || undefined} onChange={e=>setUi('to', e.target.value)} aria-label="Order date to"
             style={{border:'1px solid #e7eaf0',borderRadius:'10px',padding:'8px 10px',fontSize:'13px',fontFamily:'inherit',color:'#0f1729',background:'#fff',outline:'none'}} />
         </div>
-        {soFiltered && <button className="btn btn-ghost btn-sm" onClick={()=>setAskReset(true)} style={{marginLeft:'auto'}}>Reset filters</button>}
+        {soFiltered && <button className="btn btn-ghost tb-btn tb-btn-wide" onClick={()=>setAskReset(true)}>Reset filters</button>}
       </div>
       {askReset && <ConfirmModal title="Reset all filters to default?" message="Clients, statuses, CRD, the order dates and the search go back to All, and the sort to Newest SO." confirmLabel="Reset" danger={false} onConfirm={resetFilters} onCancel={()=>setAskReset(false)} />}
 
@@ -11513,7 +11515,7 @@ export default function App() {
   const [companyType, setCompanyType] = useState('client');
   const [companyCreateReq, setCompanyCreateReq] = useState(0);
   const pageActions = {
-    orders:    <button className="btn btn-dark" onClick={()=>setModal('create-po')}>+ New PO</button>,
+    orders:    <button className="btn btn-dark tb-btn" onClick={()=>setModal('create-po')}>+ New PO</button>,
     // The label and the type follow the Companies tab -- see the note at
     // Companies. The press is handed to Companies rather than opening a modal
     // here, so the list the company lands in is the one that refreshes.
