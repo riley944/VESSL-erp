@@ -37,9 +37,9 @@
 -- kept row already has one, so the never-overwrite rule leaves it alone. There is
 -- no UPDATE on companies in this script because there is nothing for it to do.
 --
--- WHAT THAT COSTS, STATED RATHER THAN HIDDEN. Crystal.zhang@upm.hk is on the UPM
+-- WHAT THAT COSTS, STATED RATHER THAN HIDDEN. <factory contact 1> is on the UPM
 -- company row and on the UPM preset. The kept row and the kept preset both hold
--- dp4@upm.hk, which is non-null, so the never-overwrite rule drops the Crystal
+-- <factory contact 2>, which is non-null, so the never-overwrite rule drops the Crystal
 -- address from both. It was measured to exist nowhere else in structured data --
 -- no contact row holds it -- so after this it survives in the archive below and
 -- on the factory_email of two quotes. If it is the address people actually use,
@@ -52,7 +52,7 @@
 -- MEASURED BEFORE WRITING, against the live database
 --   companies -- exactly 2 rows match the two names, both type factory.
 --   UPM id -- 0 references across all 24 FK columns, 0 purchase orders, 0 contacts.
---   kept id -- 3 purchase orders, 1 contact (Crystal, dp4@upm.hk, primary).
+--   kept id -- 3 purchase orders, 1 contact (Crystal, <factory contact 2>, primary).
 --   quotes.factory = UPM -- 2 rows; 2 further quotes already hold the full name.
 --   factory_presets -- 1 row per name, no FK points at the table, no triggers.
 --   sales_orders -- has no factory column at all, only client_company_id.
@@ -220,7 +220,7 @@ select * from (
   -- got carries its own cast and none of them relies on being obviously right.
   select 'b5 the kept preset email was not overwritten',
          (select coalesce(factory_email,'(null)')::text from vessl.factory_presets
-           where lower(btrim(factory)) = 'universal plastic and metal manufacturing ltd'), 'dp4@upm.hk'
+           where lower(btrim(factory)) = 'universal plastic and metal manufacturing ltd'), '<factory contact 2>'
   union all
   select 'b6 the UPM preset is gone and one preset remains for this factory',
          (select count(*)::text from vessl.factory_presets where lower(btrim(factory)) = 'upm') || '/' ||
@@ -234,7 +234,7 @@ select * from (
   select 'b8 the kept company is untouched, email included',
          (select name || ' ' || coalesce(email,'(null)') from vessl.companies
            where id = '9ea6b132-6d75-421a-b770-d9deea39f9f0'),
-         'Universal Plastic and Metal Manufacturing LTD dp4@upm.hk'
+         'Universal Plastic and Metal Manufacturing LTD <factory contact 2>'
   union all
   select 'b9 the kept company keeps its three orders and its contact',
          (select count(*)::text from vessl.purchase_orders
