@@ -112,6 +112,23 @@ function snapshot(node) {
   return n + out;
 }
 
+// ── THE BROWSER BACK BUTTON ──────────────────────────────────────────────────
+// Modals stay out of history, so Back with one open would otherwise change the
+// page underneath it. page.jsx's popstate listener asks here first: every
+// guarded card is on this stack while mounted, and Back closes the top one
+// through its own guardedClose -- the same confirm as the backdrop, so unsaved
+// work is never dropped silently. Module-level because there is one history.
+const openCards = [];
+
+// True when a modal was open and has been asked to close (it may stay open if
+// the user cancels the confirm); false when there was none.
+export function closeTopModal() {
+  const top = openCards[openCards.length - 1];
+  if (!top) return false;
+  top.current();
+  return true;
+}
+
 // ref goes on the modal CARD, not the backdrop: it has to contain the controls
 // being watched, and a pointerdown on the backdrop must NOT count as touching
 // the form -- that click is the one asking to leave.
@@ -121,6 +138,16 @@ export function useDirtyGuard(onClose) {
   const touched = useRef(false);
   const baseline = useRef(null);
   const sources = useRef(new Set());
+  // The latest guardedClose, for the Back-button stack above.
+  const closeRef = useRef(null);
+
+  useEffect(() => {
+    openCards.push(closeRef);
+    return () => {
+      const i = openCards.lastIndexOf(closeRef);
+      if (i >= 0) openCards.splice(i, 1);
+    };
+  }, []);
 
   const registerSource = useCallback((flag) => {
     sources.current.add(flag);
@@ -180,6 +207,7 @@ export function useDirtyGuard(onClose) {
     if (!changed) { onClose(); return; }
     if (window.confirm(MESSAGE)) onClose();
   }, [onClose]);
+  closeRef.current = guardedClose;
 
   return { ref, guardedClose, markDirty, registerSource };
 }

@@ -113,7 +113,7 @@ function cartonForSize(it, e) {
 // A backdrop click used to discard everything typed into these modals. Same
 // treatment quotes.jsx got: card ref, onClose becomes guardedClose. All sixteen
 // modals in this file are wired, so none is left behind on the old behaviour.
-import { useDirtyGuard } from '@/app/components/ModalGuard';
+import { useDirtyGuard, closeTopModal } from '@/app/components/ModalGuard';
 import { notifyTaskAssigned } from '@/lib/taskNotify';
 import { isUnseen, markSeen, insertTask, unseenCount, taskDay, byCreated, TASK_TONE } from '@/lib/taskSeen';
 import { RenameSkuModal, QuoteSkuChoiceModal } from '@/app/components/RenameSkuModal';
@@ -624,9 +624,9 @@ const devViewWithoutAnalytics = () =>
 // reaches the server, so a statically prerendered route can carry it.
 //
 // so-detail and order-detail are NOT here even though they are real pages. Both
-// render from params.id, which the hash does not carry, so restoring one would
-// mount a detail view with an undefined id. settings IS here: it takes no params
-// and is reached from the gear.
+// render from params.id, so they travel in their own shape, #so/<id> and
+// #po/<id> -- see DETAIL_HASH below. settings IS here: it takes no params and is
+// reached from the gear.
 const HASH_PAGES = [
   'programs', 'dashboard', 'sales-orders', 'orders', 'companies', 'products',
   'testing', 'pricing', 'shipments', 'inventory', 'quotes', 'codes',
@@ -676,6 +676,41 @@ const pageFromHash = () => {
   try { h = decodeURIComponent(window.location.hash.replace(/^#/, '')); }
   catch (e) { return null; }
   return normalizePage(h);
+};
+
+// ── Detail pages in the hash ─────────────────────────────────────────────────
+// #so/<id> and #po/<id>, so Back from a detail returns to its list and a refresh
+// reopens the same record. The id is held to a narrow shape on the way in and
+// on the way out: it comes from a URL, and nothing token-shaped (an auth
+// fragment carries '=' and '&') may be read as one or written back.
+const DETAIL_HASH = { 'so-detail': 'so', 'order-detail': 'po' };
+const HASH_DETAIL = { so: 'so-detail', po: 'order-detail' };
+const DETAIL_ID = /^[A-Za-z0-9-]{1,64}$/;
+
+// { page, params } for the current hash, or null. A detail prefix with a bad id
+// lands on the parent list -- the same fallback normalizePage gives the old
+// '#so-detail' links.
+const routeFromHash = () => {
+  if (typeof window === 'undefined') return null;
+  let h;
+  try { h = decodeURIComponent(window.location.hash.replace(/^#/, '')).trim(); }
+  catch (e) { return null; }
+  const m = /^(so|po)\/(.*)$/.exec(h);
+  if (m) {
+    const page = HASH_DETAIL[m[1]];
+    return DETAIL_ID.test(m[2]) ? { page, params: { id: m[2] } } : { page: DETAIL_PARENT[page], params: {} };
+  }
+  const page = normalizePage(h);
+  return page ? { page, params: {} } : null;
+};
+
+// The hash a page should show, or null for one the URL cannot carry.
+const hashFor = (page, params) => {
+  if (Object.prototype.hasOwnProperty.call(DETAIL_HASH, page)) {
+    const id = params && params.id != null ? String(params.id) : '';
+    return DETAIL_ID.test(id) ? '#' + DETAIL_HASH[page] + '/' + id : null;
+  }
+  return HASH_PAGES.includes(page) ? '#' + page : null;
 };
 
 // ── The localStorage fallback ────────────────────────────────────────────────
@@ -11568,7 +11603,11 @@ export default function App() {
   useEffect(()=>{ setRailCollapsed(railFromStore()); },[]);
   const toggleRail = () => setRailCollapsed(v => { const n = !v; storeRail(n); return n; });
 
-  const navigate = (p, pr={}) => { setRawPage(p); setParams(pr); setNavOpen(false); };
+  // Set by navigate -- a nav click, a card, a row -- and read once by the hash
+  // writer below, so only a user's move adds a history entry. The mount restore,
+  // role bounces and Back itself go through setRawPage directly and replace.
+  const pushNext = useRef(false);
+  const navigate = (p, pr={}) => { pushNext.current = true; setRawPage(p); setParams(pr); setNavOpen(false); };
 
   // Look up the signed-in user's staff role. Anything that isn't a clean hit on
   // a limited role — no row, an error, an unknown role — leaves role null, which
@@ -11717,13 +11756,20 @@ export default function App() {
   // a bookmark, a back-navigation -- while the store only remembers where this
   // browser was last. When they disagree the URL is the newer intent, so the
   // store is consulted only once the hash has come back with nothing.
+  //
+  // A detail hash brings its id with it. The store never holds a detail page, so
+  // a hashless re-launch still lands on a list.
   useEffect(() => {
-    const p = pageFromHash() || pageFromStore();
+    const r = routeFromHash();
+    if (r) { setRawPage(r.page); setParams(r.params); return; }
+    const p = pageFromStore();
     if (p) setRawPage(p);
   }, []);
 
-  // replaceState, not pushState: tab switches must not fill the back stack.
-  // Back/forward through tabs is not wired, and would need a popstate listener.
+  // pushState when the change came from navigate, replaceState otherwise (27
+  // Oct). Replace-only meant there were no entries to go back through, so Back
+  // left VESSL altogether. The mount restore and a role bounce still replace, so
+  // neither leaves a duplicate entry behind it.
   //
   // Writes the EFFECTIVE page rather than rawPage, so a limited role bounced off
   // a page it cannot see ends up with a hash naming what it is actually looking
@@ -11732,11 +11778,9 @@ export default function App() {
   // Held off until signed in and out of recovery, so neither the login screen
   // nor a password-reset link gets its hash overwritten.
   //
-  // Detail pages write NOTHING -- not the hash, not the store. The old code
-  // stamped '#so-detail', which nothing could read back, so the URL claimed a
-  // location the app would refuse to restore. Writing nothing leaves the parent
-  // list's own entry in place, which is what a refresh from a detail view should
-  // land on and now does.
+  // Detail pages write #so/<id> or #po/<id> to the hash and NOTHING to the
+  // store. A detail opened without an id gets no hash at all, which leaves the
+  // previous entry in place, as before.
   //
   // ALSO HELD OFF UNTIL roleReady. `page` is computed through the banking gate,
   // which reads role -- and role is null while the profile lookup is in flight,
@@ -11746,12 +11790,45 @@ export default function App() {
   // the wrong tab if the app were closed mid-load. Waiting costs nothing: the
   // shell renders a loading screen until roleReady anyway.
   useEffect(() => {
+    const push = pushNext.current;
+    pushNext.current = false;
     if (!user || recovery || !roleReady || typeof window === 'undefined') return;
-    if (!HASH_PAGES.includes(page)) return;
-    const want = '#' + page;
-    if (window.location.hash !== want) window.history.replaceState(null, '', want);
-    storeTab(page);
-  }, [page, user, recovery, roleReady]);
+    const want = hashFor(page, params);
+    if (!want) return;
+    if (window.location.hash !== want) {
+      if (push) window.history.pushState(null, '', want);
+      else window.history.replaceState(null, '', want);
+    }
+    if (HASH_PAGES.includes(page)) storeTab(page);
+  }, [page, params, user, recovery, roleReady]);
+
+  // Back and Forward walk VESSL screens. The entry being arrived at already holds
+  // the hash, so this only adopts it -- setRawPage, not navigate, so the writer
+  // above sees a match and writes nothing. Same guard as the writer: signed out
+  // or mid-recovery, the listener is not there at all.
+  //
+  // AN OPEN MODAL ABSORBS THE BACK. Modals are not in history, so the browser
+  // has already stepped to the previous entry by the time this runs. The hash
+  // the screen was showing is put back as a fresh entry -- it replaces the one
+  // just stepped off, so Forward has nothing new to reach -- and the top modal
+  // is asked to close through its dirty guard. Cancel the confirm and the modal
+  // and the page both stay exactly as they were.
+  const shownHash = useRef('');
+  useEffect(() => { if (typeof window !== 'undefined') shownHash.current = window.location.hash; });
+  useEffect(() => {
+    if (!user || recovery || !roleReady || typeof window === 'undefined') return;
+    const onPop = () => {
+      if (closeTopModal()) {
+        if (shownHash.current && window.location.hash !== shownHash.current) window.history.pushState(null, '', shownHash.current);
+        return;
+      }
+      const r = routeFromHash();
+      if (!r) return;
+      setRawPage(r.page); setParams(r.params); setNavOpen(false);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [user, recovery, roleReady]);
 
   if (loading) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
   if (recovery) return <ResetPassword onDone={()=>setRecovery(false)} />;
