@@ -4555,7 +4555,7 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
             )}
           </FormSection>
 
-          <FormSection icon={<Building2 size={15} />} title="Company / Vendor Info">
+          <FormSection icon={<Building2 size={15} />} title="Company / Client Info">
             {/* The Create PLM program tick and its owner picker stood here. A
                 card is opened from the quote card now, by the green button, and
                 from nowhere else -- so this form asks nothing about PLM and the
