@@ -6,7 +6,7 @@ Every hand-run script against the VESSL database (ERP schema `vessl`, portal sch
 ## Rules
 
 - **Every new script is created here**, numbered `NNN-short-name.sql` with three
-  digits. **Next free number: 135.** (95 is reserved, see below.)
+  digits. **Next free number: 137.** (95 is reserved, see below.)
 - A reverse is `NNNr-short-name-reverse.sql`; a check run after commit is
   `NNN-after-commit-checks.sql`. Both sit beside their forward script.
 - Run `python sql/preflight.py sql/NNN-name.sql` before a script is printed or run.
@@ -212,5 +212,7 @@ the script creates. *Inferred*: neither directly; the reasoning is in the row.
 | 134r | `134r-order-pdfs-bucket-reverse.sql` | — | ERP | Reverse of 134; refuses while the bucket holds files (remove them in the dashboard first), drops both policies, the bucket and `pdf_path` (a0 counts paths lost). Take the code out first | Never run | — |
 | 135 | `135-po-attachments-private.sql` | 26 Oct | ERP | `po-attachments` public → private, 25 MB, PDF/JPEG/PNG/GIF/WebP. Drops `auth read/upload/delete po-attachments` (any signed-in user, bucket_id only); adds `po-attachments staff read` (SELECT), `staff upload` (INSERT, path `<existing PO uuid>/digits-name`) and `staff delete` (DELETE), all `vessl.is_staff()`. No file moved (9 files, 7 folders, 9061136 bytes on 26 Oct; all 9 fit the new upload shape). Guard: bucket public with no limits, 3 old policies, no new ones. 9 probes (staff sees 9 and one by id, upload ok, bad shape and unknown PO refused, non-staff sees 0 and upload refused, staff delete 1, non-staff delete 0). Run AFTER the signed-link code (78cf852, live in f7edc57) | Run | DB (private, 25 MB, five types, 3 staff policies, 9 files, no probe rows; checked read-only 26 Oct) |
 | 135r | `135r-po-attachments-private-reverse.sql` | — | ERP | Reverse of 135; bucket public again with no limits, drops the 3 staff policies, recreates the 3 old ones as measured (permissive, authenticated, bucket_id only). Guard: 135 committed. Code can stay | Never run | — |
+| 136 | `136-kui-ior-flag.sql` | — | ERP | Importer of record flag. `companies.kui_ior` boolean null (true = KUI is the IOR for this client, false = the client is, null = unknown) and `products.kui_ior` boolean null (true/false overrides the client company, null = use `companies.kui_ior` via `client_company_id`), both with comments. No default, no backfill; `products.importer_of_record` (text, 0 values on 28 Oct) left in place. No grant or policy change; neither table has a trigger. Guard: columns absent, importer_of_record still text, probe rows ZZTESTER (client, name length 8) and ZZTEST2 (sku length 7) as measured, no column-level grants. 3 probes (Jenn sets the company, Jenn sets the product, non-staff reaches 0 rows). Run BEFORE deploying the code that names kui_ior | Never run | — |
+| 136r | `136r-kui-ior-flag-reverse.sql` | — | ERP | Reverse of 136; drops both `kui_ior` columns (a0 counts flags lost); importer_of_record untouched. Guard: 136 committed. Take the code out first | Never run | — |
 
 Also here: `preflight.py`, the lexer that checks a script before it is printed.
