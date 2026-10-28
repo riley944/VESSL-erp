@@ -118,7 +118,8 @@ import { notifyTaskAssigned } from '@/lib/taskNotify';
 import { isUnseen, markSeen, insertTask, unseenCount, taskDay, byCreated, TASK_TONE } from '@/lib/taskSeen';
 import { RenameSkuModal, QuoteSkuChoiceModal } from '@/app/components/RenameSkuModal';
 import { CreateProductModal } from '@/app/components/CreateProductModal';
-import { iorWord, iorToSelect, iorFromSelect } from '@/lib/ior';
+import { iorWord, iorToSelect, iorFromSelect, resolveKuiIor } from '@/lib/ior';
+import { IOR_OPTS } from '@/lib/productOptions';
 // BOTH NAMES NOW. This file used to keep its own loadExcelJS, so importing the
 // shared one would have been a duplicate binding -- which is why only excelDate
 // came across when lib/excel.js was written. That local copy is gone and this is
@@ -5923,7 +5924,7 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
     setLoading(true);
     const [qRes, pRes, poRes, soRes] = await Promise.all([
       SBQ.from('quotes').select('*').order('created_at',{ascending:false}),
-      SB.from('products').select('id,sku,name,active,client_company_id,client:companies!client_company_id(name)'),
+      SB.from('products').select('id,sku,name,active,client_company_id,kui_ior,client:companies!client_company_id(name,kui_ior)'),
       // Only to fill in a product no quote reaches -- products carry no factory column,
       // so its latest purchase order is the one place a factory is recorded, and the
       // client there stands in when the product has none set.
@@ -6063,6 +6064,23 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   // Sorted oldest first so a later order overwrites an earlier one, and each field
   // only when that order names it -- a newer PO with no client does not blank the
   // client an older one recorded.
+  // IMPORTER OF RECORD (script 136). Only ever on a product that exists -- unlike
+  // setActive there is nothing to create. '' writes null, which means follow the
+  // client company, so the row is re-read after the save and may show the company
+  // value again. Re-read as one row rather than through load(), which would blank
+  // the table.
+  const setIor = async (q, prod, value) => {
+    setBusyId(q.id);
+    try {
+      const { error } = await SB.from('products').update({ kui_ior: iorFromSelect(value) }).eq('id', prod.id);
+      if (error) { window._toast?.('Could not change importer of record — '+error.message,'err'); return; }
+      const { data, error: re } = await SB.from('products')
+        .select('id,sku,name,active,client_company_id,kui_ior,client:companies!client_company_id(name,kui_ior)').eq('id', prod.id).single();
+      if (re || !data) { window._toast?.('Saved, but could not reload the row — '+(re?.message||'not found'),'err'); return; }
+      setProds(prev => prev.map(p => p.id===prod.id ? data : p));
+    } finally { setBusyId(null); }
+  };
+
   const quotedProdIds = new Set(quotes.map(matchOf).filter(Boolean).map(p=>p.id));
   const factoryOf = new Map(), poClientOf = new Map();
   [...poLines].sort((a,b)=>((a.po||{}).order_date||'').localeCompare((b.po||{}).order_date||''))
@@ -6274,6 +6292,9 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
     ['Country',          q => q.country || ''],
     // Blank, not "Not set", when no product row exists -- that is the page's fourth
     // status bucket, and calling it Not set would merge two different states.
+    // Resolved, the same as the column: the product override, else its client
+    // company. Blank when no product row exists, like Catalogue status.
+    ['Importer of record', q => { const p = matchOf(q); return !p ? '' : (iorWord(resolveKuiIor(p, p.client).value) || 'Not set'); }],
     ['Catalogue status', q => { const p = matchOf(q); return !p ? '' : p.active == null ? 'Not set' : p.active ? 'Active' : 'Inactive'; }],
     ['Order state',      q => orderStateOfRow(q)],
     ['Tiers',            q => q.productOnly ? null : tiersOf(q).length, 'num'],
@@ -6443,7 +6464,7 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
                 is what says so.
                 Still exactly one sort at a time; SortTh reads the shared {col, dir}
                 and only the matching column shows a solid arrow. */}
-            <thead><tr><SortTh col="sku" label="SKU / Product" sort={ui.sort} onSort={cycleSort} /><SortTh col="company" label="Company" sort={ui.sort} onSort={cycleSort} /><SortTh col="factory" label="Factory" sort={ui.sort} onSort={cycleSort} /><SortTh col="tiers" label="Tiers" sort={ui.sort} onSort={cycleSort} style={{textAlign:'center'}} /><SortTh col="price" label="Client Price" sort={ui.sort} onSort={cycleSort} style={{textAlign:'center'}} /><SortTh col="margin" label="Avg Margin" sort={ui.sort} onSort={cycleSort} style={{textAlign:'center'}} /><th style={{textAlign:'center'}}>Product Status</th></tr></thead>
+            <thead><tr><SortTh col="sku" label="SKU / Product" sort={ui.sort} onSort={cycleSort} /><SortTh col="company" label="Company" sort={ui.sort} onSort={cycleSort} /><SortTh col="factory" label="Factory" sort={ui.sort} onSort={cycleSort} /><SortTh col="tiers" label="Tiers" sort={ui.sort} onSort={cycleSort} style={{textAlign:'center'}} /><SortTh col="price" label="Client Price" sort={ui.sort} onSort={cycleSort} style={{textAlign:'center'}} /><SortTh col="margin" label="Avg Margin" sort={ui.sort} onSort={cycleSort} style={{textAlign:'center'}} /><th style={{textAlign:'center'}}>Importer of Record</th><th style={{textAlign:'center'}}>Product Status</th></tr></thead>
             <tbody>
               {/* rows, not filtered: same rows, possibly reordered. The counts above and
                   the empty check below stay on `filtered`, because sorting cannot change
@@ -6512,6 +6533,27 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
                         inline-flex dot-and-select pair, so text-align is what positions
                         the group inside the cell -- and the disabled em-dash variant
                         below lands on the same axis. */}
+                    {/* IMPORTER OF RECORD, where it is set per product. Shows the
+                        RESOLVED value -- the product override, else the client company --
+                        and Not set only when neither is. Inherited is muted with "from
+                        company" on hover. No product row, no select: there is nothing to
+                        write to, and Product Status beside it is where one gets made. */}
+                    <td onClick={e=>e.stopPropagation()} style={{whiteSpace:'nowrap',textAlign:'center'}}>
+                      {!prod ? (
+                        <span style={{color:'var(--faint)'}} title="No product record yet — set Product Status to create one">—</span>
+                      ) : (()=>{ const ior = resolveKuiIor(prod, prod.client); return (
+                        <select
+                          value={iorToSelect(ior.value)}
+                          disabled={busyId===q.id}
+                          onChange={e=>setIor(q, prod, e.target.value)}
+                          aria-label={'Importer of record for '+(q.sku||q.product||'product')}
+                          title={ior.source==='company' ? 'from company' : undefined}
+                          style={{border:'1px solid var(--line)',borderRadius:'7px',padding:'3px 6px',fontSize:'11.5px',color:ior.source==='product'?'var(--ink-2)':'var(--muted)',background:'#fff',fontFamily:'inherit',outline:'none',cursor:busyId===q.id?'default':'pointer',opacity:busyId===q.id?.55:1}}
+                        >
+                          {IOR_OPTS.map(([v,l])=><option key={v||'none'} value={v}>{l}</option>)}
+                        </select>
+                      ); })()}
+                    </td>
                     <td onClick={e=>e.stopPropagation()} style={{whiteSpace:'nowrap',textAlign:'center'}}>
                       {!prodKey(q.sku,q.product) ? (
                         <span style={{color:'var(--faint)'}} title="No SKU and no product name — this row cannot be matched to a product or given one.">—</span>

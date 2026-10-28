@@ -4,8 +4,7 @@ import { SB } from "@/lib/supabase";
 // The product option sets moved to lib so the PLM card offers the same ones. See
 // the note above them there.
 import { COMPLIANCE_OPTS, STAGE_OPTS } from "@/lib/products";
-import { IOR_OPTS } from "@/lib/productOptions";
-import { resolveKuiIor, iorLabel, iorKey, iorToSelect, iorFromSelect } from "@/lib/ior";
+import { resolveKuiIor, iorLabel, iorKey, iorWord } from "@/lib/ior";
 import { CreateProductModal } from "@/app/components/CreateProductModal";
 // The regulations list and its editor moved to app/components so the Codes page
 // shows the same two rather than copies. Delete went into RegModal with them --
@@ -636,7 +635,7 @@ export default function Testing({ userEmail = '' }) {
               p.product_stage === 'sample' ? 'Sample' : p.product_stage === 'production' ? 'Production' : null,
               (p.ships_to || []).join(' '), p.trade_direction, p.importer_of_record, p.testing_paid_by,
               // The resolved IOR, so a search for KUI or Client finds the rows whose
-              // IOR select shows it.
+              // IOR cell shows it.
               iorLabel(resolveKuiIor(p, p.client)),
               // composition is searched but not rendered as text on the row -- the only
               // field here in that position. It runs to 57 characters on a real blend and
@@ -972,14 +971,6 @@ export default function Testing({ userEmail = '' }) {
     if (error) { setStatusErr('Could not save stage — ' + error.message); return; }
     await load();
   };
-  // The same shape again for products.kui_ior. '' -> null is "follow the company",
-  // so after it the row re-resolves and may show the company value once more.
-  const setIor = async (prodId, value) => {
-    setStatusErr('');
-    const { error } = await SB.from('products').update({ kui_ior: iorFromSelect(value) }).eq('id', prodId);
-    if (error) { setStatusErr('Could not save importer of record — ' + error.message); return; }
-    await load();
-  };
 
   // products cascades to test_reports, product_materials, compliance_tasks,
   // inventory_lots, inventory_balances and stock_movements — all six go with it.
@@ -1212,7 +1203,7 @@ export default function Testing({ userEmail = '' }) {
 
       {loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div> : (
         <>
-          {ui.tab==='products'  && <ProductsView products={shownProducts} orderState={orderStateOf} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} onSetIor={setIor} plmProducts={plmProducts} onEdit={(p)=>setModal({type:'product',data:p})} onRename={(p)=>setModal({type:'rename',data:p})} onDelete={deleteProduct} searching={searching} term={ui.search.trim()} filtered={!(isAll(ui.compSel) && isAll(ui.efSel) && isAll(ui.brandSel) && isAll(ui.stageSel) && isAll(ui.dateSel) && isAll(ui.clientSel) && isDefaultCat)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(ui.dateSel)} testedByProduct={testedByProduct} />}
+          {ui.tab==='products'  && <ProductsView products={shownProducts} orderState={orderStateOf} prodMats={prodMats} prodRegs={prodRegs} productStatus={productStatus} onLink={(p)=>setModal({type:'link',data:p})} onLinkRules={(p)=>setModal({type:'linkrules',data:p})} onEfiling={(p)=>setModal({type:'efiling',data:p})} onSetStatus={setCompliance} onSetStage={setStage} plmProducts={plmProducts} onEdit={(p)=>setModal({type:'product',data:p})} onRename={(p)=>setModal({type:'rename',data:p})} onDelete={deleteProduct} searching={searching} term={ui.search.trim()} filtered={!(isAll(ui.compSel) && isAll(ui.efSel) && isAll(ui.brandSel) && isAll(ui.stageSel) && isAll(ui.dateSel) && isAll(ui.clientSel) && isDefaultCat)} ordersByProduct={ordersByProduct} orderFiltered={!isAll(ui.dateSel)} testedByProduct={testedByProduct} />}
           {/* No onTest: the per-material shortcut into ReportModal went with the Testing
               column. "+ Log Test Report" in the header is the way in, and its Material
               dropdown is what picks the material. */}
@@ -1310,7 +1301,7 @@ export default function Testing({ userEmail = '' }) {
 // └───────────────────────────────────────────────────────────────────────────┘
 const PROD_COLS = 'minmax(200px,660px) 170px 130px 110px 140px 340px';
 
-function ProductsView({ products, prodMats, prodRegs, productStatus, orderState = () => null, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, onSetIor, plmProducts = {}, onEdit, onRename, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false, testedByProduct = {} }) {
+function ProductsView({ products, prodMats, prodRegs, productStatus, orderState = () => null, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, plmProducts = {}, onEdit, onRename, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false, testedByProduct = {} }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
   // well exist, it just does not match.
   // The order filters get their own empty copy. "Nothing in this filter" would be read as
@@ -1519,24 +1510,16 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, orderState 
                 <div style={{fontSize:'10.5px',color:'#8A8A8E',marginTop:'3px',lineHeight:1.3}}>Updated by sample cards</div>
               )}
             </div>
-            {/* IMPORTER OF RECORD (script 136). Modelled on the Stage select to its
-                left. It DISPLAYS the resolved value -- the product override, else the
-                client company -- and shows Not set only when neither is set. Picking
-                KUI or Client writes products.kui_ior; picking Not set writes null, which
-                means follow the company, so the row may show the company value again.
-                An inherited value is muted, with "from company" on hover; an override
-                is ink. */}
+            {/* IMPORTER OF RECORD (script 136), READ-ONLY here -- it is set on the
+                Products catalogue page, the company card and the product modal. The
+                resolved value: the product override, else the client company, else an
+                em dash. Inherited is muted with "from company" on hover; an override
+                is ink. A click falls through and opens the product, like the cells
+                around it that hold no control. */}
             {(()=>{ const ior = resolveKuiIor(p, p.client); return (
-            <div style={{minWidth:0}} onClick={e=>e.stopPropagation()}>
-              <select
-                value={iorToSelect(ior.value)}
-                onChange={e=>onSetIor(p.id,e.target.value)}
-                aria-label={'Importer of record for '+(p.sku||p.name||'product')}
-                title={ior.source==='company' ? 'from company' : undefined}
-                style={{border:'1px solid rgba(0,0,0,.1)',borderRadius:'8px',padding:'5px 8px',fontSize:'12px',fontWeight:600,color:ior.source==='product'?'#1D1D1F':'#8A8A8E',background:'#fff',cursor:'pointer',fontFamily:'inherit',outline:'none',maxWidth:'100%'}}
-              >
-                {IOR_OPTS.map(([v,l])=><option key={v||'none'} value={v}>{l}</option>)}
-              </select>
+            <div style={{minWidth:0,textAlign:'center',fontSize:'12px',fontWeight:600,color:ior.source==='product'?'#1D1D1F':'#8A8A8E'}}
+                 title={ior.source==='company' ? 'from company' : undefined}>
+              {iorWord(ior.value) || '—'}
             </div>
             ); })()}
             {/* Fourth track: the latest test date, or N/A. Reaches 4 of 271 products
