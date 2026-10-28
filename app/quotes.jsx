@@ -749,38 +749,42 @@ const PRESET_QTYS = [500, 1000, 2500, 5000];
 const PICK_LABEL = { display: "flex", alignItems: "flex-start", gap: 8, margin: 0, fontFamily: "inherit", fontSize: 12.5,
   fontWeight: 400, letterSpacing: "normal", textTransform: "none", color: "#2b3445", lineHeight: 1.45 };
 
-// ── ANOTHER ITEM FROM THE SAME PDF, AS A QUOTE OF ITS OWN ───────────────────
+// ── THE NEXT ITEM OF A MULTI-ITEM PDF ───────────────────────────────────────
 // A factory quotation can price several products. The form fills itself from
-// the one picked; with "Create the others as new quotes" ticked, Save also
-// writes one quote per remaining item, built here from the saved form `f`.
-// Each gets what the PDF says for THAT item -- name, tiers (EXW), mold and
-// sample fees, cartons, lead time, HTS when it is a library code, details,
-// its own notes and packing -- and the client, factory and PDF of this quote.
-// The SKU is ours, so it stays blank, and duty is left for the rate to fill
-// when the quote is next opened.
+// the one picked first; after each successful Save the next item opens as a new
+// quote (Quotes.saveQuote, chainForm below), and so on to the last -- or until
+// the form is closed. One quote at a time, each read and saved by a person.
+//
+// This is the starting form for that next item: what carries over from the
+// quote just saved -- client, factory and its contact, country, quote date and
+// the PDF -- and the item's name. Everything else the item says (tiers, mold
+// and sample fees, cartons, lead time, HTS, details, notes and packing) is
+// filled when the form opens, by the same applyExtract the first item went
+// through, so it arrives with the same highlights, "PDF says" hints and
+// warnings. Lead time does NOT carry over: it is per item.
 function pdfItemToForm(it, f) {
-  const F = (it && it.fields) || {};
-  const v = (k) => (F[k] && String(F[k].value ?? "").trim()) || "";
-  const qd = v("quoteDate"), vt = v("validity");
-  const dateLine = qd ? "Factory quote dated " + qd + (vt ? ", valid to " + vt : "") : (vt ? "Factory quote valid to " + vt : "");
-  const tiers = ((it && it.tiers) || []).filter((t) => t.qty != null || t.unitPrice != null).map((t) => ({
-    qty: t.qty ?? "", landed: t.unitPrice ?? "", ship: "ocean", freightAir: "", freightOcean: "", client: "", duty: "", dutyManual: false,
-  }));
   return {
     ...BLANK,
     quoteDate: f.quoteDate || "",
-    product: v("product") || (it && it.name) || "",
-    client: f.client, clientContact: f.clientContact, clientEmail: f.clientEmail, clientPhone: f.clientPhone, clientAddress: f.clientAddress,
-    factory: f.factory, factoryContact: f.factoryContact, factoryEmail: f.factoryEmail, factoryPhone: f.factoryPhone,
-    country: f.country || v("country"),
-    leadTime: v("leadTime") || f.leadTime || "",
-    hts: (it && it.hts && it.hts.code) || "",
-    unitsPerCarton: v("unitsPerCarton"), cartonL: v("cartonL"), cartonW: v("cartonW"), cartonH: v("cartonH"), cartonWeight: v("cartonWeight"),
-    moldFee: v("moldFee"), sampleFee: v("sampleFee"),
-    clientDetails: v("details"),
-    notes: [v("notes"), dateLine].filter(Boolean).join("\n"),
+    client: f.client || "", clientContact: f.clientContact || "", clientEmail: f.clientEmail || "",
+    clientPhone: f.clientPhone || "", clientAddress: f.clientAddress || "",
+    factory: f.factory || "", factoryContact: f.factoryContact || "", factoryEmail: f.factoryEmail || "", factoryPhone: f.factoryPhone || "",
+    country: f.country || "",
     pdfPath: f.pdfPath || "",
-    tiers,
+    tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }],
+  };
+}
+// The form for the chain's next item, or null when it has run out. `chain` is
+// { fileName, factory, queue, position, total }: queue the items still to come.
+// __key remounts the form; __pdfChain tells it which item to fill and where it
+// stands. Neither reaches the row -- formToRow names neither.
+function chainForm(chain, f) {
+  if (!chain || !Array.isArray(chain.queue) || !chain.queue.length) return null;
+  const [current, ...queue] = chain.queue;
+  return {
+    ...pdfItemToForm(current, f),
+    __key: "pdf-" + Date.now() + "-" + chain.position,
+    __pdfChain: { fileName: chain.fileName, factory: chain.factory, current, queue, position: chain.position + 1, total: chain.total },
   };
 }
 
@@ -1301,25 +1305,6 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
         }
       } catch (e) {}
 
-      // ── THE OTHER ITEMS OF AN IMPORTED PDF ────────────────────────────────
-      // Only when the form asked for them (pdfOthers, never stored). Same client
-      // link as the quote just saved; no product is minted for them here -- that
-      // happens when each is opened and saved, like any quote.
-      const others = Array.isArray(f.pdfOthers) ? f.pdfOthers : [];
-      if (others.length) {
-        const made = [], missed = [];
-        for (const it of others) {
-          const r2 = formToRow({ ...pdfItemToForm(it, f), updatedBy: userEmail });
-          r2.client_company_id = savedRow.client_company_id || null;
-          const { data, error } = await supabase.from("quotes").insert(r2).select("id,quote_code");
-          if (error || !data || !data[0]) missed.push((it && it.name) || "an item");
-          else made.push(data[0].quote_code || data[0].id);
-        }
-        await load();
-        flash((made.length ? "Also created " + made.length + " quote" + (made.length === 1 ? "" : "s") + " from the PDF: " + made.join(", ") : "")
-              + (missed.length ? (made.length ? " · " : "") + "Could not create: " + missed.join(", ") : ""));
-      }
-
       // Link on the NEW key, and only when unlinked, so a deliberate link is
       // never re-pointed by an unrelated edit. Creates the product when none
       // matches -- a quote implies a product, and nothing else was making them.
@@ -1358,8 +1343,20 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
         if (target) setSkuChoice({ product: target, quote: savedRow });
       }
     }
+    // ── THE NEXT ITEM OF AN IMPORTED PDF ───────────────────────────────────
+    // Last, once everything above has settled: a clean save of a chained quote
+    // opens the next item as a new quote, carrying this one's client, factory
+    // and PDF. A save that kept the form open (a task did not land) does not
+    // move on -- the form is still this item's.
+    if (savedRow && !failedTasks.length && f.pdfChain) {
+      const next = chainForm(f.pdfChain, f);
+      if (next) setEditing(next);
+    }
     return savedRow ? { savedId: savedRow.id, failed: failedTasks } : null;
   };
+  // Skip this item of a chain: the next one opens unsaved work aside, or the
+  // chain ends when there is none.
+  const skipChained = (chain, f) => setEditing(chainForm(chain, f));
 
   const removeQuote = async (id) => {
     const { error } = await supabase.from("quotes").delete().eq("id", id);
@@ -1810,7 +1807,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
 
       </>)}
 
-      {editing && <QuoteForm initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} userEmail={userEmail} assignees={assignees}
+      {editing && <QuoteForm key={editing.__key || editing.id || "new"} initial={editing} onClose={() => setEditing(null)} onSave={saveQuote} onSkip={skipChained} userEmail={userEmail} assignees={assignees}
         existingTasks={editing.id ? tasks.filter((t) => t.quote_id === editing.id) : []} />}
       {/* Opens after a SKU change is saved. onDone reloads so the list shows the
           result; the modal stays up because the report IS the result. */}
@@ -3310,7 +3307,7 @@ function SelectField({ label, k, placeholder, options, hint, f, set }) {
 // staff went with the PLM tick. It fed the owner picker that appeared when the
 // box was ticked, and nothing else in this form ever read it -- the quote CARD
 // still passes its own staff to MarkWonButton, which is a different binding.
-function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], assignees = [] }) {
+function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks = [], assignees = [] }) {
   // The form this guard exists for. About eleven of its edits are click-driven --
   // the saved-factory chips, the client suggestions, picking an HTS code, Add
   // tier, Preset qtys, auto, the Air/Ocean toggles -- and not one of them fires
@@ -3392,9 +3389,13 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
   // the whole map; typing in a box dismisses that box's entry.
   const [ext, setExt] = useState({});
   const [pdfInfo, setPdfInfo] = useState(null);
-  // A PDF with several items: the ones not filled into this form, and whether
-  // Save creates them as quotes of their own. Not form data -- handed to onSave.
-  const [pdfOthers, setPdfOthers] = useState(null);
+  // A PDF with several items, while they are being worked through: { fileName,
+  // factory, queue, position, total } -- queue the items still to come after
+  // this one. Not form data; handed to onSave, which opens the next item.
+  const [pdfChain, setPdfChain] = useState(() => {
+    const c = initial && initial.__pdfChain;
+    return c ? { fileName: c.fileName, factory: c.factory, queue: c.queue, position: c.position, total: c.total } : null;
+  });
   const pdfInputRef = useRef(null);
   // What the PDF said about the matched factory's contact, country and lead
   // time: { companyId, values }. applyFactory fills a box the directory left
@@ -3471,33 +3472,48 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
     // SEVERAL ITEMS: nothing is filled until one is picked. One item -- or a
     // route answering in the old one-product shape -- applies straight away.
     const items = Array.isArray(out.items) ? out.items : [];
-    setPdfOthers(null);
-    if (items.length > 1) { setPdfInfo({ fileName, choose: true, items, factory: out.factory, pick: 0, create: items.map(() => true) }); return; }
+    setPdfChain(null);
+    if (items.length > 1) { setPdfInfo({ fileName, choose: true, items, factory: out.factory, pick: 0 }); return; }
     applyExtract(items.length ? { ...items[0], factory: out.factory } : out, fileName);
   };
-  // The pick. Applies that item; the rows still ticked wait for Save.
+  // The pick: which item fills THIS quote. The rest queue up, in the PDF's
+  // order, and open one by one after each Save.
   //
-  // THE PICKER COLLAPSES FIRST, and a failure says so. The first version only
-  // left choose mode at the very end of applyExtract, so anything that threw on
-  // the way -- with nothing catching it -- left the picker on screen and the
-  // click looking dead. Now choose mode ends before the apply, and an error
-  // puts the picker back with the reason under it (and in the console).
+  // THE PICKER COLLAPSES FIRST, and a failure says so. Choose mode ends before
+  // the apply, and an error puts the picker back with the reason under it (and
+  // in the console) -- a throw inside applyExtract used to leave the picker on
+  // screen and the click looking dead.
   const fillFromItem = () => {
     const pi = pdfInfo;
     if (!pi || !pi.items) return;
     const pick = pi.items[pi.pick] ? pi.pick : 0;
-    const others = pi.items.filter((_, i) => i !== pick && (pi.create ? pi.create[i] !== false : true))
-      .map((it) => ({ ...it, factory: pi.factory }));
+    const queue = pi.items.filter((_, i) => i !== pick);
     setPdfInfo({ fileName: pi.fileName, busy: "Filling\u2026" });
     try {
       applyExtract({ ...pi.items[pick], factory: pi.factory }, pi.fileName);
-      setPdfOthers({ items: others, on: true });
+      setPdfChain({ fileName: pi.fileName, factory: pi.factory, queue, position: 1, total: pi.items.length });
     } catch (e) {
       console.error("Quote PDF fill failed", e);
-      setPdfOthers(null);
+      setPdfChain(null);
       setPdfInfo({ ...pi, fillError: "Could not fill from that item: " + ((e && e.message) || String(e)) });
     }
   };
+  // A chained form fills itself from its item once, on open -- the same apply
+  // the first item had, so the same highlights and warnings. The HTS code is
+  // picked through pickHts so duty is worked out on the new tiers.
+  const chainFilled = useRef(false);
+  useEffect(() => {
+    const c = initial && initial.__pdfChain;
+    if (!c || chainFilled.current) return;
+    chainFilled.current = true;
+    try {
+      applyExtract({ ...c.current, factory: c.factory }, c.fileName);
+    } catch (e) {
+      console.error("Quote PDF fill failed", e);
+      setPdfInfo({ fileName: c.fileName, error: "Could not fill item " + c.position + ": " + ((e && e.message) || String(e)) });
+    }
+  // Once per mount, by design: the chain item is fixed for this form.
+  }, []);
   // One line per item for the picker: name, sizes, then qty @ price per tier.
   const itemLine = (it) => {
     const F = it.fields || {};
@@ -4289,9 +4305,9 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
     if (qText.trim() && !confirmAll(qWho, assignees)) return;
     const out = { ...f };
     out.freightDutyUpdatedAt = stamp();
-    // The other items of an imported PDF, when the box is ticked. formToRow
+    // The PDF items still to come, for saveQuote to open the next one. formToRow
     // ignores the key, so it can never reach the quote row itself.
-    out.pdfOthers = pdfOthers && pdfOthers.on ? pdfOthers.items : [];
+    out.pdfChain = pdfChain && pdfChain.queue.length ? pdfChain : null;
     const toSend = [...queued, ...(qText.trim() ? [{ key: "typed", assigned_to: qWho, task: qText.trim() }] : [])];
     setSaving(true);
     const res = await onSave(out, toSend.map(({ assigned_to, task, key }) => ({ assigned_to, task, key })));
@@ -4414,34 +4430,32 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
             </span>
             {pdfInfo && pdfInfo.choose && (
               <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
-                {/* One row per item: the radio picks the item that fills THIS
-                    quote; the box beside every other row says whether Save also
-                    creates it as a quote of its own. The global label rule is the
-                    uppercase mono field-label style, so these labels reset it. */}
+                {/* One row per item; the radio picks the item that fills THIS
+                    quote. The global label rule is the uppercase mono field-label
+                    style, so these labels reset it. */}
                 {pdfInfo.items.map((it, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                    <label style={{ ...PICK_LABEL, flex: 1, minWidth: 0, cursor: "pointer" }}>
-                      <input type="radio" data-noguard name="pdf-item" checked={pdfInfo.pick === i} onChange={() => setPdfInfo((p) => ({ ...p, pick: i }))} style={{ marginTop: 3 }} />
-                      <span>{itemLine(it)}{(it.warnings || []).length > 0 ? <span style={{ color: "#a66f12" }}>{" \u00b7 " + it.warnings.length + " to check"}</span> : null}</span>
-                    </label>
-                    {pdfInfo.pick !== i && (
-                      <label style={{ ...PICK_LABEL, flexShrink: 0, color: "#6a7488", cursor: "pointer" }}>
-                        <input type="checkbox" data-noguard checked={!pdfInfo.create || pdfInfo.create[i] !== false}
-                          onChange={(e) => setPdfInfo((p) => ({ ...p, create: (p.create || p.items.map(() => true)).map((c, j) => (j === i ? e.target.checked : c)) }))} style={{ marginTop: 3 }} />
-                        also create as quote
-                      </label>
-                    )}
-                  </div>
+                  <label key={i} style={{ ...PICK_LABEL, cursor: "pointer" }}>
+                    <input type="radio" data-noguard name="pdf-item" checked={pdfInfo.pick === i} onChange={() => setPdfInfo((p) => ({ ...p, pick: i }))} style={{ marginTop: 3 }} />
+                    <span>{itemLine(it)}{(it.warnings || []).length > 0 ? <span style={{ color: "#a66f12" }}>{" \u00b7 " + it.warnings.length + " to check"}</span> : null}</span>
+                  </label>
                 ))}
+                <span style={{ ...PICK_LABEL, color: "#6a7488" }}>The item picked fills this quote. After each Save, the next item opens as a new quote.</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
                   <button type="button" style={S.ghostBtnSm} onClick={fillFromItem}>Fill this quote</button>
                   {pdfInfo.fillError && <span style={{ fontSize: 12, color: XC.red }}>{pdfInfo.fillError}</span>}
                 </div>
               </div>
             )}
-            {pdfInfo && pdfInfo.done && pdfOthers && pdfOthers.on && pdfOthers.items.length > 0 && (
-              <span style={{ fontSize: 12, color: "#6a7488", width: "100%" }}>
-                {"On Save, also create " + pdfOthers.items.length + " quote" + (pdfOthers.items.length === 1 ? "" : "s") + ": " + pdfOthers.items.map((it) => it.name || "Unnamed item").join(", ")}
+            {pdfChain && (
+              <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 12.5, color: "#2b3445", width: "100%" }}>
+                <span style={{ fontWeight: 600 }}>{"Item " + pdfChain.position + " of " + pdfChain.total + " from " + pdfChain.fileName}</span>
+                <span style={{ color: "#6a7488" }}>{pdfChain.queue.length ? "\u00b7 next on Save: " + (pdfChain.queue[0].name || "Unnamed item") : "\u00b7 the last item"}</span>
+                {pdfChain.position > 1 && onSkip && (
+                  <button type="button" onClick={() => onSkip(pdfChain, f)}
+                    style={{ background: "none", border: "none", padding: 0, color: "#3461e0", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                    {pdfChain.queue.length ? "\u00b7 Skip this item" : "\u00b7 Skip this item (ends)"}
+                  </button>
+                )}
               </span>
             )}
             {pdfInfo && pdfInfo.done && (
