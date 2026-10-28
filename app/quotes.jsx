@@ -744,6 +744,11 @@ function formToRow(f) {
 
 const PRESET_QTYS = [500, 1000, 2500, 5000];
 
+// The PDF item picker's rows are <label>s, which globals.css styles as the
+// uppercase mono field label. These read as sentences instead.
+const PICK_LABEL = { display: "flex", alignItems: "flex-start", gap: 8, margin: 0, fontFamily: "inherit", fontSize: 12.5,
+  fontWeight: 400, letterSpacing: "normal", textTransform: "none", color: "#2b3445", lineHeight: 1.45 };
+
 // ── ANOTHER ITEM FROM THE SAME PDF, AS A QUOTE OF ITS OWN ───────────────────
 // A factory quotation can price several products. The form fills itself from
 // the one picked; with "Create the others as new quotes" ticked, Save also
@@ -3467,16 +3472,31 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
     // route answering in the old one-product shape -- applies straight away.
     const items = Array.isArray(out.items) ? out.items : [];
     setPdfOthers(null);
-    if (items.length > 1) { setPdfInfo({ fileName, choose: true, items, factory: out.factory, pick: 0, createOthers: true }); return; }
+    if (items.length > 1) { setPdfInfo({ fileName, choose: true, items, factory: out.factory, pick: 0, create: items.map(() => true) }); return; }
     applyExtract(items.length ? { ...items[0], factory: out.factory } : out, fileName);
   };
-  // The pick. Applies that item; the rest wait for Save, if ticked.
+  // The pick. Applies that item; the rows still ticked wait for Save.
+  //
+  // THE PICKER COLLAPSES FIRST, and a failure says so. The first version only
+  // left choose mode at the very end of applyExtract, so anything that threw on
+  // the way -- with nothing catching it -- left the picker on screen and the
+  // click looking dead. Now choose mode ends before the apply, and an error
+  // puts the picker back with the reason under it (and in the console).
   const fillFromItem = () => {
     const pi = pdfInfo;
     if (!pi || !pi.items) return;
-    const others = pi.items.filter((_, i) => i !== pi.pick).map((it) => ({ ...it, factory: pi.factory }));
-    setPdfOthers({ items: others, on: !!pi.createOthers });
-    applyExtract({ ...pi.items[pi.pick], factory: pi.factory }, pi.fileName);
+    const pick = pi.items[pi.pick] ? pi.pick : 0;
+    const others = pi.items.filter((_, i) => i !== pick && (pi.create ? pi.create[i] !== false : true))
+      .map((it) => ({ ...it, factory: pi.factory }));
+    setPdfInfo({ fileName: pi.fileName, busy: "Filling\u2026" });
+    try {
+      applyExtract({ ...pi.items[pick], factory: pi.factory }, pi.fileName);
+      setPdfOthers({ items: others, on: true });
+    } catch (e) {
+      console.error("Quote PDF fill failed", e);
+      setPdfOthers(null);
+      setPdfInfo({ ...pi, fillError: "Could not fill from that item: " + ((e && e.message) || String(e)) });
+    }
   };
   // One line per item for the picker: name, sizes, then qty @ price per tier.
   const itemLine = (it) => {
@@ -4394,24 +4414,35 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
             </span>
             {pdfInfo && pdfInfo.choose && (
               <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
+                {/* One row per item: the radio picks the item that fills THIS
+                    quote; the box beside every other row says whether Save also
+                    creates it as a quote of its own. The global label rule is the
+                    uppercase mono field-label style, so these labels reset it. */}
                 {pdfInfo.items.map((it, i) => (
-                  <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, color: "#2b3445", cursor: "pointer", lineHeight: 1.45 }}>
-                    <input type="radio" data-noguard name="pdf-item" checked={pdfInfo.pick === i} onChange={() => setPdfInfo((p) => ({ ...p, pick: i }))} style={{ marginTop: 3 }} />
-                    <span>{itemLine(it)}{(it.warnings || []).length > 0 ? <span style={{ color: "#a66f12" }}>{" \u00b7 " + it.warnings.length + " to check"}</span> : null}</span>
-                  </label>
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                    <label style={{ ...PICK_LABEL, flex: 1, minWidth: 0, cursor: "pointer" }}>
+                      <input type="radio" data-noguard name="pdf-item" checked={pdfInfo.pick === i} onChange={() => setPdfInfo((p) => ({ ...p, pick: i }))} style={{ marginTop: 3 }} />
+                      <span>{itemLine(it)}{(it.warnings || []).length > 0 ? <span style={{ color: "#a66f12" }}>{" \u00b7 " + it.warnings.length + " to check"}</span> : null}</span>
+                    </label>
+                    {pdfInfo.pick !== i && (
+                      <label style={{ ...PICK_LABEL, flexShrink: 0, color: "#6a7488", cursor: "pointer" }}>
+                        <input type="checkbox" data-noguard checked={!pdfInfo.create || pdfInfo.create[i] !== false}
+                          onChange={(e) => setPdfInfo((p) => ({ ...p, create: (p.create || p.items.map(() => true)).map((c, j) => (j === i ? e.target.checked : c)) }))} style={{ marginTop: 3 }} />
+                        also create as quote
+                      </label>
+                    )}
+                  </div>
                 ))}
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#2b3445", marginTop: 4 }}>
-                  <input type="checkbox" data-noguard checked={!!pdfInfo.createOthers} onChange={(e) => setPdfInfo((p) => ({ ...p, createOthers: e.target.checked }))} />
-                  Create the other {pdfInfo.items.length - 1} as new quotes when this one is saved (same factory, client and PDF)
-                </label>
-                <div><button type="button" style={S.ghostBtnSm} onClick={fillFromItem}>Fill this quote</button></div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+                  <button type="button" style={S.ghostBtnSm} onClick={fillFromItem}>Fill this quote</button>
+                  {pdfInfo.fillError && <span style={{ fontSize: 12, color: XC.red }}>{pdfInfo.fillError}</span>}
+                </div>
               </div>
             )}
-            {pdfInfo && pdfInfo.done && pdfOthers && pdfOthers.items.length > 0 && (
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#6a7488", width: "100%" }}>
-                <input type="checkbox" data-noguard checked={!!pdfOthers.on} onChange={(e) => setPdfOthers((p) => ({ ...p, on: e.target.checked }))} />
-                {"On Save, also create " + pdfOthers.items.length + " quote" + (pdfOthers.items.length === 1 ? "" : "s") + " from this PDF: " + pdfOthers.items.map((it) => it.name || "Unnamed item").join(", ")}
-              </label>
+            {pdfInfo && pdfInfo.done && pdfOthers && pdfOthers.on && pdfOthers.items.length > 0 && (
+              <span style={{ fontSize: 12, color: "#6a7488", width: "100%" }}>
+                {"On Save, also create " + pdfOthers.items.length + " quote" + (pdfOthers.items.length === 1 ? "" : "s") + ": " + pdfOthers.items.map((it) => it.name || "Unnamed item").join(", ")}
+              </span>
             )}
             {pdfInfo && pdfInfo.done && (
               <span style={{ display: "flex", gap: 12, fontSize: 11.5, color: "#6a7488", width: "100%" }}>
