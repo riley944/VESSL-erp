@@ -10,6 +10,7 @@ import {
 import { SB } from "@/lib/supabase";
 import { PDF_BUCKET, PDF_MAX_BYTES, PDF_DIRECT_MAX_BYTES, pdfPathFor, QUOTE_PDF_IMPORT, pdfSourceKey, pdfFileNameOf } from "@/lib/quotePdf";
 import { PdfBadge, SIBLING_OUTLINE } from "@/app/components/PdfBadge";
+import { PdfItemViewer } from "@/app/components/PdfItemViewer";
 import { XC, xStyle, xTitle, PdfSays } from "@/app/components/PdfSays";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { QuoteList } from "@/app/components/QuoteList";
@@ -679,6 +680,9 @@ function rowToForm(r) {
     // The factory quote PDF this quote was imported from (script 129), a path in
     // the private quote-pdfs bucket.
     pdfPath: r.pdf_path || "",
+    // Which item of that PDF (script 139): { page, anchor, item_name }, so View
+    // PDF can open at the item's row. Null for a quote not imported from one.
+    pdfItem: r.pdf_item || null,
     tiers: tiers || [],
     updatedAt: r.updated_at || "", updatedBy: r.updated_by || "",
   };
@@ -738,6 +742,8 @@ function formToRow(f) {
     // Sent only when there is one, so a quote that never imported a PDF saves the
     // same columns it always has -- and keeps saving before script 129 has run.
     ...(f.pdfPath ? { pdf_path: f.pdfPath } : {}),
+    // Same rule for the item of the PDF (script 139).
+    ...(f.pdfItem ? { pdf_item: f.pdfItem } : {}),
     tiers: tiers,
     updated_at: stamp(), updated_by: f.updatedBy || null,
   };
@@ -828,7 +834,7 @@ const BLANK = {
   factory: "", factoryContact: "", factoryEmail: "", factoryPhone: "", country: "", leadTime: "", hts: "",
   unitsPerCarton: "", cartonL: "", cartonW: "", cartonH: "", cartonWeight: "",
   freightDutyUpdatedAt: "", freightDutyUpdatedBy: "",
-  moldFee: "", sampleFee: "", pdfPath: "",
+  moldFee: "", sampleFee: "", pdfPath: "", pdfItem: null,
   tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }],
 };
 
@@ -1732,7 +1738,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
                   <div style={{ display: "flex", alignItems: "center" }}>
                     {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
                   </div>
-                  <div style={{ ...S.cellPrimary, minWidth: 0, lineHeight: 1.3, overflowWrap: "anywhere" }}>{q.sku || "No SKU"}{q.pdfPath && <PdfBadge path={q.pdfPath} count={pdfCounts.get(q.pdfPath) || 1} onHover={setHoverPdf} />}</div>
+                  <div style={{ ...S.cellPrimary, minWidth: 0, lineHeight: 1.3, overflowWrap: "anywhere" }}>{q.sku || "No SKU"}{q.pdfPath && <PdfBadge path={q.pdfPath} item={q.pdfItem} count={pdfCounts.get(q.pdfPath) || 1} onHover={setHoverPdf} />}</div>
                   <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.product || ""}>{q.product || "Untitled product"}</div>
                   {view === "search" && <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.client || ""}>{q.client || "—"}</div>}
                   <div style={{ minWidth: 0, textAlign: "center" }}>
@@ -1782,7 +1788,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
                     <div style={{ ...S.cellPrimary, overflowWrap: "anywhere" }}>
                       {q.quoteCode && <span style={S.quoteCode}>{q.quoteCode}</span>}
                       {q.sku || "No SKU"}
-                      {q.pdfPath && <PdfBadge path={q.pdfPath} count={pdfCounts.get(q.pdfPath) || 1} onHover={setHoverPdf} />}
+                      {q.pdfPath && <PdfBadge path={q.pdfPath} item={q.pdfItem} count={pdfCounts.get(q.pdfPath) || 1} onHover={setHoverPdf} />}
                     </div>
                     <div style={S.cellSub}>{q.product || "Untitled product"}{view === "search" && q.client ? ` · ${q.client}` : ""}</div>
                     {/* The desktop row has an Updated column; the phone row had
@@ -2434,7 +2440,7 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
         <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "baseline", gap: 8 }}>
           <span style={{ fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", color: "#9aa3b5", fontWeight: 600 }}>Quote ID</span>
           <span style={{ ...S.quoteCode, fontSize: 13 }}>{q.quoteCode}</span>
-          {q.pdfPath && <PdfBadge path={q.pdfPath} count={pdfCount} onHover={onPdfHover} />}
+          {q.pdfPath && <PdfBadge path={q.pdfPath} item={q.pdfItem} count={pdfCount} onHover={onPdfHover} />}
         </div>
       )}
       <div style={{ gridColumn: "1 / -1" }}>
@@ -3590,6 +3596,18 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
       if (String(cur[k] ?? "").trim() === "" || (opts.replaceIf && opts.replaceIf())) patch[k] = nx[k].value;
     };
 
+    // Which item of the PDF this quote is, for the viewer to find its row again
+    // (script 139): the page and words its name was read from -- in practice
+    // the item's table row -- else its first price's. Always replaced: this
+    // quote is now this item, whatever it was before.
+    {
+      const nm = F.product || {};
+      const t0 = (out.tiers || [])[0] || {};
+      const page = Number(nm.page) || Number(t0.page) || 0;
+      const anchor = String(nm.evidence || t0.evidence || "").trim();
+      const itemName = String(out.name || nm.value || "").trim();
+      patch.pdfItem = page || anchor ? { page: page || 1, anchor, item_name: itemName } : null;
+    }
     // A catalogue name is locked for a reason; the PDF only suggests.
     put("product", { suggestOnly: nameLocked });
     // The SKU is ours; a factory item number is a suggestion at most.
@@ -3692,8 +3710,12 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
                  count: Object.keys(nx).length });
   };
 
+  // A quote that knows its item opens in the viewer at that row; otherwise the
+  // PDF opens in a tab, as it always has.
+  const [viewingPdf, setViewingPdf] = useState(false);
   const viewPdf = async () => {
     if (!f.pdfPath) return;
+    if (f.pdfItem) { setViewingPdf(true); return; }
     // Opened before the await so the browser does not treat it as a popup.
     const w = window.open("", "_blank");
     const { data, error } = await SB.storage.from(PDF_BUCKET).createSignedUrl(f.pdfPath, 600);
@@ -4484,6 +4506,7 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
             </button>
             <input ref={pdfInputRef} type="file" accept="application/pdf,.pdf" style={{ display: "none" }}
               onChange={(e) => { const file = e.target.files && e.target.files[0]; e.target.value = ""; importPdf(file); }} />
+            {viewingPdf && f.pdfPath && <PdfItemViewer path={f.pdfPath} item={f.pdfItem} onClose={() => setViewingPdf(false)} />}
             {f.pdfPath && (
               <button type="button" onClick={viewPdf} style={{ background: "none", border: "none", padding: 0, color: "#3461e0", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
                 View PDF
@@ -4516,7 +4539,7 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
                 ))}
                 <span style={{ ...PICK_LABEL, color: "#6a7488" }}>The first ticked item fills this quote. After each Save, the next ticked item opens as a new quote.</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
-                  <button type="button" style={{ ...S.ghostBtnSm, opacity: pdfInfo.sel.some(Boolean) && !pdfInfo.busy ? 1 : 0.5 }}
+                  <button type="button" style={{ ...S.ghostBtnSm, background: "#000000", color: "#ffffff", border: "1px solid #000000", opacity: pdfInfo.sel.some(Boolean) && !pdfInfo.busy ? 1 : 0.5 }}
                     disabled={!pdfInfo.sel.some(Boolean) || !!pdfInfo.busy} onClick={fillFromItem}>{pdfInfo.busy || "Fill this quote"}</button>
                   {pdfInfo.fillError && <span style={{ fontSize: 12, color: XC.red }}>{pdfInfo.fillError}</span>}
                 </div>

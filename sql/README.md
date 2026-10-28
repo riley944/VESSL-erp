@@ -6,7 +6,7 @@ Every hand-run script against the VESSL database (ERP schema `vessl`, portal sch
 ## Rules
 
 - **Every new script is created here**, numbered `NNN-short-name.sql` with three
-  digits. **Next free number: 137.** (95 is reserved, see below.)
+  digits. **Next free number: 140.** (95 is reserved, see below.)
 - A reverse is `NNNr-short-name-reverse.sql`; a check run after commit is
   `NNN-after-commit-checks.sql`. Both sit beside their forward script.
 - Run `python sql/preflight.py sql/NNN-name.sql` before a script is printed or run.
@@ -214,5 +214,7 @@ the script creates. *Inferred*: neither directly; the reasoning is in the row.
 | 135r | `135r-po-attachments-private-reverse.sql` | — | ERP | Reverse of 135; bucket public again with no limits, drops the 3 staff policies, recreates the 3 old ones as measured (permissive, authenticated, bucket_id only). Guard: 135 committed. Code can stay | Never run | — |
 | 136 | `136-kui-ior-flag.sql` | — | ERP | Importer of record flag. `companies.kui_ior` boolean null (true = KUI is the IOR for this client, false = the client is, null = unknown) and `products.kui_ior` boolean null (true/false overrides the client company, null = use `companies.kui_ior` via `client_company_id`), both with comments. No default, no backfill; `products.importer_of_record` (text, 0 values on 28 Oct) left in place. No grant or policy change; neither table has a trigger. Guard: columns absent, importer_of_record still text, probe rows ZZTESTER (client, name length 8) and ZZTEST2 (sku length 7) as measured, no column-level grants. 3 probes (Jenn sets the company, Jenn sets the product, non-staff reaches 0 rows). Run BEFORE deploying the code that names kui_ior | Never run | — |
 | 136r | `136r-kui-ior-flag-reverse.sql` | — | ERP | Reverse of 136; drops both `kui_ior` columns (a0 counts flags lost); importer_of_record untouched. Guard: 136 committed. Take the code out first | Never run | — |
+| 139 | `139-quote-pdf-item.sql` | — | ERP | Which item of its PDF a quote was imported from. `quotes.pdf_item` jsonb null ({page, anchor, item_name}; anchor = the words the item was read from, in practice its table row), CHECK `quotes_pdf_item_object` (null or an object), comment. No default, no backfill. No grant or policy change; the one trigger (trg_quote_code) only keeps quote_code. Guard: column absent, pdf_path present, probe quote ZZTESTER (5e39d303, client length 8), no column-level grants, only trg_quote_code. 3 probes (Jenn sets it, an array refused 23514, non-staff reaches 0 rows). Run BEFORE deploying the code that names pdf_item (Save of an imported quote, the Quote List select) | Never run | — |
+| 139r | `139r-quote-pdf-item-reverse.sql` | — | ERP | Reverse of 139; drops the CHECK and `pdf_item` (a0 counts items lost); pdf_path untouched. Guard: 139 committed. Take the code out first | Never run | — |
 
 Also here: `preflight.py`, the lexer that checks a script before it is printed.
