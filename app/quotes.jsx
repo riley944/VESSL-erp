@@ -8,7 +8,8 @@ import {
 // The SBQ import went with the htscodes fetch -- that was this file's last use of it.
 // lib/supabaseQuotes still exists; page.jsx and pricing.jsx both import it.
 import { SB } from "@/lib/supabase";
-import { PDF_BUCKET, PDF_MAX_BYTES, PDF_DIRECT_MAX_BYTES, pdfPathFor, QUOTE_PDF_IMPORT } from "@/lib/quotePdf";
+import { PDF_BUCKET, PDF_MAX_BYTES, PDF_DIRECT_MAX_BYTES, pdfPathFor, QUOTE_PDF_IMPORT, pdfSourceKey, pdfFileNameOf } from "@/lib/quotePdf";
+import { PdfBadge, SIBLING_OUTLINE } from "@/app/components/PdfBadge";
 import { XC, xStyle, xTitle, PdfSays } from "@/app/components/PdfSays";
 import { FilterSelect } from "@/app/components/FilterSelect";
 import { QuoteList } from "@/app/components/QuoteList";
@@ -778,15 +779,39 @@ function pdfItemToForm(it, f) {
 // { fileName, factory, queue, position, total }: queue the items still to come.
 // __key remounts the form; __pdfChain tells it which item to fill and where it
 // stands. Neither reaches the row -- formToRow names neither.
-function chainForm(chain, f) {
+function chainForm(chain, f, notice = "") {
   if (!chain || !Array.isArray(chain.queue) || !chain.queue.length) return null;
   const [current, ...queue] = chain.queue;
   return {
     ...pdfItemToForm(current, f),
     __key: "pdf-" + Date.now() + "-" + chain.position,
-    __pdfChain: { fileName: chain.fileName, factory: chain.factory, current, queue, position: chain.position + 1, total: chain.total },
+    __pdfChain: { fileName: chain.fileName, factory: chain.factory, current, queue, position: chain.position + 1, total: chain.total, notice },
   };
 }
+
+// ── NEVER THE SAME ITEM TWICE ───────────────────────────────────────────────
+// The quotes already made from this PDF for this client, by product name (case
+// ignored) -> quote code. "This PDF" is its file name: every import uploads
+// afresh under a new timestamped path, so two imports of one file share the
+// name, not the path (lib/quotePdf.js pdfSourceKey). With no client yet, any
+// client's quote from the file counts -- the guard runs again at Save, when
+// the client is known.
+async function importedFromPdf(pdfPath, client) {
+  const key = pdfSourceKey(pdfPath);
+  if (!key) return new Map();
+  const { data, error } = await SB.from("quotes").select("quote_code,product,client,pdf_path").not("pdf_path", "is", null);
+  if (error) throw new Error(error.message);
+  const who = String(client || "").trim().toLowerCase();
+  const out = new Map();
+  for (const q of data || []) {
+    if (pdfSourceKey(q.pdf_path) !== key) continue;
+    if (who && String(q.client || "").trim().toLowerCase() !== who) continue;
+    const name = String(q.product || "").trim().toLowerCase();
+    if (name && !out.has(name)) out.set(name, q.quote_code || "a quote");
+  }
+  return out;
+}
+const itemKey = (name) => String(name || "").trim().toLowerCase();
 
 // Sizes have historically been baked into the SKU string (LHS-170 - Large, BG-101-2XL).
 // If one is still there, recording a scale as well would double it downstream.
@@ -930,6 +955,8 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
+  // The PDF a pointer is resting on (a badge), so every quote from it is outlined.
+  const [hoverPdf, setHoverPdf] = useState(null);
   const [skuChoice, setSkuChoice] = useState(null);
   // The search term and which client is open survive going to another page and back.
   // expanded stays plain below -- an open row is the same class of thing as openId
@@ -1356,7 +1383,11 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
   };
   // Skip this item of a chain: the next one opens unsaved work aside, or the
   // chain ends when there is none.
-  const skipChained = (chain, f) => setEditing(chainForm(chain, f));
+  const skipChained = (chain, f, notice = "") => {
+    const next = chainForm(chain, f, notice);
+    setEditing(next);
+    if (!next && notice) flash(notice);
+  };
 
   const removeQuote = async (id) => {
     const { error } = await supabase.from("quotes").delete().eq("id", id);
@@ -1373,6 +1404,14 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
     await load();
     flash("Quote duplicated");
   };
+
+  // How many quotes share each stored PDF -- the badge's tooltip.
+  const pdfCounts = useMemo(() => {
+    const m = new Map();
+    quotes.forEach((q) => { if (q.pdfPath) m.set(q.pdfPath, (m.get(q.pdfPath) || 0) + 1); });
+    return m;
+  }, [quotes]);
+  const siblingRing = (q) => (hoverPdf && q.pdfPath === hoverPdf ? { outline: "2px solid " + SIBLING_OUTLINE, outlineOffset: -2, borderRadius: 10 } : {});
 
   const clients = useMemo(() => {
     const map = new Map();
@@ -1688,12 +1727,12 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
               <div key={q.id} style={S.rowGroup}>
                 {!isMobile ? (
                 <div id={`quote-row-${q.id}`}
-                  style={{ ...S.row, display: "grid", gridTemplateColumns: qGrid, columnGap: Q_GAP, ...(open ? S.rowOpen : {}) }}
+                  style={{ ...S.row, display: "grid", gridTemplateColumns: qGrid, columnGap: Q_GAP, ...(open ? S.rowOpen : {}), ...siblingRing(q) }}
                   onClick={() => setExpanded(open ? null : q.id)}>
                   <div style={{ display: "flex", alignItems: "center" }}>
                     {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
                   </div>
-                  <div style={{ ...S.cellPrimary, minWidth: 0, lineHeight: 1.3, overflowWrap: "anywhere" }}>{q.sku || "No SKU"}</div>
+                  <div style={{ ...S.cellPrimary, minWidth: 0, lineHeight: 1.3, overflowWrap: "anywhere" }}>{q.sku || "No SKU"}{q.pdfPath && <PdfBadge path={q.pdfPath} count={pdfCounts.get(q.pdfPath) || 1} onHover={setHoverPdf} />}</div>
                   <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.product || ""}>{q.product || "Untitled product"}</div>
                   {view === "search" && <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.client || ""}>{q.client || "—"}</div>}
                   <div style={{ minWidth: 0, textAlign: "center" }}>
@@ -1743,6 +1782,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
                     <div style={{ ...S.cellPrimary, overflowWrap: "anywhere" }}>
                       {q.quoteCode && <span style={S.quoteCode}>{q.quoteCode}</span>}
                       {q.sku || "No SKU"}
+                      {q.pdfPath && <PdfBadge path={q.pdfPath} count={pdfCounts.get(q.pdfPath) || 1} onHover={setHoverPdf} />}
                     </div>
                     <div style={S.cellSub}>{q.product || "Untitled product"}{view === "search" && q.client ? ` · ${q.client}` : ""}</div>
                     {/* The desktop row has an Updated column; the phone row had
@@ -1797,7 +1837,8 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
                   )}
                 </div>
                 )}
-                {open && <ExpandedDetail q={q} dutyRate={rateOf(q)} tasks={tasks.filter((t) => t.quote_id === q.id)} onAddTask={addTask} onToggleTask={toggleTask} userEmail={userEmail} staff={staff} assignees={assignees} isMobile={isMobile} onEdit={() => setEditing(q)} onDuplicate={() => duplicateQuote(q)} onDelete={() => { if (confirm("Delete this quote?")) removeQuote(q.id); }} />}
+                {open && <ExpandedDetail q={q} dutyRate={rateOf(q)} tasks={tasks.filter((t) => t.quote_id === q.id)} onAddTask={addTask} onToggleTask={toggleTask} userEmail={userEmail} staff={staff} assignees={assignees} isMobile={isMobile} onEdit={() => setEditing(q)} onDuplicate={() => duplicateQuote(q)} onDelete={() => { if (confirm("Delete this quote?")) removeQuote(q.id); }}
+                  pdfCount={q.pdfPath ? pdfCounts.get(q.pdfPath) || 1 : 1} onPdfHover={setHoverPdf} />}
               </div>
             );
           })}
@@ -2339,7 +2380,7 @@ function ContainerPackout({ q, cbmPerCarton }) {
   );
 }
 
-function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTask, userEmail, staff = [], assignees = [], isMobile = false, onEdit, onDuplicate, onDelete }) {
+function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTask, userEmail, staff = [], assignees = [], isMobile = false, onEdit, onDuplicate, onDelete, pdfCount = 1, onPdfHover }) {
   const [taskText, setTaskText] = useState("");
   // WHO THE TASK IS FOR: the people picked on the name pills (PeoplePills), as
   // emails -- one task row each. No default: nobody is picked until somebody is,
@@ -2393,6 +2434,7 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
         <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "baseline", gap: 8 }}>
           <span style={{ fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", color: "#9aa3b5", fontWeight: 600 }}>Quote ID</span>
           <span style={{ ...S.quoteCode, fontSize: 13 }}>{q.quoteCode}</span>
+          {q.pdfPath && <PdfBadge path={q.pdfPath} count={pdfCount} onHover={onPdfHover} />}
         </div>
       )}
       <div style={{ gridColumn: "1 / -1" }}>
@@ -3473,25 +3515,35 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
     // route answering in the old one-product shape -- applies straight away.
     const items = Array.isArray(out.items) ? out.items : [];
     setPdfChain(null);
-    if (items.length > 1) { setPdfInfo({ fileName, choose: true, items, factory: out.factory, pick: 0 }); return; }
+    if (items.length > 1) { setPdfInfo({ fileName, choose: true, items, factory: out.factory, sel: items.map(() => true) }); return; }
     applyExtract(items.length ? { ...items[0], factory: out.factory } : out, fileName);
   };
-  // The pick: which item fills THIS quote. The rest queue up, in the PDF's
-  // order, and open one by one after each Save.
+  // Fill: the first SELECTED item fills this quote; the other selected items
+  // queue up in the PDF's order and open one by one after each Save.
   //
-  // THE PICKER COLLAPSES FIRST, and a failure says so. Choose mode ends before
-  // the apply, and an error puts the picker back with the reason under it (and
-  // in the console) -- a throw inside applyExtract used to leave the picker on
-  // screen and the click looking dead.
-  const fillFromItem = () => {
+  // Items already made into a quote from this PDF for this client are dropped
+  // first and named -- never a second quote for the same item.
+  //
+  // THE PICKER COLLAPSES BEFORE THE APPLY, and a failure says so: an error puts
+  // the picker back with the reason under it (and in the console). A throw
+  // inside applyExtract used to leave the picker on screen and the click dead.
+  const fillFromItem = async () => {
     const pi = pdfInfo;
     if (!pi || !pi.items) return;
-    const pick = pi.items[pi.pick] ? pi.pick : 0;
-    const queue = pi.items.filter((_, i) => i !== pick);
+    const chosen = pi.items.filter((_, i) => !pi.sel || pi.sel[i]);
+    if (!chosen.length) return;
+    setPdfInfo({ ...pi, busy: "Checking\u2026", fillError: "" });
+    let done;
+    try { done = await importedFromPdf(fRef.current.pdfPath, fRef.current.client); }
+    catch (e) { setPdfInfo({ ...pi, fillError: "Could not check for earlier imports: " + ((e && e.message) || String(e)) }); return; }
+    const dup = chosen.filter((it) => done.has(itemKey(it.name)));
+    const todo = chosen.filter((it) => !done.has(itemKey(it.name)));
+    const dupNote = dup.length ? "Already imported from this PDF: " + dup.map((it) => done.get(itemKey(it.name)) + " (" + (it.name || "Unnamed item") + ")").join(", ") : "";
+    if (!todo.length) { setPdfInfo({ ...pi, fillError: dupNote + " \u2014 nothing left to fill." }); return; }
     setPdfInfo({ fileName: pi.fileName, busy: "Filling\u2026" });
     try {
-      applyExtract({ ...pi.items[pick], factory: pi.factory }, pi.fileName);
-      setPdfChain({ fileName: pi.fileName, factory: pi.factory, queue, position: 1, total: pi.items.length });
+      applyExtract({ ...todo[0], factory: pi.factory }, pi.fileName, dupNote);
+      setPdfChain({ fileName: pi.fileName, factory: pi.factory, queue: todo.slice(1), position: 1, total: todo.length });
     } catch (e) {
       console.error("Quote PDF fill failed", e);
       setPdfChain(null);
@@ -3507,7 +3559,7 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
     if (!c || chainFilled.current) return;
     chainFilled.current = true;
     try {
-      applyExtract({ ...c.current, factory: c.factory }, c.fileName);
+      applyExtract({ ...c.current, factory: c.factory }, c.fileName, c.notice || "");
     } catch (e) {
       console.error("Quote PDF fill failed", e);
       setPdfInfo({ fileName: c.fileName, error: "Could not fill item " + c.position + ": " + ((e && e.message) || String(e)) });
@@ -3522,12 +3574,12 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
     return [it.name || "Unnamed item", det, tiers].filter(Boolean).join(" \u00b7 ");
   };
 
-  const applyExtract = (out, fileName) => {
+  const applyExtract = (out, fileName, notice = "") => {
     const cur = fRef.current;
     const F = out.fields || {};
     const nx = {};
     const patch = {};
-    const warnings = [...(out.warnings || [])];
+    const warnings = [...(notice ? [notice] : []), ...(out.warnings || [])];
     const entry = (src, extra) => ({ value: String(src.value).trim(), conf: src.confidence, evidence: src.evidence, page: src.page, note: src.note, ...extra });
     // Filled only where the box is empty; a filled box gets "PDF says X".
     const put = (k, opts = {}) => {
@@ -4303,6 +4355,22 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
     // rather than save it, or drop the words.
     if (qText.trim() && !qWho.length) { setQHint("Pick at least one person, or clear the task box, then save."); return; }
     if (qText.trim() && !confirmAll(qWho, assignees)) return;
+    // NEVER A SECOND QUOTE FOR THE SAME ITEM. A new quote carrying a PDF is
+    // checked against the quotes already made from that file for this client.
+    // In a chain the item is skipped, with the reason shown on the next one;
+    // outside a chain the Save is refused and says which quote it would copy.
+    if (!f.id && f.pdfPath && (f.product || "").trim()) {
+      let done;
+      try { done = await importedFromPdf(f.pdfPath, f.client); }
+      catch (e) { setPdfInfo((p) => ({ ...(p || {}), fileName: (p && p.fileName) || pdfFileNameOf(f.pdfPath), error: "Could not check for earlier imports: " + ((e && e.message) || String(e)) })); return; }
+      const code = done.get(itemKey(f.product));
+      if (code) {
+        const msg = "Already imported from this PDF: " + code + " (" + f.product.trim() + ")";
+        if (pdfChain && onSkip) { onSkip(pdfChain, f, msg + " \u2014 skipped."); return; }
+        setPdfInfo((p) => ({ ...(p || {}), fileName: (p && p.fileName) || pdfFileNameOf(f.pdfPath), error: msg + ". Not saved." }));
+        return;
+      }
+    }
     const out = { ...f };
     out.freightDutyUpdatedAt = stamp();
     // The PDF items still to come, for saveQuote to open the next one. formToRow
@@ -4424,31 +4492,39 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
             <span style={{ fontSize: 12.5, color: pdfInfo && pdfInfo.error ? XC.red : "#6a7488" }}>
               {!pdfInfo ? "A factory quote PDF fills the fields it can; you check them before saving."
                 : pdfInfo.error ? (pdfInfo.fileName ? pdfInfo.fileName + ": " : "") + pdfInfo.error
-                : pdfInfo.busy ? pdfInfo.fileName + ": " + pdfInfo.busy
+                : pdfInfo.busy && !pdfInfo.choose ? pdfInfo.fileName + ": " + pdfInfo.busy
                 : pdfInfo.choose ? pdfInfo.fileName + ": " + pdfInfo.items.length + " items priced. Pick the one this quote is for."
                 : pdfInfo.fileName + ": " + pdfInfo.count + " fields read. Hover a highlighted box for where it came from."}
             </span>
             {pdfInfo && pdfInfo.choose && (
               <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
-                {/* One row per item; the radio picks the item that fills THIS
-                    quote. The global label rule is the uppercase mono field-label
+                {/* Select all, then one box per item, all ticked to start. The
+                    first ticked item fills this quote; the rest open in turn.
+                    The global label rule is the uppercase mono field-label
                     style, so these labels reset it. */}
+                <label style={{ ...PICK_LABEL, cursor: "pointer", fontWeight: 600 }}>
+                  <input type="checkbox" data-noguard checked={pdfInfo.sel.every(Boolean)}
+                    onChange={(e) => setPdfInfo((p) => ({ ...p, sel: p.items.map(() => e.target.checked) }))} style={{ marginTop: 3 }} />
+                  Select all
+                </label>
                 {pdfInfo.items.map((it, i) => (
-                  <label key={i} style={{ ...PICK_LABEL, cursor: "pointer" }}>
-                    <input type="radio" data-noguard name="pdf-item" checked={pdfInfo.pick === i} onChange={() => setPdfInfo((p) => ({ ...p, pick: i }))} style={{ marginTop: 3 }} />
+                  <label key={i} style={{ ...PICK_LABEL, cursor: "pointer", paddingLeft: 18 }}>
+                    <input type="checkbox" data-noguard checked={!!pdfInfo.sel[i]}
+                      onChange={(e) => setPdfInfo((p) => ({ ...p, sel: p.sel.map((v, j) => (j === i ? e.target.checked : v)) }))} style={{ marginTop: 3 }} />
                     <span>{itemLine(it)}{(it.warnings || []).length > 0 ? <span style={{ color: "#a66f12" }}>{" \u00b7 " + it.warnings.length + " to check"}</span> : null}</span>
                   </label>
                 ))}
-                <span style={{ ...PICK_LABEL, color: "#6a7488" }}>The item picked fills this quote. After each Save, the next item opens as a new quote.</span>
+                <span style={{ ...PICK_LABEL, color: "#6a7488" }}>The first ticked item fills this quote. After each Save, the next ticked item opens as a new quote.</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
-                  <button type="button" style={S.ghostBtnSm} onClick={fillFromItem}>Fill this quote</button>
+                  <button type="button" style={{ ...S.ghostBtnSm, opacity: pdfInfo.sel.some(Boolean) && !pdfInfo.busy ? 1 : 0.5 }}
+                    disabled={!pdfInfo.sel.some(Boolean) || !!pdfInfo.busy} onClick={fillFromItem}>{pdfInfo.busy || "Fill this quote"}</button>
                   {pdfInfo.fillError && <span style={{ fontSize: 12, color: XC.red }}>{pdfInfo.fillError}</span>}
                 </div>
               </div>
             )}
             {pdfChain && (
               <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 12.5, color: "#2b3445", width: "100%" }}>
-                <span style={{ fontWeight: 600 }}>{"Item " + pdfChain.position + " of " + pdfChain.total + " from " + pdfChain.fileName}</span>
+                <span style={{ fontWeight: 600 }}>{"Item " + pdfChain.position + " of " + pdfChain.total + " selected from " + pdfChain.fileName}</span>
                 <span style={{ color: "#6a7488" }}>{pdfChain.queue.length ? "\u00b7 next on Save: " + (pdfChain.queue[0].name || "Unnamed item") : "\u00b7 the last item"}</span>
                 {pdfChain.position > 1 && onSkip && (
                   <button type="button" onClick={() => onSkip(pdfChain, f)}

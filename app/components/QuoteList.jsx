@@ -7,6 +7,7 @@ import { loadExcelJS, excelDate } from '@/lib/excel';
 import { usePageState } from '@/lib/pageState';
 import { useIsMobile } from '@/lib/useIsMobile';
 import { buildListDoc, showListDoc, logoDataUrl } from '@/lib/listDoc';
+import { PdfBadge, SIBLING_OUTLINE } from '@/app/components/PdfBadge';
 
 // ── QUOTE LIST ──────────────────────────────────────────────────────────────
 // Every quote in one flat, read-only list on the Quotes page, behind the same
@@ -74,7 +75,7 @@ export function QuoteList({ reloadKey, onOpen }) {
     let live = true;
     (async () => {
       const { data, error } = await SB.from('quotes')
-        .select('id,quote_code,sku,product,client,client_company_id,created_at,company:companies!client_company_id(name)')
+        .select('id,quote_code,sku,product,client,client_company_id,created_at,pdf_path,company:companies!client_company_id(name)')
         .order('created_at', { ascending: false });
       if (!live) return;
       if (error) { setErr(error.message); setRows([]); return; }
@@ -88,6 +89,9 @@ export function QuoteList({ reloadKey, onOpen }) {
         product: (q.product || '').trim(),
         company: ((q.company && q.company.name) || q.client || '').trim(),
         created: q.created_at || null,
+        // The factory PDF it was imported from (script 129); quotes from one
+        // import share it, and the badge outlines them together.
+        pdf: q.pdf_path || '',
         day: ymd(q.created_at),
       })));
     })();
@@ -95,6 +99,14 @@ export function QuoteList({ reloadKey, onOpen }) {
   }, [reloadKey]);
 
   const all = rows || [];
+  // Quotes per stored PDF, and the one a pointer is resting on.
+  const pdfCounts = useMemo(() => {
+    const m = new Map();
+    all.forEach(r => { if (r.pdf) m.set(r.pdf, (m.get(r.pdf) || 0) + 1); });
+    return m;
+  }, [all]);
+  const [hoverPdf, setHoverPdf] = useState(null);
+  const ring = r => (hoverPdf && r.pdf === hoverPdf ? { outline: '2px solid ' + SIBLING_OUTLINE, outlineOffset: -2, borderRadius: 8 } : {});
   // Options from the quotes themselves, with a count each, alphabetical. A quote
   // with no value is listed under a dash so it can still be picked.
   const optionsFor = (key, allLabel) => {
@@ -322,7 +334,7 @@ export function QuoteList({ reloadKey, onOpen }) {
             style={{ padding: '11px 14px', borderTop: i > 0 ? '1px solid #f1f3f7' : 'none', cursor: 'pointer' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
               <span style={{ fontSize: 12.5, fontWeight: 600, color: '#3461e0', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                             fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{r.code || DASH}</span>
+                             fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{r.code || DASH}{r.pdf && <PdfBadge path={r.pdf} count={pdfCounts.get(r.pdf) || 1} onHover={setHoverPdf} />}</span>
               <span style={{ fontSize: 13.5, fontWeight: 600, color: '#0f1729', minWidth: 0, overflowWrap: 'anywhere' }}>{r.sku || DASH}</span>
             </div>
             <div style={{ fontSize: 12.5, color: '#6a7488', marginTop: 3, overflowWrap: 'anywhere' }}>
@@ -334,11 +346,11 @@ export function QuoteList({ reloadKey, onOpen }) {
             onKeyDown={e => { if (e.key === 'Enter') onOpen && onOpen(r.id); }}
             title="Open this quote"
             style={{ display: 'grid', gridTemplateColumns: GRID, gap: 14, padding: '12px 18px', alignItems: 'center',
-                     borderTop: i > 0 ? '1px solid #f1f3f7' : 'none', cursor: 'pointer' }}
+                     borderTop: i > 0 ? '1px solid #f1f3f7' : 'none', cursor: 'pointer', ...ring(r) }}
             onMouseEnter={e => { e.currentTarget.style.background = '#f8f9fc'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
             <div style={{ fontSize: 12.5, fontWeight: 600, color: '#3461e0', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                          fontVariantNumeric: 'tabular-nums' }}>{r.code || DASH}</div>
+                          fontVariantNumeric: 'tabular-nums' }}>{r.code || DASH}{r.pdf && <PdfBadge path={r.pdf} count={pdfCounts.get(r.pdf) || 1} onHover={setHoverPdf} />}</div>
             <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0f1729', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.sku || DASH}</div>
             <div style={{ fontSize: 13.5, color: '#2c3446', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.product || DASH}</div>
             <div style={{ fontSize: 13, color: '#6a7488', fontVariantNumeric: 'tabular-nums' }}>{fmtDay(r.created)}</div>
