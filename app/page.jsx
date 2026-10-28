@@ -5748,7 +5748,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
               <div className="detail-grid" style={{gridTemplateColumns:'1fr',gap:'0'}}>
                 {[['Email',co.email],['Phone',co.phone],['Website',co.website],['Billing Address',co.billing_address],['Shipping Address',co.shipping_address],...(co.type==='client'?[['Vendor #',co.vendor_number],['Importer of record',iorWord(co.kui_ior)],['Pallet info',co.pallet_info]]:[]),...(co.type==='carrier'?[['Tracking URL',co.tracking_url]]:[])].map(([l,v])=>(
                   <div key={l} style={{display:'flex',justifyContent:'space-between',gap:'16px',padding:'11px 0',borderBottom:'1px solid var(--line-2)'}}>
-                    <span style={{color:'var(--muted)',fontSize:'12px',whiteSpace:'nowrap'}}>{l}</span><span style={{fontSize:'13px',textAlign:'right',whiteSpace:'pre-wrap'}}>{v||'—'}</span>
+                    <span style={{color:'var(--muted)',fontSize:'12px',whiteSpace:'nowrap',...(l==='Importer of record'?{fontWeight:700}:{})}}>{l}</span><span style={{fontSize:'13px',textAlign:'right',whiteSpace:'pre-wrap'}}>{v||'—'}</span>
                   </div>
                 ))}
               </div>
