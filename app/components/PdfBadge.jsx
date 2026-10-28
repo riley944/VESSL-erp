@@ -1,41 +1,32 @@
 'use client';
 import { useState } from 'react';
-import { SB } from '@/lib/supabase';
-import { PDF_BUCKET, pdfFileNameOf, SIBLING_OUTLINE } from '@/lib/quotePdf';
+import { pdfFileNameOf, SIBLING_OUTLINE } from '@/lib/quotePdf';
 import { PdfItemViewer } from '@/app/components/PdfItemViewer';
 
 // ── THE "PDF" BADGE ON A QUOTE ──────────────────────────────────────────────
 // A quote imported from a factory PDF (quotes.pdf_path, script 129) carries a
-// small badge: click opens the stored PDF through a signed link, the same way
-// the quote form's View PDF does. Quotes from the same import share the path;
+// small badge: click opens the stored PDF in the viewer, the same way the quote
+// form's View PDF does. Quotes from the same import share the path;
 // hovering reports the path through onHover so the list can outline every
 // sibling, and the tooltip counts them.
 //
 // The click stops there -- the badge sits inside rows that open or expand a
 // quote on click.
 //
-// A quote that knows its item of the PDF (quotes.pdf_item, script 139) opens
-// in the viewer instead, at that item's row (PdfItemViewer).
+// The click opens PdfItemViewer: at the quote's own item when it knows it
+// (quotes.pdf_item, script 139), else wherever the PDF names the product.
 export { SIBLING_OUTLINE };
 
-export function PdfBadge({ path, count = 1, onHover, item = null }) {
+export function PdfBadge({ path, count = 1, onHover, item = null, productName = '' }) {
   const [viewing, setViewing] = useState(false);
   if (!path) return null;
   const name = pdfFileNameOf(path) || 'the PDF';
-  const open = async (e) => {
-    e.stopPropagation();
-    if (item) { setViewing(true); return; }
-    // Opened before the await so the browser does not treat it as a popup.
-    const w = window.open('', '_blank');
-    const { data, error } = await SB.storage.from(PDF_BUCKET).createSignedUrl(path, 600);
-    if (error || !data) { if (w) w.close(); window._toast?.('Could not open the PDF: ' + (error ? error.message : 'no link'), 'err'); return; }
-    if (w) w.location.href = data.signedUrl;
-  };
+  const open = (e) => { e.stopPropagation(); setViewing(true); };
   // The viewer beside the button, not in it: a portal still bubbles its
   // events through the React tree, and the button's would reopen it.
   return (
     <>
-    {viewing && <PdfItemViewer path={path} item={item} onClose={() => setViewing(false)} />}
+    {viewing && <PdfItemViewer path={path} item={item} productName={productName} onClose={() => setViewing(false)} />}
     <button type="button" onClick={open}
       onMouseEnter={() => onHover && onHover(path)} onMouseLeave={() => onHover && onHover(null)}
       title={count + ' quote' + (count === 1 ? '' : 's') + ' from ' + name}

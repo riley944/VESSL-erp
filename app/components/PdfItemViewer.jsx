@@ -18,6 +18,12 @@ import { PDF_BUCKET, pdfFileNameOf, SIBLING_OUTLINE } from '@/lib/quotePdf';
 // text -- or just the row when there are none. Not found, the page opens
 // anyway with a note saying so.
 //
+// A quote with a PDF but no pdf_item (imported before script 139) is looked
+// for by its product name instead: every page is searched, whole words, case
+// ignored, and the best match wins -- every word of a name of one or two
+// words, two thirds of a longer one; the earliest page on a tie. No match,
+// page 1 opens with "Item not located".
+//
 // Portalled to the body, so it sits above the quote form; every click stops
 // at its root, since React still bubbles a portal's events to the rows and
 // overlays it was opened from.
@@ -71,11 +77,14 @@ function linesOf(items, viewport, Util) {
 }
 
 // The box around the item's row, or null when the page does not have it.
-function findRow(lines, anchor, itemName) {
-  const want = [...new Set(words(anchor))];
+// byName: the product name alone, with no anchor -- a partial match counts
+// (see the top), and the score comes back so pages can be compared.
+function findRow(lines, anchor, itemName, byName = false) {
+  const want = byName ? [] : [...new Set(words(anchor))];
   const name = [...new Set(words(itemName))];
   const key = want.length ? want : name;
   if (!key.length) return null;
+  const need = byName ? (name.length <= 2 ? 1 : 2 / 3) : 0.5;
   let best = null;
   for (let i = 0; i < lines.length; i++) {
     const seen = new Set();
@@ -84,12 +93,14 @@ function findRow(lines, anchor, itemName) {
       // A gap of more than two lines is the next row, not this one wrapping.
       if (w > 1 && l.y0 - lines[i + w - 2].y1 > l.h * 2) break;
       l.words.forEach((x) => seen.add(x));
-      if (name.length && !name.every((x) => seen.has(x))) continue;
-      const score = key.filter((x) => seen.has(x)).length / key.length - 0.02 * (w - 1);
+      if (!byName && name.length && !name.every((x) => seen.has(x))) continue;
+      const hit = key.filter((x) => seen.has(x)).length / key.length;
+      if (hit < need) continue;
+      const score = hit - 0.02 * (w - 1);
       if (!best || score > best.score) best = { score, from: i, to: i + w - 1 };
     }
   }
-  if (!best || best.score < 0.5) return null;
+  if (!best) return null;
   const rows = lines.slice(best.from, best.to + 1);
   const box = { x0: Math.min(...rows.map((l) => l.x0)), x1: Math.max(...rows.map((l) => l.x1)),
                 y0: Math.min(...rows.map((l) => l.y0)), y1: Math.max(...rows.map((l) => l.y1)) };
@@ -112,10 +123,10 @@ function findRow(lines, anchor, itemName) {
   };
   walk(best.from - 1, -1);
   walk(best.to + 1, 1);
-  return { x0, x1, y0: box.y0, y1: box.y1 };
+  return { x0, x1, y0: box.y0, y1: box.y1, score: best.score };
 }
 
-export function PdfItemViewer({ path, item, onClose }) {
+export function PdfItemViewer({ path, item, productName = '', onClose }) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const docRef = useRef(null);
@@ -126,7 +137,11 @@ export function PdfItemViewer({ path, item, onClose }) {
   const [note, setNote] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(true);
-  const targetPage = Math.max(1, Number(item && item.page) || 1);
+  // With an item, its page. Without, the page the name search settles on --
+  // null until it has, so nothing is outlined before then.
+  const [targetPage, setTargetPage] = useState(item ? Math.max(1, Number(item.page) || 1) : null);
+  const byName = !item;
+  const label = (item && item.item_name) || productName || '';
 
   // Escape closes this and nothing under it.
   useEffect(() => {
@@ -148,15 +163,34 @@ export function PdfItemViewer({ path, item, onClose }) {
         const doc = await pdfjs.getDocument({ url: data.signedUrl, isEvalSupported: false }).promise;
         if (dead) { doc.destroy(); return; }
         docRef.current = doc;
+        if (byName) {
+          // Every page's text at scale 1, the best match kept; a later page
+          // has to beat an earlier one, not tie it.
+          let found = null;
+          if (words(productName).length) {
+            for (let n = 1; n <= doc.numPages && !dead; n++) {
+              const pg = await doc.getPage(n);
+              const lines = linesOf((await pg.getTextContent()).items, pg.getViewport({ scale: 1 }), pdfjs.Util);
+              const hit = findRow(lines, '', productName, true);
+              if (hit && (!found || hit.score > found.score)) found = { page: n, score: hit.score };
+            }
+          }
+          if (dead) { doc.destroy(); docRef.current = null; return; }
+          const at = found ? found.page : 1;
+          if (!found) setNote(productName.trim() ? 'Item not located \u2014 no page of this PDF names \u201c' + productName.trim() + '\u201d.' : 'Item not located \u2014 this quote has no product name to look for.');
+          setPage(at);
+          setTargetPage(at);
+        }
         setPages(doc.numPages);
-        if (targetPage > doc.numPages) { setNote('The PDF has ' + doc.numPages + ' page' + (doc.numPages === 1 ? '' : 's') + '; the item was read from page ' + targetPage + '.'); setPage(doc.numPages); }
+        if (!byName && targetPage > doc.numPages) { setNote('The PDF has ' + doc.numPages + ' page' + (doc.numPages === 1 ? '' : 's') + '; the item was read from page ' + targetPage + '.'); setPage(doc.numPages); }
       } catch (e) {
         console.error('PDF viewer', e);
         if (!dead) { setErr('Could not render the PDF: ' + ((e && e.message) || String(e))); setBusy(false); }
       }
     })();
     return () => { dead = true; if (docRef.current) { docRef.current.destroy(); docRef.current = null; } };
-  }, [path, targetPage]);
+  // Once per PDF: the target page is worked out here, not read from it.
+  }, [path]);
 
   // The page, drawn to the width there is; the row found on the item's page.
   useEffect(() => {
@@ -181,10 +215,11 @@ export function PdfItemViewer({ path, item, onClose }) {
         if (dead) return;
         if (page === targetPage) {
           const text = await p.getTextContent();
-          const found = findRow(linesOf(text.items, viewport, pdfjs.Util), item && item.anchor, item && item.item_name);
+          const lines = linesOf(text.items, viewport, pdfjs.Util);
+          const found = byName ? findRow(lines, '', productName, true) : findRow(lines, item.anchor, item.item_name);
           if (dead) return;
           setBox(found);
-          if (!found) setNote((n) => n || 'Item not located on page ' + page + ' — check the page for “' + ((item && item.item_name) || 'the item') + '”.');
+          if (!found) setNote((n) => n || 'Item not located on page ' + page + ' \u2014 check the page for \u201c' + (label || 'the item') + '\u201d.');
         } else setBox(null);
       } catch (e) {
         if (e && e.name === 'RenderingCancelledException') return;
@@ -193,7 +228,7 @@ export function PdfItemViewer({ path, item, onClose }) {
       } finally { if (!dead) setBusy(false); }
     })();
     return () => { dead = true; if (task) task.cancel(); };
-  }, [pages, page, targetPage, item]);
+  }, [pages, page, targetPage, item, byName, productName, label]);
 
   const name = pdfFileNameOf(path) || 'PDF';
   const pad = 4;
@@ -206,14 +241,14 @@ export function PdfItemViewer({ path, item, onClose }) {
         style={{ background: '#ffffff', borderRadius: 16, width: '100%', maxWidth: 960, boxShadow: '0 24px 60px rgba(11,21,48,0.22)', border: '1px solid #e7eaf0' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid #e7eaf0' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#0f1729', overflowWrap: 'anywhere' }}>{(item && item.item_name) || name}</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#0f1729', overflowWrap: 'anywhere' }}>{label || name}</div>
             <div style={{ fontSize: 12, color: '#6a7488', overflowWrap: 'anywhere' }}>{name}{pages ? ' · page ' + page + ' of ' + pages : ''}</div>
           </div>
           {pages > 1 && (
             <span style={{ display: 'inline-flex', gap: 6 }}>
               <button type="button" style={{ ...btn, opacity: page > 1 ? 1 : 0.4 }} disabled={page <= 1} onClick={() => setPage((n) => n - 1)}>Prev</button>
               <button type="button" style={{ ...btn, opacity: page < pages ? 1 : 0.4 }} disabled={page >= pages} onClick={() => setPage((n) => n + 1)}>Next</button>
-              {page !== targetPage && targetPage <= pages && <button type="button" style={btn} onClick={() => setPage(targetPage)}>Item page</button>}
+              {targetPage && page !== targetPage && targetPage <= pages && <button type="button" style={btn} onClick={() => setPage(targetPage)}>Item page</button>}
             </span>
           )}
           {url && <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12.5, fontWeight: 600, color: '#3461e0' }}>Open in new tab</a>}

@@ -1738,7 +1738,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
                   <div style={{ display: "flex", alignItems: "center" }}>
                     {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
                   </div>
-                  <div style={{ ...S.cellPrimary, minWidth: 0, lineHeight: 1.3, overflowWrap: "anywhere" }}>{q.sku || "No SKU"}{q.pdfPath && <PdfBadge path={q.pdfPath} item={q.pdfItem} count={pdfCounts.get(q.pdfPath) || 1} onHover={setHoverPdf} />}</div>
+                  <div style={{ ...S.cellPrimary, minWidth: 0, lineHeight: 1.3, overflowWrap: "anywhere" }}>{q.sku || "No SKU"}{q.pdfPath && <PdfBadge path={q.pdfPath} item={q.pdfItem} productName={q.product} count={pdfCounts.get(q.pdfPath) || 1} onHover={setHoverPdf} />}</div>
                   <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.product || ""}>{q.product || "Untitled product"}</div>
                   {view === "search" && <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.client || ""}>{q.client || "—"}</div>}
                   <div style={{ minWidth: 0, textAlign: "center" }}>
@@ -1788,7 +1788,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
                     <div style={{ ...S.cellPrimary, overflowWrap: "anywhere" }}>
                       {q.quoteCode && <span style={S.quoteCode}>{q.quoteCode}</span>}
                       {q.sku || "No SKU"}
-                      {q.pdfPath && <PdfBadge path={q.pdfPath} item={q.pdfItem} count={pdfCounts.get(q.pdfPath) || 1} onHover={setHoverPdf} />}
+                      {q.pdfPath && <PdfBadge path={q.pdfPath} item={q.pdfItem} productName={q.product} count={pdfCounts.get(q.pdfPath) || 1} onHover={setHoverPdf} />}
                     </div>
                     <div style={S.cellSub}>{q.product || "Untitled product"}{view === "search" && q.client ? ` · ${q.client}` : ""}</div>
                     {/* The desktop row has an Updated column; the phone row had
@@ -2440,7 +2440,7 @@ function ExpandedDetail({ q, dutyRate = null, tasks = [], onAddTask, onToggleTas
         <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "baseline", gap: 8 }}>
           <span style={{ fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", color: "#9aa3b5", fontWeight: 600 }}>Quote ID</span>
           <span style={{ ...S.quoteCode, fontSize: 13 }}>{q.quoteCode}</span>
-          {q.pdfPath && <PdfBadge path={q.pdfPath} item={q.pdfItem} count={pdfCount} onHover={onPdfHover} />}
+          {q.pdfPath && <PdfBadge path={q.pdfPath} item={q.pdfItem} productName={q.product} count={pdfCount} onHover={onPdfHover} />}
         </div>
       )}
       <div style={{ gridColumn: "1 / -1" }}>
@@ -3710,18 +3710,10 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
                  count: Object.keys(nx).length });
   };
 
-  // A quote that knows its item opens in the viewer at that row; otherwise the
-  // PDF opens in a tab, as it always has.
+  // The PDF opens in the viewer: at the quote's item when it knows it, else
+  // wherever the PDF names the product (PdfItemViewer).
   const [viewingPdf, setViewingPdf] = useState(false);
-  const viewPdf = async () => {
-    if (!f.pdfPath) return;
-    if (f.pdfItem) { setViewingPdf(true); return; }
-    // Opened before the await so the browser does not treat it as a popup.
-    const w = window.open("", "_blank");
-    const { data, error } = await SB.storage.from(PDF_BUCKET).createSignedUrl(f.pdfPath, 600);
-    if (error || !data) { if (w) w.close(); setPdfInfo((p) => ({ ...(p || {}), error: "Could not open the PDF: " + (error ? error.message : "no link") })); return; }
-    if (w) w.location.href = data.signedUrl;
-  };
+  const viewPdf = () => { if (f.pdfPath) setViewingPdf(true); };
   // Warn only -- the user may be part-way through stripping the suffix off the SKU.
   const sizeClash = (f.sizeScales || []).length > 0 && skuLooksSized(f.sku);
   // Computed once per render: the control, the plate and carton rows and every tier's size rows
@@ -4506,7 +4498,7 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
             </button>
             <input ref={pdfInputRef} type="file" accept="application/pdf,.pdf" style={{ display: "none" }}
               onChange={(e) => { const file = e.target.files && e.target.files[0]; e.target.value = ""; importPdf(file); }} />
-            {viewingPdf && f.pdfPath && <PdfItemViewer path={f.pdfPath} item={f.pdfItem} onClose={() => setViewingPdf(false)} />}
+            {viewingPdf && f.pdfPath && <PdfItemViewer path={f.pdfPath} item={f.pdfItem} productName={f.product} onClose={() => setViewingPdf(false)} />}
             {f.pdfPath && (
               <button type="button" onClick={viewPdf} style={{ background: "none", border: "none", padding: 0, color: "#3461e0", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
                 View PDF

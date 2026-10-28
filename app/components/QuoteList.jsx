@@ -335,7 +335,7 @@ export function QuoteList({ reloadKey, onOpen }) {
             style={{ padding: '11px 14px', borderTop: i > 0 ? '1px solid #f1f3f7' : 'none', cursor: 'pointer' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
               <span style={{ fontSize: 12.5, fontWeight: 600, color: '#3461e0', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                             fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{r.code || DASH}{r.pdf && <PdfBadge path={r.pdf} item={r.pdfItem} count={pdfCounts.get(r.pdf) || 1} onHover={setHoverPdf} />}</span>
+                             fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{r.code || DASH}{r.pdf && <PdfBadge path={r.pdf} item={r.pdfItem} productName={r.product} count={pdfCounts.get(r.pdf) || 1} onHover={setHoverPdf} />}</span>
               <span style={{ fontSize: 13.5, fontWeight: 600, color: '#0f1729', minWidth: 0, overflowWrap: 'anywhere' }}>{r.sku || DASH}</span>
             </div>
             <div style={{ fontSize: 12.5, color: '#6a7488', marginTop: 3, overflowWrap: 'anywhere' }}>
@@ -351,7 +351,7 @@ export function QuoteList({ reloadKey, onOpen }) {
             onMouseEnter={e => { e.currentTarget.style.background = '#f8f9fc'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
             <div style={{ fontSize: 12.5, fontWeight: 600, color: '#3461e0', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                          fontVariantNumeric: 'tabular-nums' }}>{r.code || DASH}{r.pdf && <PdfBadge path={r.pdf} item={r.pdfItem} count={pdfCounts.get(r.pdf) || 1} onHover={setHoverPdf} />}</div>
+                          fontVariantNumeric: 'tabular-nums' }}>{r.code || DASH}{r.pdf && <PdfBadge path={r.pdf} item={r.pdfItem} productName={r.product} count={pdfCounts.get(r.pdf) || 1} onHover={setHoverPdf} />}</div>
             <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0f1729', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.sku || DASH}</div>
             <div style={{ fontSize: 13.5, color: '#2c3446', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.product || DASH}</div>
             <div style={{ fontSize: 13, color: '#6a7488', fontVariantNumeric: 'tabular-nums' }}>{fmtDay(r.created)}</div>
