@@ -1299,7 +1299,7 @@ export default function Testing({ userEmail = '' }) {
 // │ Only the three LL1-380 names beyond 82 characters lose anything, by       │
 // │ about 20px, and those already read as truncated.                          │
 // └───────────────────────────────────────────────────────────────────────────┘
-const PROD_COLS = 'minmax(200px,660px) 170px 130px 110px 140px 340px';
+const PROD_COLS = 'minmax(200px,660px) 150px 170px 130px 140px 340px';
 
 function ProductsView({ products, prodMats, prodRegs, productStatus, orderState = () => null, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, plmProducts = {}, onEdit, onRename, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false, testedByProduct = {} }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
@@ -1332,11 +1332,12 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, orderState 
           Template comes from PROD_COLS, shared with the rows below. Track widths and cell
           order have to move together; the HEADERS no longer track them one-to-one -- see
           below. */}
-      {/* Five labels over six tracks, on purpose. (IOR, script 136, is the one
-          that sits over its own control: track 4, the importer of record select.)
+      {/* Five labels over six tracks, on purpose. (Importer of Record, script 136,
+          sits over its own read-only cell in track 2, sized at 150px so the label
+          holds one line; the Stage pair is tracks 3 and 4 from here on.)
 
           STAGE spans tracks 3 and 4, covering both dropdowns, and COMPLIANCE sits over
-          track 5, the action buttons -- because Materials, Rules and eFiling ARE the
+          track 6, the action buttons -- because Materials, Rules and eFiling ARE the
           compliance tools, and grouping the label with them says what that cluster is
           for. Chosen deliberately: it happens to resemble what dc3bff7 fixed, where the
           same labels landed over the buttons through max-content drift rather than
@@ -1356,7 +1357,7 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, orderState 
           right of a 340px track and their width moves with the two counts, so the label
           centres on the track, not on the group. */}
       <div style={{display:'grid',gridTemplateColumns:PROD_COLS,gap:'16px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
-        {[{label:'Product'},{label:'Stage',span:2,align:'center'},{label:'IOR',align:'center'},{label:'Testing Date',align:'center'},{label:'Compliance',align:'center'}].map(({label,span,align},i)=>(
+        {[{label:'Product'},{label:'Importer of Record',align:'center'},{label:'Stage',span:2,align:'center'},{label:'Testing Date',align:'center'},{label:'Compliance',align:'center'}].map(({label,span,align},i)=>(
           <div key={i} style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:align||'left',...(span?{gridColumn:'span '+span}:null)}}>{label}</div>
         ))}
       </div>
@@ -1453,6 +1454,18 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, orderState 
                 </div>
               )}
             </div>
+            {/* IMPORTER OF RECORD (script 136), READ-ONLY here -- it is set on the
+                Products catalogue page, the company card and the product modal. The
+                resolved value: the product override, else the client company, else an
+                em dash. Inherited is muted with "from company" on hover; an override
+                is ink. A click falls through and opens the product, like the cells
+                around it that hold no control. */}
+            {(()=>{ const ior = resolveKuiIor(p, p.client); return (
+            <div style={{minWidth:0,textAlign:'center',fontSize:'12px',fontWeight:600,color:ior.source==='product'?'#1D1D1F':'#8A8A8E'}}
+                 title={ior.source==='company' ? 'from company' : undefined}>
+              {iorWord(ior.value) || '—'}
+            </div>
+            ); })()}
             {/* The 'Built from' cell was here. It rendered up to two material pills and
                 otherwise the words "no materials linked" -- which was 268 of 271 rows,
                 because only 3 products have a material linked at all. A column empty on
@@ -1510,18 +1523,6 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, orderState 
                 <div style={{fontSize:'10.5px',color:'#8A8A8E',marginTop:'3px',lineHeight:1.3}}>Updated by sample cards</div>
               )}
             </div>
-            {/* IMPORTER OF RECORD (script 136), READ-ONLY here -- it is set on the
-                Products catalogue page, the company card and the product modal. The
-                resolved value: the product override, else the client company, else an
-                em dash. Inherited is muted with "from company" on hover; an override
-                is ink. A click falls through and opens the product, like the cells
-                around it that hold no control. */}
-            {(()=>{ const ior = resolveKuiIor(p, p.client); return (
-            <div style={{minWidth:0,textAlign:'center',fontSize:'12px',fontWeight:600,color:ior.source==='product'?'#1D1D1F':'#8A8A8E'}}
-                 title={ior.source==='company' ? 'from company' : undefined}>
-              {iorWord(ior.value) || '—'}
-            </div>
-            ); })()}
             {/* Fourth track: the latest test date, or N/A. Reaches 4 of 271 products
                 today -- LLW-1544, LLW-1545, JON-106, LLW-1388 -- because only 11 of the
                 84 reports carry a product_id and 73 are orphans whose style_ref never
