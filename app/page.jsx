@@ -141,7 +141,8 @@ import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompan
 import { usePageState, clearPageState } from '@/lib/pageState';
 import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
-import { shipmentStatusLabel } from '@/lib/shipmentStatus';
+import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo } from '@/lib/shipmentStatus';
+import { trackShipment } from '@/lib/trackShipment';
 import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
@@ -6713,6 +6714,12 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   const [respDate, setRespDate] = useState('');
   const [respBusy, setRespBusy] = useState(false);
   const [openId, setOpenId] = useState(null);
+  // TRACK REMOUNTS THE CARD. Tracking can move the status, and a card that
+  // changed its own Status select would read as edited and ask on close. Track
+  // only runs with nothing unsaved, so a fresh mount loses nothing; the notice
+  // (credits left) lives here so it survives the remount.
+  const [openKey, setOpenKey] = useState(0);
+  const [trackNotice, setTrackNotice] = useState(null);
   // Which half of the page, which sub-tab, and the three narrowings -- kept across
   // navigation, and kept across the deliberate remount that follows creating a
   // shipment, which is what the key on this component does. openId and the respond-*
@@ -6737,7 +6744,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   };
   const reload = async () => {
     const { data } = await SB.from('shipments')
-      .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,factory_company_id,client:companies!client_company_id(name)))')
+      .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,factory_company_id,client:companies!client_company_id(name))),shipment_tracking_events(event_code,event_status,location_code,location_name,event_time)')
       .order('created_at',{ascending:false});
     setRows(data||[]); setLoading(false);
   };
@@ -7534,7 +7541,11 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             const po = ((s.shipment_pos||[])[0]||{}).purchase_orders;
             const ref = (po||{}).client_po_number || (po||{}).order_number || s.shipment_number || '\u2014';
             const clientName = (((po||{}).client||{}).name || (s.companies||{}).name || '\u2014').toUpperCase();
-            const days = s.actual_arrival ? null : etaDays(s.estimated_arrival);
+            // The tracked ETA when there is one -- the carrier's, refreshed daily --
+            // else the one staff typed. Days-to-ETA follows whichever is shown.
+            const eta = s.tracking_eta || s.estimated_arrival;
+            const days = s.actual_arrival ? null : etaDays(eta);
+            const lastEv = s.tracking_ref ? lastActualEvent(s.shipment_tracking_events) : null;
             const overdue = days!==null && days<0;
             const delivered = (s.status==='delivered' || s.actual_arrival);
             const frac = delivered ? 1 : progressOf(s.status);
@@ -7552,16 +7563,23 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={overdue?'#FF375F':'#6B7280'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18h18l-2-6H5l-2 6z"/><path d="M12 12V4M8 8h8"/></svg>
                   <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.vessel_name||'Vessel TBD'}{s.voyage_no?' \u00b7 '+s.voyage_no:''}</span>
                   {s.container_no && <span style={{fontFamily:'var(--mono)',fontSize:'10.5px',color:'#A0A0A4',whiteSpace:'nowrap'}}>{s.container_no}</span>}
+                  {s.tracking_ref && <span title={s.tracking_error || 'Tracked with ShipsGo'} style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',color:s.tracking_error?'#B91C1C':'#0A84FF',background:s.tracking_error?'#FEE2E2':'#EAF3FE'}}>Tracked</span>}
                 </div>
                 <div style={{position:'relative',height:'3px',background:'#ECECEE',borderRadius:'2px'}}>
                   <div style={{position:'absolute',left:0,top:0,height:'100%',width:(frac*100)+'%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',borderRadius:'2px',transition:'width .4s'}} />
                   <div style={{position:'absolute',top:'50%',left:(frac*100)+'%',width:'9px',height:'9px',borderRadius:'50%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',transform:'translate(-50%,-50%)',border:'2px solid #fff',boxShadow:'0 1px 2px rgba(0,0,0,.2)'}} />
                 </div>
                 <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'6px',textTransform:'uppercase',letterSpacing:'.05em'}}>{legLabel(s.status)}</div>
+                {s.tracking_ref && (
+                  <div style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                    {[lastEv ? trackingEventLabel(lastEv.event_code)+' '+(lastEv.location_name||lastEv.location_code||'')+' '+fmtDateShort(lastEv.event_time) : 'No events yet',
+                      s.tracking_checked_at ? 'checked '+checkedAgo(s.tracking_checked_at) : null].filter(Boolean).join(' · ')}
+                  </div>
+                )}
               </div>
               <div style={{textAlign:'right'}}>
                 <div style={{fontSize:'12px',color:'#86868B',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC'}}>ETD</span> {fmtDateShort(s.estimated_departure)}</div>
-                <div style={{fontSize:'13px',fontWeight:600,color:'#1D1D1F',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC',fontWeight:400}}>ETA</span> {fmtDateShort(s.estimated_arrival)}</div>
+                <div style={{fontSize:'13px',fontWeight:600,color:'#1D1D1F',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC',fontWeight:400}}>ETA</span> <span title={s.tracking_eta ? 'From tracking' : undefined}>{fmtDateShort(eta)}</span></div>
               </div>
               <div style={{textAlign:'right'}}>
                 {delivered ? (
@@ -7586,7 +7604,10 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
         </div>
       ))}
 
-      {openId && <ShipmentDetailModal id={openId} onClose={()=>setOpenId(null)} onSaved={()=>{setOpenId(null);reload();}} />}
+      {openId && <ShipmentDetailModal key={openId+':'+openKey} id={openId} notice={trackNotice}
+                    onClose={()=>{setOpenId(null);setTrackNotice(null);}}
+                    onSaved={()=>{setOpenId(null);setTrackNotice(null);reload();}}
+                    onTracked={note=>{setTrackNotice(note);setOpenKey(k=>k+1);reload();}} />}
       {/* ── LAND ON THE FREIGHT QUOTE JUST CREATED ──────────────────────────
           + Freight Quote sits in the page header and is NOT guarded by ui.view,
           so it is clickable while the shipments half is on screen -- and the new
@@ -8600,17 +8621,26 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
 }
 
 // ── Shipment Detail / Edit Modal ──────────────────────────────────────────────
-function ShipmentDetailModal({ id, onClose, onSaved }) {
+function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null }) {
   // Fetches the row and populates the form after mount, which is exactly the
   // case the moving baseline exists for -- without it every open-then-close
   // would confirm.
   const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   const [s, setS] = useState(null);
+  // The row as loaded. Save sends status only when the select moved away from
+  // it -- tracking may have advanced the status since this card opened, and
+  // writing the loaded copy back would undo that and cascade backwards.
+  const [orig, setOrig] = useState(null);
+  const [events, setEvents] = useState([]);
+  const [tracking, setTracking] = useState(false);
+  const [trackErr, setTrackErr] = useState('');
   const [linkedPO, setLinkedPO] = useState(null);
   const [companies, setCompanies] = useState([]);
   const [saving, setSaving] = useState(false);
   useEffect(()=>{
-    SB.from('shipments').select('*').eq('id',id).single().then(({data})=>setS(data||{}));
+    SB.from('shipments').select('*').eq('id',id).single().then(({data})=>{ setS(data||{}); setOrig(data||{}); });
+    SB.from('shipment_tracking_events').select('id,container_number,event_code,event_status,location_code,location_name,vessel_name,voyage,event_time')
+      .eq('shipment_id',id).order('event_time',{ascending:true}).then(({data})=>setEvents(data||[]));
     SB.from('companies').select('id,name,type').order('name').then(({data})=>setCompanies(data||[]));
     SB.from('shipment_pos').select('purchase_orders(order_number,client:companies!client_company_id(name))').eq('shipment_id',id).limit(1).then(({data})=>{
       if(data?.[0]?.purchase_orders) setLinkedPO(data[0].purchase_orders);
@@ -8622,7 +8652,8 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
   const save = async () => {
     setSaving(true);
     const upd = {
-      shipment_number: s.shipment_number||null, status: s.status||'created',
+      shipment_number: s.shipment_number||null,
+      ...((s.status||'created') !== (orig?.status||'created') ? { status: s.status||'created' } : {}),
       client_company_id: s.client_company_id||null, carrier_company_id: s.carrier_company_id||null,
       vessel_name: s.vessel_name||null, container_no: s.container_no||null, voyage_no: s.voyage_no||null,
       booking_number: s.booking_number||null, bill_of_lading: s.bill_of_lading||null,
@@ -8643,6 +8674,28 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
   };
   const clients  = companies.filter(c=>['client','brand','customer'].includes(c.type));
   const carriers = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
+  // ── TRACK ─────────────────────────────────────────────────────────────────
+  // The route reads the SAVED number, so Track waits until nothing is unsaved --
+  // which is also what makes the remount afterwards safe (see openKey above).
+  const EDITABLE = ['shipment_number','status','client_company_id','carrier_company_id','vessel_name','container_no','voyage_no','booking_number','bill_of_lading'];
+  const unsaved = !!(s && orig) && (EDITABLE.some(k=>(s[k]||'')!==(orig[k]||''))
+    || dval(s.estimated_departure)!==dval(orig.estimated_departure) || dval(s.estimated_arrival)!==dval(orig.estimated_arrival));
+  const tracked = !!(orig && orig.tracking_ref);
+  const hasNumber = !!(orig && ((orig.bill_of_lading||'').trim() || (orig.booking_number||'').trim() || (orig.container_no||'').trim()));
+  const track = async () => {
+    setTracking(true); setTrackErr('');
+    const out = await trackShipment(id);
+    setTracking(false);
+    if (!out.ok) { setTrackErr(out.error || 'Tracking failed.'); return; }
+    const r = out.result || {};
+    const moved = r.moved ? 'Status moved to '+shipmentStatusLabel(r.status_after)+'. ' : '';
+    const how = out.refreshed ? 'Tracking refreshed, no credit used.'
+      : out.reused ? 'Already tracked at ShipsGo — reused, no credit used.'
+      : 'Tracking started, 1 credit used.';
+    const left = out.credits != null ? ' Credits left: '+out.credits+'.' : '';
+    if (onTracked) onTracked(moved+how+left);
+  };
+  const lastEv = lastActualEvent(events);
   return (
     <>
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
@@ -8666,11 +8719,56 @@ function ShipmentDetailModal({ id, onClose, onSaved }) {
             <div><label>Container #</label><input className="form-input" value={s.container_no||''} onChange={e=>set('container_no',e.target.value)} placeholder="e.g. MSKU1234567" /></div>
             <div><label>Booking #</label><input className="form-input" value={s.booking_number||''} onChange={e=>set('booking_number',e.target.value)} /></div>
           </div>
-          <div className="form-row"><label>Bill of Lading</label><input className="form-input" value={s.bill_of_lading||''} onChange={e=>set('bill_of_lading',e.target.value)} /></div>
+          <div className="form-row"><label>Bill of Lading</label>
+            <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
+              <input className="form-input" style={{flex:1}} value={s.bill_of_lading||''} onChange={e=>set('bill_of_lading',e.target.value)} />
+              <button type="button" className="btn btn-ghost btn-sm" style={{flexShrink:0,whiteSpace:'nowrap'}}
+                      disabled={tracking || !hasNumber || unsaved} onClick={track}
+                      title={!hasNumber ? 'Save a bill of lading, booking number or container number first'
+                        : unsaved ? 'Save your changes first — tracking uses the saved number'
+                        : tracked ? 'Re-read this shipment from ShipsGo — free' : 'Start ShipsGo tracking — uses 1 credit, free if ShipsGo already tracks this number'}>
+                {tracking ? 'Tracking…' : tracked ? 'Refresh tracking' : 'Track (1 credit)'}
+              </button>
+            </div>
+            {(trackErr || notice) && <div style={{fontSize:'12px',marginTop:'6px',color:trackErr?'var(--hot)':'var(--muted)'}}>{trackErr || notice}</div>}
+          </div>
           <div className="form-row-2">
             <div><label>ETD</label><input type="date" className="form-input" value={dval(s.estimated_departure)} onChange={e=>set('estimated_departure',e.target.value)} /></div>
             <div><label>ETA</label><input type="date" className="form-input" value={dval(s.estimated_arrival)} onChange={e=>set('estimated_arrival',e.target.value)} /></div>
           </div>
+          {(tracked || events.length > 0) && (
+            <>
+              <span className="form-section-label">Tracking</span>
+              <div style={{fontSize:'12.5px',color:'var(--ink-2)',lineHeight:1.6,marginBottom:'8px'}}>
+                {[orig.tracking_status, [orig.tracking_vessel, orig.tracking_voyage].filter(Boolean).join(' / ') || null,
+                  orig.tracking_eta ? 'ETA '+fmtDateShort(orig.tracking_eta) : null,
+                  orig.tracking_ata ? 'arrived '+fmtDateShort(orig.tracking_ata) : null,
+                  orig.tracking_checked_at ? 'checked '+checkedAgo(orig.tracking_checked_at) : null].filter(Boolean).join(' · ') || 'Waiting for ShipsGo'}
+                {orig.tracking_error && <div style={{color:'var(--hot)'}}>{orig.tracking_error}</div>}
+              </div>
+              {/* The timeline. A filled dot is an actual movement, a hollow one an
+                  estimate; the latest actual one is the row's last event. */}
+              <div style={{display:'flex',flexDirection:'column',gap:'2px',marginBottom:'14px'}}>
+                {events.length === 0 && <div style={{fontSize:'12px',color:'var(--muted)'}}>No movements reported yet.</div>}
+                {events.map(e=>{
+                  const act = e.event_status==='ACT';
+                  const cur = lastEv && e.id===lastEv.id;
+                  return (
+                    <div key={e.id} style={{display:'grid',gridTemplateColumns:'14px 1fr auto',gap:'8px',alignItems:'center',fontSize:'12.5px',padding:'3px 0',color:act?'var(--ink)':'var(--muted)'}}>
+                      <span style={{width:'8px',height:'8px',borderRadius:'50%',boxSizing:'border-box',justifySelf:'center',
+                        background:act?(cur?'#0A84FF':'var(--ink-2)'):'transparent',border:act?'none':'1.5px solid var(--muted)'}} />
+                      <span style={{minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',fontWeight:cur?600:400}}>
+                        {trackingEventLabel(e.event_code)+' · '+(e.location_name||e.location_code||'—')}
+                        {e.vessel_name ? <span style={{color:'var(--muted)'}}>{' · '+e.vessel_name+(e.voyage?' '+e.voyage:'')}</span> : null}
+                        {e.container_number ? <span style={{color:'var(--faint)',fontFamily:'var(--mono)',fontSize:'11px'}}>{' '+e.container_number}</span> : null}
+                      </span>
+                      <span style={{fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{fmtDateShort(e.event_time)}{act?'':' est.'}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
           <OrderNotesPanel shipmentId={id} compact />
         </div>
         )}
