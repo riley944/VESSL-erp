@@ -1287,19 +1287,20 @@ export default function Testing({ userEmail = '' }) {
 // │ tracks sat far right. Capping it makes the slack collect at the table's   │
 // │ RIGHT EDGE instead, moving Stage, Testing Date and the buttons left.      │
 // │                                                                           │
-// │ shift = (viewport - 1164) - 660, where 1164 is the sidebar (220), the     │
-// │ page padding (56), the row padding (44), the four fixed tracks (780) and  │
-// │ the four 16px gaps. So 660 gives ~96px at a 1920 viewport, NOTHING at     │
-// │ 1824 or below, and 736px of dead space at 2560. If the window this is     │
-// │ tuned for changes, this number is the only thing to change.               │
+// │ shift = (viewport - 1380) - 610, where 1380 is the sidebar (220), the     │
+// │ page padding (56), the row padding (44), the five fixed tracks (980) and  │
+// │ the five 16px gaps. So 610 shifts NOTHING at 1990 or below and leaves     │
+// │ 570px of dead space at 2560. If the window this is tuned for changes,     │
+// │ this number is the only thing to change.                                  │
 // │                                                                           │
-// │ 660 rather than tighter, so nothing truncates sooner than it did: the     │
-// │ 90th-percentile product name is 51 characters (~413px) and the longest    │
-// │ subtitle -- SKU, CPSC type, last-ordered date and count -- is ~396px.     │
-// │ Only the three LL1-380 names beyond 82 characters lose anything, by       │
-// │ about 20px, and those already read as truncated.                          │
+// │ 610, down from 660, paid for the Importer of Record track: 50px moved     │
+// │ from the cap to that track (150 -> 200), which slides its centred header  │
+// │ and cells ~25px left at every width and leaves the tracks after it where  │
+// │ they were. The 90th-percentile product name is 51 characters (~413px) and │
+// │ the longest subtitle ~396px, so neither truncates; only the three LL1-380 │
+// │ names beyond 82 characters lose more (~70px), already reading truncated.  │
 // └───────────────────────────────────────────────────────────────────────────┘
-const PROD_COLS = 'minmax(200px,660px) 150px 170px 130px 140px 340px';
+const PROD_COLS = 'minmax(200px,610px) 200px 170px 130px 140px 340px';
 
 function ProductsView({ products, prodMats, prodRegs, productStatus, orderState = () => null, onLink, onLinkRules, onEfiling, onSetStatus, onSetStage, plmProducts = {}, onEdit, onRename, onDelete, searching, term, filtered, ordersByProduct = {}, orderFiltered = false, testedByProduct = {} }) {
   // Mid-search the "how records get created" copy would be misleading — the record may
@@ -1333,8 +1334,8 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, orderState 
           order have to move together; the HEADERS no longer track them one-to-one -- see
           below. */}
       {/* Five labels over six tracks, on purpose. (Importer of Record, script 136,
-          sits over its own read-only cell in track 2, sized at 150px so the label
-          holds one line; the Stage pair is tracks 3 and 4 from here on.)
+          sits over its own read-only cell in track 2, 200px -- wide enough for the
+          label on one line, and wide enough that its centre sits close to Product; the Stage pair is tracks 3 and 4 from here on.)
 
           STAGE spans tracks 3 and 4, covering both dropdowns, and COMPLIANCE sits over
           track 6, the action buttons -- because Materials, Rules and eFiling ARE the
