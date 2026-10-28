@@ -744,6 +744,41 @@ function formToRow(f) {
 
 const PRESET_QTYS = [500, 1000, 2500, 5000];
 
+// ── ANOTHER ITEM FROM THE SAME PDF, AS A QUOTE OF ITS OWN ───────────────────
+// A factory quotation can price several products. The form fills itself from
+// the one picked; with "Create the others as new quotes" ticked, Save also
+// writes one quote per remaining item, built here from the saved form `f`.
+// Each gets what the PDF says for THAT item -- name, tiers (EXW), mold and
+// sample fees, cartons, lead time, HTS when it is a library code, details,
+// its own notes and packing -- and the client, factory and PDF of this quote.
+// The SKU is ours, so it stays blank, and duty is left for the rate to fill
+// when the quote is next opened.
+function pdfItemToForm(it, f) {
+  const F = (it && it.fields) || {};
+  const v = (k) => (F[k] && String(F[k].value ?? "").trim()) || "";
+  const qd = v("quoteDate"), vt = v("validity");
+  const dateLine = qd ? "Factory quote dated " + qd + (vt ? ", valid to " + vt : "") : (vt ? "Factory quote valid to " + vt : "");
+  const tiers = ((it && it.tiers) || []).filter((t) => t.qty != null || t.unitPrice != null).map((t) => ({
+    qty: t.qty ?? "", landed: t.unitPrice ?? "", ship: "ocean", freightAir: "", freightOcean: "", client: "", duty: "", dutyManual: false,
+  }));
+  return {
+    ...BLANK,
+    quoteDate: f.quoteDate || "",
+    product: v("product") || (it && it.name) || "",
+    client: f.client, clientContact: f.clientContact, clientEmail: f.clientEmail, clientPhone: f.clientPhone, clientAddress: f.clientAddress,
+    factory: f.factory, factoryContact: f.factoryContact, factoryEmail: f.factoryEmail, factoryPhone: f.factoryPhone,
+    country: f.country || v("country"),
+    leadTime: v("leadTime") || f.leadTime || "",
+    hts: (it && it.hts && it.hts.code) || "",
+    unitsPerCarton: v("unitsPerCarton"), cartonL: v("cartonL"), cartonW: v("cartonW"), cartonH: v("cartonH"), cartonWeight: v("cartonWeight"),
+    moldFee: v("moldFee"), sampleFee: v("sampleFee"),
+    clientDetails: v("details"),
+    notes: [v("notes"), dateLine].filter(Boolean).join("\n"),
+    pdfPath: f.pdfPath || "",
+    tiers,
+  };
+}
+
 // Sizes have historically been baked into the SKU string (LHS-170 - Large, BG-101-2XL).
 // If one is still there, recording a scale as well would double it downstream.
 const SKU_SIZE_SUFFIX = /[-_\/ ]\s*(?:[0-9]?X{0,3}(?:S|M|L|XS|SM|MED|LG|XL|XXL|SMALL|MEDIUM|LARGE|XLARGE|XXLARGE))\s*$/i;
@@ -1260,6 +1295,25 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
           savedRow = { ...savedRow, client_company_id: cid };
         }
       } catch (e) {}
+
+      // ── THE OTHER ITEMS OF AN IMPORTED PDF ────────────────────────────────
+      // Only when the form asked for them (pdfOthers, never stored). Same client
+      // link as the quote just saved; no product is minted for them here -- that
+      // happens when each is opened and saved, like any quote.
+      const others = Array.isArray(f.pdfOthers) ? f.pdfOthers : [];
+      if (others.length) {
+        const made = [], missed = [];
+        for (const it of others) {
+          const r2 = formToRow({ ...pdfItemToForm(it, f), updatedBy: userEmail });
+          r2.client_company_id = savedRow.client_company_id || null;
+          const { data, error } = await supabase.from("quotes").insert(r2).select("id,quote_code");
+          if (error || !data || !data[0]) missed.push((it && it.name) || "an item");
+          else made.push(data[0].quote_code || data[0].id);
+        }
+        await load();
+        flash((made.length ? "Also created " + made.length + " quote" + (made.length === 1 ? "" : "s") + " from the PDF: " + made.join(", ") : "")
+              + (missed.length ? (made.length ? " · " : "") + "Could not create: " + missed.join(", ") : ""));
+      }
 
       // Link on the NEW key, and only when unlinked, so a deliberate link is
       // never re-pointed by an unrelated edit. Creates the product when none
@@ -3333,6 +3387,9 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
   // the whole map; typing in a box dismisses that box's entry.
   const [ext, setExt] = useState({});
   const [pdfInfo, setPdfInfo] = useState(null);
+  // A PDF with several items: the ones not filled into this form, and whether
+  // Save creates them as quotes of their own. Not form data -- handed to onSave.
+  const [pdfOthers, setPdfOthers] = useState(null);
   const pdfInputRef = useRef(null);
   // What the PDF said about the matched factory's contact, country and lead
   // time: { companyId, values }. applyFactory fills a box the directory left
@@ -3406,7 +3463,27 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
       setPdfInfo({ fileName, error: "Could not reach the server." });
       return;
     }
-    applyExtract(out, fileName);
+    // SEVERAL ITEMS: nothing is filled until one is picked. One item -- or a
+    // route answering in the old one-product shape -- applies straight away.
+    const items = Array.isArray(out.items) ? out.items : [];
+    setPdfOthers(null);
+    if (items.length > 1) { setPdfInfo({ fileName, choose: true, items, factory: out.factory, pick: 0, createOthers: true }); return; }
+    applyExtract(items.length ? { ...items[0], factory: out.factory } : out, fileName);
+  };
+  // The pick. Applies that item; the rest wait for Save, if ticked.
+  const fillFromItem = () => {
+    const pi = pdfInfo;
+    if (!pi || !pi.items) return;
+    const others = pi.items.filter((_, i) => i !== pi.pick).map((it) => ({ ...it, factory: pi.factory }));
+    setPdfOthers({ items: others, on: !!pi.createOthers });
+    applyExtract({ ...pi.items[pi.pick], factory: pi.factory }, pi.fileName);
+  };
+  // One line per item for the picker: name, sizes, then qty @ price per tier.
+  const itemLine = (it) => {
+    const F = it.fields || {};
+    const det = F.details ? String(F.details.value) : "";
+    const tiers = (it.tiers || []).map((t) => (t.qty != null ? Number(t.qty).toLocaleString() : "?") + " @ " + (t.unitPrice != null ? t.unitPrice : "?")).join(", ");
+    return [it.name || "Unnamed item", det, tiers].filter(Boolean).join(" \u00b7 ");
   };
 
   const applyExtract = (out, fileName) => {
@@ -4192,6 +4269,9 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
     if (qText.trim() && !confirmAll(qWho, assignees)) return;
     const out = { ...f };
     out.freightDutyUpdatedAt = stamp();
+    // The other items of an imported PDF, when the box is ticked. formToRow
+    // ignores the key, so it can never reach the quote row itself.
+    out.pdfOthers = pdfOthers && pdfOthers.on ? pdfOthers.items : [];
     const toSend = [...queued, ...(qText.trim() ? [{ key: "typed", assigned_to: qWho, task: qText.trim() }] : [])];
     setSaving(true);
     const res = await onSave(out, toSend.map(({ assigned_to, task, key }) => ({ assigned_to, task, key })));
@@ -4309,8 +4389,30 @@ function QuoteForm({ initial, onClose, onSave, userEmail, existingTasks = [], as
               {!pdfInfo ? "A factory quote PDF fills the fields it can; you check them before saving."
                 : pdfInfo.error ? (pdfInfo.fileName ? pdfInfo.fileName + ": " : "") + pdfInfo.error
                 : pdfInfo.busy ? pdfInfo.fileName + ": " + pdfInfo.busy
+                : pdfInfo.choose ? pdfInfo.fileName + ": " + pdfInfo.items.length + " items priced. Pick the one this quote is for."
                 : pdfInfo.fileName + ": " + pdfInfo.count + " fields read. Hover a highlighted box for where it came from."}
             </span>
+            {pdfInfo && pdfInfo.choose && (
+              <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
+                {pdfInfo.items.map((it, i) => (
+                  <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, color: "#2b3445", cursor: "pointer", lineHeight: 1.45 }}>
+                    <input type="radio" data-noguard name="pdf-item" checked={pdfInfo.pick === i} onChange={() => setPdfInfo((p) => ({ ...p, pick: i }))} style={{ marginTop: 3 }} />
+                    <span>{itemLine(it)}{(it.warnings || []).length > 0 ? <span style={{ color: "#a66f12" }}>{" \u00b7 " + it.warnings.length + " to check"}</span> : null}</span>
+                  </label>
+                ))}
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#2b3445", marginTop: 4 }}>
+                  <input type="checkbox" data-noguard checked={!!pdfInfo.createOthers} onChange={(e) => setPdfInfo((p) => ({ ...p, createOthers: e.target.checked }))} />
+                  Create the other {pdfInfo.items.length - 1} as new quotes when this one is saved (same factory, client and PDF)
+                </label>
+                <div><button type="button" style={S.ghostBtnSm} onClick={fillFromItem}>Fill this quote</button></div>
+              </div>
+            )}
+            {pdfInfo && pdfInfo.done && pdfOthers && pdfOthers.items.length > 0 && (
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#6a7488", width: "100%" }}>
+                <input type="checkbox" data-noguard checked={!!pdfOthers.on} onChange={(e) => setPdfOthers((p) => ({ ...p, on: e.target.checked }))} />
+                {"On Save, also create " + pdfOthers.items.length + " quote" + (pdfOthers.items.length === 1 ? "" : "s") + " from this PDF: " + pdfOthers.items.map((it) => it.name || "Unnamed item").join(", ")}
+              </label>
+            )}
             {pdfInfo && pdfInfo.done && (
               <span style={{ display: "flex", gap: 12, fontSize: 11.5, color: "#6a7488", width: "100%" }}>
                 <span><span style={{ color: XC.high }}>{"\u25a0"}</span> from the PDF</span>
