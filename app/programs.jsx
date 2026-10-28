@@ -24,6 +24,7 @@ import {
 // The three product option sets, shared with the Testing product modal so the two
 // screens cannot offer different words for the same stored value.
 import { COMPLIANCE_OPTS, STAGE_OPTS, CATALOGUE_OPTS, catalogueKey } from '@/lib/products';
+import { resolveKuiIor, iorLabel } from '@/lib/ior';
 // The export control Testing, Products and Codes already use. It owns the pill,
 // the menu and the dismissal; the writers below are this page's business, which
 // is the split that file states at the top of itself.
@@ -3174,6 +3175,9 @@ function ProgramCard({ r, userEmail, staff = [], busy = false, onStage, onOwner,
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'12px',marginBottom:'4px'}}>
         <div style={{minWidth:0}}>
           <div style={{fontFamily:'var(--mono)',fontSize:'12.5px',fontWeight:700,color:'#1D1D1F'}}>{p.sku || '—'}</div>
+          {/* Importer of record (script 136), the product's override or else the
+              card's client -- which is the product's client on every card. */}
+          <div style={{fontSize:'11.5px',color:'#86868B',marginTop:'1px'}}>{iorLabel(resolveKuiIor(p, r.client))}</div>
           <div style={{fontSize:'17px',fontWeight:600,color:'#1D1D1F',letterSpacing:'-.01em',marginTop:'2px'}}>{p.name || '—'}</div>
           <div style={{fontSize:'13px',color:'#5A5A5E',marginTop:'3px'}}>
             {[(r.client||{}).name, factoryName].filter(Boolean).join(' · ') || '—'}
@@ -3849,6 +3853,7 @@ function Consignment({ r, staff, userEmail, carriers, busy, onStage, onOpenCard,
           </div>
           <div style={{fontSize:'12.5px',color:T.muted,marginTop:'4px',display:'flex',gap:'14px',flexWrap:'wrap'}}>
             {r.factoryName && <span>{r.factoryName}</span>}
+            <span>{iorLabel(resolveKuiIor(p, r.client))}</span>
             {roundLine && <span>{roundLine}</span>}
             {r.days !== null && r.stage && r.stage !== ARCHIVED && <span>{r.days} day{r.days === 1 ? '' : 's'} in {stageLabel(r.stage).toLowerCase()}</span>}
           </div>
@@ -4070,7 +4075,7 @@ export default function Programs({ userEmail, canOpenTesting = false }) {
                 + 'created_at,created_by,updated_at,updated_by,testing_lab,source_quote_id,'
                 // The quote the card came from (script 104), for "From quote Q-...".
                 + 'source_quote:quotes!programs_source_quote_id_fkey(id,quote_code),'
-                + 'products(id,sku,name,active,product_stage,compliance_status),client:companies!client_company_id(id,name),'
+                + 'products(id,sku,name,active,product_stage,compliance_status,kui_ior),client:companies!client_company_id(id,name,kui_ior),'
                 + 'owner:staff_profiles!owner_id(id,email,full_name)')
           .order('created_at', { ascending:true }),
         // NOTE COUNTS IN BULK, because the expanded tile shows one. NotesPanel

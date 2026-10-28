@@ -118,6 +118,7 @@ import { notifyTaskAssigned } from '@/lib/taskNotify';
 import { isUnseen, markSeen, insertTask, unseenCount, taskDay, byCreated, TASK_TONE } from '@/lib/taskSeen';
 import { RenameSkuModal, QuoteSkuChoiceModal } from '@/app/components/RenameSkuModal';
 import { CreateProductModal } from '@/app/components/CreateProductModal';
+import { iorWord, iorToSelect, iorFromSelect } from '@/lib/ior';
 // BOTH NAMES NOW. This file used to keep its own loadExcelJS, so importing the
 // shared one would have been a duplicate binding -- which is why only excelDate
 // came across when lib/excel.js was written. That local copy is gone and this is
@@ -5624,7 +5625,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
       const { data:c } = await SB.from('companies').select('*').eq('id',id).single();
       const { data:cc } = await SB.from('contacts').select('*').eq('company_id',id).order('is_primary',{ascending:false});
       setCo(c); setContacts(cc||[]);
-      setForm({ tracking_url:c?.tracking_url||'', name:c?.name||'', type:c?.type||'client', email:c?.email||'', phone:c?.phone||'', website:c?.website||'', vendor_number:c?.vendor_number||'', pallet_info:c?.pallet_info||'', po_notes:c?.po_notes||'', billing_address:c?.billing_address||'', shipping_address:c?.shipping_address||'' });
+      setForm({ tracking_url:c?.tracking_url||'', name:c?.name||'', type:c?.type||'client', email:c?.email||'', phone:c?.phone||'', website:c?.website||'', vendor_number:c?.vendor_number||'', pallet_info:c?.pallet_info||'', kui_ior:iorToSelect(c?.kui_ior), po_notes:c?.po_notes||'', billing_address:c?.billing_address||'', shipping_address:c?.shipping_address||'' });
     })();
   },[id]);
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -5694,7 +5695,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
     // not keep a pattern nothing reads.
     const trackUrl = form.type==='carrier' ? (form.tracking_url||'').trim() : '';
     if(trackUrl && !(trackUrl.startsWith('https') && trackUrl.includes('{number}'))){alert('The tracking URL must start with https and contain {number} where the tracking number goes.');return;}
-    await SB.from('companies').update({tracking_url:trackUrl||null,name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,po_notes:form.po_notes||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null}).eq('id',id);
+    await SB.from('companies').update({tracking_url:trackUrl||null,name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,kui_ior:form.type==='client'?iorFromSelect(form.kui_ior):null,po_notes:form.po_notes||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null}).eq('id',id);
     // DELETES FIRST. A row being removed must not be counted when the primary is
     // settled below, and doing them last would mean writing is_primary onto a
     // row that is about to disappear.
@@ -5745,7 +5746,7 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
             <>
               <div style={{display:'flex',gap:'8px',marginBottom:'18px'}}><Badge status={co.type} label={co.type==='client' ? 'Company' : undefined} /></div>
               <div className="detail-grid" style={{gridTemplateColumns:'1fr',gap:'0'}}>
-                {[['Email',co.email],['Phone',co.phone],['Website',co.website],['Billing Address',co.billing_address],['Shipping Address',co.shipping_address],...(co.type==='client'?[['Vendor #',co.vendor_number],['Pallet info',co.pallet_info]]:[]),...(co.type==='carrier'?[['Tracking URL',co.tracking_url]]:[])].map(([l,v])=>(
+                {[['Email',co.email],['Phone',co.phone],['Website',co.website],['Billing Address',co.billing_address],['Shipping Address',co.shipping_address],...(co.type==='client'?[['Vendor #',co.vendor_number],['Importer of record',iorWord(co.kui_ior)],['Pallet info',co.pallet_info]]:[]),...(co.type==='carrier'?[['Tracking URL',co.tracking_url]]:[])].map(([l,v])=>(
                   <div key={l} style={{display:'flex',justifyContent:'space-between',gap:'16px',padding:'11px 0',borderBottom:'1px solid var(--line-2)'}}>
                     <span style={{color:'var(--muted)',fontSize:'12px',whiteSpace:'nowrap'}}>{l}</span><span style={{fontSize:'13px',textAlign:'right',whiteSpace:'pre-wrap'}}>{v||'—'}</span>
                   </div>
@@ -5779,6 +5780,8 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
                 <div className="form-row-2">
                   <div><label>Vendor # <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(internal — our # with this client)</span></label><input className="form-input" value={form.vendor_number} onChange={e=>f('vendor_number')(e.target.value)} /></div>
                   <div><label>Pallet info <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(autofills onto their POs)</span></label><input className="form-input" value={form.pallet_info} onChange={e=>f('pallet_info')(e.target.value)} placeholder="e.g. 48x40 GMA, max 60 cartons/pallet" /></div>
+                  <div><label>Importer of record <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(a product can override it)</span></label><select className="form-select" value={form.kui_ior} onChange={e=>f('kui_ior')(e.target.value)}><option value="">Not set</option><option value="kui">KUI</option><option value="client">Client</option></select></div>
+                  <div></div>
                   <div style={{gridColumn:'1 / -1'}}><label>PO Notes <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(compliance terms printed on every PO for this client)</span></label><textarea className="form-input" rows={5} value={form.po_notes} onChange={e=>f('po_notes')(e.target.value)} placeholder={'e.g.\\nMust ship even case packs only\\nPacking slip must show PO#, vendor name, weight, carton dims\\nNo phthalates, No PVC'} style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
                 </div>
               )}
@@ -5903,7 +5906,7 @@ function Products({ navigate, canCreateProducts = true, userEmail = '' }) {
   const openEditProduct = async (productId) => {
     if (!productId) return;
     const [p, pr, pm, rg] = await Promise.all([
-      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,product_stage,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,active,manual_test_date,client:companies!client_company_id(name)').eq('id', productId).single(),
+      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,product_stage,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,kui_ior,testing_paid_by,brand_group,client_company_id,active,manual_test_date,client:companies!client_company_id(name,kui_ior)').eq('id', productId).single(),
       SB.from('product_regulations').select('id,product_id,regulation_id').eq('product_id', productId),
       SB.from('product_materials').select('*,material:materials(id,name,status,material_code)').eq('product_id', productId),
       SB.from('regulations').select('*').eq('active',true).order('sort_order').order('code'),

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { SB } from '@/lib/supabase';
 import { SBQ } from '@/lib/supabaseQuotes';
 import { useDirtyGuard } from '@/app/components/ModalGuard';
+import { iorFromSelect } from '@/lib/ior';
 
 // ── CreateCompanyModal ───────────────────────────────────────────────────────
 // Extracted from app/page.jsx unchanged in behaviour. It moved because the quote
@@ -63,7 +64,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun }) {
   // select is kept for an opening with no initialType, which nothing does today;
   // that opening starts as Client, as the old default did.
   const typeFixed = !!initialType;
-  const [form, setForm] = useState({name:'',type:initialType || 'client',email:'',phone:'',website:'',vendor_number:'',pallet_info:'',billing_address:'',shipping_address:'',tracking_url:'',cname:'',cemail:'',cphone:''});
+  const [form, setForm] = useState({name:'',type:initialType || 'client',email:'',phone:'',website:'',vendor_number:'',pallet_info:'',kui_ior:'',billing_address:'',shipping_address:'',tracking_url:'',cname:'',cemail:'',cphone:''});
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   // THE WORD FOLLOWS THE TYPE, fixed or selected, so the title, the name label, the save
   // button and the required-name alert all say Factory once somebody picks
@@ -93,7 +94,11 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun }) {
       const hit = (same || []).find(c => (c.name || '').trim().toLowerCase() === name.trim().toLowerCase());
       if (hit) name = hit.name;
     }
-    const { data: co, error } = await SB.from('companies').upsert({name,type:form.type,...(url ? { tracking_url: url } : {}),email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
+    // IMPORTER OF RECORD ONLY WHEN PICKED, the same way as the tracking URL: this
+    // is an upsert that can adopt an existing client, and sending null for a
+    // blank select would wipe the flag that client already has (script 136).
+    const ior = form.type === 'client' ? iorFromSelect(form.kui_ior) : null;
+    const { data: co, error } = await SB.from('companies').upsert({name,type:form.type,...(url ? { tracking_url: url } : {}),...(ior != null ? { kui_ior: ior } : {}),email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
     if (error) { alert('Error: '+error.message); return; }
     // PRIMARY ONLY IF THIS COMPANY HAS NOBODY YET. This modal is an UPSERT on
     // (name, type), so "create" can adopt a company that already exists and
@@ -149,6 +154,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun }) {
             <div className="form-row-2">
               <div><label>Vendor # <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(internal)</span></label><input className="form-input" value={form.vendor_number} onChange={e=>f('vendor_number')(e.target.value)} /></div>
               <div><label>Pallet info</label><input className="form-input" value={form.pallet_info} onChange={e=>f('pallet_info')(e.target.value)} placeholder="e.g. 48x40 GMA" /></div>
+              <div><label>Importer of record</label><select className="form-select" value={form.kui_ior} onChange={e=>f('kui_ior')(e.target.value)}><option value="">Not set</option><option value="kui">KUI</option><option value="client">Client</option></select></div>
             </div>
           )}
           <span className="form-section-label">Primary Contact</span>

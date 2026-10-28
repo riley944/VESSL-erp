@@ -7,6 +7,7 @@ import { useDirtyGuard } from '@/app/components/ModalGuard';
 import { materialLabel } from '@/lib/materialLabel';
 import { LifecyclePanel } from '@/app/components/LifecyclePanel';
 import { cleanName } from '@/lib/products';
+import { iorWord, iorToSelect, iorFromSelect } from '@/lib/ior';
 
 // ── CreateProductModal (create or edit a row in vessl.products) ──────────────
 // Lifted out of page.jsx, where it was unreachable — it rendered only under a
@@ -112,7 +113,9 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
     // a real JS array, so it needs no parsing, just a guard for null and for a row
     // fetched before the column existed.
     shipsTo:Array.isArray(data?.ships_to) ? data.ships_to : [],
-    tradeDirection:s(data?.trade_direction), importerOfRecord:s(data?.importer_of_record),
+    tradeDirection:s(data?.trade_direction),
+    // '' = use the client company, 'kui' / 'client' = this product overrides it.
+    kuiIor:iorToSelect(data?.kui_ior),
     testingPaidBy:s(data?.testing_paid_by),
     // A `date` column arrives as 'YYYY-MM-DD', which is exactly what <input
     // type="date"> wants; slicing guards a row that ever holds a timestamp. Same
@@ -196,7 +199,13 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
       // for one spelling of "not recorded", and the CHECK rejects '{}' anyway.
       ships_to:form.shipsTo.length ? form.shipsTo : null,
       trade_direction:form.tradeDirection.trim()||null,
-      importer_of_record:form.importerOfRecord.trim()||null,
+      // importer_of_record (the old free text, 0 values) is deliberately ABSENT --
+      // kui_ior replaced it (script 136) and nothing writes the old column now.
+      //
+      // kui_ior ONLY WHEN THE ROW PASSED IN CARRIED IT, the 88f0295 rule again: an
+      // edit opened from a select that omits the column would show "use company"
+      // and null an override on Save. A new row has nothing to wipe, so it writes.
+      ...(!editing || (data && 'kui_ior' in data) ? { kui_ior:iorFromSelect(form.kuiIor) } : {}),
       testing_paid_by:form.testingPaidBy.trim()||null,
       // cpsc_code is deliberately absent. Its input was removed because the column
       // has never held a value -- null on all 271 rows, and nothing anywhere read it.
@@ -477,12 +486,23 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
               : <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'5px'}}>Two-letter ISO codes. The United Kingdom is GB, not UK.</div>}
           </div>
           <div className="form-row-2">
-            {/* All three are free text on purpose. Domestic / Import / Export are not
-                exclusive -- everything here is made in China and some goes on to Japan,
-                so one product is both -- and the other two wait on Jenn's real lists
-                rather than a guessed vocabulary that would have to be widened. */}
+            {/* Two of these three are free text on purpose. Domestic / Import / Export
+                are not exclusive -- everything here is made in China and some goes on to
+                Japan, so one product is both -- and Who Pays waits on Jenn's real list
+                rather than a guessed vocabulary that would have to be widened. Importer
+                of record became a three-way select in script 136: it only ever had
+                two answers, KUI or the client. */}
             <div><label>Domestic / Import / Export</label><input className="form-input" value={form.tradeDirection} onChange={e=>f('tradeDirection')(e.target.value)} /></div>
-            <div><label>Importer of Record</label><input className="form-input" value={form.importerOfRecord} onChange={e=>f('importerOfRecord')(e.target.value)} /></div>
+            {/* Hidden, not disabled, when the row came without kui_ior -- the save
+                leaves the column alone then, so a select here would be a control
+                that does nothing. */}
+            {!editing || (data && 'kui_ior' in data) ? (
+              <div><label>Importer of record</label><select className="form-select" value={form.kuiIor} onChange={e=>f('kuiIor')(e.target.value)}>
+                <option value="">{'Use company (currently ' + (data?.client ? (iorWord(data.client.kui_ior) || 'not set') : 'no client') + ')'}</option>
+                <option value="kui">KUI</option>
+                <option value="client">Client</option>
+              </select></div>
+            ) : <div></div>}
           </div>
           <div className="form-row-2">
             <div><label>Who Pays for Testing</label><input className="form-input" value={form.testingPaidBy} onChange={e=>f('testingPaidBy')(e.target.value)} /></div>

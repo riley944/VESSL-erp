@@ -4,6 +4,7 @@ import { SB } from "@/lib/supabase";
 // The product option sets moved to lib so the PLM card offers the same ones. See
 // the note above them there.
 import { COMPLIANCE_OPTS, STAGE_OPTS } from "@/lib/products";
+import { resolveKuiIor, iorLabel, iorKey } from "@/lib/ior";
 import { CreateProductModal } from "@/app/components/CreateProductModal";
 // The regulations list and its editor moved to app/components so the Codes page
 // shows the same two rather than copies. Delete went into RegModal with them --
@@ -185,7 +186,7 @@ export default function Testing({ userEmail = '' }) {
   // its dependency array, and a missed rename there would not throw, it would just
   // stop recomputing. Fetched lists, the modal slot and the busy flags stay plain.
   const [ui, setUi] = usePageState('testing', {
-    tab:'products', search:'', compSel:[], efSel:[], brandSel:[], stageSel:[], dateSel:[],
+    tab:'products', search:'', compSel:[], efSel:[], brandSel:[], stageSel:[], dateSel:[], iorSel:[],
     clientSel:[], matFilter:'', repFilter:'', movedOnly:false, orderSel:[], catSel:['active','notset'],
   });
   const [products, setProducts] = useState([]);
@@ -219,6 +220,7 @@ export default function Testing({ userEmail = '' }) {
   // ui.efSel    efilingKey's four returns, verbatim
   // ui.brandSel merlin | non_merlin | unclassified
   // ui.stageSel production | sample | notset
+  // ui.iorSel   kui | client | notset -- iorKey on the RESOLVED value (lib/ior.js)
   // ui.dateSel  30 | 60 | 90 | over90 | nolink
   // Client stays SINGLE-select: it is an identity, not a bucket, and 13 of them
   // behave differently from a five-item state list. FilterSelect serves both.
@@ -268,7 +270,7 @@ export default function Testing({ userEmail = '' }) {
       // and those used to be adjacent in SKU order. Without it Postgres may
       // return such a group differently between loads, which is the fault the
       // regulations fetch below already carries a note about.
-      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,product_stage,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,testing_paid_by,brand_group,client_company_id,active,manual_test_date,created_at,client:companies!client_company_id(name)')
+      SB.from('products').select('id,sku,name,description,composition,hts_code,unit_of_measure,weight_kg,units_per_carton,carton_weight_kg,carton_l_cm,carton_w_cm,carton_h_cm,compliance_status,cpsc_type,product_stage,efiled_date,efiling_required,ships_to,trade_direction,importer_of_record,kui_ior,testing_paid_by,brand_group,client_company_id,active,manual_test_date,created_at,client:companies!client_company_id(name,kui_ior)')
         .order('created_at',{ascending:false,nullsFirst:false}).order('sku',{nullsFirst:false}),
       // By MAT number, not by age. These twelve fibres are a reference library, not a
       // feed -- there is no "latest" worth surfacing, and newest-first put MAT-0013
@@ -511,6 +513,7 @@ export default function Testing({ userEmail = '' }) {
       bump('e:'+efilingKey(p));
       bump('b:'+(p.brand_group == null ? 'unclassified' : p.brand_group));
       bump('s:'+(p.product_stage == null ? 'notset' : p.product_stage));
+      bump('i:'+iorKey(resolveKuiIor(p, p.client)));
     });
     return c;
   },[selectableProducts]);
@@ -550,6 +553,14 @@ export default function Testing({ userEmail = '' }) {
     { value:'production', label:'Production', count:n('s:production') },
     { value:'sample',     label:'Sample',     count:n('s:sample') },
     { value:'notset',     label:'Not set',    count:n('s:notset') },
+  ],[countBy, selectableProducts.length]);
+  // Counted on the RESOLVED value, so a product with no override sits under its
+  // company's answer -- the same thing the row says.
+  const iorOptions = useMemo(()=>[
+    { value:'',       label:'All IOR', count:selectableProducts.length },
+    { value:'kui',    label:'KUI',     count:n('i:kui') },
+    { value:'client', label:'Client',  count:n('i:client') },
+    { value:'notset', label:'Not set', count:n('i:notset') },
   ],[countBy, selectableProducts.length]);
   // No counts on the windows. They overlap -- 30 ⊂ 60 ⊂ 90 -- so a column of numbers
   // that do not sum to the total reads as an error rather than as nesting, and the
@@ -623,6 +634,8 @@ export default function Testing({ userEmail = '' }) {
               // a state nobody has recorded.
               p.product_stage === 'sample' ? 'Sample' : p.product_stage === 'production' ? 'Production' : null,
               (p.ships_to || []).join(' '), p.trade_direction, p.importer_of_record, p.testing_paid_by,
+              // The IOR words as the row renders them, so a search finds what it shows.
+              iorLabel(resolveKuiIor(p, p.client)),
               // composition is searched but not rendered as text on the row -- the only
               // field here in that position. It runs to 57 characters on a real blend and
               // the Product cell already carries three lines and truncates, so a fourth
@@ -656,6 +669,7 @@ export default function Testing({ userEmail = '' }) {
     // Unclassified and under All, nowhere else.
     if (!isAll(ui.brandSel)) list = list.filter(p => inSel(ui.brandSel, p.brand_group == null ? 'unclassified' : p.brand_group));
     if (!isAll(ui.stageSel)) list = list.filter(p => inSel(ui.stageSel, p.product_stage == null ? 'notset' : p.product_stage));
+    if (!isAll(ui.iorSel))   list = list.filter(p => inSel(ui.iorSel,   iorKey(resolveKuiIor(p, p.client))));
     // Equality on both branches, never <> and never NOT -- the same rule brand_group
     // follows. client_company_id is NULL on the six products whose SKU names no guide
     // prefix; those are unresolved, not "some other client", and
@@ -698,7 +712,7 @@ export default function Testing({ userEmail = '' }) {
     // -- this array is the one place where a missed rename would not throw. It would
     // read a stale name, the memo would stop seeing that filter change, and the list
     // would quietly stop responding to a dropdown that still looks like it works.
-  }, [products, q, ui.compSel.join(), ui.efSel.join(), ui.brandSel.join(), ui.stageSel.join(), ui.dateSel.join(), ui.clientSel.join(), ui.catSel.join(), ui.orderSel.join(), ui.movedOnly, movedPast, ordersByProduct]);
+  }, [products, q, ui.compSel.join(), ui.efSel.join(), ui.brandSel.join(), ui.stageSel.join(), ui.iorSel.join(), ui.dateSel.join(), ui.clientSel.join(), ui.catSel.join(), ui.orderSel.join(), ui.movedOnly, movedPast, ordersByProduct]);
   // -- EXPORT WHAT IS ON SCREEN -----------------------------------------------
   // shownProducts, NOT products and not selectableProducts. The whole point is that
   // Jenn narrows the table first and exports that -- search, all seven filter axes and
@@ -765,6 +779,7 @@ export default function Testing({ userEmail = '' }) {
       ['eFiling',    labelsFor(ui.efSel,    efOptions)],
       ['Brand',      labelsFor(ui.brandSel, brandOptions)],
       ['Stage',      labelsFor(ui.stageSel, stageOptions)],
+      ['IOR',        labelsFor(ui.iorSel,   iorOptions)],
       ['Ordered',    labelsFor(ui.dateSel,  dateOptions)],
       ['Client',     labelsFor(ui.clientSel, clientOptions)],
       ['Sample but already ordered or sold', ui.movedOnly ? 'Only these' : 'All'],
@@ -1123,6 +1138,7 @@ export default function Testing({ userEmail = '' }) {
             <FilterSelect multiple label="All eFiling"    value={ui.efSel}    onChange={v=>setUi('efSel', v)}    options={efOptions} />
             <FilterSelect multiple label="All Brands"     value={ui.brandSel} onChange={v=>setUi('brandSel', v)} options={brandOptions} />
             <FilterSelect multiple label="All Stages"     value={ui.stageSel} onChange={v=>setUi('stageSel', v)} options={stageOptions} />
+            <FilterSelect multiple label="All IOR"        value={ui.iorSel}   onChange={v=>setUi('iorSel', v)}   options={iorOptions} />
             <FilterSelect multiple label="Ordered · Any"  value={ui.dateSel}  onChange={v=>setUi('dateSel', v)}  options={dateOptions} />
             {/* Single-select: a client is an identity, not a bucket, and the 13 of
                 them behave nothing like a five-item state list. */}
@@ -1427,13 +1443,13 @@ function ProductsView({ products, prodMats, prodRegs, productStatus, orderState 
                   preserve a blank would be hiding a fact to protect a layout.
                   The separator only appears between two things that are both
                   there, so no row reads as having a missing half. */}
-              {(p.client?.name || p.created_at) && (
-                <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                  {p.client?.name || ''}
-                  {p.client?.name && p.created_at ? ' · ' : ''}
-                  {p.created_at ? 'Created ' + fmtDate(p.created_at) : ''}
-                </div>
-              )}
+              {/* IOR RIDES HERE TOO (script 136), between the client it usually
+                  comes from and the created date. Known on every row -- "not set"
+                  is an answer -- so it is always present and the line always
+                  renders now. */}
+              <div style={{fontSize:'11.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                {[p.client?.name, iorLabel(resolveKuiIor(p, p.client)), p.created_at ? 'Created ' + fmtDate(p.created_at) : null].filter(Boolean).join(' · ')}
+              </div>
             </div>
             {/* The 'Built from' cell was here. It rendered up to two material pills and
                 otherwise the words "no materials linked" -- which was 268 of 271 rows,
