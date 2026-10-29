@@ -204,3 +204,97 @@
   margin-top: 6px;
 }
 .soon { text-align: center; padding: 64px 16px; color: var(--m-muted); }
+
+/* ── The Quotes table ──────────────────────────────────────────────────────
+   The desktop Quotes table's columns, in order: chevron, SKU, product name,
+   factory (country beneath), tiers, method, client price range, average
+   margin, updated (first name beneath). The header and every row share one
+   template, so the columns line up. Every cell is 15px. SKU, product and
+   factory share what is left and WRAP; the other columns are fixed at what
+   their figures and pills need on one line, measured in Spline Sans at 15px:
+   "Some tiers unpriced" is 141px (+20 pill padding), "Oct 15, 2026" 83px,
+   "$128.50 – $99.99" 114px (and may break at the dash, never inside a
+   figure). At 768px portrait the row has ~712px: 500 fixed, ~212 to wrap in.
+
+   1100px and wider takes the desktop's own proportions (app/quotes.jsx qGrid),
+   the price column's floor raised to the 15px pill. A phone cannot hold nine
+   columns at 15px, so there each row stacks: SKU / product / factory /
+   tiers + method on the left, price / margin / updated on the right. */
+.qTable { background: #ffffff; border: 1px solid var(--m-line); border-radius: 16px; }
+.qHead, .qRow {
+  display: grid;
+  column-gap: 8px;
+  align-items: start;
+  grid-template-columns: 20px minmax(0, .8fr) minmax(0, 1.1fr) minmax(0, 1fr) 52px 58px 162px 56px 88px;
+  grid-template-areas: "chev sku prod fact tiers meth price marg upd";
+}
+.qHead {
+  padding: 10px 12px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--m-muted);
+  border-bottom: 1px solid var(--m-line);
+}
+.qRow {
+  width: 100%;
+  min-height: 44px;
+  padding: 12px;
+  text-align: left;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--m-ink);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+}
+/* 15px is the floor everywhere in a quote row, its opened details and tier
+   cards included. */
+.qItem { --m-fs: 15px; --m-fs-meta: 15px; }
+.qItem + .qItem { border-top: 1px solid var(--m-line); }
+.qItem:last-child .qRow { border-radius: 0 0 16px 16px; }
+.qItemOpen { background: #fafbfc; }
+.qItemOpen .qRow { font-weight: 500; }
+.qChev { grid-area: chev; display: flex; align-items: center; min-height: 21px; }
+.qSku { grid-area: sku; font-weight: 600; min-width: 0; }
+.qProd { grid-area: prod; min-width: 0; }
+.qFact { grid-area: fact; min-width: 0; }
+.qTiers { grid-area: tiers; text-align: center; }
+.qMeth { grid-area: meth; text-align: center; color: var(--m-muted); }
+.qPrice { grid-area: price; text-align: center; }
+.qMarg { grid-area: marg; text-align: center; }
+.qUpd { grid-area: upd; }
+.qPriceSpan { grid-column: price-start / marg-end; grid-row: 1; text-align: center; }
+.qSub { display: block; font-size: 15px; font-weight: 400; color: var(--m-muted); margin-top: 2px; }
+.qPill { display: inline-block; white-space: nowrap; font-size: 15px; font-weight: 600; border-radius: 12px; padding: 2px 10px; line-height: 1.4; }
+.tierPill {
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  font-size: 15px; font-weight: 600; color: var(--m-blue); background: #eef1f6; border-radius: 14px; padding: 1px 9px;
+}
+.qHead .qTiers, .qHead .qMeth, .qHead .qPrice, .qHead .qMarg { text-align: center; }
+.qItem .body { background: #ffffff; }
+
+@media (min-width: 1100px) {
+  .qHead, .qRow {
+    column-gap: 12px;
+    grid-template-columns: 22px 140px minmax(56px, 1.1fr) minmax(104px, 1.6fr) minmax(48px, 52px) minmax(50px, 72px) minmax(162px, 170px) minmax(56px, 80px) minmax(88px, 126px);
+  }
+}
+
+@media (max-width: 640px) {
+  .qHead { display: none; }
+  .qRow {
+    row-gap: 4px;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "chev sku   price"
+      "chev prod  marg"
+      "chev fact  upd"
+      "chev tiers meth";
+  }
+  .qPrice, .qMarg, .qUpd, .qMeth { text-align: right; }
+  .qTiers { text-align: left; }
+  .qPriceSpan { grid-area: price; grid-column: auto; grid-row: auto; text-align: right; }
+}

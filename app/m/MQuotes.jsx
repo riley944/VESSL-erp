@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, Layers } from 'lucide-react';
 import { SB } from '@/lib/supabase';
 import { rowToForm } from '@/lib/quoteRow';
 import { fmt, fmtUnit, fmtStamp, moldFeeText, pricedState, quoteSummary, NO_PRICE_TEXT, SOME_UNPRICED_TEXT } from '@/lib/quoteFigures';
@@ -16,11 +17,13 @@ import s from './m.module.css';
 // ── QUOTES ON THE IPAD ──────────────────────────────────────────────────────
 // Every quote, newest first, read through the desktop's rowToForm. The client
 // dropdown and a search narrow it;
-// a card shows every field of the desktop list row (SKU, product name,
-// factory and country, tiers, method, client price range, average margin,
-// updated date and person), as label and value pairs that wrap, plus the
-// client, Q-number, status and created date; it opens in place to the
-// details, one column, and the tiers as cards
+// the list is the desktop Quotes table: a header, then one row per quote with
+// the desktop's columns in order (chevron, SKU, product name, factory over
+// country, tiers, method, client price range, average margin, updated date
+// over first name). Product and factory wrap, never cut short; figures and
+// pills keep to one line. Read-only: no edit, copy or delete. A row opens in
+// place to the details -- client, Q-number, status and created first -- and
+// the tiers as cards
 // (TierCards, touch). Each card exports the client price sheet for that one
 // quote -- the same sheet Send to Client builds for one quote, DDP only
 // (lib/clientSheetExport.js) -- as PDF, CSV or Excel, and opens Send to Client
@@ -93,9 +96,21 @@ export function MQuotes({ email, me }) {
       {shown.length === 0
         ? <div className={s.soon}>Nothing matches. Try clearing the search or the client.</div>
         : (
-          <div className={s.list}>
+          <div className={s.qTable}>
+            {/* The column heads, laid on the rows' own grid (m.module.css). */}
+            <div className={s.qHead} aria-hidden="true">
+              <span className={s.qChev} />
+              <span className={s.qSku}>SKU</span>
+              <span className={s.qProd}>Product name</span>
+              <span className={s.qFact}>Factory</span>
+              <span className={s.qTiers}>Tiers</span>
+              <span className={s.qMeth}>Method</span>
+              <span className={s.qPrice}>Client price range</span>
+              <span className={s.qMarg}>Avg margin</span>
+              <span className={s.qUpd}>Updated</span>
+            </div>
             {shown.map((q) => (
-              <QuoteCard key={q.id} q={q} open={open === q.id} onToggle={() => setOpen(open === q.id ? null : q.id)}
+              <QuoteRow key={q.id} q={q} open={open === q.id} onToggle={() => setOpen(open === q.id ? null : q.id)}
                 staff={staff} me={me} settings={settings} dutyRate={htsRateFor(q.hts, codes)}
                 deliver={deliver} onSend={() => setSendFor(q)} />
             ))}
@@ -118,26 +133,13 @@ export function MQuotes({ email, me }) {
   );
 }
 
-// One label and value; the value wraps, figures (num) stay on one line.
-function Field({ label, num = false, children }) {
-  return (
-    <div className={s.field2}>
-      <div className={s.fLabel}>{label}</div>
-      <div className={num ? s.fValue + ' ' + s.num : s.fValue}>{children}</div>
-    </div>
-  );
-}
-
-// ── One quote ───────────────────────────────────────────────────────────────
-function QuoteCard({ q, open, onToggle, staff, me, settings, dutyRate, deliver, onSend }) {
+// ── One quote: a row, and what it opens to ──────────────────────────────────
+function QuoteRow({ q, open, onToggle, staff, me, settings, dutyRate, deliver, onSend }) {
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
   const ps = pricedState(q);
   // The desktop row's figures and wording (app/quotes.jsx, the clientQuotes row).
   const sum = quoteSummary(q, dutyRate);
-  const priceRange = sum.minClient == null ? '—'
-    : sum.minClient === sum.maxClient ? `$${fmtUnit(sum.minClient)}`
-    : `$${fmtUnit(sum.maxClient)} – $${fmtUnit(sum.minClient)}`;
   const status = !(q.tiers || []).length ? ['No tiers', s.pillNone]
     : ps.none ? [NO_PRICE_TEXT, s.pillNone]
     : ps.some ? [SOME_UNPRICED_TEXT, s.pillWarn]
@@ -177,6 +179,10 @@ function QuoteCard({ q, open, onToggle, staff, me, settings, dutyRate, deliver, 
 
   const cartonDims = [q.cartonL, q.cartonW, q.cartonH].every((v) => v !== '' && v != null) ? q.cartonL + ' × ' + q.cartonW + ' × ' + q.cartonH + ' cm' : '';
   const details = [
+    ['Client', clientOf(q)],
+    ['Quote', q.quoteCode],
+    ['Status', <span key="st" className={s.pill + ' ' + status[1]}>{status[0]}</span>],
+    ['Created', q.createdAt ? fmtStamp(q.createdAt) : ''],
     ['Factory', q.factory],
     ['Country', q.country],
     ['Lead time', q.leadTime],
@@ -193,28 +199,29 @@ function QuoteCard({ q, open, onToggle, staff, me, settings, dutyRate, deliver, 
   ].filter(([, v]) => v != null && String(v).trim() !== '');
 
   return (
-    <div className={s.card + (open ? ' ' + s.cardOpen : '')}>
-      <button type="button" className={s.cardHead} aria-expanded={open} onClick={onToggle}>
-        <div className={s.client}>{clientOf(q)}</div>
-        <div className={s.product}>{q.product || 'Untitled product'}</div>
-        <div className={s.fields}>
-          <Field label="SKU">{q.sku || 'No SKU'}</Field>
-          <Field label="Quote">{q.quoteCode || '—'}</Field>
-          <Field label="Factory">{q.factory || '—'}{q.country ? <div className={s.meta}>{q.country}</div> : null}</Field>
-          <Field label="Tiers" num>{sum.count}</Field>
-          <Field label="Method">{sum.method || '—'}</Field>
-          <Field label="Client price range">
-            {ps.none
-              ? <span className={s.pill + ' ' + s.pillNone}>{NO_PRICE_TEXT}</span>
-              : <><span className={s.num} style={{ fontWeight: 600 }}>{priceRange}</span>{ps.some && <div style={{ marginTop: 4 }}><span className={s.pill + ' ' + s.pillWarn}>{SOME_UNPRICED_TEXT}</span></div>}</>}
-          </Field>
-          <Field label="Avg margin" num>
-            {ps.none ? '—' : <span style={{ color: sum.avgMargin < 25 ? '#c2683a' : '#3f7d5a', fontWeight: 600 }}>{sum.avgMargin ? sum.avgMargin.toFixed(0) + '%' : '—'}</span>}
-          </Field>
-          <Field label="Status"><span className={s.pill + ' ' + status[1]}>{status[0]}</span></Field>
-          <Field label="Created">{q.createdAt ? fmtStamp(q.createdAt) : '—'}</Field>
-          <Field label="Updated">{fmtStamp(q.updatedAt)}{who ? <div className={s.meta}>by {who}</div> : null}</Field>
-        </div>
+    <div className={s.qItem + (open ? ' ' + s.qItemOpen : '')}>
+      <button type="button" className={s.qRow} aria-expanded={open} onClick={onToggle}>
+        <span className={s.qChev}>{open ? <ChevronDown size={18} color="#5b6478" /> : <ChevronRight size={18} color="#5b6478" />}</span>
+        <span className={s.qSku}>{q.sku || 'No SKU'}</span>
+        <span className={s.qProd}>{q.product || 'Untitled product'}</span>
+        <span className={s.qFact}>{q.factory || '—'}{q.country ? <span className={s.qSub}>{q.country}</span> : null}</span>
+        <span className={s.qTiers}><span className={s.tierPill}><Layers size={13} /> {sum.count}</span></span>
+        <span className={s.qMeth}>{sum.method || '—'}</span>
+        {ps.none ? (
+          // As the desktop: one pill across both price columns.
+          <span className={s.qPriceSpan}><span className={s.qPill + ' ' + s.pillNone}>{NO_PRICE_TEXT}</span></span>
+        ) : (
+          <>
+            <span className={s.qPrice}>
+              {sum.minClient == null ? '—'
+                : sum.minClient === sum.maxClient ? <span className={s.num} style={{ fontWeight: 600 }}>${fmtUnit(sum.minClient)}</span>
+                : <><span className={s.num} style={{ fontWeight: 600 }}>${fmtUnit(sum.maxClient)}</span> – <span className={s.num} style={{ fontWeight: 600 }}>${fmtUnit(sum.minClient)}</span></>}
+              {ps.some && <span className={s.qSub}><span className={s.qPill + ' ' + s.pillWarn}>{SOME_UNPRICED_TEXT}</span></span>}
+            </span>
+            <span className={s.qMarg}><span className={s.num} style={{ color: sum.avgMargin < 25 ? '#c2683a' : '#3f7d5a', fontWeight: 600 }}>{sum.avgMargin ? sum.avgMargin.toFixed(0) + '%' : '—'}</span></span>
+          </>
+        )}
+        <span className={s.qUpd}><span className={s.num}>{fmtStamp(q.updatedAt)}</span>{who ? <span className={s.qSub}>{who}</span> : null}</span>
       </button>
       {open && (
         <div className={s.body}>
