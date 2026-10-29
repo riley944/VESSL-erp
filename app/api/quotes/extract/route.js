@@ -17,6 +17,7 @@
 // /api/orders/extract; this file is the quote prompt, schema and checks.
 
 import { runExtract, json, fieldsFrom, toNum, normName, domainOf } from '@/lib/pdfExtract';
+import { companyKey } from '@/lib/companyName';
 import { PDF_BUCKET, PDF_MAX_BYTES, PDF_DIRECT_MAX_BYTES, PDF_PATH_RE, QUOTE_PDF_IMPORT } from '@/lib/quotePdf';
 
 export const runtime = 'nodejs';
@@ -215,13 +216,18 @@ const FORM_KEY = { material: 'details', packing: 'notes' };
 // ── MATCHING A FACTORY ───────────────────────────────────────────────────────
 // Against existing factory companies only. Never creates one: the quote form
 // lost the ability to mint a company on purpose, and this must not give it back.
-// normName and domainOf are lib/pdfExtract.js.
-
+// normName and domainOf are lib/pdfExtract.js, companyKey lib/companyName.js.
+//
+// BY NAME, SPACES AND PUNCTUATION IGNORED. companyKey drops case, spaces,
+// punctuation and the trailing Co./Ltd/LLC/Inc, so "Fuzhou Xiang Xing
+// Textile Co.,LTD" is the directory's "Fuzhou Xiangxing Textile Co., LTD" --
+// it was a miss, and a miss sent people to pick the factory by hand.
 function matchFactory(name, email, companies) {
   const want = normName(name);
+  const key = companyKey(name);
   const dom = domainOf(email);
-  if (want) {
-    const exact = companies.filter((c) => normName(c.name) === want);
+  if (key) {
+    const exact = companies.filter((c) => companyKey(c.name) === key || (want && normName(c.name) === want));
     if (exact.length === 1) return { id: exact[0].id, name: exact[0].name, matchedBy: 'name' };
   }
   if (dom) {
@@ -229,10 +235,31 @@ function matchFactory(name, email, companies) {
     if (byMail.length === 1) return { id: byMail[0].id, name: byMail[0].name, matchedBy: 'email' };
   }
   if (want.length >= 5) {
-    const part = companies.filter((c) => { const n = normName(c.name); return n.length >= 5 && (n.includes(want) || want.includes(n)); });
+    const flat = want.replace(/ /g, '');
+    const part = companies.filter((c) => { const n = normName(c.name).replace(/ /g, ''); return n.length >= 5 && (n.includes(flat) || flat.includes(n)); });
     if (part.length === 1) return { id: part[0].id, name: part[0].name, matchedBy: 'partial' };
   }
   return null;
+}
+
+// ── THE SAMPLE PHASE OF A LEAD TIME ─────────────────────────────────────────
+// "15-20days for sample and after sample be confirmed 55days (item 3:
+// 65days)" is one lead time for the document and an override for one item.
+// The item's reading tends to carry only its production days ("65 days after
+// sample confirmed") and loses the sample phase every item shares. When the
+// item's value names no sample phase and the PDF's own lead-time text does,
+// the phase goes back in front: "15-20 days for sample; 65 days after sample
+// confirmed". Taken only from the document's value or the printed evidence,
+// so it is never made up.
+const SAMPLE_PHASE = /(\d+(?:\s*(?:[-\u2013~]|to)\s*\d+)?)\s*(?:working\s+)?days?\s+(?:for|of)\s+(?:the\s+)?samples?\b/i;
+function withSamplePhase(entry, sources) {
+  const value = String(entry.value || '').trim();
+  if (!value || SAMPLE_PHASE.test(value)) return entry;
+  for (const src of sources) {
+    const m = SAMPLE_PHASE.exec(String(src || ''));
+    if (m) return { ...entry, value: m[1].replace(/\s*(?:[-\u2013~]|to)\s*/, '-') + ' days for sample; ' + value };
+  }
+  return entry;
 }
 
 // ── HTS AGAINST THE LIBRARY ──────────────────────────────────────────────────
@@ -387,6 +414,7 @@ export async function POST(req) {
   const items = groups.slice(0, MAX_ITEMS).map((g) => {
     const own = fieldsFrom(fieldsAll.filter((e) => g.nums.includes(asInt(e.item))));
     const raw = { ...Object.fromEntries(INHERITED.filter((k) => docF[k]).map((k) => [k, docF[k]])), ...own };
+    if (raw.leadTime) raw.leadTime = withSamplePhase(raw.leadTime, [docF.leadTime && docF.leadTime.value, docF.leadTime && docF.leadTime.evidence, raw.leadTime.evidence]);
     return {
       name: g.name ? g.name.value : '',
       ...shapeItem({

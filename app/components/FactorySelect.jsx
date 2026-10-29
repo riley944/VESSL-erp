@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { SB } from '@/lib/supabase';
 import { CompanySelect, useCompanyDirectory, contactsOf, sameName } from '@/app/components/CompanySelect';
+import { sameCompany } from '@/lib/companyName';
 
 // ── The factory side of CompanySelect ────────────────────────────────────────
 // Everything structural moved to CompanySelect when the client box needed the
@@ -45,7 +46,10 @@ export function useFactoryCompanies() {
 // against this company; the preset's contact fields are older free text that came
 // off a quote. When both exist the structured one wins.
 export function factoryFillFor(company, { contacts = [], presets = [] } = {}) {
-  const preset = presets.find((p) => sameName(p.factory, company && company.name)) || null;
+  // The preset is free text off old quotes: matched on the company key (case,
+  // spaces, punctuation and a trailing Co./Ltd ignored), exact name first.
+  const preset = presets.find((p) => sameName(p.factory, company && company.name))
+    || presets.find((p) => sameCompany(p.factory, company && company.name)) || null;
   return {
     preset,
     contacts: contactsOf(company, contacts),

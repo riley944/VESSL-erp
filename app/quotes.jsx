@@ -52,6 +52,7 @@ import { CodeModal } from "@/app/components/CodeModal";
 import { HtsField, useHtsCodes } from "@/app/components/HtsField";
 // The factory box is a closed select now, the same shape as HtsField and for the
 // same reason -- free text is how one firm ends up in the catalogue twice.
+import { sameCompany } from "@/lib/companyName";
 import { FactorySelect, useFactoryCompanies, factoryFillFor, contactFieldsFrom,
          ContactPickModal } from "@/app/components/FactorySelect";
 // The client box is the same control over the client companies. FactorySelect is
@@ -3461,6 +3462,11 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
   // time: { companyId, values }. applyFactory fills a box the directory left
   // blank from it. Set by applyExtract; picking a factory by hand clears it.
   const pdfFillRef = useRef(null);
+  // Set by the first PDF import into this form. From then on a factory picked
+  // from the directory -- by hand or by the import's own match -- fills only
+  // the boxes that are still blank: what the PDF put there, or a person typed,
+  // stays, and keeps its highlight.
+  const pdfImportedRef = useRef(false);
   // The response arrives seconds after the click; the apply reads the form as
   // it is THEN, not as it was when the file was picked.
   const fRef = useRef(f);
@@ -3476,7 +3482,7 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
     // The PDF's factory was not in the directory -- but once the box holds one
     // that is (picked, carried from the last item of a chain, or just added),
     // the warning and its "PDF says" line have nothing left to say.
-    if (e.red && k === "factory" && factoryCompanies.some((c) => (c.name || "").trim() === String(f.factory || "").trim())) return null;
+    if (e.red && k === "factory" && factoryCompanies.some((c) => sameCompany(c.name, f.factory))) return null;
     if (e.red) return { color: XC.red, title, says: e.says };
     const now = String(current !== undefined ? (current ?? "") : (f[k] ?? "")).trim();
     const same = now === e.value || (now !== "" && e.value !== "" && isFinite(Number(now)) && isFinite(Number(e.value)) && Number(now) === Number(e.value));
@@ -3597,6 +3603,7 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
   };
 
   const applyExtract = (out, fileName, notice = "") => {
+    pdfImportedRef.current = true;
     const cur = fRef.current;
     const F = out.fields || {};
     const nx = {};
@@ -3668,9 +3675,11 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
       nx.factory = { value: fm.name, red: true, says: fm.name + " \u2014 not in the factory directory", conf: F.factoryName ? F.factoryName.confidence : "medium",
                      evidence: F.factoryName ? F.factoryName.evidence : "", page: F.factoryName ? F.factoryName.page : 0 };
     }
-    // Picking a factory refills these from the directory, so then the PDF only
-    // suggests; otherwise an empty box takes the PDF's value.
-    ["factoryContact", "factoryEmail", "factoryPhone", "country", "leadTime"].forEach((k) => put(k, { suggestOnly: !!pickCompany }));
+    // An empty box takes the PDF's value, matched factory or not: the directory
+    // fills only what the PDF left blank (applyFactory, after an import), so a
+    // lead time read from this quotation is never replaced by the factory's
+    // usual one.
+    ["factoryContact", "factoryEmail", "factoryPhone", "country", "leadTime"].forEach((k) => put(k));
     // For applyFactory: a box the directory leaves blank takes these. Kept while
     // the matched factory is offered, so "Use" on it fills blanks the same way.
     pdfFillRef.current = company ? { companyId: company.id, values: Object.fromEntries(
@@ -3926,12 +3935,14 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
     // but it read as a mistake and a reorder would have broken the fill silently.
     // contactFieldsFrom always returns all three contact fields, blank where it has
     // nothing, so the clear it used to need is built into its own answer.
-    setF((p) => ({
-      ...p,
-      ...contactFieldsFrom(contact, fill.preset, company),
-      country: fill.country,
-      leadTime: fill.leadTime,
-    }));
+    const dir = { ...contactFieldsFrom(contact, fill.preset, company), country: fill.country, leadTime: fill.leadTime };
+    const blanksOnly = pdfImportedRef.current;
+    setF((p) => {
+      if (!blanksOnly) return { ...p, ...dir };
+      const n = { ...p };
+      Object.entries(dir).forEach(([k, v]) => { if (String(n[k] ?? "").trim() === "") n[k] = v; });
+      return n;
+    });
     // PDF IMPORT. The directory wins where it has a value; where it has none,
     // the PDF fills the box. Queued after the fill above, so it sees its result
     // -- and it runs on the contact-choice path too, which also ends here.
