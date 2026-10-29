@@ -26,11 +26,15 @@ import { PDF_BUCKET, pdfFileNameOf, SIBLING_OUTLINE } from '@/lib/quotePdf';
 // between this row and the next when the page draws one, else halfway to the
 // next row's text (cellOf). Not found, the page opens anyway with a note.
 //
+// A quote whose pdf_item predates anchors[] gets, on its page, every table
+// row naming the item as well as its anchor's row.
+//
 // A quote with a PDF but no pdf_item (imported before script 139) is looked
 // for by its product name instead: every page is searched, whole words, case
 // ignored -- every word of a name of one or two words, two thirds of a longer
 // one. It opens at the page with the best match (the earliest on a tie) and
-// outlines every row there that names the product. No match, page 1 opens
+// outlines every table row there that names the product -- never a notes or
+// packing line. No match, page 1 opens
 // with "Item not located".
 //
 // Portalled to the body, so it sits above the quote form; every click stops
@@ -204,10 +208,12 @@ function findRow(lines, anchor, itemName, mode = 'item') {
   return best ? { ...tableBox(lines, best.from, best.to), score: best.score } : null;
 }
 
-// Every row naming the product: whole words, case ignored; every word of a
-// name of one or two words, two thirds of a longer one. A row starts on a line
-// holding one of the name's words and is the shortest run (up to four lines)
-// that reaches the mark; the search goes on after it.
+// Every TABLE row naming the product: whole words, case ignored; every word
+// of a name of one or two words, two thirds of a longer one. A row starts on a
+// line holding one of the name's words and is the shortest run (up to four
+// lines) that reaches the mark, grown to its whole row; the search goes on
+// after it. Only a row with a line of three or more separate pieces of text
+// counts -- a table row, not a notes or packing line that mentions the product.
 function rowsByName(lines, productName) {
   const name = [...new Set(words(productName))];
   if (!name.length) return [];
@@ -221,7 +227,12 @@ function rowsByName(lines, productName) {
       if (w > 1 && l.y0 - lines[i + w - 2].y1 > l.h * GAP_LINES) break;
       l.words.forEach((x) => seen.add(x));
       const hit = name.filter((x) => seen.has(x)).length / name.length;
-      if (hit >= need) { const b = tableBox(lines, i, i + w - 1); out.push({ ...b, score: hit - 0.02 * (w - 1) }); i = b.to; break; }
+      if (hit >= need) {
+        const b = tableBox(lines, i, i + w - 1);
+        if (lines.slice(b.from, b.to + 1).some((x) => x.runs.length >= 3)) out.push({ ...b, score: hit - 0.02 * (w - 1) });
+        i = b.to;
+        break;
+      }
     }
   }
   return out;
@@ -344,14 +355,19 @@ export function PdfItemViewer({ path, item, productName = '', onClose }) {
         await task.promise;
         if (dead) return;
         const anchors = byName ? [] : anchorsOf(item).filter((a) => a.page === page);
-        if (!byName && !anchors.length) {
+        // Saved before anchors[] existed: the one anchor names the first row
+        // only, so on the item's page the table rows naming the item are added
+        // -- a product at two quantities still shows both.
+        const legacy = !byName && !(Array.isArray(item.anchors) && item.anchors.length) && page === targetPage;
+        if (!byName && !anchors.length && !legacy) {
           if (page === targetPage) setNote((n) => n || 'Item not located on page ' + page + ' — check the page for “' + (label || 'the item') + '”.');
           return;
         }
         const lines = linesOf((await p.getTextContent()).items, viewport, pdfjs.Util);
         let found = byName
           ? rowsByName(lines, productName)
-          : anchors.map((a) => findRow(lines, a.anchor, item.item_name) || findRow(lines, a.anchor, '', 'strict')).filter(Boolean);
+          : anchors.map((a) => findRow(lines, a.anchor, item.item_name) || findRow(lines, a.anchor, '', 'strict')).filter(Boolean)
+              .concat(legacy ? rowsByName(lines, item.item_name || productName) : []);
         // The ruled lines only when there is a row to fit -- reading the
         // drawing is the slow part.
         if (found.length) {
