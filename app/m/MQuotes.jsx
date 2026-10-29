@@ -14,8 +14,8 @@ import { SendToClientModal } from '@/app/quotes';
 import s from './m.module.css';
 
 // ── QUOTES ON THE IPAD ──────────────────────────────────────────────────────
-// Every quote, newest first, read through the desktop's rowToForm. A client
-// (recent ones as chips, every one in the dropdown) and a search narrow it;
+// Every quote, newest first, read through the desktop's rowToForm. The client
+// dropdown and a search narrow it;
 // a card opens in place to the details, one column, and the tiers as cards
 // (TierCards, touch). Each card exports the client price sheet for that one
 // quote -- the same sheet Send to Client builds for one quote, DDP only
@@ -54,14 +54,8 @@ export function MQuotes({ email, me }) {
     SB.from('kui_settings').select('company_name').eq('id', 1).single().then(({ data }) => setSettings(data || {}), () => setSettings({}));
   }, []);
 
-  // Clients: every one, by name, for the dropdown; the eight most recently
-  // quoted as chips.
+  // Clients: every one, by name, for the dropdown.
   const clientNames = useMemo(() => [...new Set((quotes || []).map(clientOf))].sort((a, b) => a.localeCompare(b)), [quotes]);
-  const recent = useMemo(() => {
-    const seen = [];
-    (quotes || []).forEach((q) => { const c = clientOf(q); if (!seen.includes(c)) seen.push(c); });
-    return seen.slice(0, 8);
-  }, [quotes]);
   const shown = useMemo(() => {
     const t = normalizeTerm(term);
     return (quotes || []).filter((q) => (!client || clientOf(q) === client)
@@ -89,13 +83,6 @@ export function MQuotes({ email, me }) {
         </select>
         <input className={s.search} type="search" aria-label="Search quotes" placeholder="Search SKU, product, client, factory, Q-number"
           value={term} onChange={(e) => setTerm(e.target.value)} />
-      </div>
-      <div className={s.chips}>
-        <button type="button" className={s.chip + (!client ? ' ' + s.chipOn : '')} onClick={() => setClient('')}>All</button>
-        {recent.map((c) => (
-          <button key={c} type="button" className={s.chip + (client === c ? ' ' + s.chipOn : '')}
-            onClick={() => { setClient(client === c ? '' : c); setOpen(null); }}>{c}</button>
-        ))}
       </div>
       <div className={s.meta} style={{ marginBottom: 10 }}>{shown.length === quotes.length ? quotes.length + ' quotes' : shown.length + ' of ' + quotes.length + ' quotes'}</div>
 

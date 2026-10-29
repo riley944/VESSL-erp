@@ -14,8 +14,11 @@ import s from './m.module.css';
 // desktop, a profile lookup that errors reads as unrestricted: the data is
 // still behind RLS, which is what actually keeps it staff-only.
 //
-// Only Quotes is wired today; Sales Orders and Shipments say so.
-const TABS = [['quotes', 'Quotes'], ['orders', 'Sales Orders'], ['shipments', 'Shipments']];
+// Only Quotes is wired today; Sales Orders, Purchase Orders and Shipments say
+// so. The four fit the bar on one line at iPad portrait (768px) at 15px --
+// measured in Spline Sans 600: 708px of 768 with the bar's spacing in
+// m.module.css -- so the labels stay whole.
+const TABS = [['quotes', 'Quotes'], ['orders', 'Sales Orders'], ['pos', 'Purchase Orders'], ['shipments', 'Shipments']];
 
 export default function MPage() {
   const [session, setSession] = useState(undefined);   // undefined while loading

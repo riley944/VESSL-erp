@@ -48,13 +48,16 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
+  gap: 8px 12px;
 }
-.logo { height: 26px; width: auto; display: block; }
-.tabs { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 auto; }
+/* Four tabs on one line at 768px: logo 24px tall (~129px wide), 12px tab
+   padding, 4px between tabs -- 708px with Sign out, 60px to spare. A phone
+   wraps the bar onto two rows instead of shrinking anything. */
+.logo { height: 24px; width: auto; display: block; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 auto; }
 .tab {
   min-height: 44px;
-  padding: 8px 16px;
+  padding: 8px 12px;
   border-radius: 12px;
   border: 1px solid transparent;
   background: transparent;
@@ -67,7 +70,7 @@
 .tabOn { background: var(--m-ink); color: #ffffff; }
 .signOut {
   min-height: 44px;
-  padding: 8px 14px;
+  padding: 8px 12px;
   border-radius: 12px;
   border: 1px solid var(--m-line);
   background: #ffffff;
@@ -99,21 +102,6 @@
 .select { flex: 1 1 220px; max-width: 100%; }
 .search { flex: 3 1 260px; max-width: 100%; }
 .meta { font-size: var(--m-fs-meta); color: var(--m-muted); }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-.chip {
-  min-height: 44px;
-  padding: 8px 14px;
-  border-radius: 22px;
-  border: 1px solid var(--m-line);
-  background: #ffffff;
-  color: var(--m-ink);
-  font: inherit;
-  font-size: var(--m-fs-meta);
-  font-weight: 600;
-  cursor: pointer;
-  text-align: left;
-}
-.chipOn { background: var(--m-ink); border-color: var(--m-ink); color: #ffffff; }
 
 /* ── Quote cards ── */
 .list {
