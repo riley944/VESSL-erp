@@ -50,7 +50,7 @@ const TYPE_NOUN = { client: 'Client' };
 // noun replaces the type's word in the title, the name label, the save button and
 // the required-name alert -- the Companies page's Clients tab passes "Company".
 // The Type field still shows the type itself, which is what gets stored.
-export function CreateCompanyModal({ onClose, onCreated, initialType, noun }) {
+export function CreateCompanyModal({ onClose, onCreated, initialType, noun, initial = null }) {
   // Plain form, every field an input or select. No click-driven setters at all.
   const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   // initialType lets a host open this already set to what it is asking for -- the
@@ -64,7 +64,14 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun }) {
   // select is kept for an opening with no initialType, which nothing does today;
   // that opening starts as Client, as the old default did.
   const typeFixed = !!initialType;
-  const [form, setForm] = useState({name:'',type:initialType || 'client',email:'',phone:'',website:'',vendor_number:'',pallet_info:'',kui_ior:'',billing_address:'',shipping_address:'',tracking_url:'',cname:'',cemail:'',cphone:''});
+  // initial prefills fields by name -- the quote form passes what a factory PDF
+  // printed (name, email, phone, contact, country). Taken once, at open, so it
+  // is the guard's baseline: closing an untouched prefilled form asks nothing.
+  const [form, setForm] = useState(() => {
+    const base = {name:'',type:initialType || 'client',email:'',phone:'',website:'',vendor_number:'',pallet_info:'',kui_ior:'',billing_address:'',shipping_address:'',tracking_url:'',cname:'',cemail:'',cphone:'',country:''};
+    Object.entries(initial || {}).forEach(([k, v]) => { if (k in base && k !== 'type' && v != null) base[k] = String(v); });
+    return base;
+  });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   // THE WORD FOLLOWS THE TYPE, fixed or selected, so the title, the name label, the save
   // button and the required-name alert all say Factory once somebody picks
@@ -121,7 +128,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun }) {
       if (form.type==='client') {
         await SBQ.from('client_contacts').insert({client:form.name,contact:form.cname||null,email:form.cemail||null,phone:form.phone||null}).select();
       } else if (form.type==='factory') {
-        await SBQ.from('factory_presets').insert({factory:form.name,factory_email:form.email||null,factory_phone:form.phone||null}).select();
+        await SBQ.from('factory_presets').insert({factory:form.name,factory_email:form.email||null,factory_phone:form.phone||null,country:form.country||null}).select();
       }
     } catch(e) {}
     // THE TYPE TRAVELS BACK, because the Companies list is fetched per type and
@@ -145,6 +152,11 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun }) {
             <div><label>Phone</label><input className="form-input" value={form.phone} onChange={e=>f('phone')(e.target.value)} /></div>
           </div>
           <div className="form-row"><label>Website</label><input className="form-input" value={form.website} onChange={e=>f('website')(e.target.value)} placeholder="https://" /></div>
+          {/* A factory's country has no column on companies; it lives on the
+              factory's preset row, which the quote form fills Country from. */}
+          {form.type==='factory' && (
+            <div className="form-row"><label>Country</label><input className="form-input" value={form.country} onChange={e=>f('country')(e.target.value)} placeholder="e.g. China" /></div>
+          )}
           {form.type==='carrier' && (
             <div className="form-row"><label>Tracking URL <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(optional -- put {'{number}'} where the tracking number goes)</span></label><input className="form-input" value={form.tracking_url} onChange={e=>f('tracking_url')(e.target.value)} placeholder="https://www.example.com/track?n={number}" /></div>
           )}

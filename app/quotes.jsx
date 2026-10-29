@@ -3426,6 +3426,9 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
   const { companies: factoryCompanies, contacts: factoryContacts,
           presets: factoryPresets, addCompany } = useFactoryCompanies();
   const [addingFactory, setAddingFactory] = useState(null);
+  // The PDF's factory is not in the directory: { name, prefill } while the
+  // "Create it as a new factory?" question is up (after the form fills).
+  const [askNewFactory, setAskNewFactory] = useState(null);
   // The client directory, the same shape. Its contacts come from vessl.contacts
   // like the factory side -- client_contacts is free text keyed on a name and is
   // no longer read or written here; the Directory panel still maintains it.
@@ -3741,6 +3744,12 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
     markDirty();
     setPdfInfo({ fileName, done: true, warnings, factoryName: fm.name || "", factoryMissing: !!(nx.factory && nx.factory.red),
                  count: Object.keys(nx).length });
+    // AN UNKNOWN FACTORY: once the form has filled, ask whether to create it.
+    // Not in a chain's later items -- they carry the factory the first one
+    // settled on -- and not when the box already holds a directory factory.
+    const inDirectory = cur.factory && factoryCompanies.some((c) => sameCompany(c.name, cur.factory));
+    if (nx.factory && nx.factory.red && !(initial && initial.__pdfChain) && !inDirectory)
+      setAskNewFactory({ name: fm.name, prefill: factoryPrefill(fm.name, nx) });
   };
 
   // The PDF opens in the viewer: at the quote's item when it knows it, else
@@ -3980,6 +3989,13 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
   // The created company is selected immediately and its row is handed to the
   // directory, so the select finds it without waiting for a refetch. A brand-new
   // factory has no contacts, so this always takes the silent path.
+  // What the PDF printed about its factory, as CreateCompanyModal's fields.
+  // src is a reading map -- nx while importing, ext afterwards.
+  const factoryPrefill = (name, src) => {
+    const v = (k) => (src && src[k] && src[k].value) || "";
+    return { name: name || "", email: v("factoryEmail"), phone: v("factoryPhone"),
+             cname: v("factoryContact"), cemail: v("factoryEmail"), country: v("country") };
+  };
   const onFactoryCreated = (type, company) => {
     setAddingFactory(null);
     if (!company || type !== 'factory') return;
@@ -4504,8 +4520,28 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
               then declines to select -- a dead end with nothing said. */}
           <CreateCompanyModal
             initialType="factory"
+            initial={addingFactory.prefill || { name: addingFactory.name || "" }}
             onClose={() => setAddingFactory(null)}
             onCreated={onFactoryCreated} />
+        </div>
+      )}
+      {askNewFactory && (
+        // Create / Not now, not a browser confirm: its buttons can only say OK
+        // and Cancel. Not now leaves the red box and "+ Add new factory".
+        <div onClick={(e) => { e.stopPropagation(); setAskNewFactory(null); }}
+          style={{ ...S.overlay, zIndex: 60, alignItems: "center" }}>
+          <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}
+            style={{ ...S.modal, maxWidth: 440, padding: "22px 24px" }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#0f1729", marginBottom: 8 }}>New factory?</div>
+            <div style={{ fontSize: 13.5, color: "#2b3445", lineHeight: 1.5 }}>
+              {"This factory is not in the system: " + askNewFactory.name + ". Create it as a new factory?"}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+              <button type="button" style={S.ghostBtnSm} onClick={() => setAskNewFactory(null)}>Not now</button>
+              <button type="button" style={S.primaryBtnSm} autoFocus
+                onClick={() => { const a = askNewFactory; setAskNewFactory(null); setAddingFactory({ name: a.name, prefill: a.prefill }); }}>Create</button>
+            </div>
+          </div>
         </div>
       )}
       <div ref={cardRef} style={{ ...S.modal, maxWidth: QUOTE_FORM_MAX_W }} onClick={(e) => e.stopPropagation()}>
@@ -4911,7 +4947,7 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
                   ? <PdfSays h={hl("factory")} />
                   : <span style={{ fontSize: 11.5, color: "#6a7488" }} title={hl("factory").title}>Factory from the PDF{ext.factory && ext.factory.note ? " (" + ext.factory.note + ")" : ""}</span>}
                 {ext.factory && ext.factory.red && (
-                  <button type="button" onClick={() => setAddingFactory({ name: ext.factory.value })}
+                  <button type="button" onClick={() => setAddingFactory({ name: ext.factory.value, prefill: factoryPrefill(ext.factory.value, ext) })}
                     style={{ background: "none", border: "none", padding: 0, color: "#3461e0", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>
                     + Add new factory
                   </button>
