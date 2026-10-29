@@ -1,0 +1,16 @@
+{
+  "name": "VESSL",
+  "short_name": "VESSL",
+  "description": "King Universal quotes, on the iPad.",
+  "start_url": "/m",
+  "scope": "/m",
+  "display": "standalone",
+  "background_color": "#f5f6f8",
+  "theme_color": "#0f1729",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
