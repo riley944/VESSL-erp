@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { SB } from '@/lib/supabase';
+import { isStaffEmail, UNIVERSAL_PAGES, ROLE_PAGES, allowedPagesFor } from '@/lib/access';
 import { OrderNotesPanel } from '@/app/components/OrderNotesPanel';
 import { OrderNoteDraft, useStaff } from '@/app/components/OrderNoteDraft';
 import { postNoteAfterCreate } from '@/lib/orderNotes';
@@ -492,69 +493,10 @@ const Ic = {
   settings:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
 };
 
-// ── Staff domain gate ────────────────────────────────────────────────────────
-// orders.vessl.io is staff-only, but kui.vessl.io (the client portal) shares
-// this Supabase project and therefore its auth.users pool — so a portal account
-// is a valid credential here unless we check the domain ourselves.
-// Mirrors portal.is_kui_staff() in Postgres, which is
-//   auth.jwt()->>'email' ilike '%@kinguniversal.com'
-// so the UI and RLS agree on who counts as staff. Non-string input (null,
-// undefined, a missing email claim) short-circuits to false rather than throwing.
-const isStaffEmail = email =>
-  typeof email === 'string' && email.trim().toLowerCase().endsWith('@kinguniversal.com');
+// Who may sign in, and which pages a limited role sees: isStaffEmail,
+// ROLE_PAGES and allowedPagesFor are lib/access.js, shared with the iPad
+// view (app/m).
 
-// ── Role-based page access ───────────────────────────────────────────────────
-// Only roles listed here are limited, to exactly the page ids they map to.
-// Any other role — including no staff_profiles row, or a lookup error — is
-// unrestricted and sees every page, exactly as before.
-// Pages every role reaches, however limited. Settings is one because what it now
-// holds -- your own name, your own password -- belongs to the person, not the job.
-// Spread into each limited role rather than special-cased in the `page` fallback
-// below, and the difference matters: allowedPages is also what the sidebar filters
-// its links against and what supplies the [0] fallback, so it has to stay the
-// complete list of what a role may render. An exception written into the fallback
-// line would leave those two reading a list that no longer says what it means.
-// It cannot surface a nav link: the sidebar filters over `links`, which has never
-// had a settings entry -- that button was always separate, and is now gone.
-const UNIVERSAL_PAGES = ['settings'];
-// Appended last on purpose, so allowedPages[0] is still 'testing' and a limited
-// role landing on a genuinely disallowed page falls back where it always did.
-//
-// PROGRAMS IS ON THIS LIST, and it is the one page here that is not a list of
-// things to check. The PLM board is where a product's stage, its owner and its
-// sampling history are kept, and QC work is most of what moves a card off
-// Sampling and off Testing -- so the person doing that work could see neither
-// the board they were moving nor the notes on it. Granted as a page rather than
-// by making the role unrestricted: this list is still the whole of what
-// limited_qc may render, and quotes, orders, companies, pricing and banking
-// stay off it.
-//
-// NOT AT POSITION 0, deliberately, whatever else moves around it. allowedPages[0]
-// is the fallback a limited role lands on when a hash names a page it may not
-// see, and that has always been testing.
-//
-// LIMITED_OPS (Monica, 19 Oct) is every sidebar page but the orders and the
-// numbers: Purchase Orders and Sales Orders (with their detail pages,
-// order-detail and so-detail, which are not on the list either) and Analytics.
-// Samples first, so a disallowed hash lands where everyone else lands. Company
-// Banking is not listed: its own allowlist (COMPANY_TAB_ROLES, admin and staff)
-// would refuse it anyway. Pricing ('pricing', PRICING_PAGE below) is listed so
-// it appears if PRICING_ENABLED is ever turned on.
-//
-// A PAGE LIST, NOT A LOCK ON THE DATA. limited_ops is a staff profile, so RLS
-// lets it read what staff read -- Inventory, Shipments and Quotes show PO
-// details on their own pages, and the API would answer an order query. This
-// keeps the order pages out of the way; it does not make orders private.
-const ROLE_PAGES = {
-  limited_qc: ['testing', 'products', 'programs', 'shipments', 'codes', ...UNIVERSAL_PAGES],
-  limited_ops: ['programs', 'companies', 'products', 'testing', 'pricing', 'shipments', 'inventory', 'quotes', 'codes',
-                'client-relations', ...UNIVERSAL_PAGES],
-};
-// Returns the allowed page ids for a limited role, or null meaning unrestricted.
-// hasOwnProperty guard: role is free text, so a value like 'constructor' must
-// not pick up an inherited Object.prototype member and read as limited.
-const allowedPagesFor = role =>
-  (role && Object.prototype.hasOwnProperty.call(ROLE_PAGES, role)) ? ROLE_PAGES[role] : null;
 
 // ── Company Banking access ───────────────────────────────────────────────────
 // AN ALLOWLIST, NOT A DENYLIST, and this is the whole reason the constant exists.
