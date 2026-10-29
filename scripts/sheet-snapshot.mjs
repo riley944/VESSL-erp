@@ -43,7 +43,8 @@ if (process.argv[2] === '--compare') {
   const [a, b] = process.argv.slice(3).map((p) => resolve(ROOT, p));
   const JSZip = (await import('jszip')).default;
   const walk = (d) => readdirSync(d).flatMap((n) => (statSync(join(d, n)).isDirectory() ? walk(join(d, n)) : [join(d, n)]));
-  const files = (d) => walk(d).map((f) => relative(d, f)).sort();
+  // Files starting _ are the run's own scaffolding (the lifted rowToForm), not output.
+  const files = (d) => walk(d).map((f) => relative(d, f)).filter((f) => !/(^|[\\/])_/.test(f)).sort();
   const fa = files(a), fb = files(b);
   const diffs = [];
   for (const f of [...new Set([...fa, ...fb])]) {
