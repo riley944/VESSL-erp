@@ -44,7 +44,9 @@ export function MQuotes({ email, me }) {
   const [client, setClient] = useState('');
   const [term, setTerm] = useState('');
   const [open, setOpen] = useState(null);
-  const [sendFor, setSendFor] = useState(null);     // the quote whose Send to Client is open
+  // Send to Client: null, { quote } from a row (its client, it ticked), or
+  // { all: true } from the top button (pick any client, any quotes).
+  const [sendFor, setSendFor] = useState(null);
   const [pending, setPending] = useState(null);     // { blob, filename } waiting for a Share tap
   const { codes } = useHtsCodes();
 
@@ -90,6 +92,9 @@ export function MQuotes({ email, me }) {
         </select>
         <input className={s.search} type="search" aria-label="Search quotes" placeholder="Search SKU, product, client, factory, Q-number"
           value={term} onChange={(e) => setTerm(e.target.value)} />
+        {/* The desktop's Send to Client: choose a client, tick any of its
+            quotes, set up the sheet, export to the share sheet. */}
+        <button type="button" className={s.btn + ' ' + s.btnDark} style={{ flex: '0 0 auto' }} onClick={() => setSendFor({ all: true })}>Send to Client</button>
       </div>
       <div className={s.meta} style={{ marginBottom: 10 }}>{shown.length === quotes.length ? quotes.length + ' quotes' : shown.length + ' of ' + quotes.length + ' quotes'}</div>
 
@@ -112,7 +117,7 @@ export function MQuotes({ email, me }) {
             {shown.map((q) => (
               <QuoteRow key={q.id} q={q} open={open === q.id} onToggle={() => setOpen(open === q.id ? null : q.id)}
                 staff={staff} me={me} settings={settings} dutyRate={htsRateFor(q.hts, codes)}
-                deliver={deliver} onSend={() => setSendFor(q)} />
+                deliver={deliver} onSend={() => setSendFor({ quote: q })} />
             ))}
           </div>
         )}
@@ -127,7 +132,8 @@ export function MQuotes({ email, me }) {
 
       {sendFor && (
         <SendToClientModal clients={byClient} staff={staff} userEmail={email} onSaved={load} onClose={() => setSendFor(null)}
-          deliver={deliver} initialClient={clientOf(sendFor)} initialPicked={[sendFor.id]} touch />
+          deliver={deliver} initialClient={sendFor.quote ? clientOf(sendFor.quote) : null}
+          initialPicked={sendFor.quote ? [sendFor.quote.id] : null} touch />
       )}
     </>
   );
