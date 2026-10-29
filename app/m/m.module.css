@@ -210,14 +210,16 @@
    factory (country beneath), tiers, method, client price range, average
    margin, updated (first name beneath). The header and every row share one
    template, so the columns line up. Every cell is 15px. SKU, product and
-   factory share what is left and WRAP; the other columns are fixed at what
-   their figures and pills need on one line, measured in Spline Sans at 15px:
-   "Some tiers unpriced" is 141px (+20 pill padding), "Oct 15, 2026" 83px,
-   "$128.50 – $99.99" 114px (and may break at the dash, never inside a
-   figure). At 768px portrait the row has ~712px: 500 fixed, ~212 to wrap in.
+   factory share what is left and WRAP, breaking inside a word only when that
+   word alone is wider than its cell (overflow-wrap: break-word). The other
+   columns are fixed at what their figures need on one line, measured in
+   Spline Sans at 15px ("Oct 15, 2026" 83px). Under 1100px the price column
+   is 110px and its pills may take two lines ("Some tiers unpriced" is 141px
+   on one), a range breaking only at its dash; that leaves ~264px of a 768px
+   row to SKU, product and factory, weighted to product and factory.
 
    1100px and wider takes the desktop's own proportions (app/quotes.jsx qGrid),
-   the price column's floor raised to the 15px pill. A phone cannot hold nine
+   the price column's floor raised so its pills stay on one line. A phone cannot hold nine
    columns at 15px, so there each row stacks: SKU / product / factory /
    tiers + method on the left, price / margin / updated on the right. */
 .qTable { background: #ffffff; border: 1px solid var(--m-line); border-radius: 16px; }
@@ -225,8 +227,10 @@
   display: grid;
   column-gap: 8px;
   align-items: start;
-  grid-template-columns: 20px minmax(0, .8fr) minmax(0, 1.1fr) minmax(0, 1fr) 52px 58px 162px 56px 88px;
+  grid-template-columns: 20px minmax(0, .7fr) minmax(0, 1.25fr) minmax(0, 1.15fr) 52px 58px 110px 56px 88px;
   grid-template-areas: "chev sku prod fact tiers meth price marg upd";
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 .qHead {
   padding: 10px 12px;
@@ -269,6 +273,8 @@
 .qPriceSpan { grid-column: price-start / marg-end; grid-row: 1; text-align: center; }
 .qSub { display: block; font-size: 15px; font-weight: 400; color: var(--m-muted); margin-top: 2px; }
 .qPill { display: inline-block; white-space: nowrap; font-size: 15px; font-weight: 600; border-radius: 12px; padding: 2px 10px; line-height: 1.4; }
+/* Portrait: the narrow price column lets its pills take two lines. */
+.qPrice .qPill, .qPriceSpan .qPill { white-space: normal; }
 .tierPill {
   display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
   font-size: 15px; font-weight: 600; color: var(--m-blue); background: #eef1f6; border-radius: 14px; padding: 1px 9px;
@@ -281,6 +287,7 @@
     column-gap: 12px;
     grid-template-columns: 22px 140px minmax(56px, 1.1fr) minmax(104px, 1.6fr) minmax(48px, 52px) minmax(50px, 72px) minmax(162px, 170px) minmax(56px, 80px) minmax(88px, 126px);
   }
+  .qPrice .qPill, .qPriceSpan .qPill { white-space: nowrap; }
 }
 
 @media (max-width: 640px) {
