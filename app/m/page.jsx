@@ -1,0 +1,105 @@
+'use client';
+import { useEffect, useState } from 'react';
+import { SB } from '@/lib/supabase';
+import { isStaffEmail, allowedPagesFor } from '@/lib/access';
+import { MLogin } from './MLogin';
+import { MQuotes } from './MQuotes';
+import s from './m.module.css';
+
+// ── /m, THE IPAD VIEW ───────────────────────────────────────────────────────
+// The same sign-in and the same gates as the desktop shell (app/page.jsx), in
+// the same order: a session, an @kinguniversal.com address (isStaffEmail), a
+// staff_profiles row, and -- for a limited role -- Quotes on its page list
+// (allowedPagesFor; limited_qc has no Quotes, limited_ops does). As on the
+// desktop, a profile lookup that errors reads as unrestricted: the data is
+// still behind RLS, which is what actually keeps it staff-only.
+//
+// Only Quotes is wired today; Sales Orders and Shipments say so.
+const TABS = [['quotes', 'Quotes'], ['orders', 'Sales Orders'], ['shipments', 'Shipments']];
+
+export default function MPage() {
+  const [session, setSession] = useState(undefined);   // undefined while loading
+  const [profile, setProfile] = useState(undefined);   // undefined loading, null no row
+  const [tab, setTab] = useState('quotes');
+
+  useEffect(() => {
+    SB.auth.getSession().then(({ data: { session: ses } }) => setSession(ses || null));
+    const { data: { subscription } } = SB.auth.onAuthStateChange((_e, ses) => setSession(ses || null));
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const email = (session && session.user && session.user.email) || '';
+  useEffect(() => {
+    if (!email || !isStaffEmail(email)) { setProfile(undefined); return; }
+    let live = true;
+    (async () => {
+      try {
+        // staff_profiles is itself is_staff()-gated, so no row reads as none.
+        const { data, error } = await SB.from('staff_profiles').select('email,role,full_name,job_title').ilike('email', email);
+        if (error) throw error;
+        const row = (data || []).find((r) => (r.email || '').toLowerCase() === email.toLowerCase()) || null;
+        if (live) setProfile(row);
+      } catch (e) {
+        if (live) setProfile({ email, role: null, full_name: '', job_title: '', lookupFailed: true });
+      }
+    })();
+    return () => { live = false; };
+  }, [email]);
+
+  const signOut = () => SB.auth.signOut();
+
+  let content;
+  if (session === undefined) content = <div className={s.center}><span className={s.meta}>Loading…</span></div>;
+  else if (!session) content = <MLogin />;
+  else if (!isStaffEmail(email)) {
+    content = (
+      <Message title="This is a client account" signOut={signOut}>
+        {email} is signed in, but this view is for King Universal staff. Sign out, then sign in with your
+        @kinguniversal.com address.
+      </Message>
+    );
+  } else if (profile === undefined) content = <div className={s.center}><span className={s.meta}>Loading…</span></div>;
+  else if (profile === null) {
+    content = (
+      <Message title="No staff access yet" signOut={signOut}>
+        {email} has no staff profile in VESSL, so there is nothing to show. Ask Matt to add one.
+      </Message>
+    );
+  } else {
+    const allowed = allowedPagesFor(profile.role);
+    const canQuotes = !allowed || allowed.includes('quotes');
+    content = (
+      <>
+        <header className={s.bar}>
+          <img className={s.logo} src="/logo.png" alt="King Universal" />
+          <nav className={s.tabs} aria-label="Sections">
+            {TABS.map(([id, label]) => (
+              <button key={id} type="button" className={s.tab + (tab === id ? ' ' + s.tabOn : '')}
+                aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}</button>
+            ))}
+          </nav>
+          <button type="button" className={s.signOut} onClick={signOut}>Sign out</button>
+        </header>
+        <main className={s.main}>
+          {tab === 'quotes' && (canQuotes
+            ? <MQuotes email={email} me={profile} />
+            : <div className={s.soon}>Quotes is not part of your account&apos;s pages. Ask Matt if you need it.</div>)}
+          {tab !== 'quotes' && <div className={s.soon}>{(TABS.find(([id]) => id === tab) || [])[1]}: coming soon.</div>}
+        </main>
+      </>
+    );
+  }
+  return <div className={s.root}>{content}</div>;
+}
+
+function Message({ title, children, signOut }) {
+  return (
+    <div className={s.center}>
+      <div className={s.panel}>
+        <div style={{ fontSize: 'calc(var(--m-fs) + 3px)', fontWeight: 700, marginBottom: 8 }}>{title}</div>
+        <div>{children}</div>
+        <button type="button" className={s.btn + ' ' + s.btnDark} onClick={signOut}>Sign out</button>
+      </div>
+    </div>
+  );
+}
