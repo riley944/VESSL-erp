@@ -2,7 +2,9 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { SB } from '@/lib/supabase';
-import { isStaffEmail, UNIVERSAL_PAGES, ROLE_PAGES, allowedPagesFor } from '@/lib/access';
+import { isStaffEmail, UNIVERSAL_PAGES, ROLE_PAGES, allowedPagesFor, ORDER_MONEY_ROLES, canSeeOrderMoney } from '@/lib/access';
+import { stampToday, openExportWindow, exportUser, loadLetterhead, deliverExport } from '@/lib/recordExport';
+import { SO_LIST_SELECT, PO_CARD_SELECT, PO_CARD_FALLBACK_SELECT } from '@/lib/orderQueries';
 import { OrderNotesPanel } from '@/app/components/OrderNotesPanel';
 import { OrderNoteDraft, useStaff } from '@/app/components/OrderNoteDraft';
 import { postNoteAfterCreate } from '@/lib/orderNotes';
@@ -336,9 +338,7 @@ function distinctClients(rows){
   const m={}; (rows||[]).forEach(p=>{ const c=poClient(p); if(c) m[c]=(m[c]||0)+1; });
   return Object.entries(m).sort((a,b)=>a[0].localeCompare(b[0]));
 }
-// Read-only additions for the export: the PO's terms, fees and notes, and each
-// line's quantity, prices, size and SKUs. The cards still read only what they did.
-const PO_CARD_SELECT = 'id,order_number,client_po_number,status,production_pct,order_date,updated_at,cargo_ready_date,requested_ship_date,cancel_date,payment_terms,incoterm,shipping_method,currency,mold_fee,sample_fee,deposit_percent,notes,delivery_address,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(id,description,quantity,unit_price,size,product_sku,product_id,vpn,master_sku,pack_sku,baby_sku,carton_info,ci_value,retail_price,products(sku,name)),sales_order_pos(sales_orders(id,so_number,client_po_number,created_at))';
+// PO_CARD_SELECT is lib/orderQueries.js, with the Sales Orders select.
 
 // ── THE LINKED ORDER, on a card ─────────────────────────────────────────────
 // A PO card names its sales order and an SO card its PO, through
@@ -512,15 +512,8 @@ const Ic = {
 // every link. A denylist would show it the bank account number; an allowlist
 // simply does not match, so a role nobody has heard of gets nothing.
 const COMPANY_TAB_ROLES = ['admin', 'staff'];
-// ── MONEY IN AN ORDER EXPORT ────────────────────────────────────────────────
-// The Sales and Purchase Order exports include prices, costs and margins only
-// for these roles. They are the roles that can open those pages today -- every
-// other role reaching them would be a change to allowedPagesFor -- and on those
-// pages admin and staff see every figure. Anyone else gets the same export with
-// every money column and row removed (withoutMoney in lib/ordersExport.js), so
-// widening page access later cannot widen what an export reveals by accident.
-const ORDER_MONEY_ROLES = ['admin', 'staff'];
-const canSeeOrderMoney = role => ORDER_MONEY_ROLES.includes(role);
+// ORDER_MONEY_ROLES and canSeeOrderMoney (money in the order pages and their
+// exports) are lib/access.js, shared with the iPad view.
 const canSeeBanking = role => COMPANY_TAB_ROLES.includes(role);
 // Used at THREE sites, and all three are needed. The sidebar link is only the
 // visible one; the page render stops a hash from mounting the component, and the
@@ -2052,7 +2045,7 @@ function SalesOrders({navigate, role=null, user=null, displayName=''}){
   const [exporting,setExporting]=useState('');
   // The lines carry what the export lists (description, SKU, size) and each linked
   // PO its number, status and factory -- read-only additions to the same select.
-  const load=async()=>{ setLoading(true); const {data}=await SB.from('sales_orders').select('*,client:companies!client_company_id(id,name),sales_order_items(id,description,client_sku,size,quantity,client_price),sales_order_pos(purchase_orders(id,order_number,client_po_number,status,currency,factory:companies!factory_company_id(name),purchase_order_items(unit_price,quantity))),order_costs(id,amount,kind,note)').order('created_at',{ascending:false}); setRows(data||[]); setLoading(false); };
+  const load=async()=>{ setLoading(true); const {data}=await SB.from('sales_orders').select(SO_LIST_SELECT).order('created_at',{ascending:false}); setRows(data||[]); setLoading(false); };
   useEffect(()=>{ load(); },[]);
   // The list, its order and its totals come from soListView in lib/ordersView.js,
   // which the export reads too, so the two cannot drift. No-CRD orders go last as
@@ -4065,7 +4058,7 @@ function Orders({ navigate, role = null, user = null, displayName = '', newActio
       console.error('[Orders] Primary purchase_orders select failed — rendering from the reduced fallback query. '
                   + 'Cards may be missing fields. PostgREST said:', error.message, error);
       window._toast?.('Purchase orders loaded on a reduced query — check the console', 'err');
-      const fallback = 'id,order_number,client_po_number,status,order_date,cargo_ready_date,requested_ship_date,factory:companies!factory_company_id(name),client:companies!client_company_id(name),purchase_order_items(description,products(name))';
+      const fallback = PO_CARD_FALLBACK_SELECT;
       const retry = await SB.from('purchase_orders').select(fallback).order('created_at',{ascending:false});
       if (retry.error) console.error('[Orders] Fallback select failed too:', retry.error.message, retry.error);
       data = retry.data;
@@ -5030,46 +5023,9 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
 // type. Same words, different grammatical job.
 
 // ── EXPORT PLUMBING, SHARED BY EVERY EXPORT IN THIS FILE ────────────────────
-// Both of these were local to Products. Companies exports too and is declared
-// above it, so it could not see them -- and a second copy of a two-line helper is
-// how one export writes products-2026-09-22.xlsx and another writes something
-// subtly different. Module scope, one definition, both callers.
-const stampToday = () => {
-  const d = new Date();
-  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-};
-// ── ORDER EXPORTS: open, build, deliver ─────────────────────────────────────
-// The Sales and Purchase Order pages share these. A PDF needs its window opened
-// inside the click, before anything is awaited, or a pop-up blocker stops it.
-// out: { sheets, xlsxName, csvName(sheet, table, i), pdfMeta } -- one set of
-// sheet descriptions, laid out as Excel, CSV files or a print document.
-const openExportWindow = () => {
-  const win = window.open('', '_blank');
-  if (!win) { alert('The PDF opens in a new window. Allow pop-ups for this site and try again.'); return null; }
-  win.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:48px;color:#475569">Preparing the PDF\u2026</body>');
-  return win;
-};
-const exportUser = (user, displayName) => {
-  const email = user?.email || '';
-  return email ? ((displayName||'').trim() ? displayName.trim()+' ('+email+')' : email) : '';
-};
-async function deliverExport(fmt, out, win) {
-  if (fmt === 'xlsx') {
-    const ExcelJS = await loadExcelJS();
-    const buf = await buildWorkbook(ExcelJS, out.sheets).xlsx.writeBuffer();
-    downloadFile(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), out.xlsxName);
-  } else if (fmt === 'csv') {
-    const files = sheetsToCsvFiles(out.sheets, out.csvName);
-    for (let i = 0; i < files.length; i++) {
-      if (i) await new Promise(r => setTimeout(r, 400));
-      downloadFile(new Blob([files[i].text], { type:'text/csv;charset=utf-8' }), files[i].name);
-    }
-  } else if (fmt === 'pdf') {
-    const brand = await loadLetterhead();
-    win.document.open(); win.document.write(sheetsToPdfHtml(out.sheets, brand, out.pdfMeta)); win.document.close();
-    setTimeout(() => { try { win.focus(); win.print(); } catch (e) {} }, 900);
-  }
-}
+// stampToday, openExportWindow, exportUser, loadLetterhead and deliverExport
+// (Excel, CSV files or a print document from one set of sheet descriptions)
+// are lib/recordExport.js, shared with the iPad view (app/m).
 // One export at a time per page: key names what is being built (the list, or
 // 'rec:'+id), so its button can say so and every other one waits.
 const startOrderExport = (exporting, setExporting, key, fmt, build) => {
@@ -7161,25 +7117,9 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
       const who = userEmail ? ((displayName||'').trim() ? displayName.trim()+' ('+userEmail+')' : userEmail) : '';
       const ctx = { exportedAt: now, user: who, ui, V, bids, coNames, refOf: matchRef };
       const out = build(ctx, now);
-      if (fmt === 'xlsx') {
-        const ExcelJS = await loadExcelJS();
-        const buf = await buildWorkbook(ExcelJS, out.sheets).xlsx.writeBuffer();
-        downloadFile(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), out.xlsxName);
-      } else if (fmt === 'csv') {
-        // One file per table, one after another; a short gap so the browser
-        // takes each download as its own.
-        const files = sheetsToCsvFiles(out.sheets, out.csvName);
-        for (let i = 0; i < files.length; i++) {
-          if (i) await new Promise(r => setTimeout(r, 400));
-          downloadFile(new Blob([files[i].text], { type:'text/csv;charset=utf-8' }), files[i].name);
-        }
-      } else if (fmt === 'pdf') {
-        const brand = await loadLetterhead();
-        const html = sheetsToPdfHtml(out.sheets, brand, out.pdfMeta);
-        win.document.open(); win.document.write(html); win.document.close();
-        // As the freight sheet: the document paginates itself once its fonts land.
-        setTimeout(() => { try { win.focus(); win.print(); } catch (e) {} }, 900);
-      }
+      // Excel, CSV files one after another, or the print document: the same
+      // delivery as the order pages (lib/recordExport.js).
+      await deliverExport(fmt, out, win);
     } catch (e) {
       if (win) { try { win.close(); } catch (x) {} }
       alert('Could not build the export: '+((e && e.message) || e));
@@ -10627,12 +10567,7 @@ function buildFreightDoc(q, clientName, forwarderName, brand = {}) {
 // white colourway for a dark sidebar and would print invisibly on white paper.
 // public/logo.png is the same crown-globe mark in black, which is the one for
 // paper, read at full resolution so it stays crisp at print DPI.
-async function loadLetterhead() {
-  let settings = null;
-  try { const { data } = await SB.from('kui_settings').select('*').eq('id',1).single(); settings = data; } catch(e){}
-  const logo = await logoDataUrl();
-  return { settings, logo };
-}
+// loadLetterhead is lib/recordExport.js.
 
 // ── Sales Order / Order Confirmation document (client-facing — CLIENT PRICES ONLY) ──
 //

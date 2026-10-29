@@ -42,6 +42,11 @@ const ExcelJS = (await import('exceljs')).default;
 const logo = 'data:image/png;base64,' + readFileSync(join(ROOT, 'public/logo.png')).toString('base64');
 const brand = { settings: fx.settings, logo };
 
+// lib/recordExport.js imports the app's Supabase client, which wants a URL at
+// import. Nothing here calls it -- the letterhead comes from the fixture -- so
+// a placeholder is enough.
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'http://localhost.invalid';
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= 'snapshot';
 const libMode = existsSync(join(ROOT, 'lib/recordExport.js'));
 console.log('mode:', libMode ? 'lib (after the move)' : 'inline (before the move)');
 const X = libMode ? await imp('lib/recordExport.js') : null;
