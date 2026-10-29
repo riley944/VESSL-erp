@@ -7943,7 +7943,7 @@ function ForwarderRFQModal({ quote, onClose, onSent }) {
         <div style={{padding:'20px 24px 0'}}>
           <div style={{fontSize:'17px',fontWeight:700,color:'#1A1A1C',letterSpacing:'-.015em'}}>Request forwarder quotes</div>
           <div style={{fontSize:'13px',color:'#8A8A8E',marginTop:'4px',lineHeight:1.5}}>
-            {(quote.quote_number||'')+' · '+(quote.origin||'?')+' → '+(quote.destination||'?')+' · '+(isLCL(quote) ? lclSummary(quote) : String(quote.containers_needed||'?')+' × '+(quote.container_type||"40'HQ"))}. Generates the fillable RFQ sheet — rates per container size, itemized destination charges, and if-needed fees — then opens the email to ONE contact. Attach the downloaded file and send.
+            {(quote.quote_number||'')+' · '+(quote.origin||'?')+' → '+(quote.destination||'?')+' · '+(isLCL(quote) ? lclSummary(quote) : String(quote.containers_needed||'?')+' × '+(quote.container_type||"40'HQ"))}. Generates the fillable RFQ sheet and emails it to the chosen contacts with the sheet attached.
           </div>
         </div>
         <div style={{padding:'18px 24px'}}>
@@ -8044,7 +8044,7 @@ function ImportBidsModal({ quotes, onClose, onApplied }) {
       // change made in the geometry module.
       const rfqId = val(RFQ_ID_ROW,2).trim();
       const quote = (quotes||[]).find(q=>q.id===rfqId);
-      if (!quote) { alert('This file does not match any freight quote — the RFQ ID cell (B1) is missing or was edited.'); setBusy(false); return; }
+      if (!quote) { alert('This file does not match any freight quote — the RFQ ID cell (B2) is missing or was edited.'); setBusy(false); return; }
 
       // LCL: the only figure is the all-in total in B22. One clear amount is
       // recorded as the bid; anything else records nothing -- never a partial
@@ -8552,7 +8552,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
                   L.missing.some(m=>m.what==='cost') ? 'enter the unit cost for each line marked above' : null,
                   L.missing.some(m=>m.what==='duty') ? 'enter the duty % for each line marked above' : null].filter(Boolean).join('; ')}
               </div>}
-              <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'6px'}}>Estimate. Rates are set in Settings; typed unit costs and duty rates are not saved.</div>
+              <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'6px'}}>Estimate. Rates are set on the KUI Banking page; typed unit costs and duty rates are not saved.</div>
             </div>
           </div>
         )}

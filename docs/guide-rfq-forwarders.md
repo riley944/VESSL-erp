@@ -36,9 +36,6 @@ and pick a winner. Everything happens on the **Shipments** page, under the
    One quote = one forwarder. Duplicates are grouped, so picking a winner later
    closes the others.
 
-The window's own description still says the email "opens" for you to attach the
-file. That is out of date: **Send** emails it, with the sheet attached.
-
 **What the forwarder receives:** an email from *King Universal Freight
 <rfq@vessl.io>*, subject *Freight quote request — [Quote #] ([origin] → [destination])*.
 It has the route, equipment, cargo, incoterm, ready date and your notes. The
@@ -120,8 +117,7 @@ Type money as one number, e.g. *1850* or *$1,850.00*.
   For an all-in bid, the fees show as **included**. It is an estimate.
 
   The rates are edited on **KUI Banking** in the left-hand menu (admin and staff),
-  section **Landed cost rates** → **Save rates**. (The panel's note says "Settings";
-  KUI Banking is where they are.)
+  section **Landed cost rates** → **Save rates**.
 
 `[Screenshot: Forwarder quotes window with an ALL-IN bid and the landed-cost breakdown open]`
 `[Screenshot: KUI Banking → Landed cost rates]`
@@ -161,7 +157,7 @@ or mark it **Not selected** or archive it.
 | **The RFQ was NOT sent. …** | Nothing went out and the quote is unchanged. Read the reason, then try again. |
 | **Your session has expired — sign in again before sending.** | Sign out and back in, then send. |
 | **The RFQ was sent to …, but recording it failed** | The email went. The card still says draft: tell Matt. Do not resend. |
-| **This file does not match any freight quote — the RFQ ID cell (B1) is missing or was edited.** | The RFQ ID was changed or the file is not our sheet. The ID is actually in **B2**, not B1. Enter the bid by hand. |
+| **This file does not match any freight quote — the RFQ ID cell (B2) is missing or was edited.** | The RFQ ID was changed or the file is not our sheet. Enter the bid by hand. |
 | **This is an LCL RFQ, and row 22 … does not hold one clear all-in total** | Use **+ Add bid by hand** with the total. |
 | **This sheet has no total for a [size], so it cannot be saved as an all-in price.** | Untick all-in, or enter the bid by hand. |
 | **Could not read that file: …** | Not a readable .xlsx. Ask for the sheet again, or enter by hand. |
