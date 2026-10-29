@@ -51,7 +51,7 @@ import { HtsField, useHtsCodes } from "@/app/components/HtsField";
 // same reason -- free text is how one firm ends up in the catalogue twice.
 import { sameCompany } from "@/lib/companyName";
 import { suggestedMarkup, roundToPricePoint, suggestClientPrice, mapToDeltas, mapToPlates, mapToCartons, qtyMapToRow, rowToForm } from "@/lib/quoteRow";
-import { fmt, fmtUnit, tierMargin, moldFeeText, tierQtyShown, sizeLineText, freightCell, dutyCell, NO_PRICE_TEXT, NO_PRICE_TIP, SOME_UNPRICED_TEXT, SOME_UNPRICED_TIP, pricedState } from "@/lib/quoteFigures";
+import { fmt, fmtUnit, tierMargin, moldFeeText, tierQtyShown, sizeLineText, freightCell, dutyCell, NO_PRICE_TEXT, NO_PRICE_TIP, SOME_UNPRICED_TEXT, SOME_UNPRICED_TIP, pricedState, quoteSummary, fmtStamp } from "@/lib/quoteFigures";
 import { PriceTag, TierCards } from "@/app/components/TierCards";
 import { FactorySelect, useFactoryCompanies, factoryFillFor, contactFieldsFrom,
          ContactPickModal } from "@/app/components/FactorySelect";
@@ -216,12 +216,6 @@ const CARD_TIER_MIN = ["qty", "exw", "method", "freight", "duty", "total", "clie
 // sideways. At 1200 it is ~1129, with ~41px over the floors.
 const QUOTE_FORM_MAX_W = 1200;
 function stamp() { return new Date().toISOString(); }
-function fmtStamp(iso) {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  } catch { return "—"; }
-}
 
 // EXW (raw) cost is stored in tier.landed; total cost = EXW + freight/duty
 //
@@ -569,23 +563,6 @@ function freightValue(t) { const f = tierFreight(t); return f || ""; }
 function dutyValue(t) {
   if (t.dutyLegacy) return "incl.";
   return t.duty === "" || t.duty == null ? "" : tierDuty(t);
-}
-function quoteSummary(q, dutyRate = null) {
-  const tiers = q.tiers || [];
-  if (!tiers.length) return { count: 0, minClient: null, maxClient: null, avgMargin: 0, method: null };
-  const prices = tiers.map((t) => Number(t.client) || 0).filter((p) => p > 0);
-  const margins = tiers.map((t) => tierMargin(t, t.client, q.moldFee, dutyRate)).filter((m) => m !== 0);
-  // ship lives on the tier, so a quote only has one method when every tier agrees.
-  // A tier with no ship key counts as ocean -- the same default activeFreight uses,
-  // so the column can never disagree with the freight the tier is actually costed on.
-  const ships = new Set(tiers.map((t) => t.ship || "ocean"));
-  return {
-    count: tiers.length,
-    minClient: prices.length ? Math.min(...prices) : null,
-    maxClient: prices.length ? Math.max(...prices) : null,
-    avgMargin: margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : 0,
-    method: ships.size > 1 ? "Mixed" : (ships.has("air") ? "Air" : "Ocean"),
-  };
 }
 
 // Dropdown-only sentinel for "show every client". activeClient itself stays null in that

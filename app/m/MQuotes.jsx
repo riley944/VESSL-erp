@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { SB } from '@/lib/supabase';
 import { rowToForm } from '@/lib/quoteRow';
-import { fmt, moldFeeText, pricedState, NO_PRICE_TEXT, SOME_UNPRICED_TEXT } from '@/lib/quoteFigures';
+import { fmt, fmtUnit, fmtStamp, moldFeeText, pricedState, quoteSummary, NO_PRICE_TEXT, SOME_UNPRICED_TEXT } from '@/lib/quoteFigures';
 import { htsRateFor } from '@/lib/quoteTiers';
 import { personName } from '@/lib/people';
 import { matches, normalizeTerm } from '@/lib/textFilter';
@@ -16,7 +16,11 @@ import s from './m.module.css';
 // ── QUOTES ON THE IPAD ──────────────────────────────────────────────────────
 // Every quote, newest first, read through the desktop's rowToForm. The client
 // dropdown and a search narrow it;
-// a card opens in place to the details, one column, and the tiers as cards
+// a card shows every field of the desktop list row (SKU, product name,
+// factory and country, tiers, method, client price range, average margin,
+// updated date and person), as label and value pairs that wrap, plus the
+// client, Q-number, status and created date; it opens in place to the
+// details, one column, and the tiers as cards
 // (TierCards, touch). Each card exports the client price sheet for that one
 // quote -- the same sheet Send to Client builds for one quote, DDP only
 // (lib/clientSheetExport.js) -- as PDF, CSV or Excel, and opens Send to Client
@@ -114,11 +118,26 @@ export function MQuotes({ email, me }) {
   );
 }
 
+// One label and value; the value wraps, figures (num) stay on one line.
+function Field({ label, num = false, children }) {
+  return (
+    <div className={s.field2}>
+      <div className={s.fLabel}>{label}</div>
+      <div className={num ? s.fValue + ' ' + s.num : s.fValue}>{children}</div>
+    </div>
+  );
+}
+
 // ── One quote ───────────────────────────────────────────────────────────────
 function QuoteCard({ q, open, onToggle, staff, me, settings, dutyRate, deliver, onSend }) {
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
   const ps = pricedState(q);
+  // The desktop row's figures and wording (app/quotes.jsx, the clientQuotes row).
+  const sum = quoteSummary(q, dutyRate);
+  const priceRange = sum.minClient == null ? '—'
+    : sum.minClient === sum.maxClient ? `$${fmtUnit(sum.minClient)}`
+    : `$${fmtUnit(sum.maxClient)} – $${fmtUnit(sum.minClient)}`;
   const status = !(q.tiers || []).length ? ['No tiers', s.pillNone]
     : ps.none ? [NO_PRICE_TEXT, s.pillNone]
     : ps.some ? [SOME_UNPRICED_TEXT, s.pillWarn]
@@ -177,12 +196,24 @@ function QuoteCard({ q, open, onToggle, staff, me, settings, dutyRate, deliver, 
     <div className={s.card + (open ? ' ' + s.cardOpen : '')}>
       <button type="button" className={s.cardHead} aria-expanded={open} onClick={onToggle}>
         <div className={s.client}>{clientOf(q)}</div>
-        <div className={s.product}>{q.product || 'No product name'}</div>
-        <div className={s.sub}>{[q.sku || 'No SKU', q.quoteCode].filter(Boolean).join(' · ')}</div>
-        <div className={s.row}>
-          <span className={s.pill + ' ' + status[1]}>{status[0]}</span>
-          {q.createdAt && <span className={s.meta}>Created {day(q.createdAt)}</span>}
-          {q.updatedAt && <span className={s.meta}>Updated {day(q.updatedAt)}{who ? ' by ' + who : ''}</span>}
+        <div className={s.product}>{q.product || 'Untitled product'}</div>
+        <div className={s.fields}>
+          <Field label="SKU">{q.sku || 'No SKU'}</Field>
+          <Field label="Quote">{q.quoteCode || '—'}</Field>
+          <Field label="Factory">{q.factory || '—'}{q.country ? <div className={s.meta}>{q.country}</div> : null}</Field>
+          <Field label="Tiers" num>{sum.count}</Field>
+          <Field label="Method">{sum.method || '—'}</Field>
+          <Field label="Client price range">
+            {ps.none
+              ? <span className={s.pill + ' ' + s.pillNone}>{NO_PRICE_TEXT}</span>
+              : <><span className={s.num} style={{ fontWeight: 600 }}>{priceRange}</span>{ps.some && <div style={{ marginTop: 4 }}><span className={s.pill + ' ' + s.pillWarn}>{SOME_UNPRICED_TEXT}</span></div>}</>}
+          </Field>
+          <Field label="Avg margin" num>
+            {ps.none ? '—' : <span style={{ color: sum.avgMargin < 25 ? '#c2683a' : '#3f7d5a', fontWeight: 600 }}>{sum.avgMargin ? sum.avgMargin.toFixed(0) + '%' : '—'}</span>}
+          </Field>
+          <Field label="Status"><span className={s.pill + ' ' + status[1]}>{status[0]}</span></Field>
+          <Field label="Created">{q.createdAt ? fmtStamp(q.createdAt) : '—'}</Field>
+          <Field label="Updated">{fmtStamp(q.updatedAt)}{who ? <div className={s.meta}>by {who}</div> : null}</Field>
         </div>
       </button>
       {open && (

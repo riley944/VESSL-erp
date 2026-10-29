@@ -129,6 +129,12 @@
 .product { font-size: calc(var(--m-fs) + 2px); font-weight: 650; line-height: 1.3; margin-top: 2px; }
 .sub { font-size: var(--m-fs-meta); color: var(--m-muted); margin-top: 4px; }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
+/* A card's fields: label over value, as many columns as fit (one on a narrow
+   phone), every value wrapping onto as many lines as it needs. */
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 18px; margin-top: 10px; }
+.field2 { min-width: 0; }
+.fLabel { font-size: var(--m-fs-meta); color: var(--m-muted); line-height: 1.35; }
+.fValue { font-size: var(--m-fs); line-height: 1.4; }
 .pill { display: inline-block; font-size: var(--m-fs-meta); font-weight: 600; border-radius: 12px; padding: 2px 10px; line-height: 1.4; }
 .pillOk { color: #2f6b4b; background: #e5f3eb; }
 .pillWarn { color: #8a5a14; background: #fbf1df; }
