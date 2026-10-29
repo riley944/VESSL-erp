@@ -763,8 +763,10 @@ const PICK_LABEL = { display: "flex", alignItems: "flex-start", gap: 8, margin: 
 // the form is closed. One quote at a time, each read and saved by a person.
 //
 // This is the starting form for that next item: what carries over from the
-// quote just saved -- client, factory and its contact, country, quote date and
-// the PDF -- and the item's name. Everything else the item says (tiers, mold
+// quote just saved -- the factory and its contact, email and phone, country,
+// quote date and the PDF -- and the item's name. NOT THE CLIENT: one factory
+// quotation can price items for different clients, so each item's client is
+// chosen on its own form (and the duplicate guard at Save keys on that one). Everything else the item says (tiers, mold
 // and sample fees, cartons, lead time, HTS, details, notes and packing) is
 // filled when the form opens, by the same applyExtract the first item went
 // through, so it arrives with the same highlights, "PDF says" hints and
@@ -773,8 +775,6 @@ function pdfItemToForm(it, f) {
   return {
     ...BLANK,
     quoteDate: f.quoteDate || "",
-    client: f.client || "", clientContact: f.clientContact || "", clientEmail: f.clientEmail || "",
-    clientPhone: f.clientPhone || "", clientAddress: f.clientAddress || "",
     factory: f.factory || "", factoryContact: f.factoryContact || "", factoryEmail: f.factoryEmail || "", factoryPhone: f.factoryPhone || "",
     country: f.country || "",
     pdfPath: f.pdfPath || "",
@@ -1378,8 +1378,8 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
     }
     // ── THE NEXT ITEM OF AN IMPORTED PDF ───────────────────────────────────
     // Last, once everything above has settled: a clean save of a chained quote
-    // opens the next item as a new quote, carrying this one's client, factory
-    // and PDF. A save that kept the form open (a task did not land) does not
+    // opens the next item as a new quote, carrying this one's factory and PDF
+    // (never its client -- pdfItemToForm). A save that kept the form open (a task did not land) does not
     // move on -- the form is still this item's.
     if (savedRow && !failedTasks.length && f.pdfChain) {
       const next = chainForm(f.pdfChain, f);
@@ -3461,6 +3461,10 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
     const e = ext[k];
     if (!e || e.dismissed) return null;
     const title = xTitle(e);
+    // The PDF's factory was not in the directory -- but once the box holds one
+    // that is (picked, carried from the last item of a chain, or just added),
+    // the warning and its "PDF says" line have nothing left to say.
+    if (e.red && k === "factory" && factoryCompanies.some((c) => (c.name || "").trim() === String(f.factory || "").trim())) return null;
     if (e.red) return { color: XC.red, title, says: e.says };
     const now = String(current !== undefined ? (current ?? "") : (f[k] ?? "")).trim();
     const same = now === e.value || (now !== "" && e.value !== "" && isFinite(Number(now)) && isFinite(Number(e.value)) && Number(now) === Number(e.value));
@@ -4370,7 +4374,8 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
     if (qText.trim() && !qWho.length) { setQHint("Pick at least one person, or clear the task box, then save."); return; }
     if (qText.trim() && !confirmAll(qWho, assignees)) return;
     // NEVER A SECOND QUOTE FOR THE SAME ITEM. A new quote carrying a PDF is
-    // checked against the quotes already made from that file for this client.
+    // checked against the quotes already made from that file for the client
+    // chosen on THIS form -- a chained item does not inherit one.
     // In a chain the item is skipped, with the reason shown on the next one;
     // outside a chain the Save is refused and says which quote it would copy.
     if (!f.id && f.pdfPath && (f.product || "").trim()) {
