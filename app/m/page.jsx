@@ -7,6 +7,7 @@ import { MQuotes } from './MQuotes';
 import { MSalesOrders } from './MSalesOrders';
 import { MPurchaseOrders } from './MPurchaseOrders';
 import { MShipments } from './MShipments';
+import { MSamples } from './MSamples';
 import s from './m.module.css';
 
 // ── /m, THE IPAD VIEW ───────────────────────────────────────────────────────
@@ -17,14 +18,16 @@ import s from './m.module.css';
 // desktop, a profile lookup that errors reads as unrestricted: the data is
 // still behind RLS, which is what actually keeps it staff-only.
 //
-// Four tabs, all read-only. Each is open to the roles that can open its
+// Five tabs, all read-only. Each is open to the roles that can open its
 // desktop page (PAGE_OF: the desktop page id, checked against a limited
-// role's list); money in the order tabs follows canSeeOrderMoney, as on the
-// desktop. The four fit the bar on one line at iPad portrait (768px) at 15px
-// -- measured in Spline Sans 600: 708px of 768 with the bar's spacing in
-// m.module.css -- so the labels stay whole.
-const TABS = [['quotes', 'Quotes'], ['orders', 'Sales Orders'], ['pos', 'Purchase Orders'], ['shipments', 'Shipments']];
-const PAGE_OF = { quotes: 'quotes', orders: 'sales-orders', pos: 'orders', shipments: 'shipments' };
+// role's list -- Samples is the desktop's programs page, on every role's
+// list); money in the order tabs follows canSeeOrderMoney, as on the desktop.
+// The five fit the bar on one line at iPad portrait (768px) at 15px with the
+// square KUI monogram in place of the wordmark below 1100px -- measured in
+// Spline Sans 600: 702px of 768 with the bar's spacing in m.module.css (the
+// wordmark would make it 799px) -- so the labels stay whole.
+const TABS = [['quotes', 'Quotes'], ['orders', 'Sales Orders'], ['pos', 'Purchase Orders'], ['shipments', 'Shipments'], ['samples', 'Samples']];
+const PAGE_OF = { quotes: 'quotes', orders: 'sales-orders', pos: 'orders', shipments: 'shipments', samples: 'programs' };
 
 export default function MPage() {
   const [session, setSession] = useState(undefined);   // undefined while loading
@@ -83,6 +86,7 @@ export default function MPage() {
       <>
         <header className={s.bar}>
           <img className={s.logo} src="/logo.png" alt="King Universal" />
+          <img className={s.mark} src="/icons/icon-192.png" alt="King Universal" />
           <nav className={s.tabs} aria-label="Sections">
             {TABS.map(([id, label]) => (
               <button key={id} type="button" className={s.tab + (tab === id ? ' ' + s.tabOn : '')}
@@ -97,6 +101,7 @@ export default function MPage() {
           {can(tab) && tab === 'orders' && <MSalesOrders user={session.user} displayName={profile.full_name || ''} showMoney={showMoney} />}
           {can(tab) && tab === 'pos' && <MPurchaseOrders user={session.user} displayName={profile.full_name || ''} showMoney={showMoney} />}
           {can(tab) && tab === 'shipments' && <MShipments user={session.user} displayName={profile.full_name || ''} />}
+          {can(tab) && tab === 'samples' && <MSamples />}
         </main>
       </>
     );

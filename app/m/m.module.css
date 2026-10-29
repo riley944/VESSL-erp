@@ -50,10 +50,17 @@
   align-items: center;
   gap: 8px 12px;
 }
-/* Four tabs on one line at 768px: logo 24px tall (~129px wide), 12px tab
-   padding, 4px between tabs -- 708px with Sign out, 60px to spare. A phone
-   wraps the bar onto two rows instead of shrinking anything. */
+/* Five tabs on one line at 768px: below 1100px the wordmark (24px tall,
+   ~129px wide) gives way to the square KUI monogram (32px), 12px tab
+   padding, 4px between tabs -- 702px with Sign out, 66px to spare. 1100px
+   and wider keeps the wordmark. A phone wraps the bar onto two rows instead
+   of shrinking anything. */
 .logo { height: 24px; width: auto; display: block; }
+.mark { display: none; width: 32px; height: 32px; border-radius: 8px; }
+@media (max-width: 1099px) {
+  .logo { display: none; }
+  .mark { display: block; }
+}
 .tabs { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 auto; }
 .tab {
   min-height: 44px;
