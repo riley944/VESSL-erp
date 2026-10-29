@@ -239,18 +239,28 @@
 .panel { width: 100%; max-width: 420px; background: #ffffff; border: 1px solid var(--m-line); border-radius: 18px; padding: 24px; }
 .panel .field { width: 100%; margin-top: 10px; }
 .panel .btn { width: 100%; margin-top: 14px; }
-.linkBtn {
-  min-height: 44px;
-  background: none;
-  border: none;
-  color: var(--m-blue);
-  font: inherit;
-  font-size: var(--m-fs-meta);
-  font-weight: 600;
-  cursor: pointer;
-  padding: 0;
-  margin-top: 6px;
+/* The sign-in is the desktop's (login-* and btn-login in globals.css); these
+   add only the iPad rules. The wrap fills this view's own scroll container
+   rather than 100vh and keeps clear of the notch and home bar; .root's 1.45
+   line height and anywhere-wrapping are put back to the desktop's. The card
+   takes the width it is given up to 420px instead of a fixed 392px, with less
+   side padding on a phone. Inputs are 16px so Safari does not zoom; the
+   button and the link are 44px tall. Under .root, so they outrank the
+   global classes whatever order the two stylesheets load in. */
+.root .loginWrap {
+  min-height: 100%;
+  padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  line-height: normal;
+  overflow-wrap: normal;
 }
+.root .loginCard { width: 100%; max-width: 420px; }
+@media (max-width: 480px) {
+  .root .loginCard { padding: 36px 24px 28px; }
+}
+.root .loginField { font-size: 16px; min-height: 44px; }
+.root .loginBtn { min-height: 44px; }
+.root .loginBtn:disabled { opacity: .7; cursor: default; transform: none; }
+.root .loginAlt { min-height: 44px; margin-top: 0; }
 .soon { text-align: center; padding: 64px 16px; color: var(--m-muted); }
 
 /* ── The Quotes table ──────────────────────────────────────────────────────
