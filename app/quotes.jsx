@@ -680,8 +680,8 @@ function rowToForm(r) {
     // The factory quote PDF this quote was imported from (script 129), a path in
     // the private quote-pdfs bucket.
     pdfPath: r.pdf_path || "",
-    // Which item of that PDF (script 139): { page, anchor, item_name }, so View
-    // PDF can open at the item's row. Null for a quote not imported from one.
+    // Which item of that PDF (script 139): { page, anchor, item_name, anchors },
+    // so View PDF can open at the item's rows. Null for a quote not imported from one.
     pdfItem: r.pdf_item || null,
     tiers: tiers || [],
     updatedAt: r.updated_at || "", updatedBy: r.updated_by || "",
@@ -3612,15 +3612,23 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
 
     // Which item of the PDF this quote is, for the viewer to find its row again
     // (script 139): the page and words its name was read from -- in practice
-    // the item's table row -- else its first price's. Always replaced: this
-    // quote is now this item, whatever it was before.
+    // the item's table row -- else its first price's. anchors has one entry
+    // per price read (its words and page), so a product quoted at several
+    // quantities or sizes can have every row found; anchor stays for the rows
+    // saved before anchors existed. Always replaced: this quote is now this
+    // item, whatever it was before.
     {
       const nm = F.product || {};
       const t0 = (out.tiers || [])[0] || {};
       const page = Number(nm.page) || Number(t0.page) || 0;
       const anchor = String(nm.evidence || t0.evidence || "").trim();
       const itemName = String(out.name || nm.value || "").trim();
-      patch.pdfItem = page || anchor ? { page: page || 1, anchor, item_name: itemName } : null;
+      const anchors = [];
+      (out.tiers || []).forEach((t) => {
+        const a = { page: Number(t.page) || page || 1, anchor: String(t.evidence || "").trim() };
+        if (a.anchor && !anchors.some((x) => x.page === a.page && x.anchor === a.anchor)) anchors.push(a);
+      });
+      patch.pdfItem = page || anchor || anchors.length ? { page: page || (anchors[0] && anchors[0].page) || 1, anchor, item_name: itemName, anchors } : null;
     }
     // A catalogue name is locked for a reason; the PDF only suggests.
     put("product", { suggestOnly: nameLocked });
