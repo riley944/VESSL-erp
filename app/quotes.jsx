@@ -40,6 +40,7 @@ import { isBagMode, sizeCostFields, sizeCostToRow, rateFromRows, htsRateFor, siz
 import ExportMenu from "@/app/components/ExportMenu";
 import { buildModel } from "@/lib/clientSheet";
 import { sheetHeader, sheetEdits, sheetPayment, sheetBaseName, sheetLogo, sheetFile } from "@/lib/clientSheetExport";
+import { downloadBlob } from "@/lib/download";
 import { CodeModal } from "@/app/components/CodeModal";
 // HtsField used to live in this file. It moved to app/components so the Edit
 // Product modal could use the same control rather than a second copy -- the
@@ -2456,14 +2457,12 @@ async function printQuote(q, dutyRate = null) {
 // lib/clientSheetExport.js, shared with the iPad view (app/m). deliver(blob,
 // filename) hands a built file over -- a download here; the iPad view passes
 // its share sheet. initialClient / initialPicked open it on one client's quotes
-// with some already ticked (the iPad card's Send to Client).
-export const downloadBlob = (blob, filename) => {
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-};
+// with some already ticked (the iPad card's Send to Client). touch is the iPad
+// view's rules: 16px inputs (Safari zooms anything smaller), no text under 13px
+// or cut short, rows one column when narrow, 44px tap targets. downloadBlob is
+// lib/download.js.
 
-export function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClose, deliver = downloadBlob, initialClient = null, initialPicked = null }) {
+export function SendToClientModal({ clients, staff = [], userEmail = "", onSaved, onClose, deliver = downloadBlob, initialClient = null, initialPicked = null, touch = false }) {
   const { ref: cardRef, guardedClose, registerSource } = useDirtyGuard(onClose);
   const [step, setStep] = useState(initialClient ? "quotes" : "client");
   const [chosenClient, setChosenClient] = useState(initialClient);
@@ -2567,8 +2566,11 @@ export function SendToClientModal({ clients, staff = [], userEmail = "", onSaved
     setBusy("");
   };
 
-  const lbl = { ...S.fieldLabel, display: "block", marginBottom: 4 };
-  const inp = { ...S.input, padding: "8px 10px", fontSize: 13 };
+  const lbl = { ...S.fieldLabel, display: "block", marginBottom: 4, ...(touch ? { fontSize: 13 } : {}) };
+  const inp = { ...S.input, padding: "8px 10px", fontSize: touch ? 16 : 13 };
+  // touch: text at least 13px, body text 15px, tap targets 44px tall.
+  const fz = (n) => (touch ? Math.max(n, 13) : n);
+  const tall = touch ? { minHeight: 44 } : {};
   const field = (label, value, onChange, extra) => (
     <label style={{ display: "block", minWidth: 0, ...(extra || {}) }}>
       <span style={lbl}>{label}</span>
@@ -2590,16 +2592,16 @@ export function SendToClientModal({ clients, staff = [], userEmail = "", onSaved
         <div style={{ padding: "20px 26px 24px", maxHeight: "64vh", overflowY: "auto" }}>
           {step === "client" && (
             <>
-              <p style={{ fontSize: 13.5, color: "#6a7488", marginTop: 0 }}>Pick a client, choose the quotes, then set up the sheet. It shows the client's prices per order quantity, delivered or broken down into freight and duty — never your cost or margin.</p>
+              <p style={{ fontSize: touch ? 15 : 13.5, color: "#6a7488", marginTop: 0 }}>Pick a client, choose the quotes, then set up the sheet. It shows the client's prices per order quantity, delivered or broken down into freight and duty — never your cost or margin.</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {realClients.length === 0 && <div style={{ color: "#6a7488" }}>No clients yet.</div>}
                 {realClients.map((c) => {
                   const col = clientColor(c.name);
                   return (
-                    <button key={c.name} style={S.sendClientRow} onClick={() => { setChosenClient(c.name); setStep("quotes"); setHead(null); setEdits({}); }}>
+                    <button key={c.name} style={touch ? { ...S.sendClientRow, fontSize: 15, minHeight: 48 } : S.sendClientRow} onClick={() => { setChosenClient(c.name); setStep("quotes"); setHead(null); setEdits({}); }}>
                       <span style={{ ...S.clientAvatar, width: 34, height: 34, fontSize: 13, background: col.avatar, color: col.text }}>{c.name.slice(0, 2).toUpperCase()}</span>
                       <span style={{ flex: 1, fontWeight: 600, color: "#0f1729" }}>{c.name}</span>
-                      <span style={{ fontSize: 12.5, color: "#6a7488" }}>{c.quotes.length} {c.quotes.length === 1 ? "quote" : "quotes"}</span>
+                      <span style={{ fontSize: fz(12.5), color: "#6a7488" }}>{c.quotes.length} {c.quotes.length === 1 ? "quote" : "quotes"}</span>
                       <ChevronRight size={16} color="#9aa3b5" />
                     </button>
                   );
@@ -2609,23 +2611,23 @@ export function SendToClientModal({ clients, staff = [], userEmail = "", onSaved
           )}
           {step === "quotes" && (
             <>
-              <button style={{ ...S.crumbBtn, marginBottom: 12 }} onClick={() => { setStep("client"); setPicked({}); }}>
+              <button style={{ ...S.crumbBtn, marginBottom: 12, ...tall }} onClick={() => { setStep("client"); setPicked({}); }}>
                 <ChevronLeft size={15} /> Back to clients
               </button>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontSize: 12.5, color: "#6a7488" }}>Select quotes to include</span>
-                <button style={S.taskJump} onClick={toggleAll}>{allOn ? "Clear all" : "Select all"}</button>
+                <span style={{ fontSize: fz(12.5), color: "#6a7488" }}>Select quotes to include</span>
+                <button style={touch ? { ...S.taskJump, fontSize: 13, ...tall } : S.taskJump} onClick={toggleAll}>{allOn ? "Clear all" : "Select all"}</button>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {clientQuotes.map((q) => {
                   const priced = (q.tiers || []).some((t) => effectiveQty(t) > 0 && Number(t.client) > 0);
                   return (
-                    <button key={q.id} style={S.sendQuoteRow} onClick={() => toggle(q.id)}>
+                    <button key={q.id} style={touch ? { ...S.sendQuoteRow, fontSize: 15, minHeight: 48 } : S.sendQuoteRow} onClick={() => toggle(q.id)}>
                       {picked[q.id] ? <CheckCircle2 size={18} color="#3f7d5a" /> : <Circle size={18} color="#bba" />}
                       <span style={{ flex: 1, textAlign: "left" }}>
                         <span style={{ fontWeight: 600, color: "#0f1729" }}>{q.sku || "No SKU"}</span>
-                        {q.product ? <span style={{ color: "#6a7488", fontSize: 12.5 }}> · {q.product}</span> : null}
-                        {!priced && <span style={{ color: "#c2683a", fontSize: 11.5, display: "block" }}>No client prices yet — its prices will read "—"</span>}
+                        {q.product ? <span style={{ color: "#6a7488", fontSize: fz(12.5) }}> · {q.product}</span> : null}
+                        {!priced && <span style={{ color: "#c2683a", fontSize: fz(11.5), display: "block" }}>No client prices yet — its prices will read "—"</span>}
                       </span>
                     </button>
                   );
@@ -2635,7 +2637,7 @@ export function SendToClientModal({ clients, staff = [], userEmail = "", onSaved
           )}
           {step === "settings" && head && (
             <>
-              <button style={{ ...S.crumbBtn, marginBottom: 14 }} onClick={() => setStep("quotes")}>
+              <button style={{ ...S.crumbBtn, marginBottom: 14, ...tall }} onClick={() => setStep("quotes")}>
                 <ChevronLeft size={15} /> Back to quotes
               </button>
               <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
@@ -2659,13 +2661,13 @@ export function SendToClientModal({ clients, staff = [], userEmail = "", onSaved
                 {field("Company", head.signoff.company, (v) => setSign("company", v))}
               </div>
               <div style={{ ...S.fieldLabel, marginBottom: 6 }}>Products</div>
-              <p style={{ fontSize: 12, color: "#6a7488", margin: "0 0 8px" }}>Item is for this sheet only. Details and Color save back to the quote when you export.</p>
+              <p style={{ fontSize: fz(12), color: "#6a7488", margin: "0 0 8px" }}>Item is for this sheet only. Details and Color save back to the quote when you export.</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {pickedQuotes.map((q) => {
                   const e = edits[q.id] || {};
                   return (
-                    <div key={q.id} style={{ display: "grid", gridTemplateColumns: "minmax(90px, .7fr) minmax(0, 1.5fr) minmax(0, 1.6fr) minmax(0, 1.1fr)", gap: 8, alignItems: "center" }}>
-                      <span style={{ fontSize: 12.5, fontWeight: 700, color: "#0f1729", overflow: "hidden", textOverflow: "ellipsis" }} title={q.sku}>{q.sku || "No SKU"}</span>
+                    <div key={q.id} style={{ display: "grid", gridTemplateColumns: touch ? "repeat(auto-fit, minmax(170px, 1fr))" : "minmax(90px, .7fr) minmax(0, 1.5fr) minmax(0, 1.6fr) minmax(0, 1.1fr)", gap: 8, alignItems: "center" }}>
+                      <span style={touch ? { fontSize: 13, fontWeight: 700, color: "#0f1729", overflowWrap: "anywhere" } : { fontSize: 12.5, fontWeight: 700, color: "#0f1729", overflow: "hidden", textOverflow: "ellipsis" }} title={q.sku}>{q.sku || "No SKU"}</span>
                       <input data-noguard style={inp} aria-label={"Item, " + (q.sku || "")} value={e.item ?? ""} onChange={(ev) => setEdit(q.id, "item", ev.target.value)} placeholder="Item" />
                       <input data-noguard style={inp} aria-label={"Details, " + (q.sku || "")} value={e.details ?? ""} onChange={(ev) => setEdit(q.id, "details", ev.target.value)} placeholder="Details" />
                       <input data-noguard style={inp} aria-label={"Color, " + (q.sku || "")} value={e.color ?? ""} onChange={(ev) => setEdit(q.id, "color", ev.target.value)} placeholder="Color" />
@@ -2673,21 +2675,21 @@ export function SendToClientModal({ clients, staff = [], userEmail = "", onSaved
                   );
                 })}
               </div>
-              {msg && <div style={{ marginTop: 14, fontSize: 12.5, color: "#c2683a" }}>{msg}</div>}
+              {msg && <div style={{ marginTop: 14, fontSize: fz(12.5), color: "#c2683a" }}>{msg}</div>}
             </>
           )}
         </div>
         {step === "quotes" && (
           <div style={S.modalFoot}>
-            <button style={S.ghostBtn} onClick={onClose}>Cancel</button>
-            <button style={{ ...S.primaryBtn, opacity: pickedQuotes.length ? 1 : 0.5 }} disabled={!pickedQuotes.length} onClick={toSettings}>
+            <button style={{ ...S.ghostBtn, ...tall }} onClick={onClose}>Cancel</button>
+            <button style={{ ...S.primaryBtn, opacity: pickedQuotes.length ? 1 : 0.5, ...tall }} disabled={!pickedQuotes.length} onClick={toSettings}>
               Set up sheet ({pickedQuotes.length}) <ChevronRight size={16} />
             </button>
           </div>
         )}
         {step === "settings" && (
           <div style={S.modalFoot}>
-            <button style={S.ghostBtn} onClick={guardedClose}>Cancel</button>
+            <button style={{ ...S.ghostBtn, ...tall }} onClick={guardedClose}>Cancel</button>
             <ExportMenu label="Export sheet" busyLabel="Building…" className="export-pill" busy={!!busy} disabled={!!busy || !head}
               title="Export the client price sheet" ariaLabel="Export the client price sheet" onPick={exportAs} />
           </div>
