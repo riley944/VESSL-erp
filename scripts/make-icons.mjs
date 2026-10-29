@@ -5,7 +5,9 @@
 //   node scripts/make-icons.mjs
 //
 // Writes public/icons/apple-touch-icon.png (180), icon-192.png and
-// icon-512.png. The letters sit inside the middle 60%, so the 192 and 512 can
+// icon-512.png, and public/favicon.ico (16 and 32, PNG frames) -- the file
+// every browser asks for at /favicon.ico; without it that request 404s on
+// every page. The letters sit inside the middle 60%, so the 192 and 512 can
 // also serve as maskable icons (Android crops to a circle or squircle).
 // @napi-rs/canvas is already in node_modules (it came with pdfjs-dist).
 import { createCanvas } from '@napi-rs/canvas';
@@ -42,3 +44,19 @@ for (const [name, size] of [['apple-touch-icon.png', 180], ['icon-192.png', 192]
   writeFileSync(join(OUT, name), icon(size));
   console.log('wrote public/icons/' + name, size + 'x' + size);
 }
+
+// An .ico is a directory of images; PNG frames are valid in it. Header, one
+// 16-byte entry per frame, then the frames.
+const frames = [16, 32].map((n) => ({ n, png: icon(n) }));
+const head = Buffer.alloc(6 + 16 * frames.length);
+head.writeUInt16LE(0, 0); head.writeUInt16LE(1, 2); head.writeUInt16LE(frames.length, 4);
+let offset = head.length;
+frames.forEach(({ n, png }, i) => {
+  const e = 6 + 16 * i;
+  head.writeUInt8(n, e); head.writeUInt8(n, e + 1); head.writeUInt8(0, e + 2); head.writeUInt8(0, e + 3);
+  head.writeUInt16LE(1, e + 4); head.writeUInt16LE(32, e + 6);
+  head.writeUInt32LE(png.length, e + 8); head.writeUInt32LE(offset, e + 12);
+  offset += png.length;
+});
+writeFileSync(join(ROOT, 'public/favicon.ico'), Buffer.concat([head, ...frames.map((f) => f.png)]));
+console.log('wrote public/favicon.ico 16x16 + 32x32');
