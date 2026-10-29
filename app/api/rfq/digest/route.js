@@ -1,9 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
+import { OPS_TEAM } from '@/lib/opsTeam';
 
 // ── GET /api/rfq/digest ──────────────────────────────────────────────────────
 // The weekly RFQ reminder. Lists sent freight RFQs with no bid recorded against
-// them, oldest first, and mails the list to Kristy.
+// them, oldest first, and mails the list to the ops team (Kristy and Monica).
 //
 // SCHEDULED, SO THERE IS NO CALLER TO RUN AS. /api/rfq/send authenticates the
 // person who pressed the button and runs every read under their token, which is
@@ -25,11 +26,11 @@ export const dynamic = 'force-dynamic';
 
 // Same verified sender as the RFQ itself.
 const FROM = 'King Universal Freight <rfq@vessl.io>';
-// Kristy runs the RFQ round and chases the forwarders, so the digest is hers to
-// act on.
-const DIGEST_TO = 'kristy@kinguniversal.com';
+// The ops team (lib/opsTeam.js) runs the RFQ round and chases the forwarders,
+// so the digest is theirs to act on.
+const DIGEST_TO = OPS_TEAM;
 // Copied, not blind-copied. Everyone on this mail is internal and it helps for
-// Kristy to see that the list is also being watched.
+// the ops team to see that the list is also being watched.
 const DIGEST_CC = 'mattdillon@kinguniversal.com';
 // Where ?onlyMe=1 sends instead. Deliberately not DIGEST_CC even though both are
 // the same address today -- one is who else sees the real digest, the other is
@@ -149,7 +150,7 @@ export async function GET(req) {
       from: FROM,
       // onlyMe is the rehearsal path -- one recipient, no cc, so a test cannot
       // reach Kristy however the query string is mangled.
-      to: onlyMe ? [REHEARSAL_TO] : [DIGEST_TO],
+      to: onlyMe ? [REHEARSAL_TO] : DIGEST_TO,
       ...(onlyMe ? {} : { cc: [DIGEST_CC] }),
       subject: onlyMe ? '[TEST] ' + subject : subject,
       html,

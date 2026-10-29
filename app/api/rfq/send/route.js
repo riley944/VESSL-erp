@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
 import ExcelJS from 'exceljs';
 import { buildRfqWorkbook, rfqFileName, rfqSubject, rfqBody } from '@/lib/rfqSheet';
+import { OPS_TEAM } from '@/lib/opsTeam';
 
 // ── POST /api/rfq/send ───────────────────────────────────────────────────────
 // Emails the freight RFQ workbook to one or more contacts at ONE forwarder, or
@@ -23,20 +24,20 @@ const FROM = 'King Universal Freight <rfq@vessl.io>';
 // vessl.io is verified for SENDING only -- receiving is off -- so a forwarder
 // hitting Reply must be pointed somewhere that actually accepts mail.
 //
-// Kristy, per Riley: she runs the RFQ round and imports the replies, so the
-// filled sheets should land in her mailbox rather than being forwarded on. This
-// is the address a FORWARDER sees, not an internal one -- changing it changes
-// who receives every bid.
-const DEFAULT_REPLY_TO = 'kristy@kinguniversal.com';
-// Kristy keeps a copy of every RFQ she sends. BCC rather than a second `to`:
+// The ops team (lib/opsTeam.js -- Kristy and Monica): they run the RFQ round
+// and import the replies, so the filled sheets land in both mailboxes rather
+// than being forwarded on. These are the addresses a FORWARDER sees, not
+// internal ones -- changing them changes who receives every bid.
+const DEFAULT_REPLY_TO = OPS_TEAM;
+// The ops team keeps a copy of every RFQ sent. BCC rather than a second `to`:
 // the forwarder must not see an internal address on the recipient line, and one
 // that replies to it instead of to Reply-To sends the bid to the wrong place.
 //
-// A SEPARATE CONSTANT FROM DEFAULT_REPLY_TO even though both are her address
+// A SEPARATE CONSTANT FROM DEFAULT_REPLY_TO even though both are the ops team
 // today. "Who receives the bids" and "who keeps a file copy" are different
 // decisions and will not necessarily move together -- collapsing them into one
 // name is how the next person changes one and silently changes the other.
-const ARCHIVE_BCC = 'kristy@kinguniversal.com';
+const ARCHIVE_BCC = OPS_TEAM;
 
 // The same test page.jsx applies at the UI, mirroring portal.is_kui_staff() in
 // Postgres: auth.jwt()->>'email' ilike '%@kinguniversal.com'. Three copies of one
@@ -178,7 +179,7 @@ export async function POST(req) {
     const { data, error } = await resend.emails.send({
       from: FROM,
       to,
-      bcc: [ARCHIVE_BCC],
+      bcc: ARCHIVE_BCC,
       replyTo: replyTo,
       subject: rfqSubject(quote),
       // The RESOLVED replyTo, not DEFAULT_REPLY_TO: the body names the address a
