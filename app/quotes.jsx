@@ -67,7 +67,7 @@ import { ProductCpscRules, useProductCpscRules, matchSkuToProduct } from "@/app/
 // A backdrop click used to discard everything typed into these modals. The guard
 // closes silently when nothing has been touched and confirms when something has;
 // the ref goes on the CARD, because that is what holds the controls it watches.
-import { useDirtyGuard } from "@/app/components/ModalGuard";
+import { useDirtyGuard, UNSAVED_MESSAGE } from "@/app/components/ModalGuard";
 import { matches, normalizeTerm } from "@/lib/textFilter";
 import { notifyTaskAssigned as notifyTask } from "@/lib/taskNotify";
 import { PeoplePills } from "@/app/components/PeoplePills";
@@ -3370,7 +3370,16 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
   // Two of those click-driven edits turned out NOT to reach a control's value
   // after all, so they call markDirty: the Air/Ocean toggles and picking an HTS
   // code. See setTier and pickHts for why each one is invisible.
-  const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
+  // EVERY CLOSE ASKS -- Cancel, the x, the backdrop, Back. With changes, the
+  // usual unsaved-changes question; without, a plain "are you sure". In a PDF
+  // chain it also says the items still to come are dropped. chainLeftRef is
+  // kept current from pdfChain, below.
+  const chainLeftRef = useRef(0);
+  const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose, (changed) => {
+    const n = chainLeftRef.current;
+    return (changed ? UNSAVED_MESSAGE : "Are you sure you want to cancel?")
+      + (n > 0 ? "\n\nThis also stops the remaining " + n + " item" + (n === 1 ? "" : "s") + " from this PDF." : "");
+  });
   // ── INACTIVE MEANS NOT FOR NEW WORK ────────────────────────────────────────
   // null while unknown or irrelevant; otherwise { known, inactiveOnly }.
   const [skuState, setSkuState] = useState(null);
@@ -3444,6 +3453,7 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
     const c = initial && initial.__pdfChain;
     return c ? { fileName: c.fileName, factory: c.factory, queue: c.queue, position: c.position, total: c.total } : null;
   });
+  chainLeftRef.current = pdfChain && Array.isArray(pdfChain.queue) ? pdfChain.queue.length : 0;
   const pdfInputRef = useRef(null);
   // What the PDF said about the matched factory's contact, country and lead
   // time: { companyId, values }. applyFactory fills a box the directory left
@@ -5391,7 +5401,7 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
           </div>
         </div>
         <div style={S.modalFoot}>
-          <button style={S.ghostBtn} onClick={onClose}>Cancel</button>
+          <button style={S.ghostBtn} onClick={guardedClose}>Cancel</button>
           {/* Disabled rather than hidden, and it keeps its label. A button that
               vanishes leaves somebody hunting for it; one that is visibly refused,
               with the reason sitting under the SKU field, explains itself. */}

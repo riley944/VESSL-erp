@@ -44,7 +44,8 @@ import { createContext, useCallback, useContext, useEffect, useRef } from 'react
 // Opt a control out with data-noguard -- for a search box inside a form modal,
 // where typing is navigation rather than input.
 
-const MESSAGE = 'You have unsaved changes in this form.\n\nDiscard them and close?';
+export const UNSAVED_MESSAGE = 'You have unsaved changes in this form.\n\nDiscard them and close?';
+const MESSAGE = UNSAVED_MESSAGE;
 
 // Lets a child call markDirty without every modal threading a prop down. Default
 // is a no-op so a component using it outside a guarded modal still renders.
@@ -132,7 +133,13 @@ export function closeTopModal() {
 // ref goes on the modal CARD, not the backdrop: it has to contain the controls
 // being watched, and a pointerdown on the backdrop must NOT count as touching
 // the form -- that click is the one asking to leave.
-export function useDirtyGuard(onClose) {
+//
+// ask, optional: (changed) => the confirm text, or null to close without one.
+// For a modal that confirms even when nothing changed -- the quote form. Left
+// out, a clean close is silent and a dirty one asks MESSAGE, as always.
+export function useDirtyGuard(onClose, ask = null) {
+  const askRef = useRef(ask);
+  askRef.current = ask;
   const ref = useRef(null);
   const dirty = useRef(false);
   const touched = useRef(false);
@@ -204,8 +211,9 @@ export function useDirtyGuard(onClose) {
     // A modal holding no controls at all -- a viewer, a picker, a confirm --
     // snapshots to "0" on both sides, so it can never be dirty and closes
     // silently. No special-casing at any call site.
-    if (!changed) { onClose(); return; }
-    if (window.confirm(MESSAGE)) onClose();
+    const text = askRef.current ? askRef.current(changed) : (changed ? MESSAGE : null);
+    if (!text) { onClose(); return; }
+    if (window.confirm(text)) onClose();
   }, [onClose]);
   closeRef.current = guardedClose;
 
