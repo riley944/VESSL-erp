@@ -6,9 +6,9 @@ import { PdfItemViewer } from '@/app/components/PdfItemViewer';
 // ── THE "PDF" BADGE ON A QUOTE ──────────────────────────────────────────────
 // A quote imported from a factory PDF (quotes.pdf_path, script 129) carries a
 // small badge: click opens the stored PDF in the viewer, the same way the quote
-// form's View PDF does. Quotes from the same import share the path;
-// hovering reports the path through onHover so the list can outline every
-// sibling, and the tooltip counts them.
+// form's View PDF does. Quotes from the same import share the path, and the
+// tooltip counts them. Hovering calls onHover (truthy on enter, null on
+// leave) so the list can outline the badge's own row.
 //
 // The click stops there -- the badge sits inside rows that open or expand a
 // quote on click.

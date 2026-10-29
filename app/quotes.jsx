@@ -961,8 +961,10 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
-  // The PDF a pointer is resting on (a badge), so every quote from it is outlined.
-  const [hoverPdf, setHoverPdf] = useState(null);
+  // The quote whose PDF badge a pointer is resting on -- that row alone is
+  // outlined. Quotes sharing its PDF are counted in the badge's tooltip only.
+  const [hoverRow, setHoverRow] = useState(null);
+  const badgeHover = (q) => (on) => setHoverRow(on ? q.id : null);
   const [skuChoice, setSkuChoice] = useState(null);
   // The search term and which client is open survive going to another page and back.
   // expanded stays plain below -- an open row is the same class of thing as openId
@@ -1417,7 +1419,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
     quotes.forEach((q) => { if (q.pdfPath) m.set(q.pdfPath, (m.get(q.pdfPath) || 0) + 1); });
     return m;
   }, [quotes]);
-  const siblingRing = (q) => (hoverPdf && q.pdfPath === hoverPdf ? { outline: "2px solid " + SIBLING_OUTLINE, outlineOffset: -2, borderRadius: 10 } : {});
+  const badgeRing = (q) => (hoverRow === q.id ? { outline: "2px solid " + SIBLING_OUTLINE, outlineOffset: -2, borderRadius: 10 } : {});
 
   const clients = useMemo(() => {
     const map = new Map();
@@ -1733,12 +1735,12 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
               <div key={q.id} style={S.rowGroup}>
                 {!isMobile ? (
                 <div id={`quote-row-${q.id}`}
-                  style={{ ...S.row, display: "grid", gridTemplateColumns: qGrid, columnGap: Q_GAP, ...(open ? S.rowOpen : {}), ...siblingRing(q) }}
+                  style={{ ...S.row, display: "grid", gridTemplateColumns: qGrid, columnGap: Q_GAP, ...(open ? S.rowOpen : {}), ...badgeRing(q) }}
                   onClick={() => setExpanded(open ? null : q.id)}>
                   <div style={{ display: "flex", alignItems: "center" }}>
                     {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
                   </div>
-                  <div style={{ ...S.cellPrimary, minWidth: 0, lineHeight: 1.3, overflowWrap: "anywhere" }}>{q.sku || "No SKU"}{q.pdfPath && <PdfBadge path={q.pdfPath} item={q.pdfItem} productName={q.product} count={pdfCounts.get(q.pdfPath) || 1} onHover={setHoverPdf} />}</div>
+                  <div style={{ ...S.cellPrimary, minWidth: 0, lineHeight: 1.3, overflowWrap: "anywhere" }}>{q.sku || "No SKU"}{q.pdfPath && <PdfBadge path={q.pdfPath} item={q.pdfItem} productName={q.product} count={pdfCounts.get(q.pdfPath) || 1} onHover={badgeHover(q)} />}</div>
                   <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.product || ""}>{q.product || "Untitled product"}</div>
                   {view === "search" && <div style={{ fontSize: 13.5, color: "#2c3446", ...ELL }} title={q.client || ""}>{q.client || "—"}</div>}
                   <div style={{ minWidth: 0, textAlign: "center" }}>
@@ -1778,7 +1780,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
                   </div>
                 </div>
                 ) : (
-                <div id={`quote-row-${q.id}`} style={{ ...S.row, ...(open ? S.rowOpen : {}) }} onClick={() => setExpanded(open ? null : q.id)}>
+                <div id={`quote-row-${q.id}`} style={{ ...S.row, ...(open ? S.rowOpen : {}), ...badgeRing(q) }} onClick={() => setExpanded(open ? null : q.id)}>
                   <div style={{ width: isMobile ? 20 : 26, flexShrink: 0, display: "flex", alignItems: "center" }}>
                     {open ? <ChevronDown size={16} color="#6a7488" /> : <ChevronRight size={16} color="#6a7488" />}
                   </div>
@@ -1788,7 +1790,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
                     <div style={{ ...S.cellPrimary, overflowWrap: "anywhere" }}>
                       {q.quoteCode && <span style={S.quoteCode}>{q.quoteCode}</span>}
                       {q.sku || "No SKU"}
-                      {q.pdfPath && <PdfBadge path={q.pdfPath} item={q.pdfItem} productName={q.product} count={pdfCounts.get(q.pdfPath) || 1} onHover={setHoverPdf} />}
+                      {q.pdfPath && <PdfBadge path={q.pdfPath} item={q.pdfItem} productName={q.product} count={pdfCounts.get(q.pdfPath) || 1} onHover={badgeHover(q)} />}
                     </div>
                     <div style={S.cellSub}>{q.product || "Untitled product"}{view === "search" && q.client ? ` · ${q.client}` : ""}</div>
                     {/* The desktop row has an Updated column; the phone row had
@@ -1844,7 +1846,7 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
                 </div>
                 )}
                 {open && <ExpandedDetail q={q} dutyRate={rateOf(q)} tasks={tasks.filter((t) => t.quote_id === q.id)} onAddTask={addTask} onToggleTask={toggleTask} userEmail={userEmail} staff={staff} assignees={assignees} isMobile={isMobile} onEdit={() => setEditing(q)} onDuplicate={() => duplicateQuote(q)} onDelete={() => { if (confirm("Delete this quote?")) removeQuote(q.id); }}
-                  pdfCount={q.pdfPath ? pdfCounts.get(q.pdfPath) || 1 : 1} onPdfHover={setHoverPdf} />}
+                  pdfCount={q.pdfPath ? pdfCounts.get(q.pdfPath) || 1 : 1} onPdfHover={badgeHover(q)} />}
               </div>
             );
           })}
