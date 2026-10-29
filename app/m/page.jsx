@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { SB } from '@/lib/supabase';
 import { isStaffEmail, allowedPagesFor, canSeeOrderMoney } from '@/lib/access';
 import { MLogin } from './MLogin';
@@ -25,7 +25,11 @@ import s from './m.module.css';
 // The five fit the bar on one line at iPad portrait (768px) at 15px with the
 // square KUI monogram in place of the wordmark below 1100px -- measured in
 // Spline Sans 600: 702px of 768 with the bar's spacing in m.module.css (the
-// wordmark would make it 799px) -- so the labels stay whole.
+// wordmark would make it 799px), and that was with a Sign out button the
+// account menu has since replaced -- so the labels stay whole.
+//
+// The logo is the account button: it opens a small menu under it with who is
+// signed in and Sign out (AccountMenu).
 const TABS = [['quotes', 'Quotes'], ['orders', 'Sales Orders'], ['pos', 'Purchase Orders'], ['shipments', 'Shipments'], ['samples', 'Samples']];
 const PAGE_OF = { quotes: 'quotes', orders: 'sales-orders', pos: 'orders', shipments: 'shipments', samples: 'programs' };
 
@@ -85,15 +89,13 @@ export default function MPage() {
     content = (
       <>
         <header className={s.bar}>
-          <img className={s.logo} src="/logo.png" alt="King Universal" />
-          <img className={s.mark} src="/icons/icon-192.png" alt="King Universal" />
+          <AccountMenu name={profile.full_name || ''} email={email} signOut={signOut} />
           <nav className={s.tabs} aria-label="Sections">
             {TABS.map(([id, label]) => (
               <button key={id} type="button" className={s.tab + (tab === id ? ' ' + s.tabOn : '')}
                 aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}</button>
             ))}
           </nav>
-          <button type="button" className={s.signOut} onClick={signOut}>Sign out</button>
         </header>
         <main className={s.main}>
           {!can(tab) && <div className={s.soon}>{label} is not part of your account&apos;s pages. Ask Matt if you need it.</div>}
@@ -107,6 +109,49 @@ export default function MPage() {
     );
   }
   return <div className={s.root}>{content}</div>;
+}
+
+// The logo as a button (the monogram below 1100px, the wordmark above, 44px
+// either way). The menu hangs under it: the signed-in name and email, muted,
+// then Sign out. A tap outside it or Escape closes it; Escape hands focus back
+// to the button.
+function AccountMenu({ name, email, signOut }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef(null);
+  const btn = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (wrap.current && !wrap.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      if (btn.current) btn.current.focus();
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  return (
+    <div className={s.account} ref={wrap}>
+      <button type="button" ref={btn} className={s.logoBtn} aria-haspopup="menu" aria-expanded={open}
+        aria-label="Account" onClick={() => setOpen((o) => !o)}>
+        <img className={s.logo} src="/logo.png" alt="King Universal" />
+        <img className={s.mark} src="/icons/icon-192.png" alt="King Universal" />
+      </button>
+      {open && (
+        <div className={s.menu} role="menu">
+          <div className={s.menuWho}>
+            {name && <div>{name}</div>}
+            <div>{email}</div>
+          </div>
+          <button type="button" role="menuitem" className={s.menuItem} onClick={signOut}>Sign out</button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function Message({ title, children, signOut }) {

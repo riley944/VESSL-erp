@@ -52,9 +52,10 @@
 }
 /* Five tabs on one line at 768px: below 1100px the wordmark (24px tall,
    ~129px wide) gives way to the square KUI monogram (32px), 12px tab
-   padding, 4px between tabs -- 702px with Sign out, 66px to spare. 1100px
-   and wider keeps the wordmark. A phone wraps the bar onto two rows instead
-   of shrinking anything. */
+   padding, 4px between tabs -- 702px when the bar still had a Sign out
+   button; the account menu replaced it, so there is more to spare now.
+   1100px and wider keeps the wordmark. A phone wraps the bar onto two rows
+   instead of shrinking anything. */
 .logo { height: 24px; width: auto; display: block; }
 .mark { display: none; width: 32px; height: 32px; border-radius: 8px; }
 @media (max-width: 1099px) {
@@ -62,6 +63,59 @@
   .mark { display: block; }
 }
 .tabs { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 auto; }
+
+/* The logo is the account button; its menu hangs under it. */
+.account { position: relative; }
+.logoBtn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 4px;
+  margin-left: -4px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.logoBtn[aria-expanded="true"] { background: var(--m-soft); }
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  min-width: 220px;
+  max-width: calc(100vw - 32px);
+  background: #ffffff;
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(15, 23, 41, 0.12);
+  padding: 6px;
+}
+.menuWho {
+  padding: 8px 10px 10px;
+  color: var(--m-muted);
+  font-size: var(--m-fs-meta);
+  border-bottom: 1px solid var(--m-line);
+  margin-bottom: 4px;
+}
+.menuItem {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--m-ink);
+  font: inherit;
+  font-size: var(--m-fs);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.menuItem:hover, .menuItem:focus-visible { background: var(--m-soft); }
 .tab {
   min-height: 44px;
   padding: 8px 12px;
@@ -75,19 +129,6 @@
   cursor: pointer;
 }
 .tabOn { background: var(--m-ink); color: #ffffff; }
-.signOut {
-  min-height: 44px;
-  padding: 8px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--m-line);
-  background: #ffffff;
-  color: var(--m-ink);
-  font: inherit;
-  font-size: var(--m-fs-meta);
-  font-weight: 600;
-  cursor: pointer;
-  margin-left: auto;
-}
 
 /* ── Page body ── */
 .main {
