@@ -135,6 +135,13 @@
 .field2 { min-width: 0; }
 .fLabel { font-size: var(--m-fs-meta); color: var(--m-muted); line-height: 1.35; }
 .fValue { font-size: var(--m-fs); line-height: 1.4; }
+
+/* An expanded card's lines (order items, linked orders): the name, then its
+   particulars, both wrapping; figures inside stay whole (.num). */
+.lines { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 8px; }
+.lineItem { border: 1px solid var(--m-line); border-radius: 12px; padding: 10px 12px; background: #ffffff; min-width: 0; }
+.lineName { font-size: var(--m-fs); font-weight: 600; line-height: 1.35; }
+.lineMeta { font-size: var(--m-fs-meta); color: var(--m-muted); line-height: 1.45; margin-top: 2px; }
 .pill { display: inline-block; font-size: var(--m-fs-meta); font-weight: 600; border-radius: 12px; padding: 2px 10px; line-height: 1.4; }
 .pillOk { color: #2f6b4b; background: #e5f3eb; }
 .pillWarn { color: #8a5a14; background: #fbf1df; }
