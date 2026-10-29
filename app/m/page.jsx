@@ -1,9 +1,12 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { SB } from '@/lib/supabase';
-import { isStaffEmail, allowedPagesFor } from '@/lib/access';
+import { isStaffEmail, allowedPagesFor, canSeeOrderMoney } from '@/lib/access';
 import { MLogin } from './MLogin';
 import { MQuotes } from './MQuotes';
+import { MSalesOrders } from './MSalesOrders';
+import { MPurchaseOrders } from './MPurchaseOrders';
+import { MShipments } from './MShipments';
 import s from './m.module.css';
 
 // ── /m, THE IPAD VIEW ───────────────────────────────────────────────────────
@@ -14,11 +17,14 @@ import s from './m.module.css';
 // desktop, a profile lookup that errors reads as unrestricted: the data is
 // still behind RLS, which is what actually keeps it staff-only.
 //
-// Only Quotes is wired today; Sales Orders, Purchase Orders and Shipments say
-// so. The four fit the bar on one line at iPad portrait (768px) at 15px --
-// measured in Spline Sans 600: 708px of 768 with the bar's spacing in
+// Four tabs, all read-only. Each is open to the roles that can open its
+// desktop page (PAGE_OF: the desktop page id, checked against a limited
+// role's list); money in the order tabs follows canSeeOrderMoney, as on the
+// desktop. The four fit the bar on one line at iPad portrait (768px) at 15px
+// -- measured in Spline Sans 600: 708px of 768 with the bar's spacing in
 // m.module.css -- so the labels stay whole.
 const TABS = [['quotes', 'Quotes'], ['orders', 'Sales Orders'], ['pos', 'Purchase Orders'], ['shipments', 'Shipments']];
+const PAGE_OF = { quotes: 'quotes', orders: 'sales-orders', pos: 'orders', shipments: 'shipments' };
 
 export default function MPage() {
   const [session, setSession] = useState(undefined);   // undefined while loading
@@ -70,7 +76,9 @@ export default function MPage() {
     );
   } else {
     const allowed = allowedPagesFor(profile.role);
-    const canQuotes = !allowed || allowed.includes('quotes');
+    const can = (id) => !allowed || allowed.includes(PAGE_OF[id]);
+    const showMoney = canSeeOrderMoney(profile.role);
+    const label = (TABS.find(([id]) => id === tab) || [])[1];
     content = (
       <>
         <header className={s.bar}>
@@ -84,10 +92,11 @@ export default function MPage() {
           <button type="button" className={s.signOut} onClick={signOut}>Sign out</button>
         </header>
         <main className={s.main}>
-          {tab === 'quotes' && (canQuotes
-            ? <MQuotes email={email} me={profile} />
-            : <div className={s.soon}>Quotes is not part of your account&apos;s pages. Ask Matt if you need it.</div>)}
-          {tab !== 'quotes' && <div className={s.soon}>{(TABS.find(([id]) => id === tab) || [])[1]}: coming soon.</div>}
+          {!can(tab) && <div className={s.soon}>{label} is not part of your account&apos;s pages. Ask Matt if you need it.</div>}
+          {can(tab) && tab === 'quotes' && <MQuotes email={email} me={profile} />}
+          {can(tab) && tab === 'orders' && <MSalesOrders user={session.user} displayName={profile.full_name || ''} showMoney={showMoney} />}
+          {can(tab) && tab === 'pos' && <MPurchaseOrders user={session.user} displayName={profile.full_name || ''} showMoney={showMoney} />}
+          {can(tab) && tab === 'shipments' && <MShipments user={session.user} displayName={profile.full_name || ''} />}
         </main>
       </>
     );
