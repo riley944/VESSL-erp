@@ -141,7 +141,7 @@ import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompan
 import { usePageState, clearPageState } from '@/lib/pageState';
 import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
-import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingEtd, trackingWord } from '@/lib/shipmentStatus';
+import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord } from '@/lib/shipmentStatus';
 import { trackShipment } from '@/lib/trackShipment';
 import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
@@ -7554,13 +7554,13 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             const po = ((s.shipment_pos||[])[0]||{}).purchase_orders;
             const ref = (po||{}).client_po_number || (po||{}).order_number || s.shipment_number || '\u2014';
             const clientName = (((po||{}).client||{}).name || (s.companies||{}).name || '\u2014').toUpperCase();
-            // The tracked ETA when there is one -- the carrier's, refreshed daily --
-            // else the one staff typed. Days-to-ETA follows whichever is shown.
-            const eta = s.tracking_eta || s.estimated_arrival;
-            // The same for the departure, and for vessel and voyage: what staff
-            // typed when they typed it, else what tracking reports.
-            const etdTracked = !s.estimated_departure && s.tracking_ref ? trackingEtd(s.shipment_tracking_events) : null;
-            const etd = s.estimated_departure || etdTracked;
+            // ETD and ETA are the columns, as the tiles, the filters and the export
+            // read them. On a tracked row tracking writes them (script 141).
+            const eta = s.estimated_arrival;
+            const etd = s.estimated_departure;
+            const datesTracked = !!s.tracking_ref;
+            // Vessel and voyage: what staff typed when they typed it, else what
+            // tracking reports.
             const vesselTracked = !s.vessel_name && !!s.tracking_vessel;
             const vessel = s.vessel_name || s.tracking_vessel;
             const voyage = s.vessel_name ? s.voyage_no : (s.voyage_no || s.tracking_voyage);
@@ -7604,8 +7604,8 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                 )}
               </div>
               <div style={{textAlign:'right'}}>
-                <div style={{fontSize:'12px',color:'#86868B',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC'}}>ETD</span> <span title={etdTracked ? 'From tracking' : undefined}>{fmtDateShort(etd)}</span></div>
-                <div style={{fontSize:'13px',fontWeight:600,color:'#1D1D1F',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC',fontWeight:400}}>ETA</span> <span title={s.tracking_eta ? 'From tracking' : undefined}>{fmtDateShort(eta)}</span></div>
+                <div style={{fontSize:'12px',color:'#86868B',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC'}}>ETD</span> <span title={datesTracked ? 'From tracking' : undefined}>{fmtDateShort(etd)}</span></div>
+                <div style={{fontSize:'13px',fontWeight:600,color:'#1D1D1F',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC',fontWeight:400}}>ETA</span> <span title={datesTracked ? 'From tracking' : undefined}>{fmtDateShort(eta)}</span></div>
               </div>
               <div style={{textAlign:'right'}}>
                 {delivered ? (
@@ -8716,8 +8716,13 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
       client_company_id: s.client_company_id||null, carrier_company_id: s.carrier_company_id||null,
       vessel_name: s.vessel_name||null, container_no: s.container_no||null, voyage_no: s.voyage_no||null,
       booking_number: s.booking_number||null, bill_of_lading: s.bill_of_lading||null,
-      estimated_departure: dval(s.estimated_departure) ? new Date(dval(s.estimated_departure)+'T12:00:00').toISOString() : null,
-      estimated_arrival:   dval(s.estimated_arrival)   ? new Date(dval(s.estimated_arrival)+'T12:00:00').toISOString()   : null,
+      // While tracked the dates are tracking's (script 141) and the boxes are
+      // read-only, so Save leaves them alone -- writing the loaded copy back would
+      // undo a date tracking moved since this card opened.
+      ...(tracked ? {} : {
+        estimated_departure: dval(s.estimated_departure) ? new Date(dval(s.estimated_departure)+'T12:00:00').toISOString() : null,
+        estimated_arrival:   dval(s.estimated_arrival)   ? new Date(dval(s.estimated_arrival)+'T12:00:00').toISOString()   : null,
+      }),
       updated_at: new Date().toISOString(),
     };
     const { error } = await SB.from('shipments').update(upd).eq('id',id);
@@ -8750,10 +8755,6 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
   const roBox = ro && !(orig && orig.tracking_error);
   const roStyle = {opacity:.7,cursor:'default'};
   const roTitle = 'Read from ShipsGo while this shipment is tracked';
-  // The dates tracking reports, shown under the ETD and ETA boxes when staff left
-  // them blank. Shown, never saved -- the boxes stay the staff columns.
-  const etdTracked = tracked ? trackingEtd(events) : null;
-  const etaTracked = tracked && orig ? orig.tracking_eta : null;
   const track = async () => {
     setTracking(true); setTrackErr('');
     const out = await trackShipment(id);
@@ -8809,10 +8810,11 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
             {(trackErr || notice) && <div style={{fontSize:'12px',marginTop:'6px',color:(trackErr||noticeErr)?'var(--hot)':'var(--muted)'}}>{trackErr || notice}</div>}
           </div>
           <div className="form-row-2">
-            <div><label>ETD</label><input type="date" className="form-input" value={dval(s.estimated_departure)} onChange={e=>set('estimated_departure',e.target.value)} />
-              {!dval(s.estimated_departure) && etdTracked && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'From tracking: '+fmtDateShort(etdTracked)}</div>}</div>
-            <div><label>ETA</label><input type="date" className="form-input" value={dval(s.estimated_arrival)} onChange={e=>set('estimated_arrival',e.target.value)} />
-              {!dval(s.estimated_arrival) && etaTracked && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'From tracking: '+fmtDateShort(etaTracked)}</div>}</div>
+            {/* While tracked, tracking owns both dates (script 141): read-only. */}
+            <div><label>ETD</label><input type="date" className="form-input" value={dval(s.estimated_departure)} onChange={e=>set('estimated_departure',e.target.value)}
+              readOnly={ro} style={ro?roStyle:undefined} title={ro?'From tracking':undefined} /></div>
+            <div><label>ETA</label><input type="date" className="form-input" value={dval(s.estimated_arrival)} onChange={e=>set('estimated_arrival',e.target.value)}
+              readOnly={ro} style={ro?roStyle:undefined} title={ro?'From tracking':undefined} /></div>
           </div>
           {(tracked || events.length > 0) && (
             <>
