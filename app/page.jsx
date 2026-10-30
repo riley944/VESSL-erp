@@ -141,7 +141,7 @@ import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompan
 import { usePageState, clearPageState } from '@/lib/pageState';
 import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
-import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo } from '@/lib/shipmentStatus';
+import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingEtd, trackingWord } from '@/lib/shipmentStatus';
 import { trackShipment } from '@/lib/trackShipment';
 import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
@@ -7553,6 +7553,13 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             // The tracked ETA when there is one -- the carrier's, refreshed daily --
             // else the one staff typed. Days-to-ETA follows whichever is shown.
             const eta = s.tracking_eta || s.estimated_arrival;
+            // The same for the departure, and for vessel and voyage: what staff
+            // typed when they typed it, else what tracking reports.
+            const etdTracked = !s.estimated_departure && s.tracking_ref ? trackingEtd(s.shipment_tracking_events) : null;
+            const etd = s.estimated_departure || etdTracked;
+            const vesselTracked = !s.vessel_name && !!s.tracking_vessel;
+            const vessel = s.vessel_name || s.tracking_vessel;
+            const voyage = s.vessel_name ? s.voyage_no : (s.voyage_no || s.tracking_voyage);
             const days = s.actual_arrival ? null : etaDays(eta);
             const lastEv = s.tracking_ref ? lastActualEvent(s.shipment_tracking_events) : null;
             // Gated out at the port of discharge: on the road to the client, so a
@@ -7573,7 +7580,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
               <div style={{minWidth:0}}>
                 <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={overdue?'#FF375F':'#6B7280'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18h18l-2-6H5l-2 6z"/><path d="M12 12V4M8 8h8"/></svg>
-                  <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.vessel_name||'Vessel TBD'}{s.voyage_no?' \u00b7 '+s.voyage_no:''}</span>
+                  <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}><span title={vesselTracked ? 'From tracking' : undefined}>{vessel||'Vessel TBD'}{voyage?' \u00b7 '+voyage:''}</span></span>
                   {s.container_no && <span style={{fontFamily:'var(--mono)',fontSize:'10.5px',color:'#A0A0A4',whiteSpace:'nowrap'}}>{s.container_no}</span>}
                   {s.tracking_ref && <span title={s.tracking_error || 'Tracked with ShipsGo'} style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',color:s.tracking_error?'#B91C1C':'#0A84FF',background:s.tracking_error?'#FEE2E2':'#EAF3FE'}}>Tracked</span>}
                 </div>
@@ -7581,7 +7588,10 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                   <div style={{position:'absolute',left:0,top:0,height:'100%',width:(frac*100)+'%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',borderRadius:'2px',transition:'width .4s'}} />
                   <div style={{position:'absolute',top:'50%',left:(frac*100)+'%',width:'9px',height:'9px',borderRadius:'50%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',transform:'translate(-50%,-50%)',border:'2px solid #fff',boxShadow:'0 1px 2px rgba(0,0,0,.2)'}} />
                 </div>
-                <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'6px',textTransform:'uppercase',letterSpacing:'.05em'}}>{legLabel(s.status)}</div>
+                <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'6px',textTransform:'uppercase',letterSpacing:'.05em'}}>
+                  {legLabel(s.status)}
+                  {s.tracking_ref && s.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,color:'#B0B0B5'}}>{'ShipsGo: '+trackingWord(s.tracking_status)}</span>}
+                </div>
                 {s.tracking_ref && (
                   <div style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
                     {[lastEv ? trackingEventLabel(lastEv.event_code)+' '+(lastEv.location_name||lastEv.location_code||'')+' '+fmtDateShort(lastEv.event_time) : 'No events yet',
@@ -7590,7 +7600,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                 )}
               </div>
               <div style={{textAlign:'right'}}>
-                <div style={{fontSize:'12px',color:'#86868B',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC'}}>ETD</span> {fmtDateShort(s.estimated_departure)}</div>
+                <div style={{fontSize:'12px',color:'#86868B',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC'}}>ETD</span> <span title={etdTracked ? 'From tracking' : undefined}>{fmtDateShort(etd)}</span></div>
                 <div style={{fontSize:'13px',fontWeight:600,color:'#1D1D1F',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC',fontWeight:400}}>ETA</span> <span title={s.tracking_eta ? 'From tracking' : undefined}>{fmtDateShort(eta)}</span></div>
               </div>
               <div style={{textAlign:'right'}}>
