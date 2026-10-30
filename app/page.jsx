@@ -7559,6 +7559,10 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             const eta = s.estimated_arrival;
             const etd = s.estimated_departure;
             const datesTracked = !!s.tracking_ref;
+            // Arrived: a tracked row whose container has reached the port of
+            // discharge shows that date in place of its ETA. Display only --
+            // estimated_arrival and actual_arrival are not touched.
+            const arrived = datesTracked && s.tracking_ata ? s.tracking_ata : null;
             // Vessel and voyage: what staff typed when they typed it, else what
             // tracking reports.
             const vesselTracked = !s.vessel_name && !!s.tracking_vessel;
@@ -7605,7 +7609,9 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
               </div>
               <div style={{textAlign:'right'}}>
                 <div style={{fontSize:'12px',color:'#86868B',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC'}}>ETD</span> <span title={datesTracked ? 'From tracking' : undefined}>{fmtDateShort(etd)}</span></div>
-                <div style={{fontSize:'13px',fontWeight:600,color:'#1D1D1F',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC',fontWeight:400}}>ETA</span> <span title={datesTracked ? 'From tracking' : undefined}>{fmtDateShort(eta)}</span></div>
+                <div style={{fontSize:'13px',fontWeight:600,color:'#1D1D1F',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}>{arrived
+                  ? <><span style={{color:'#C7C7CC',fontWeight:400}}>Arrived</span> <span title="Arrived at the port of discharge, from tracking">{fmtDateShort(arrived)}</span></>
+                  : <><span style={{color:'#C7C7CC',fontWeight:400}}>ETA</span> <span title={datesTracked ? 'From tracking' : undefined}>{fmtDateShort(eta)}</span></>}</div>
               </div>
               <div style={{textAlign:'right'}}>
                 {delivered ? (
@@ -8813,8 +8819,14 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
             {/* While tracked, tracking owns both dates (script 141): read-only. */}
             <div><label>ETD</label><input type="date" className="form-input" value={dval(s.estimated_departure)} onChange={e=>set('estimated_departure',e.target.value)}
               readOnly={ro} style={ro?roStyle:undefined} title={ro?'From tracking':undefined} /></div>
-            <div><label>ETA</label><input type="date" className="form-input" value={dval(s.estimated_arrival)} onChange={e=>set('estimated_arrival',e.target.value)}
-              readOnly={ro} style={ro?roStyle:undefined} title={ro?'From tracking':undefined} /></div>
+            {/* Once tracking reports the arrival at the port of discharge, the box
+                shows that date instead, labelled so. Display only: Save leaves the
+                dates alone while tracked, and actual_arrival is never set here. */}
+            {ro && orig.tracking_ata
+              ? <div><label>Arrived (port of discharge)</label><input type="date" className="form-input" value={dval(orig.tracking_ata)}
+                  readOnly style={roStyle} title="Arrived at the port of discharge, from tracking" /></div>
+              : <div><label>ETA</label><input type="date" className="form-input" value={dval(s.estimated_arrival)} onChange={e=>set('estimated_arrival',e.target.value)}
+                  readOnly={ro} style={ro?roStyle:undefined} title={ro?'From tracking':undefined} /></div>}
           </div>
           {(tracked || events.length > 0) && (
             <>
