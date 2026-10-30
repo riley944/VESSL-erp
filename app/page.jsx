@@ -143,7 +143,7 @@ import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName 
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo } from '@/lib/shipmentStatus';
 import { trackShipment } from '@/lib/trackShipment';
-import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
+import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
          buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline, timelineBy, monthColor, INV_STATUS_COLORS } from '@/lib/inventoryView';
@@ -6724,7 +6724,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   // navigation, and kept across the deliberate remount that follows creating a
   // shipment, which is what the key on this component does. openId and the respond-*
   // fields stay plain below, being a row somebody opened and a form in progress.
-  const [ui, setUi] = usePageState('shipments', { view:'quotes', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'', client:'' });
+  const [ui, setUi] = usePageState('shipments', { view:'quotes', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'', client:'', track:'' });
   // qSel, shipFilter and search are ui.* now, in the page store above, and
   // QF_DEFAULT is at module scope above this component -- see the note there.
   const [quotes, setQuotes] = useState([]);
@@ -7074,7 +7074,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   const V = shipmentsView({ quotes, rows, dreqs, bids, coNames }, ui, new Date());
   const { cSel, quotesV, rowsV, dreqsV, openDreqsV, clientChoices, bidCount, winnerOf,
     activeShips, doneShips, arriving, overdueShips, awaiting, bidsIn, awarded, drafts, notSelected, archivedQ,
-    isDefaultQ, shownQuotes, shownShips } = V;
+    isDefaultQ, shownQuotes, shownShips, trackedCount, manualCount } = V;
 
   // Counts are live and come from the same buckets the tiles read, so a number in
   // the dropdown and a number on a tile cannot disagree.
@@ -7259,6 +7259,15 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
           <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
             {[['active','In transit',activeShips.length],['delivered','Delivered',doneShips.length],['all','All',rowsV.length]].map(([val,label,ct])=>(
               <button key={val} onClick={()=>{setUi('tab', val); setUi('shipFilter','');}} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:ui.tab===val&&!ui.shipFilter?'#1D1D1F':'#fff',color:ui.tab===val&&!ui.shipFilter?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{label+' '+String(ct)}</button>
+            ))}
+            {/* Tracked / Manual. A narrowing beside the tabs, not a fourth tab:
+                it applies within In transit, Delivered or All. Click again to clear. */}
+            <span style={{width:'1px',background:'rgba(0,0,0,.1)',margin:'4px 2px'}} />
+            {[['tracked','Tracked',trackedCount],['manual','Manual',manualCount]].map(([val,label,ct])=>(
+              <button key={val} onClick={()=>setUi('track', ui.track===val?'':val)} title={val==='tracked'?'Shipments followed by ShipsGo':'Shipments kept by hand'}
+                style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:ui.track===val?'#0A84FF':'#fff',color:ui.track===val?'#fff':'#3A3A3E',boxShadow:ui.track===val?'none':'0 1px 2px rgba(0,0,0,.05)'}}>
+                {label} <span style={{opacity:.6,fontVariantNumeric:'tabular-nums'}}>{ct}</span>
+              </button>
             ))}
             {ui.shipFilter && <button onClick={()=>setUi('shipFilter','')} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:'#1D1D1F',color:'#fff'}}>{(ui.shipFilter==='arriving'?'Arriving \u226414d':'Overdue')+' \u00d7'}</button>}
           </div>
@@ -7546,7 +7555,10 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             const eta = s.tracking_eta || s.estimated_arrival;
             const days = s.actual_arrival ? null : etaDays(eta);
             const lastEv = s.tracking_ref ? lastActualEvent(s.shipment_tracking_events) : null;
-            const overdue = days!==null && days<0;
+            // Gated out at the port of discharge: on the road to the client, so a
+            // passed ETA is not flagged (lib/shipmentsView.js, gatedOut).
+            const gated = gatedOut(s);
+            const overdue = days!==null && days<0 && !gated;
             const delivered = (s.status==='delivered' || s.actual_arrival);
             const frac = delivered ? 1 : progressOf(s.status);
             return (
@@ -7586,6 +7598,8 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                   <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'12px',fontWeight:600,color:'#30D158'}}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Delivered
                   </span>
+                ) : gated ? (
+                  <span title="Tracking has the container out of the port" style={{fontSize:'11.5px',fontWeight:600,color:'#86868B'}}>Gated out</span>
                 ) : days!==null ? (
                   <>
                     <div style={{fontSize:'16px',fontWeight:700,color:overdue?'#FF375F':'#1D1D1F',fontVariantNumeric:'tabular-nums',lineHeight:1}}>{overdue?'+'+Math.abs(days):days}<span style={{fontSize:'11px',color:'#A0A0A4',fontWeight:400}}>d</span></div>
