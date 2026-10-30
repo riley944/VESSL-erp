@@ -10894,8 +10894,9 @@ function buildSODoc(d) {
   });
 }
 function ConfirmModal({ title, message, confirmLabel='Delete', danger=true, onConfirm, onCancel }) {
-  // Verified: zero controls, so both snapshots are "0", they compare equal, and
-  // clicking outside cancels silently -- which is what it already did.
+  // Verified: zero controls, so both snapshots are "0" and it is never dirty.
+  // Clicking outside asks "Close this window?" first, as every modal now does
+  // (ModalGuard, 30 Oct); OK cancels, as the outside click always did.
   const { ref: cardRef, guardedClose } = useDirtyGuard(onCancel);
   return (
     <div className="modal-overlay" onClick={guardedClose} style={{zIndex:10000}}>
