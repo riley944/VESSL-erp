@@ -8645,7 +8645,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
 }
 
 // ── Shipment Detail / Edit Modal ──────────────────────────────────────────────
-function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null }) {
+function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, noticeErr = false }) {
   // Fetches the row and populates the form after mount, which is exactly the
   // case the moving baseline exists for -- without it every open-then-close
   // would confirm.
@@ -8719,6 +8719,18 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null })
   const tracked = !!(orig && orig.tracking_ref);
   const hasNumber = !!(orig && ((orig.bill_of_lading||'').trim() || (orig.booking_number||'').trim() || (orig.container_no||'').trim()));
   const closed = !tracked && !!orig && ['delivered','cancelled'].includes(orig.status);
+  // WHILE TRACKED, THE TRACKED FIELDS ARE READ-ONLY: the numbers tracking was
+  // started from, and the vessel and voyage it reports (shown when staff typed
+  // none). The container stays editable while tracking reports it is not on the
+  // B/L -- that is how a typo is put right.
+  const ro = tracked;
+  const roBox = ro && !(orig && orig.tracking_error);
+  const roStyle = {opacity:.7,cursor:'default'};
+  const roTitle = 'Read from ShipsGo while this shipment is tracked';
+  // The dates tracking reports, shown under the ETD and ETA boxes when staff left
+  // them blank. Shown, never saved -- the boxes stay the staff columns.
+  const etdTracked = tracked ? trackingEtd(events) : null;
+  const etaTracked = tracked && orig ? orig.tracking_eta : null;
   const track = async () => {
     setTracking(true); setTrackErr('');
     const out = await trackShipment(id);
@@ -8746,23 +8758,30 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null })
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>PO #</label><input className="form-input" value={linkedPO?.order_number||s.shipment_number||''} readOnly style={{opacity:.7,cursor:'default'}} /></div>
-            <div><label>Status</label><select className="form-select" value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{STAT.map(x=><option key={x} value={x}>{shipmentStatusLabel(x)}</option>)}</select></div>
+            <div><label>Status{tracked && orig.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,fontWeight:500,color:'var(--muted)'}}>{'ShipsGo: '+trackingWord(orig.tracking_status)}</span>}</label><select className="form-select" value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{STAT.map(x=><option key={x} value={x}>{shipmentStatusLabel(x)}</option>)}</select></div>
           </div>
           <div className="form-row-2">
             <div><label>Client</label><input className="form-input" value={(linkedPO?.client?.name||s.companies?.name||'—').toUpperCase()} readOnly style={{opacity:.7,cursor:'default',fontWeight:600}} /></div>
-            <div><label>Carrier / Forwarder</label><select className="form-select" value={s.carrier_company_id||''} onChange={e=>set('carrier_company_id',e.target.value)}><option value="">—</option>{companies.filter(c=>['carrier','freight_forwarder'].includes(c.type)).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+            <div><label>Forwarder</label><select className="form-select" value={s.carrier_company_id||''} onChange={e=>set('carrier_company_id',e.target.value)}><option value="">—</option>{companies.filter(c=>['carrier','freight_forwarder'].includes(c.type)).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           </div>
           <div className="form-row-2">
-            <div><label>Vessel / Boat</label><input className="form-input" value={s.vessel_name||''} onChange={e=>set('vessel_name',e.target.value)} placeholder="e.g. MAERSK SELETAR" /></div>
-            <div><label>Voyage #</label><input className="form-input" value={s.voyage_no||''} onChange={e=>set('voyage_no',e.target.value)} placeholder="e.g. 084W" /></div>
+            <div><label>Vessel / Boat</label>{ro
+              ? <input className="form-input" value={s.vessel_name||orig.tracking_vessel||''} readOnly style={roStyle} title={roTitle} />
+              : <input className="form-input" value={s.vessel_name||''} onChange={e=>set('vessel_name',e.target.value)} placeholder="e.g. MAERSK SELETAR" />}</div>
+            <div><label>Voyage #</label>{ro
+              ? <input className="form-input" value={s.vessel_name ? (s.voyage_no||'') : (s.voyage_no||orig.tracking_voyage||'')} readOnly style={roStyle} title={roTitle} />
+              : <input className="form-input" value={s.voyage_no||''} onChange={e=>set('voyage_no',e.target.value)} placeholder="e.g. 084W" />}</div>
           </div>
           <div className="form-row-2">
-            <div><label>Container #</label><input className="form-input" value={s.container_no||''} onChange={e=>set('container_no',e.target.value)} placeholder="e.g. MSKU1234567" /></div>
-            <div><label>Booking #</label><input className="form-input" value={s.booking_number||''} onChange={e=>set('booking_number',e.target.value)} /></div>
+            <div><label>Container #</label><input className="form-input" value={s.container_no||''} onChange={e=>set('container_no',e.target.value)} placeholder="e.g. MSKU1234567"
+              readOnly={roBox} style={roBox?roStyle:undefined} title={roBox?roTitle:(ro?'Not on the tracked B/L -- correct it, save, then Refresh tracking':undefined)} /></div>
+            <div><label>Booking #</label><input className="form-input" value={s.booking_number||''} onChange={e=>set('booking_number',e.target.value)}
+              readOnly={ro} style={ro?roStyle:undefined} title={ro?roTitle:undefined} /></div>
           </div>
           <div className="form-row"><label>Bill of Lading</label>
             <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
-              <input className="form-input" style={{flex:1}} value={s.bill_of_lading||''} onChange={e=>set('bill_of_lading',e.target.value)} />
+              <input className="form-input" style={ro?{flex:1,...roStyle}:{flex:1}} value={s.bill_of_lading||''} onChange={e=>set('bill_of_lading',e.target.value)}
+                readOnly={ro} title={ro?roTitle:undefined} />
               <button type="button" className="btn btn-ghost btn-sm" style={{flexShrink:0,whiteSpace:'nowrap'}}
                       disabled={tracking || !hasNumber || unsaved || closed} onClick={track}
                       title={!hasNumber ? 'Save a bill of lading, booking number or container number first'
@@ -8774,11 +8793,13 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null })
                 {tracking ? 'Tracking…' : tracked ? 'Refresh tracking' : trackedSibling ? 'Track (free, B/L already tracked)' : 'Track (1 credit)'}
               </button>
             </div>
-            {(trackErr || notice) && <div style={{fontSize:'12px',marginTop:'6px',color:trackErr?'var(--hot)':'var(--muted)'}}>{trackErr || notice}</div>}
+            {(trackErr || notice) && <div style={{fontSize:'12px',marginTop:'6px',color:(trackErr||noticeErr)?'var(--hot)':'var(--muted)'}}>{trackErr || notice}</div>}
           </div>
           <div className="form-row-2">
-            <div><label>ETD</label><input type="date" className="form-input" value={dval(s.estimated_departure)} onChange={e=>set('estimated_departure',e.target.value)} /></div>
-            <div><label>ETA</label><input type="date" className="form-input" value={dval(s.estimated_arrival)} onChange={e=>set('estimated_arrival',e.target.value)} /></div>
+            <div><label>ETD</label><input type="date" className="form-input" value={dval(s.estimated_departure)} onChange={e=>set('estimated_departure',e.target.value)} />
+              {!dval(s.estimated_departure) && etdTracked && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'From tracking: '+fmtDateShort(etdTracked)}</div>}</div>
+            <div><label>ETA</label><input type="date" className="form-input" value={dval(s.estimated_arrival)} onChange={e=>set('estimated_arrival',e.target.value)} />
+              {!dval(s.estimated_arrival) && etaTracked && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'From tracking: '+fmtDateShort(etaTracked)}</div>}</div>
           </div>
           {(tracked || events.length > 0) && (
             <>
@@ -9650,7 +9671,7 @@ function CreateShipmentModal({ onClose, onCreated }) {
           </div>
           <div className="form-row-2">
             <div><label>Client</label><select className="form-select" value={form.client} onChange={e=>f('client')(e.target.value)}><option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-            <div><label>Carrier / Forwarder</label><select className="form-select" value={form.carrier} onChange={e=>f('carrier')(e.target.value)}><option value="">—</option>{carriers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+            <div><label>Forwarder</label><select className="form-select" value={form.carrier} onChange={e=>f('carrier')(e.target.value)}><option value="">—</option>{carriers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           </div>
           <div className="form-row"><label>Bill of Lading</label><input className="form-input" value={form.bol} onChange={e=>f('bol')(e.target.value)} /></div>
           <div className="form-row-2">
