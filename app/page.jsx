@@ -8634,11 +8634,23 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null })
   const [events, setEvents] = useState([]);
   const [tracking, setTracking] = useState(false);
   const [trackErr, setTrackErr] = useState('');
+  // Another shipment on the same B/L that is already tracked (script 140) --
+  // Track then attaches this one to it for free.
+  const [trackedSibling, setTrackedSibling] = useState(null);
   const [linkedPO, setLinkedPO] = useState(null);
   const [companies, setCompanies] = useState([]);
   const [saving, setSaving] = useState(false);
   useEffect(()=>{
-    SB.from('shipments').select('*').eq('id',id).single().then(({data})=>{ setS(data||{}); setOrig(data||{}); });
+    SB.from('shipments').select('*').eq('id',id).single().then(({data})=>{
+      setS(data||{}); setOrig(data||{});
+      // Same normalising as the Track route: B/L else booking, uppercase, no spaces.
+      const num = r => (String(r.bill_of_lading||'').trim() || String(r.booking_number||'').trim()).toUpperCase().replace(/\s+/g,'');
+      const mine = data ? num(data) : '';
+      if (mine && !data.tracking_ref) {
+        SB.from('shipments').select('id,shipment_number,bill_of_lading,booking_number').eq('tracking_provider','shipsgo').not('tracking_ref','is',null)
+          .then(({data:rows})=>setTrackedSibling((rows||[]).find(r=>r.id!==id && num(r)===mine)||null));
+      }
+    });
     SB.from('shipment_tracking_events').select('id,container_number,event_code,event_status,location_code,location_name,vessel_name,voyage,event_time')
       .eq('shipment_id',id).order('event_time',{ascending:true}).then(({data})=>setEvents(data||[]));
     SB.from('companies').select('id,name,type').order('name').then(({data})=>setCompanies(data||[]));
@@ -8682,16 +8694,21 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null })
     || dval(s.estimated_departure)!==dval(orig.estimated_departure) || dval(s.estimated_arrival)!==dval(orig.estimated_arrival));
   const tracked = !!(orig && orig.tracking_ref);
   const hasNumber = !!(orig && ((orig.bill_of_lading||'').trim() || (orig.booking_number||'').trim() || (orig.container_no||'').trim()));
+  const closed = !tracked && !!orig && ['delivered','cancelled'].includes(orig.status);
   const track = async () => {
     setTracking(true); setTrackErr('');
     const out = await trackShipment(id);
     setTracking(false);
     if (!out.ok) { setTrackErr(out.error || 'Tracking failed.'); return; }
-    const r = out.result || {};
+    // The result covers every shipment on the B/L; this card reads its own row.
+    const rows = (out.result && out.result.rows) || [];
+    const r = rows.find(x=>x.shipment_id===id) || {};
     const moved = r.moved ? 'Status moved to '+shipmentStatusLabel(r.status_after)+'. ' : '';
-    const how = out.refreshed ? 'Tracking refreshed, no credit used.'
-      : out.reused ? 'Already tracked at ShipsGo — reused, no credit used.'
-      : 'Tracking started, 1 credit used.';
+    const n = rows.length > 1 ? ' for '+rows.length+' shipments on this B/L' : '';
+    const how = out.refreshed ? 'Tracking refreshed'+n+', no credit used.'
+      : out.sibling ? 'Attached to the tracking already on this B/L'+n+', no credit used.'
+      : out.reused ? 'Already tracked at ShipsGo — reused'+n+', no credit used.'
+      : 'Tracking started'+n+', 1 credit used.';
     const left = out.credits != null ? ' Credits left: '+out.credits+'.' : '';
     if (onTracked) onTracked(moved+how+left);
   };
@@ -8723,11 +8740,14 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null })
             <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
               <input className="form-input" style={{flex:1}} value={s.bill_of_lading||''} onChange={e=>set('bill_of_lading',e.target.value)} />
               <button type="button" className="btn btn-ghost btn-sm" style={{flexShrink:0,whiteSpace:'nowrap'}}
-                      disabled={tracking || !hasNumber || unsaved} onClick={track}
+                      disabled={tracking || !hasNumber || unsaved || closed} onClick={track}
                       title={!hasNumber ? 'Save a bill of lading, booking number or container number first'
                         : unsaved ? 'Save your changes first — tracking uses the saved number'
-                        : tracked ? 'Re-read this shipment from ShipsGo — free' : 'Start ShipsGo tracking — uses 1 credit, free if ShipsGo already tracks this number'}>
-                {tracking ? 'Tracking…' : tracked ? 'Refresh tracking' : 'Track (1 credit)'}
+                        : closed ? 'This shipment is '+orig.status+' — tracking is for shipments still on the way'
+                        : tracked ? 'Re-read this B/L from ShipsGo — free'
+                        : trackedSibling ? (trackedSibling.shipment_number||'Another shipment')+' on this B/L is already tracked — this attaches to it, free'
+                        : 'Start ShipsGo tracking — uses 1 credit, free if ShipsGo already tracks this number. Every shipment on this B/L is attached'}>
+                {tracking ? 'Tracking…' : tracked ? 'Refresh tracking' : trackedSibling ? 'Track (free, B/L already tracked)' : 'Track (1 credit)'}
               </button>
             </div>
             {(trackErr || notice) && <div style={{fontSize:'12px',marginTop:'6px',color:trackErr?'var(--hot)':'var(--muted)'}}>{trackErr || notice}</div>}
@@ -8740,7 +8760,8 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null })
             <>
               <span className="form-section-label">Tracking</span>
               <div style={{fontSize:'12.5px',color:'var(--ink-2)',lineHeight:1.6,marginBottom:'8px'}}>
-                {[orig.tracking_status, [orig.tracking_vessel, orig.tracking_voyage].filter(Boolean).join(' / ') || null,
+                {[orig.tracking_container ? 'Following container '+orig.tracking_container : null,
+                  orig.tracking_status, [orig.tracking_vessel, orig.tracking_voyage].filter(Boolean).join(' / ') || null,
                   orig.tracking_eta ? 'ETA '+fmtDateShort(orig.tracking_eta) : null,
                   orig.tracking_ata ? 'arrived '+fmtDateShort(orig.tracking_ata) : null,
                   orig.tracking_checked_at ? 'checked '+checkedAgo(orig.tracking_checked_at) : null].filter(Boolean).join(' · ') || 'Waiting for ShipsGo'}

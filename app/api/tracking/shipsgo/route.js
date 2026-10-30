@@ -10,8 +10,9 @@ import { serviceClient, applyShipsgo } from '@/lib/trackingServer';
 // constant time.
 //
 // The payload is only a pointer. The route re-reads the shipment from ShipsGo
-// by its id and applies that, so a replayed or reordered event can only ever
-// apply the current state.
+// by its id and applies that to every shipment carrying it as their ref -- all
+// the containers of one B/L (script 140) -- so a replayed or reordered event
+// can only ever apply the current state.
 //
 // RETRIES. ShipsGo retries a 5xx (after 1, 5 and 10 minutes) and nothing else,
 // so 5xx is kept for failures a retry can fix -- ShipsGo or the database
@@ -48,10 +49,10 @@ export async function POST(req) {
   if (!ACTED_ON.includes(event) || !shipsgoId) return json({ ok:true, ignored:event || 'no event' }, 200);
 
   try {
-    const result = await applyShipsgo(svc, null, String(shipsgoId));
+    const result = await applyShipsgo(svc, String(shipsgoId));
     return json({ ok:true, result }, 200);
   } catch (err) {
-    // Not one of ours: apply_tracking_update raises P0002 when no shipment
+    // Not one of ours: apply_tracking_group raises P0002 when no shipment
     // carries this ref. Tracked from the ShipsGo dashboard, say -- nothing to do.
     if (err && err.code === 'P0002') return json({ ok:true, ignored:'not tracked here' }, 200);
     if (err instanceof ShipsgoError) {
