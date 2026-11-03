@@ -10947,7 +10947,8 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
                 </div>
                 {showPick && (
                   <div style={{display:'grid',gridTemplateColumns:LINE_COLS,gap:'6px',marginTop:'4px'}}>
-                    <div style={{gridColumn:'1 / 3',display:'flex',alignItems:'center',gap:'6px',fontSize:'12px',color:'#8A8A8E',whiteSpace:'nowrap'}}>
+                    <div style={{gridColumn:(l.quoteId && pickFor!==l._k) ? '1 / 3' : '1 / 2',display:'flex',alignItems:'center',
+                      justifyContent:(l.quoteId && pickFor!==l._k) ? 'flex-start' : 'center',gap:'6px',fontSize:'12px',color:'#8A8A8E',whiteSpace:'nowrap'}}>
                       {l.quoteId && pickFor!==l._k
                         ? <>
                             <span>from <b style={{fontFamily:'var(--mono)',color:'#3461e0'}}>{l.quoteCode||'a quote'}</b></span>
@@ -10957,7 +10958,7 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
                           </>
                         : <button type="button" onClick={()=>setPickFor(pickFor===l._k ? null : l._k)}
                             title="Fill this line from a product quote and link it to that quote"
-                            style={{background:'none',border:'1px solid #0071E3',borderRadius:'7px',padding:'3px 9px',fontSize:'12px',fontWeight:500,color:'#0071E3',cursor:'pointer'}}>
+                            style={{background:'none',border:'none',padding:0,fontFamily:'var(--mono)',fontSize:'12px',fontWeight:700,color:'#3461e0',cursor:'pointer'}}>
                             {pickFor===l._k ? 'Close' : 'Pick quote'}
                           </button>}
                     </div>
