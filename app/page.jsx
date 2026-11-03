@@ -10927,8 +10927,10 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
             </div>
             {lines.map((l,i)=>{
               const lineCbm = (Number(l.cartons)||0)*(Number(l.cbmPer)||0);
-              const linePcs = (Number(l.cartons)||0)*(Number(l.upc)||0);
               const m = skuMsg[l._k];
+              // Under the SKU box: Pick quote while the box is empty, the source
+              // once the line is linked. A typed SKU not yet looked up shows neither.
+              const showPick = !l.sku.trim() || l.quoteId || pickFor===l._k;
               return (
                 <div key={l._k} style={{marginBottom:'6px'}}>
                 <div style={{display:'grid',gridTemplateColumns:LINE_COLS,gap:'6px',alignItems:'center'}}>
@@ -10943,15 +10945,24 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
                   <div style={{fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{lineCbm>0?lineCbm.toFixed(3):'—'}</div>
                   <button type="button" onClick={()=>rmLine(i)} style={{background:'none',border:'none',color:'#C0C0C4',cursor:'pointer',fontSize:'17px',lineHeight:1}}>×</button>
                 </div>
-                <div style={{fontSize:'10.5px',color:'#8A8A8E',paddingLeft:'10px',marginTop:'3px',display:'flex',gap:'12px',flexWrap:'wrap',alignItems:'baseline'}}>
-                  {l.quoteId && <span>from <b style={{fontFamily:'var(--mono)',color:'#3461e0'}}>{l.quoteCode||'a quote'}</b></span>}
-                  {linePcs>0 && <span>= {fmtNum(linePcs)} pcs</span>}
-                  <button type="button" onClick={()=>setPickFor(pickFor===l._k ? null : l._k)}
-                    title="Fill this line from a product quote and link it to that quote"
-                    style={{background:'none',border:'none',padding:0,color:'#0071E3',fontSize:'10.5px',fontWeight:600,cursor:'pointer'}}>
-                    {pickFor===l._k ? 'Close' : (l.quoteId ? 'Pick another quote' : 'Pick quote')}
-                  </button>
-                </div>
+                {showPick && (
+                  <div style={{display:'grid',gridTemplateColumns:LINE_COLS,gap:'6px',marginTop:'4px'}}>
+                    <div style={{gridColumn:'1 / 3',display:'flex',alignItems:'center',gap:'6px',fontSize:'12px',color:'#8A8A8E',whiteSpace:'nowrap'}}>
+                      {l.quoteId && pickFor!==l._k
+                        ? <>
+                            <span>from <b style={{fontFamily:'var(--mono)',color:'#3461e0'}}>{l.quoteCode||'a quote'}</b></span>
+                            <span>\u00b7</span>
+                            <button type="button" onClick={()=>setPickFor(l._k)} title="Fill this line from a different product quote"
+                              style={{background:'none',border:'none',padding:0,color:'#0071E3',fontSize:'12px',fontWeight:500,cursor:'pointer'}}>Pick another quote</button>
+                          </>
+                        : <button type="button" onClick={()=>setPickFor(pickFor===l._k ? null : l._k)}
+                            title="Fill this line from a product quote and link it to that quote"
+                            style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'3px 9px',fontSize:'12px',fontWeight:500,color:'#4A4A4E',cursor:'pointer'}}>
+                            {pickFor===l._k ? 'Close' : 'Pick quote'}
+                          </button>}
+                    </div>
+                  </div>
+                )}
                 {pickFor===l._k && (
                   <div style={{...SKU_PANEL}}>
                     {!quotesReady ? 'Quotes are still loading\u2026' : (
