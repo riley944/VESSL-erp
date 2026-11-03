@@ -143,7 +143,7 @@ import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName 
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord } from '@/lib/shipmentStatus';
 import { trackShipment, refreshStale } from '@/lib/trackShipment';
-import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut } from '@/lib/shipmentsView';
+import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
          buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline, timelineBy, monthColor, INV_STATUS_COLORS } from '@/lib/inventoryView';
@@ -7601,7 +7601,10 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             // Gated out at the port of discharge: on the road to the client, so a
             // passed ETA is not flagged (lib/shipmentsView.js, gatedOut).
             const gated = gatedOut(s);
-            const overdue = days!==null && days<0 && !gated;
+            // At the port of discharge, not gated out: "At port · N days" in
+            // place of a countdown, and never overdue (lib/shipmentsView.js).
+            const port = atPort(s);
+            const overdue = days!==null && days<0 && !gated && !port;
             const delivered = (s.status==='delivered' || s.actual_arrival);
             const frac = delivered ? 1 : progressOf(s.status);
             return (
@@ -7649,6 +7652,10 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                   </span>
                 ) : gated ? (
                   <span title="Tracking has the container out of the port" style={{fontSize:'11.5px',fontWeight:600,color:'#86868B'}}>Gated out</span>
+                ) : port ? (
+                  <span title={'At the port of discharge since '+fmtDateShort(s.tracking_ata)+', from tracking'} style={{fontSize:'11.5px',fontWeight:600,color:'#86868B',whiteSpace:'nowrap'}}>
+                    {(() => { const n = portDaysAt(s, Date.now()); return 'At port \u00b7 '+n+' day'+(n===1?'':'s'); })()}
+                  </span>
                 ) : days!==null ? (
                   <>
                     <div style={{fontSize:'16px',fontWeight:700,color:overdue?'#FF375F':'#1D1D1F',fontVariantNumeric:'tabular-nums',lineHeight:1}}>{overdue?'+'+Math.abs(days):days}<span style={{fontSize:'11px',color:'#A0A0A4',fontWeight:400}}>d</span></div>
