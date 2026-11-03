@@ -17,6 +17,14 @@ import { serviceClient, applyShipsgo } from '@/lib/trackingServer';
 //                               ShipsGo already has the number: 409, reused)
 //                               and attach every live sibling in one call
 // A shipment with only a container number is tracked on its own.
+//
+// REFRESH ONLY. { shipment_id, refresh_only:true, max_age_hours } is the
+// Shipments page keeping tracked rows current as it loads (refreshStale in
+// lib/trackShipment.js). It only ever takes the free refresh: a row that is not
+// tracked, is delivered or cancelled, or was checked within max_age_hours
+// answers ok with skipped, and the request never reaches a create. The check is
+// made on the row as read here, so two people opening the page at once cost
+// one ShipsGo read.
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -54,10 +62,21 @@ export async function POST(req) {
   try { body = await req.json(); } catch { return json({ ok:false, error:'Malformed request.' }, 400); }
   const id = body && typeof body.shipment_id === 'string' ? body.shipment_id : '';
   if (!id) return json({ ok:false, error:'No shipment given.' }, 400);
+  const refreshOnly = body.refresh_only === true;
+  const maxAgeHours = Number(body.max_age_hours) || 0;
   const { data:sh, error:shErr } = await sb.from('shipments')
-    .select('id,status,bill_of_lading,booking_number,container_no,tracking_provider,tracking_ref').eq('id', id).maybeSingle();
+    .select('id,status,bill_of_lading,booking_number,container_no,tracking_provider,tracking_ref,tracking_checked_at').eq('id', id).maybeSingle();
   if (shErr) return json({ ok:false, error:'Could not read the shipment: '+shErr.message }, 502);
   if (!sh) return json({ ok:false, error:'That shipment could not be read.' }, 404);
+
+  if (refreshOnly) {
+    if (sh.tracking_provider !== 'shipsgo' || !sh.tracking_ref) return json({ ok:true, skipped:'not tracked' }, 200);
+    if (['delivered', 'cancelled'].includes(sh.status)) return json({ ok:true, skipped:sh.status }, 200);
+    const checked = sh.tracking_checked_at ? Date.parse(sh.tracking_checked_at) : 0;
+    if (maxAgeHours > 0 && checked && Date.now() - checked < maxAgeHours * 3600000) {
+      return json({ ok:true, skipped:'fresh' }, 200);
+    }
+  }
 
   const number = numberOf(sh);
 
