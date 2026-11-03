@@ -6723,6 +6723,23 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   // A New tracked shipment whose Track failed opens its card with the error.
   const [noticeErr, setNoticeErr] = useState(false);
   const [newTracked, setNewTracked] = useState(false);
+  // The row a New tracked shipment just made: lit up and scrolled to once the
+  // list has it, then let go after a few seconds. No card opens on success.
+  const [litId, setLitId] = useState(null);
+  const litShown = useRef(null);
+  useEffect(() => {
+    if (!litId || litShown.current === litId || !rows.some(r => r.id === litId)) return;
+    litShown.current = litId;
+    requestAnimationFrame(() => {
+      const el = document.querySelector('[data-ship-id="'+litId+'"]');
+      if (el) el.scrollIntoView({ block:'center', behavior:'smooth' });
+    });
+  }, [litId, rows]);
+  useEffect(() => {
+    if (!litId) return;
+    const timer = setTimeout(() => setLitId(null), 6000);
+    return () => clearTimeout(timer);
+  }, [litId]);
   // Which half of the page, which sub-tab, and the three narrowings -- kept across
   // navigation, and kept across the deliberate remount that follows creating a
   // shipment, which is what the key on this component does. openId and the respond-*
@@ -7608,7 +7625,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             const delivered = (s.status==='delivered' || s.actual_arrival);
             const frac = delivered ? 1 : progressOf(s.status);
             return (
-              <div key={s.id} onClick={()=>setOpenId(s.id)} className="ship-manifest-row" style={{display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'16px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',cursor:'pointer',transition:'.12s',alignItems:'center'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+              <div key={s.id} data-ship-id={s.id} onClick={()=>setOpenId(s.id)} className="ship-manifest-row" style={{...(s.id===litId ? {background:'#EAF3FE',boxShadow:'inset 3px 0 0 #0A84FF'} : {}),display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'16px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',cursor:'pointer',transition:'.12s',alignItems:'center'}} onMouseEnter={e=>{ if (s.id!==litId) e.currentTarget.style.background='#FAFAFB'; }} onMouseLeave={e=>{ if (s.id!==litId) e.currentTarget.style.background='transparent'; }}>
               <div style={{minWidth:0}}>
                 <div style={{display:'flex',alignItems:'center',gap:'4px',minWidth:0}}>
                   <div style={{fontFamily:'var(--mono)',fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',minWidth:0}}>{ref}</div>
@@ -7679,8 +7696,10 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                     onSaved={()=>{setOpenId(null);setTrackNotice(null);setNoticeErr(false);reload();}}
                     onTracked={note=>{setTrackNotice(note);setNoticeErr(false);setOpenKey(k=>k+1);reload();}} />}
       {newTracked && <CreateTrackedShipmentModal onClose={()=>setNewTracked(false)}
-                    onCreated={(id, note, isErr)=>{ setNewTracked(false); setUi('view','shipments'); reload(); reloadDreqs();
-                                                   setTrackNotice(note); setNoticeErr(isErr); setOpenKey(k=>k+1); setOpenId(id); }} />}
+                    onCreated={(id, note, isErr)=>{ setNewTracked(false); setUi('view','shipments'); setUi('shipFilter',''); setUi('search',''); setUi('track','');
+                                                   reload(); reloadDreqs();
+                                                   if (isErr) { setTrackNotice(note); setNoticeErr(true); setOpenKey(k=>k+1); setOpenId(id); }
+                                                   else { window._toast?.(note); setLitId(id); } }} />}
       {/* ── LAND ON THE FREIGHT QUOTE JUST CREATED ──────────────────────────
           + Freight Quote sits in the page header and is NOT guarded by ui.view,
           so it is clickable while the shipments half is on screen -- and the new
@@ -9982,6 +10001,11 @@ function CreateShipmentModal({ onClose, onCreated }) {
 // forwarder by hand stops the filling.
 function CreateTrackedShipmentModal({ onClose, onCreated }) {
   const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
+  // A note to post once the shipment exists (OrderNoteDraft), as New Shipment
+  // does: nothing is saved until then, and an empty box posts nothing.
+  const staff = useStaff();
+  const [noteText, setNoteText] = useState('');
+  const [noteTo, setNoteTo] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [sos, setSos] = useState([]);
   const [links, setLinks] = useState([]);   // sales_order_pos with the PO's number
@@ -10081,6 +10105,9 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
       const { error:lErr } = await SB.from('shipment_pos').insert(ticked.map(p=>({ shipment_id: ship.id, purchase_order_id: p.id })));
       if (lErr) window._toast?.('Shipment saved, but linking the Sales Order’s POs failed: '+lErr.message,'err');
     }
+    // The note goes on before Track, so it is there whatever tracking says. It
+    // cannot fail the shipment: whatever happens is said in a toast.
+    await postNoteAfterCreate({ what:'Shipment', column:'shipment_id', orderId:ship.id, body:noteText, picked:noteTo, staff });
     const out = await trackShipment(ship.id);
     setBusy(false);
     if (out.ok) onCreated(ship.id, trackOutcomeText(out, ship.id), false);
@@ -10137,6 +10164,7 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
             </select>
             {fwdHint && <div style={{fontSize:'12px',marginTop:'6px',color:'var(--muted)'}}>{fwdHint}</div>}
           </div>
+          <OrderNoteDraft staff={staff} text={noteText} setText={setNoteText} to={noteTo} setTo={setNoteTo} disabled={busy} />
           {err && <div style={{fontSize:'12.5px',color:'var(--hot)',marginTop:'4px'}}>{err}</div>}
         </div>
         <div className="modal-foot">
