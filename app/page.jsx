@@ -2263,6 +2263,7 @@ function SalesOrderDetail({id,navigate}){
   const [costs,setCosts]=useState([]);
   const [shipment,setShipment]=useState(null);
   const [shipEvents,setShipEvents]=useState([]);   // its tracking events, when tracked
+  const [shipBy,setShipBy]=useState(false);        // its status last set by tracking
   const load=async()=>{
     setLoading(true);
     const [{data:soD},{data:itmD,error:itmErr},{data:posD,error:posErr},{data:costD}]=await Promise.all([
@@ -2298,6 +2299,7 @@ function SalesOrderDetail({id,navigate}){
     }
     setShipment(sh);
     setShipEvents(await trackingEventsOf(sh));
+    setShipBy(sh ? await statusSetByTracking(sh.id) : false);
     setLoading(false);
   };
   useEffect(()=>{ load(); },[id]);
@@ -2493,7 +2495,7 @@ function SalesOrderDetail({id,navigate}){
       </div>
 
       <div className="section-card" style={{marginBottom:'20px'}}>
-        <div className="section-head"><h3>Logistics &amp; Shipment</h3>{shipment&&<Badge status={shipment.status==='in_transit'?'shipped':shipment.status==='delivered'?'delivered':'confirmed'} />}</div>
+        <div className="section-head"><h3>Logistics &amp; Shipment</h3></div>
         {!shipment ? (
           <div style={{padding:'20px 18px',fontSize:'13px',color:'var(--muted)',display:'flex',alignItems:'center',gap:'12px'}}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M1 6h13v9H1zM14 9h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg>
@@ -2508,6 +2510,7 @@ function SalesOrderDetail({id,navigate}){
                 <span style={{fontSize:'14px',fontWeight:600,color:'var(--ink)'}}>{shipment.destination_port?.name||shipment.destination_port?.unlocode||'—'}</span>
               </span>
             </div>
+            <ShipmentStatusArea s={shipment} byTracking={shipBy} />
             <TrackingSummary s={shipment} events={shipEvents} />
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',borderTop:'1px solid var(--line-2)'}}>
               {[['Vessel',shipment.vessel_name],['Voyage #',shipment.voyage_no],['Container #',shipment.container_no],['Booking #',shipment.booking_number],['Bill of Lading',shipment.bill_of_lading],['Carrier',shipment.carrier?.name],['ETD',fmtDate(shipment.estimated_departure)],['ETA',fmtDate(shipment.estimated_arrival)]].map(([l,v],i)=>(
@@ -4232,6 +4235,7 @@ function OrderDetail({ id, navigate }) {
   const [editing, setEditing] = useState(false);
   const [ship, setShip]   = useState(null);
   const [shipEvents, setShipEvents] = useState([]);   // its tracking events, when tracked
+  const [shipBy, setShipBy] = useState(false);         // its status last set by tracking
   const [logi, setLogi]   = useState({});
   const [savingLogi, setSavingLogi] = useState(false);
   // Said beside Save logistics. It used to borrow the notes card's message,
@@ -4262,6 +4266,7 @@ function OrderDetail({ id, navigate }) {
     }
     setShip(sh);
     setShipEvents(await trackingEventsOf(sh));
+    setShipBy(sh ? await statusSetByTracking(sh.id) : false);
     setLogi({
       vessel_name: sh?.vessel_name||'', container_no: sh?.container_no||'', booking_number: sh?.booking_number||'',
       bill_of_lading: sh?.bill_of_lading||'', voyage_no: sh?.voyage_no||'',
@@ -4553,6 +4558,7 @@ function OrderDetail({ id, navigate }) {
 
       <div className="section-card" style={{marginBottom:'20px'}}>
         <div className="section-head"><h3>Logistics</h3></div>
+        <ShipmentStatusArea s={ship} byTracking={shipBy} />
         <TrackingSummary s={ship} events={shipEvents} />
         <div className="logi-grid">
           {[['Vessel / Boat','vessel_name','e.g. MAERSK SELETAR'],['Container #','container_no','e.g. MSKU1234567'],['Voyage #','voyage_no','e.g. 084W'],['Booking #','booking_number',''],['Bill of Lading','bill_of_lading','']].map(([lab,k,ph])=>(
@@ -8922,12 +8928,30 @@ function TrackingSummary({ s, events }) {
   ].filter(Boolean);
   return (
     <div style={{padding:'10px 18px',borderTop:'1px solid var(--line-2)',display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'4px 10px',fontSize:'12.5px',color:'var(--ink-2)'}}>
-      <span title={s.tracking_error || 'Tracked with ShipsGo'} style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',
-        color:s.tracking_error?'#B91C1C':'#0A84FF',background:s.tracking_error?'#FEE2E2':'#EAF3FE'}}>Tracked</span>
       {s.tracking_status && <span title="ShipsGo's own status" style={{color:'var(--muted)'}}>{'ShipsGo: '+trackingWord(s.tracking_status)}</span>}
       <span>{parts.join(' \u00b7 ')}</span>
       {s.tracking_checked_at && <span title="Last checked with ShipsGo" style={{color:'var(--muted)'}}>{'Last updated '+checkedAgo(s.tracking_checked_at)}</span>}
       {s.tracking_error && <div style={{flexBasis:'100%',color:'var(--hot)'}}>{s.tracking_error}</div>}
+    </div>
+  );
+}
+
+// ── SHIPMENT STATUS ON AN ORDER ─────────────────────────────────────────────
+// The Sales Order and PO pages show their shipment's own status here, in the
+// shipment's words (shipmentStatusLabel), with Tracked or Manual and the
+// ShipsGo mark when tracking set it last. The order's own status is shown where
+// it always was and is not touched.
+function ShipmentStatusArea({ s, byTracking }) {
+  if (!s) return null;
+  const tracked = !!s.tracking_ref;
+  return (
+    <div style={{display:'flex',alignItems:'baseline',flexWrap:'wrap',gap:'4px 10px',padding:'10px 18px',borderTop:'1px solid var(--line-2)'}}>
+      <span style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)'}}>Shipment status</span>
+      <span style={{fontSize:'13px',fontWeight:600,color:'var(--ink)'}}>{shipmentStatusLabel(s.status)}</span>
+      {byTracking && <span title="Status last set by ShipsGo tracking" style={{fontSize:'12px',color:'var(--muted)'}}>{'\u00b7 ShipsGo'}</span>}
+      <span title={tracked ? (s.tracking_error || 'Tracked with ShipsGo') : 'Not tracked -- staff keep this shipment up to date'}
+        style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',
+          color:tracked?(s.tracking_error?'#B91C1C':'#0A84FF'):'#6B7280',background:tracked?(s.tracking_error?'#FEE2E2':'#EAF3FE'):'#F2F2F4'}}>{tracked ? 'Tracked' : 'Manual'}</span>
     </div>
   );
 }
