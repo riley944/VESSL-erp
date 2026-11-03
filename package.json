@@ -7,7 +7,9 @@
     "dev": "next dev -H 127.0.0.1 -p 3000",
     "build": "cross-env NEXT_DIST_DIR=.next-build next build",
     "start": "next start",
-    "lint": "eslint app lib"
+    "lint": "eslint app lib",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.136.0",
@@ -22,6 +24,7 @@
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
-    "eslint": "9.39.0"
+    "eslint": "9.39.0",
+    "vitest": "^5.1.0"
   }
 }
