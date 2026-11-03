@@ -8635,11 +8635,11 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
                 )}
                 {linkFor===l.idx && !l.linkId && (
                   <div style={{margin:'6px 0',padding:'8px',border:'1px solid #E5E7EB',borderRadius:'9px',background:'#fff'}}>
-                    {!pq ? <div style={{fontSize:'12px',color:'#8A8A8E'}}>Loading quotes\u2026</div> : (
+                    {!pq ? <div style={{fontSize:'12px',color:'#8A8A8E'}}>{'Loading quotes\u2026'}</div> : (
                       <QuotePicker quotes={pq} value="" detail suggestIds={suggestFor(l.desc)}
                         onPick={id=>{ const q = pq.find(x=>x.id===id); if (q) linkLine(l, q); }} />
                     )}
-                    <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'5px'}}>Links this line on every freight quote of the RFQ. Suggested rows match the line\u2019s name or SKU; check the carton before picking.</div>
+                    <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'5px'}}>{'Links this line on every freight quote of the RFQ. Suggested rows match the line\u2019s name or SKU; check the carton before picking.'}</div>
                   </div>
                 )}
                 {!L.allIn && (
@@ -10951,7 +10951,7 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
                       {l.quoteId && pickFor!==l._k
                         ? <>
                             <span>from <b style={{fontFamily:'var(--mono)',color:'#3461e0'}}>{l.quoteCode||'a quote'}</b></span>
-                            <span>\u00b7</span>
+                            <span>{'\u00b7'}</span>
                             <button type="button" onClick={()=>setPickFor(l._k)} title="Fill this line from a different product quote"
                               style={{background:'none',border:'none',padding:0,color:'#0071E3',fontSize:'12px',fontWeight:500,cursor:'pointer'}}>Pick another quote</button>
                           </>
