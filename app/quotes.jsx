@@ -1699,7 +1699,11 @@ function FreightQuoteButton({ q, cbmPerCarton }) {
         total_cartons: cartons, total_cbm: totalCbm,
         total_weight_kg: Number((cartons * (Number(q.cartonWeight) || 0)).toFixed(2)),
         containers_needed: containers, utilization_pct: Number(util.toFixed(1)),
-        line_items: [{ desc: q.product || q.sku || "", upc: upc, cartons: cartons, pieces: pieces, cbm_per: per, cbm_total: totalCbm, weight: Number(q.cartonWeight) || 0 }],
+        line_items: [{ desc: q.product || q.sku || "", upc: upc, cartons: cartons, pieces: pieces, cbm_per: per, cbm_total: totalCbm, weight: Number(q.cartonWeight) || 0,
+          // The line names the quote it came from, as the freight form saves it, so
+          // the bid breakdown and Apply can find its cost, HTS and carton.
+          ...(q.sku ? { sku: q.sku } : {}),
+          ...(q.id ? { quote_id: q.id, quote_code: q.quoteCode || null } : {}) }],
         notes: "Generated from quote " + (q.sku || q.product || "") + (nm ? " for " + nm : ""),
         status: "draft",
       };

@@ -8166,6 +8166,7 @@ function ImportBidsModal({ quotes, onClose, onApplied }) {
 
 // ── Apply a winning bid into the product quote's freight builder ─────────────
 const APPLY_CAPS = { '20GP':32, '40GP':58, '40HQ':68, '45HQ':83 };
+const NO_IDS = [];
 
 // ── THE PRODUCT QUOTE PICKER ─────────────────────────────────────────────────
 // A searchable combobox in the manner of HtsField: type to filter by product,
@@ -8174,10 +8175,19 @@ const APPLY_CAPS = { '20GP':32, '40GP':58, '40HQ':68, '45HQ':83 };
 // and a guess left in place wrote one bid's freight onto the wrong product.
 // Rows lead with the quote ID and SKU, newest quote first; the freight quote's
 // own product quote, when it has one, is listed first and tagged.
+// detail adds the factory and the carton to each row, for the places a line is
+// being linked to a quote and the carton is what tells two alike quotes apart.
+// suggestIds are listed next and tagged SUGGESTED -- a hint (a name or SKU
+// match), never a choice: nothing is picked until somebody picks.
 const quoteHead = q => [(q.quote_code||'').trim(), (q.sku||'').trim()].filter(Boolean).join(' \u00b7 ');
 const quoteSub = q => [(q.product||'').trim(), (q.client||'').trim()].filter(Boolean).join(' \u00b7 ');
 const quoteLabel = q => [quoteHead(q), quoteSub(q)].filter(Boolean).join(' \u00b7 ') || q.id.slice(0,8);
-function QuotePicker({ quotes, value, onPick, linkedId }) {
+const quoteCarton = q => {
+  const L=Number(q.carton_l)||0, W=Number(q.carton_w)||0, H=Number(q.carton_h)||0, u=Number(q.units_per_carton)||0;
+  if (!(L>0&&W>0&&H>0) && !u) return 'no carton data';
+  return [(L>0&&W>0&&H>0) ? L+'\u00d7'+W+'\u00d7'+H+' cm' : 'no dimensions', u ? u+' pcs/ctn' : 'pcs/ctn not set'].join(' \u00b7 ');
+};
+function QuotePicker({ quotes, value, onPick, linkedId, detail = false, suggestIds = NO_IDS }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState('');
   const [active, setActive] = useState(0);
@@ -8187,8 +8197,9 @@ function QuotePicker({ quotes, value, onPick, linkedId }) {
     // Q-0400 before Q-0399: numeric compare, so Q-1000 will sort above Q-0999.
     const sorted = [...quotes].sort((a, b) => String(b.quote_code||'').localeCompare(String(a.quote_code||''), undefined, { numeric:true }));
     const list = term ? sorted.filter(q => matches(term, q.quote_code, q.sku, q.product, q.client)) : sorted;
-    return linkedId ? [...list.filter(q => q.id === linkedId), ...list.filter(q => q.id !== linkedId)] : list;
-  }, [quotes, term, linkedId]);
+    const rank = q => q.id === linkedId ? 0 : suggestIds.includes(q.id) ? 1 : 2;
+    return [0, 1, 2].flatMap(r => list.filter(q => rank(q) === r));
+  }, [quotes, term, linkedId, suggestIds]);
   useEffect(() => { setActive(0); }, [term, open]);
   // The highlighted row stays in view as the arrows move it.
   useEffect(() => {
@@ -8226,7 +8237,9 @@ function QuotePicker({ quotes, value, onPick, linkedId }) {
                       background: i === active ? '#EAF3FE' : 'transparent', color:'#1A1A1C'}}>
               <span style={{fontWeight:700,fontSize:'14px'}}>{quoteHead(q) || (q.product||'').trim() || '\u2014'}</span>
               {q.id === linkedId && <span style={{fontSize:'10px',fontWeight:700,color:'#15803D',background:'#DCFCE7',borderRadius:'5px',padding:'1px 6px',marginLeft:'7px'}}>LINKED</span>}
+              {q.id !== linkedId && suggestIds.includes(q.id) && <span style={{fontSize:'10px',fontWeight:700,color:'#B45309',background:'#FEF3C7',borderRadius:'5px',padding:'1px 6px',marginLeft:'7px'}}>SUGGESTED</span>}
               <span style={{display:'block',fontSize:'12.5px',color:'#8A8A8E',marginTop:'2px'}}>{quoteSub(q) || '\u00a0'}</span>
+              {detail && <span style={{display:'block',fontSize:'12px',color:'#8A8A8E',marginTop:'1px'}}>{[(q.factory||'').trim() || 'no factory', quoteCarton(q)].join(' \u00b7 ')}</span>}
             </button>
           ))}
         </div>
@@ -10337,6 +10350,9 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
   // { kind:'none', text } | { kind:'pick', options } | { kind:'confirm', quote, fill, clash, others }
   // | { kind:'note', text }.
   const [skuMsg, setSkuMsg] = useState({});
+  // The line (_k) whose Pick quote list is open. Picking runs the same
+  // offerQuote as the SKU box: fill, or ask before replacing what is there.
+  const [pickFor, setPickFor] = useState(null);
   // _k -> true once the SKU box has been typed in since its last lookup. Leaving
   // the box looks up only then, so tabbing through a saved line's SKU on a
   // reopened RFQ asks nothing; Enter always looks up.
@@ -10432,8 +10448,10 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
   const cartonSig = q => { const x = fillOf(q); return x.upc+'|'+x.cbmPer+'|'+x.weight; };
   const setMsg = (k, m) => setSkuMsg(prev => { const n = { ...prev }; if (m) n[k] = m; else delete n[k]; return n; });
 
+  // A SKU typed in the line's box stays; a line filled by Pick quote takes the
+  // quote's SKU, so the saved line names it either way.
   const applyFill = (k, q, fill, others) => {
-    setLines(prev=>prev.map(l=>l._k===k ? { ...l, ...fill, quoteId:q.id, quoteCode:q.quote_code||'' } : l));
+    setLines(prev=>prev.map(l=>l._k===k ? { ...l, ...fill, sku: l.sku.trim() ? l.sku : (q.sku||''), quoteId:q.id, quoteCode:q.quote_code||'' } : l));
     const notes = [];
     if (others>0) notes.push(others+' other quote'+(others===1?' has':'s have')+' this SKU with the same carton');
     if (!fill.upc && !fill.cbmPer && !fill.weight) notes.push('that quote has no carton data, so only the description was filled');
@@ -10771,10 +10789,21 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
                   <div style={{fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{lineCbm>0?lineCbm.toFixed(3):'—'}</div>
                   <button type="button" onClick={()=>rmLine(i)} style={{background:'none',border:'none',color:'#C0C0C4',cursor:'pointer',fontSize:'17px',lineHeight:1}}>×</button>
                 </div>
-                {(linePcs>0 || l.quoteId) && (
-                  <div style={{fontSize:'10.5px',color:'#8A8A8E',paddingLeft:'10px',marginTop:'3px',display:'flex',gap:'12px',flexWrap:'wrap'}}>
-                    {l.quoteId && <span>from <b style={{fontFamily:'var(--mono)',color:'#3461e0'}}>{l.quoteCode||'a quote'}</b></span>}
-                    {linePcs>0 && <span>= {fmtNum(linePcs)} pcs</span>}
+                <div style={{fontSize:'10.5px',color:'#8A8A8E',paddingLeft:'10px',marginTop:'3px',display:'flex',gap:'12px',flexWrap:'wrap',alignItems:'baseline'}}>
+                  {l.quoteId && <span>from <b style={{fontFamily:'var(--mono)',color:'#3461e0'}}>{l.quoteCode||'a quote'}</b></span>}
+                  {linePcs>0 && <span>= {fmtNum(linePcs)} pcs</span>}
+                  <button type="button" onClick={()=>setPickFor(pickFor===l._k ? null : l._k)}
+                    title="Fill this line from a product quote and link it to that quote"
+                    style={{background:'none',border:'none',padding:0,color:'#0071E3',fontSize:'10.5px',fontWeight:600,cursor:'pointer'}}>
+                    {pickFor===l._k ? 'Close' : (l.quoteId ? 'Pick another quote' : 'Pick quote')}
+                  </button>
+                </div>
+                {pickFor===l._k && (
+                  <div style={{...SKU_PANEL}}>
+                    {!quotesReady ? 'Quotes are still loading\u2026' : (
+                      <QuotePicker quotes={products} value={l.quoteId} detail
+                        onPick={id=>{ const q=products.find(x=>x.id===id); setPickFor(null); if (q) { markDirty(); offerQuote(l._k, q); } }} />
+                    )}
                   </div>
                 )}
                 {m && (m.kind==='none' || m.kind==='note') && (
