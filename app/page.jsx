@@ -141,9 +141,9 @@ import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompan
 import { usePageState, clearPageState } from '@/lib/pageState';
 import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
-import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo } from '@/lib/shipmentStatus';
+import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord } from '@/lib/shipmentStatus';
 import { trackShipment } from '@/lib/trackShipment';
-import { QF_DEFAULT, shipmentsView, rfqPill } from '@/lib/shipmentsView';
+import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
          buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline, timelineBy, monthColor, INV_STATUS_COLORS } from '@/lib/inventoryView';
@@ -6720,11 +6720,14 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   // (credits left) lives here so it survives the remount.
   const [openKey, setOpenKey] = useState(0);
   const [trackNotice, setTrackNotice] = useState(null);
+  // A New tracked shipment whose Track failed opens its card with the error.
+  const [noticeErr, setNoticeErr] = useState(false);
+  const [newTracked, setNewTracked] = useState(false);
   // Which half of the page, which sub-tab, and the three narrowings -- kept across
   // navigation, and kept across the deliberate remount that follows creating a
   // shipment, which is what the key on this component does. openId and the respond-*
   // fields stay plain below, being a row somebody opened and a form in progress.
-  const [ui, setUi] = usePageState('shipments', { view:'quotes', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'', client:'' });
+  const [ui, setUi] = usePageState('shipments', { view:'quotes', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'', client:'', track:'' });
   // qSel, shipFilter and search are ui.* now, in the page store above, and
   // QF_DEFAULT is at module scope above this component -- see the note there.
   const [quotes, setQuotes] = useState([]);
@@ -7043,6 +7046,26 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
     return out;
   }, [soPos, shipPos, rows]);
 
+  // "SO # · PO #" for a row. A shipment reaches a Sales Order only through its
+  // POs (shipment_pos, then sales_order_pos), the chain shipsForSo walks the
+  // other way. Derived, so a PO moved to another SO moves its shipments' SO too.
+  const soNumsForShip = useMemo(() => {
+    const soNum = {};
+    (salesOrders||[]).forEach(x => { soNum[x.id] = x.so_number || x.order_number || ''; });
+    const sosOfPo = {};
+    (soPos||[]).forEach(x => { (sosOfPo[x.purchase_order_id] = sosOfPo[x.purchase_order_id] || []).push(x.sales_order_id); });
+    const out = {};
+    (shipPos||[]).forEach(x => {
+      (sosOfPo[x.purchase_order_id] || []).forEach(sid => {
+        const n = soNum[sid];
+        if (!n) return;
+        const list = out[x.shipment_id] = out[x.shipment_id] || [];
+        if (!list.includes(n)) list.push(n);
+      });
+    });
+    return out;
+  }, [salesOrders, soPos, shipPos]);
+
   // Returns what the ref resolved to and HOW, so the card can say which.
   const matchRef = (ref) => {
     if (!ref) return null;
@@ -7074,7 +7097,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   const V = shipmentsView({ quotes, rows, dreqs, bids, coNames }, ui, new Date());
   const { cSel, quotesV, rowsV, dreqsV, openDreqsV, clientChoices, bidCount, winnerOf,
     activeShips, doneShips, arriving, overdueShips, awaiting, bidsIn, awarded, drafts, notSelected, archivedQ,
-    isDefaultQ, shownQuotes, shownShips } = V;
+    isDefaultQ, shownQuotes, shownShips, trackedCount, manualCount } = V;
 
   // Counts are live and come from the same buckets the tiles read, so a number in
   // the dropdown and a number on a tile cannot disagree.
@@ -7180,7 +7203,8 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
         </div>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>
-          {onNewShipment && <button onClick={onNewShipment} style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
+          {onNewShipment && <button onClick={onNewShipment} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
+          <button onClick={()=>setNewTracked(true)} title="A shipment ShipsGo follows: client, PO, B/L or container, forwarder" style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Tracked Shipment</button>
           <ExportMenu label="Export" className="export-pill" busy={exporting==='all'} disabled={!!exporting} title="Export Freight Quotes, Shipments and Delivery Requests" ariaLabel="Export Freight Quotes, Shipments and Delivery Requests" onPick={fmt => exportTab('all', fmt)} />
         </div>
       </div>
@@ -7259,6 +7283,15 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
           <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
             {[['active','In transit',activeShips.length],['delivered','Delivered',doneShips.length],['all','All',rowsV.length]].map(([val,label,ct])=>(
               <button key={val} onClick={()=>{setUi('tab', val); setUi('shipFilter','');}} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:ui.tab===val&&!ui.shipFilter?'#1D1D1F':'#fff',color:ui.tab===val&&!ui.shipFilter?'#fff':'#5A5A5E',boxShadow:'0 1px 2px rgba(0,0,0,.05)'}}>{label+' '+String(ct)}</button>
+            ))}
+            {/* Tracked / Manual. A narrowing beside the tabs, not a fourth tab:
+                it applies within In transit, Delivered or All. Click again to clear. */}
+            <span style={{width:'1px',background:'rgba(0,0,0,.1)',margin:'4px 2px'}} />
+            {[['tracked','Tracked',trackedCount],['manual','Manual',manualCount]].map(([val,label,ct])=>(
+              <button key={val} onClick={()=>setUi('track', ui.track===val?'':val)} title={val==='tracked'?'Shipments followed by ShipsGo':'Shipments kept by hand'}
+                style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:ui.track===val?'#0A84FF':'#fff',color:ui.track===val?'#fff':'#3A3A3E',boxShadow:ui.track===val?'none':'0 1px 2px rgba(0,0,0,.05)'}}>
+                {label} <span style={{opacity:.6,fontVariantNumeric:'tabular-nums'}}>{ct}</span>
+              </button>
             ))}
             {ui.shipFilter && <button onClick={()=>setUi('shipFilter','')} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:'#1D1D1F',color:'#fff'}}>{(ui.shipFilter==='arriving'?'Arriving \u226414d':'Overdue')+' \u00d7'}</button>}
           </div>
@@ -7541,12 +7574,29 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             const po = ((s.shipment_pos||[])[0]||{}).purchase_orders;
             const ref = (po||{}).client_po_number || (po||{}).order_number || s.shipment_number || '\u2014';
             const clientName = (((po||{}).client||{}).name || (s.companies||{}).name || '\u2014').toUpperCase();
-            // The tracked ETA when there is one -- the carrier's, refreshed daily --
-            // else the one staff typed. Days-to-ETA follows whichever is shown.
-            const eta = s.tracking_eta || s.estimated_arrival;
+            const soPoLine = [ (soNumsForShip[s.id]||[]).length ? 'SO '+soNumsForShip[s.id].join(', ') : null,
+                               (s.shipment_pos||[]).length ? 'PO '+(s.shipment_pos||[]).map(x=>(x.purchase_orders||{}).order_number).filter(Boolean).join(', ') : null ]
+                             .filter(Boolean).join(' \u00b7 ');
+            // ETD and ETA are the columns, as the tiles, the filters and the export
+            // read them. On a tracked row tracking writes them (script 141).
+            const eta = s.estimated_arrival;
+            const etd = s.estimated_departure;
+            const datesTracked = !!s.tracking_ref;
+            // Arrived: a tracked row whose container has reached the port of
+            // discharge shows that date in place of its ETA. Display only --
+            // estimated_arrival and actual_arrival are not touched.
+            const arrived = datesTracked && s.tracking_ata ? s.tracking_ata : null;
+            // Vessel and voyage: what staff typed when they typed it, else what
+            // tracking reports.
+            const vesselTracked = !s.vessel_name && !!s.tracking_vessel;
+            const vessel = s.vessel_name || s.tracking_vessel;
+            const voyage = s.vessel_name ? s.voyage_no : (s.voyage_no || s.tracking_voyage);
             const days = s.actual_arrival ? null : etaDays(eta);
             const lastEv = s.tracking_ref ? lastActualEvent(s.shipment_tracking_events) : null;
-            const overdue = days!==null && days<0;
+            // Gated out at the port of discharge: on the road to the client, so a
+            // passed ETA is not flagged (lib/shipmentsView.js, gatedOut).
+            const gated = gatedOut(s);
+            const overdue = days!==null && days<0 && !gated;
             const delivered = (s.status==='delivered' || s.actual_arrival);
             const frac = delivered ? 1 : progressOf(s.status);
             return (
@@ -7557,11 +7607,12 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                   {recordExport('shipment', s, 'shipment')}
                 </div>
                 <div style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{clientName}</div>
+                {soPoLine && <div title={soPoLine} style={{fontFamily:'var(--mono)',fontSize:'10.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{soPoLine}</div>}
               </div>
               <div style={{minWidth:0}}>
                 <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={overdue?'#FF375F':'#6B7280'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18h18l-2-6H5l-2 6z"/><path d="M12 12V4M8 8h8"/></svg>
-                  <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.vessel_name||'Vessel TBD'}{s.voyage_no?' \u00b7 '+s.voyage_no:''}</span>
+                  <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}><span title={vesselTracked ? 'From tracking' : undefined}>{vessel||'Vessel TBD'}{voyage?' \u00b7 '+voyage:''}</span></span>
                   {s.container_no && <span style={{fontFamily:'var(--mono)',fontSize:'10.5px',color:'#A0A0A4',whiteSpace:'nowrap'}}>{s.container_no}</span>}
                   {s.tracking_ref && <span title={s.tracking_error || 'Tracked with ShipsGo'} style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',color:s.tracking_error?'#B91C1C':'#0A84FF',background:s.tracking_error?'#FEE2E2':'#EAF3FE'}}>Tracked</span>}
                 </div>
@@ -7569,7 +7620,10 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                   <div style={{position:'absolute',left:0,top:0,height:'100%',width:(frac*100)+'%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',borderRadius:'2px',transition:'width .4s'}} />
                   <div style={{position:'absolute',top:'50%',left:(frac*100)+'%',width:'9px',height:'9px',borderRadius:'50%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',transform:'translate(-50%,-50%)',border:'2px solid #fff',boxShadow:'0 1px 2px rgba(0,0,0,.2)'}} />
                 </div>
-                <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'6px',textTransform:'uppercase',letterSpacing:'.05em'}}>{legLabel(s.status)}</div>
+                <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'6px',textTransform:'uppercase',letterSpacing:'.05em'}}>
+                  {legLabel(s.status)}
+                  {s.tracking_ref && s.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,color:'#B0B0B5'}}>{'ShipsGo: '+trackingWord(s.tracking_status)}</span>}
+                </div>
                 {s.tracking_ref && (
                   <div style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
                     {[lastEv ? trackingEventLabel(lastEv.event_code)+' '+(lastEv.location_name||lastEv.location_code||'')+' '+fmtDateShort(lastEv.event_time) : 'No events yet',
@@ -7578,14 +7632,18 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                 )}
               </div>
               <div style={{textAlign:'right'}}>
-                <div style={{fontSize:'12px',color:'#86868B',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC'}}>ETD</span> {fmtDateShort(s.estimated_departure)}</div>
-                <div style={{fontSize:'13px',fontWeight:600,color:'#1D1D1F',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC',fontWeight:400}}>ETA</span> <span title={s.tracking_eta ? 'From tracking' : undefined}>{fmtDateShort(eta)}</span></div>
+                <div style={{fontSize:'12px',color:'#86868B',fontVariantNumeric:'tabular-nums'}}><span style={{color:'#C7C7CC'}}>ETD</span> <span title={datesTracked ? 'From tracking' : undefined}>{fmtDateShort(etd)}</span></div>
+                <div style={{fontSize:'13px',fontWeight:600,color:'#1D1D1F',marginTop:'2px',fontVariantNumeric:'tabular-nums'}}>{arrived
+                  ? <><span style={{color:'#C7C7CC',fontWeight:400}}>Arrived</span> <span title="Arrived at the port of discharge, from tracking">{fmtDateShort(arrived)}</span></>
+                  : <><span style={{color:'#C7C7CC',fontWeight:400}}>ETA</span> <span title={datesTracked ? 'From tracking' : undefined}>{fmtDateShort(eta)}</span></>}</div>
               </div>
               <div style={{textAlign:'right'}}>
                 {delivered ? (
                   <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'12px',fontWeight:600,color:'#30D158'}}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Delivered
                   </span>
+                ) : gated ? (
+                  <span title="Tracking has the container out of the port" style={{fontSize:'11.5px',fontWeight:600,color:'#86868B'}}>Gated out</span>
                 ) : days!==null ? (
                   <>
                     <div style={{fontSize:'16px',fontWeight:700,color:overdue?'#FF375F':'#1D1D1F',fontVariantNumeric:'tabular-nums',lineHeight:1}}>{overdue?'+'+Math.abs(days):days}<span style={{fontSize:'11px',color:'#A0A0A4',fontWeight:400}}>d</span></div>
@@ -7604,10 +7662,13 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
         </div>
       ))}
 
-      {openId && <ShipmentDetailModal key={openId+':'+openKey} id={openId} notice={trackNotice}
-                    onClose={()=>{setOpenId(null);setTrackNotice(null);}}
-                    onSaved={()=>{setOpenId(null);setTrackNotice(null);reload();}}
-                    onTracked={note=>{setTrackNotice(note);setOpenKey(k=>k+1);reload();}} />}
+      {openId && <ShipmentDetailModal key={openId+':'+openKey} id={openId} notice={trackNotice} noticeErr={noticeErr}
+                    onClose={()=>{setOpenId(null);setTrackNotice(null);setNoticeErr(false);}}
+                    onSaved={()=>{setOpenId(null);setTrackNotice(null);setNoticeErr(false);reload();}}
+                    onTracked={note=>{setTrackNotice(note);setNoticeErr(false);setOpenKey(k=>k+1);reload();}} />}
+      {newTracked && <CreateTrackedShipmentModal onClose={()=>setNewTracked(false)}
+                    onCreated={(id, note, isErr)=>{ setNewTracked(false); setUi('view','shipments'); reload(); reloadDreqs();
+                                                   setTrackNotice(note); setNoticeErr(isErr); setOpenKey(k=>k+1); setOpenId(id); }} />}
       {/* ── LAND ON THE FREIGHT QUOTE JUST CREATED ──────────────────────────
           + Freight Quote sits in the page header and is NOT guarded by ui.view,
           so it is clickable while the shipments half is on screen -- and the new
@@ -8620,8 +8681,24 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
   );
 }
 
+// What a Track did, in one line: the move this shipment made, how the tracking
+// was got and what it cost, and the credits left. The result covers every
+// shipment on the B/L (apply_tracking_group); id picks this one's row.
+function trackOutcomeText(out, id) {
+  const rows = (out.result && out.result.rows) || [];
+  const r = rows.find(x=>x.shipment_id===id) || {};
+  const moved = r.moved ? 'Status moved to '+shipmentStatusLabel(r.status_after)+'. ' : '';
+  const n = rows.length > 1 ? ' for '+rows.length+' shipments on this B/L' : '';
+  const how = out.refreshed ? 'Tracking refreshed'+n+', no credit used.'
+    : out.sibling ? 'Attached to the tracking already on this B/L'+n+', no credit used.'
+    : out.reused ? 'Already tracked at ShipsGo — reused'+n+', no credit used.'
+    : 'Tracking started'+n+', 1 credit used.';
+  const left = out.credits != null ? ' Credits left: '+out.credits+'.' : '';
+  return moved+how+left;
+}
+
 // ── Shipment Detail / Edit Modal ──────────────────────────────────────────────
-function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null }) {
+function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, noticeErr = false }) {
   // Fetches the row and populates the form after mount, which is exactly the
   // case the moving baseline exists for -- without it every open-then-close
   // would confirm.
@@ -8638,6 +8715,9 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null })
   // Track then attaches this one to it for free.
   const [trackedSibling, setTrackedSibling] = useState(null);
   const [linkedPO, setLinkedPO] = useState(null);
+  // "SO # · PO #" for the first box: every PO on this shipment, and every Sales
+  // Order those POs are on (the only way a shipment reaches an SO).
+  const [soPoLine, setSoPoLine] = useState('');
   const [companies, setCompanies] = useState([]);
   const [saving, setSaving] = useState(false);
   useEffect(()=>{
@@ -8657,6 +8737,15 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null })
     SB.from('shipment_pos').select('purchase_orders(order_number,client:companies!client_company_id(name))').eq('shipment_id',id).limit(1).then(({data})=>{
       if(data?.[0]?.purchase_orders) setLinkedPO(data[0].purchase_orders);
     });
+    (async()=>{
+      const { data:pl } = await SB.from('shipment_pos').select('purchase_order_id,purchase_orders(order_number)').eq('shipment_id',id);
+      const ids = (pl||[]).map(x=>x.purchase_order_id);
+      if (!ids.length) return;
+      const { data:sl } = await SB.from('sales_order_pos').select('sales_orders(so_number,order_number)').in('purchase_order_id', ids);
+      const soNums = [...new Set((sl||[]).map(x=>(x.sales_orders||{}).so_number||(x.sales_orders||{}).order_number).filter(Boolean))];
+      const poNums = (pl||[]).map(x=>(x.purchase_orders||{}).order_number).filter(Boolean);
+      setSoPoLine([soNums.length ? 'SO '+soNums.join(', ') : null, poNums.length ? 'PO '+poNums.join(', ') : null].filter(Boolean).join(' \u00b7 '));
+    })();
   },[id]);
   const set = (k,v)=>setS(prev=>({...prev,[k]:v}));
   const STAT = ['created','in_transit','at_origin_port','at_transshipment','at_destination_port','customs','out_for_delivery','delivered','delayed','exception','cancelled'];
@@ -8669,8 +8758,13 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null })
       client_company_id: s.client_company_id||null, carrier_company_id: s.carrier_company_id||null,
       vessel_name: s.vessel_name||null, container_no: s.container_no||null, voyage_no: s.voyage_no||null,
       booking_number: s.booking_number||null, bill_of_lading: s.bill_of_lading||null,
-      estimated_departure: dval(s.estimated_departure) ? new Date(dval(s.estimated_departure)+'T12:00:00').toISOString() : null,
-      estimated_arrival:   dval(s.estimated_arrival)   ? new Date(dval(s.estimated_arrival)+'T12:00:00').toISOString()   : null,
+      // While tracked the dates are tracking's (script 141) and the boxes are
+      // read-only, so Save leaves them alone -- writing the loaded copy back would
+      // undo a date tracking moved since this card opened.
+      ...(tracked ? {} : {
+        estimated_departure: dval(s.estimated_departure) ? new Date(dval(s.estimated_departure)+'T12:00:00').toISOString() : null,
+        estimated_arrival:   dval(s.estimated_arrival)   ? new Date(dval(s.estimated_arrival)+'T12:00:00').toISOString()   : null,
+      }),
       updated_at: new Date().toISOString(),
     };
     const { error } = await SB.from('shipments').update(upd).eq('id',id);
@@ -8695,22 +8789,20 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null })
   const tracked = !!(orig && orig.tracking_ref);
   const hasNumber = !!(orig && ((orig.bill_of_lading||'').trim() || (orig.booking_number||'').trim() || (orig.container_no||'').trim()));
   const closed = !tracked && !!orig && ['delivered','cancelled'].includes(orig.status);
+  // WHILE TRACKED, THE TRACKED FIELDS ARE READ-ONLY: the numbers tracking was
+  // started from, and the vessel and voyage it reports (shown when staff typed
+  // none). The container stays editable while tracking reports it is not on the
+  // B/L -- that is how a typo is put right.
+  const ro = tracked;
+  const roBox = ro && !(orig && orig.tracking_error);
+  const roStyle = {opacity:.7,cursor:'default'};
+  const roTitle = 'Read from ShipsGo while this shipment is tracked';
   const track = async () => {
     setTracking(true); setTrackErr('');
     const out = await trackShipment(id);
     setTracking(false);
     if (!out.ok) { setTrackErr(out.error || 'Tracking failed.'); return; }
-    // The result covers every shipment on the B/L; this card reads its own row.
-    const rows = (out.result && out.result.rows) || [];
-    const r = rows.find(x=>x.shipment_id===id) || {};
-    const moved = r.moved ? 'Status moved to '+shipmentStatusLabel(r.status_after)+'. ' : '';
-    const n = rows.length > 1 ? ' for '+rows.length+' shipments on this B/L' : '';
-    const how = out.refreshed ? 'Tracking refreshed'+n+', no credit used.'
-      : out.sibling ? 'Attached to the tracking already on this B/L'+n+', no credit used.'
-      : out.reused ? 'Already tracked at ShipsGo — reused'+n+', no credit used.'
-      : 'Tracking started'+n+', 1 credit used.';
-    const left = out.credits != null ? ' Credits left: '+out.credits+'.' : '';
-    if (onTracked) onTracked(moved+how+left);
+    if (onTracked) onTracked(trackOutcomeText(out, id));
   };
   const lastEv = lastActualEvent(events);
   return (
@@ -8721,24 +8813,36 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null })
         {!s ? <div className="modal-body">Loading…</div> : (
         <div className="modal-body">
           <div className="form-row-2">
-            <div><label>PO #</label><input className="form-input" value={linkedPO?.order_number||s.shipment_number||''} readOnly style={{opacity:.7,cursor:'default'}} /></div>
-            <div><label>Status</label><select className="form-select" value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{STAT.map(x=><option key={x} value={x}>{shipmentStatusLabel(x)}</option>)}</select></div>
+            {soPoLine
+              ? <div><label>SO # · PO #</label><input className="form-input" value={soPoLine} readOnly style={{opacity:.7,cursor:'default'}} title={soPoLine} /></div>
+              : <div><label>Shipment #</label><input className="form-input" value={s.shipment_number||''} readOnly style={{opacity:.7,cursor:'default'}} /></div>}
+            <div><label>Status{tracked && orig.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,fontWeight:500,color:'var(--muted)'}}>{'ShipsGo: '+trackingWord(orig.tracking_status)}</span>}</label><select className="form-select" value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{STAT.map(x=><option key={x} value={x}>{shipmentStatusLabel(x)}</option>)}</select></div>
           </div>
           <div className="form-row-2">
-            <div><label>Client</label><input className="form-input" value={(linkedPO?.client?.name||s.companies?.name||'—').toUpperCase()} readOnly style={{opacity:.7,cursor:'default',fontWeight:600}} /></div>
-            <div><label>Carrier / Forwarder</label><select className="form-select" value={s.carrier_company_id||''} onChange={e=>set('carrier_company_id',e.target.value)}><option value="">—</option>{companies.filter(c=>['carrier','freight_forwarder'].includes(c.type)).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+            {/* The client the row shows (shipClient): the linked PO's, else the
+                shipment's own. The row is loaded with select('*'), so its own
+                client is named from the companies this card already loads. */}
+            <div><label>Client</label><input className="form-input" value={(linkedPO?.client?.name||(companies.find(c=>c.id===s.client_company_id)||{}).name||'—').toUpperCase()} readOnly style={{opacity:.7,cursor:'default',fontWeight:600}} /></div>
+            <div><label>Forwarder</label><select className="form-select" value={s.carrier_company_id||''} onChange={e=>set('carrier_company_id',e.target.value)}><option value="">—</option>{companies.filter(c=>['carrier','freight_forwarder'].includes(c.type)).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           </div>
           <div className="form-row-2">
-            <div><label>Vessel / Boat</label><input className="form-input" value={s.vessel_name||''} onChange={e=>set('vessel_name',e.target.value)} placeholder="e.g. MAERSK SELETAR" /></div>
-            <div><label>Voyage #</label><input className="form-input" value={s.voyage_no||''} onChange={e=>set('voyage_no',e.target.value)} placeholder="e.g. 084W" /></div>
+            <div><label>Vessel / Boat</label>{ro
+              ? <input className="form-input" value={s.vessel_name||orig.tracking_vessel||''} readOnly style={roStyle} title={roTitle} />
+              : <input className="form-input" value={s.vessel_name||''} onChange={e=>set('vessel_name',e.target.value)} placeholder="e.g. MAERSK SELETAR" />}</div>
+            <div><label>Voyage #</label>{ro
+              ? <input className="form-input" value={s.vessel_name ? (s.voyage_no||'') : (s.voyage_no||orig.tracking_voyage||'')} readOnly style={roStyle} title={roTitle} />
+              : <input className="form-input" value={s.voyage_no||''} onChange={e=>set('voyage_no',e.target.value)} placeholder="e.g. 084W" />}</div>
           </div>
           <div className="form-row-2">
-            <div><label>Container #</label><input className="form-input" value={s.container_no||''} onChange={e=>set('container_no',e.target.value)} placeholder="e.g. MSKU1234567" /></div>
-            <div><label>Booking #</label><input className="form-input" value={s.booking_number||''} onChange={e=>set('booking_number',e.target.value)} /></div>
+            <div><label>Container #</label><input className="form-input" value={s.container_no||''} onChange={e=>set('container_no',e.target.value)} placeholder="e.g. MSKU1234567"
+              readOnly={roBox} style={roBox?roStyle:undefined} title={roBox?roTitle:(ro?'Not on the tracked B/L -- correct it, save, then Refresh tracking':undefined)} /></div>
+            <div><label>Booking #</label><input className="form-input" value={s.booking_number||''} onChange={e=>set('booking_number',e.target.value)}
+              readOnly={ro} style={ro?roStyle:undefined} title={ro?roTitle:undefined} /></div>
           </div>
           <div className="form-row"><label>Bill of Lading</label>
             <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
-              <input className="form-input" style={{flex:1}} value={s.bill_of_lading||''} onChange={e=>set('bill_of_lading',e.target.value)} />
+              <input className="form-input" style={ro?{flex:1,...roStyle}:{flex:1}} value={s.bill_of_lading||''} onChange={e=>set('bill_of_lading',e.target.value)}
+                readOnly={ro} title={ro?roTitle:undefined} />
               <button type="button" className="btn btn-ghost btn-sm" style={{flexShrink:0,whiteSpace:'nowrap'}}
                       disabled={tracking || !hasNumber || unsaved || closed} onClick={track}
                       title={!hasNumber ? 'Save a bill of lading, booking number or container number first'
@@ -8750,11 +8854,20 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null })
                 {tracking ? 'Tracking…' : tracked ? 'Refresh tracking' : trackedSibling ? 'Track (free, B/L already tracked)' : 'Track (1 credit)'}
               </button>
             </div>
-            {(trackErr || notice) && <div style={{fontSize:'12px',marginTop:'6px',color:trackErr?'var(--hot)':'var(--muted)'}}>{trackErr || notice}</div>}
+            {(trackErr || notice) && <div style={{fontSize:'12px',marginTop:'6px',color:(trackErr||noticeErr)?'var(--hot)':'var(--muted)'}}>{trackErr || notice}</div>}
           </div>
           <div className="form-row-2">
-            <div><label>ETD</label><input type="date" className="form-input" value={dval(s.estimated_departure)} onChange={e=>set('estimated_departure',e.target.value)} /></div>
-            <div><label>ETA</label><input type="date" className="form-input" value={dval(s.estimated_arrival)} onChange={e=>set('estimated_arrival',e.target.value)} /></div>
+            {/* While tracked, tracking owns both dates (script 141): read-only. */}
+            <div><label>ETD</label><input type="date" className="form-input" value={dval(s.estimated_departure)} onChange={e=>set('estimated_departure',e.target.value)}
+              readOnly={ro} style={ro?roStyle:undefined} title={ro?'From tracking':undefined} /></div>
+            {/* Once tracking reports the arrival at the port of discharge, the box
+                shows that date instead, labelled so. Display only: Save leaves the
+                dates alone while tracked, and actual_arrival is never set here. */}
+            {ro && orig.tracking_ata
+              ? <div><label>Arrived (port of discharge)</label><input type="date" className="form-input" value={dval(orig.tracking_ata)}
+                  readOnly style={roStyle} title="Arrived at the port of discharge, from tracking" /></div>
+              : <div><label>ETA</label><input type="date" className="form-input" value={dval(s.estimated_arrival)} onChange={e=>set('estimated_arrival',e.target.value)}
+                  readOnly={ro} style={ro?roStyle:undefined} title={ro?'From tracking':undefined} /></div>}
           </div>
           {(tracked || events.length > 0) && (
             <>
@@ -9626,7 +9739,7 @@ function CreateShipmentModal({ onClose, onCreated }) {
           </div>
           <div className="form-row-2">
             <div><label>Client</label><select className="form-select" value={form.client} onChange={e=>f('client')(e.target.value)}><option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-            <div><label>Carrier / Forwarder</label><select className="form-select" value={form.carrier} onChange={e=>f('carrier')(e.target.value)}><option value="">—</option>{carriers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+            <div><label>Forwarder</label><select className="form-select" value={form.carrier} onChange={e=>f('carrier')(e.target.value)}><option value="">—</option>{carriers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           </div>
           <div className="form-row"><label>Bill of Lading</label><input className="form-input" value={form.bol} onChange={e=>f('bol')(e.target.value)} /></div>
           <div className="form-row-2">
@@ -9640,6 +9753,198 @@ function CreateShipmentModal({ onClose, onCreated }) {
           <OrderNoteDraft staff={staff} text={noteText} setText={setNoteText} to={noteTo} setTo={setNoteTo} />
         </div>
         <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={submit}>Save Shipment</button></div>
+      </div>
+    </div>
+  );
+}
+
+// ── New tracked shipment ──────────────────────────────────────────────────────
+// A shipment that ShipsGo follows from the start: client, an optional Sales
+// Order, a B/L or a container, and the forwarder. Saving inserts the row, links
+// the Sales Order's POs, then runs Track exactly as the card's button does --
+// same route, same credit and sibling rules (one credit per B/L, a tracked
+// sibling's ref reused for free). If Track fails the row stays, as a manual
+// shipment, and the card opens with the error. The plain New Shipment form is
+// still there for rows kept by hand, and still links a PO directly.
+//
+// THE SALES ORDER. A shipment reaches a Sales Order only through its POs
+// (shipment_pos, then sales_order_pos) -- there is no shipment-to-SO link -- so
+// picking an SO attaches its POs. One PO is attached outright; several show as
+// ticked boxes, so a PO not on this container can be left off (each attached PO,
+// and every SO it is on, follows the shipment's status). An SO with no PO cannot
+// be reached that way and is greyed out. A PO that is on more than one SO gets a
+// line saying the other SO moves with it.
+//
+// THE FORWARDER fills itself, first match wins, and is never required:
+//   1. an awarded freight quote on one of the attached POs
+//   2. else the newest freight quote on them that is not archived
+//   3. else the forwarder on this client's most recent shipment that has one
+// A bid names its forwarder as text only; the company is on its freight quote
+// (shipment_quotes.forwarder_company_id), which reaches a PO by po_id. Picking a
+// forwarder by hand stops the filling.
+function CreateTrackedShipmentModal({ onClose, onCreated }) {
+  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
+  const [companies, setCompanies] = useState([]);
+  const [sos, setSos] = useState([]);
+  const [links, setLinks] = useState([]);   // sales_order_pos with the PO's number
+  const [form, setForm] = useState({ client:'', soId:'', poIds:[], bol:'', box:'', forwarder:'' });
+  const [fwdHint, setFwdHint] = useState('');
+  const [fwdManual, setFwdManual] = useState(false);
+  const [poShips, setPoShips] = useState({});   // PO id -> shipments it already has
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const f = k => v => setForm(prev=>({...prev,[k]:v}));
+  // The number's tail is minted once, so it does not change under the user.
+  const tail = useRef(Date.now().toString(36).toUpperCase());
+  useEffect(()=>{
+    SB.from('companies').select('id,name,type').order('name').then(({data})=>setCompanies(data||[]));
+    SB.from('sales_orders').select('id,so_number,order_number,client_po_number,client_company_id,status').order('created_at',{ascending:false}).limit(300)
+      .then(({data})=>setSos(data||[]));
+    SB.from('sales_order_pos').select('sales_order_id,purchase_order_id,purchase_orders(order_number)')
+      .then(({data})=>setLinks(data||[]));
+  },[]);
+  const clients  = companies.filter(c=>['client','brand','customer'].includes(c.type));
+  const forwarders = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
+  const soLabel = so => (so.so_number||so.order_number||so.id.slice(0,8))+(so.client_po_number && so.client_po_number!==so.so_number ? ' · '+so.client_po_number : '');
+  const posOf = soId => links.filter(l=>l.sales_order_id===soId)
+    .map(l=>({ id:l.purchase_order_id, number:(l.purchase_orders||{}).order_number||l.purchase_order_id.slice(0,8) }));
+  const sosShown = form.client ? sos.filter(x=>x.client_company_id===form.client) : sos;
+  const so = sos.find(x=>x.id===form.soId) || null;
+  const soPos = so ? posOf(so.id) : [];
+  const ticked = soPos.filter(p=>form.poIds.includes(p.id));
+  // A ticked PO that is also on another SO: that SO follows this shipment too.
+  const shared = ticked.map(p=>({ p, others: links.filter(l=>l.purchase_order_id===p.id && l.sales_order_id!==form.soId)
+                                                  .map(l=>sos.find(x=>x.id===l.sales_order_id)).filter(Boolean) }))
+                       .filter(x=>x.others.length);
+  // SHP-<first PO number>-xxxx with a PO, as the PO page names its shipments; else SHP-xxxxx.
+  const number = ticked.length
+    ? 'SHP-'+String(ticked[0].number).replace(/^PO[-\s]?/i,'')+'-'+tail.current.slice(-4)
+    : 'SHP-'+tail.current.slice(-5);
+
+  // An SO sets the client and ticks all its POs.
+  const pickSo = id => {
+    const x = sos.find(s2=>s2.id===id);
+    setForm(prev=>({...prev, soId:id, poIds: id ? posOf(id).map(p=>p.id) : [],
+                    client: (x && x.client_company_id) || prev.client}));
+  };
+  const togglePo = id => setForm(prev=>({...prev, poIds: prev.poIds.includes(id) ? prev.poIds.filter(v=>v!==id) : [...prev.poIds, id]}));
+
+  // The forwarder chain, rerun when the attached POs or the client change.
+  const poKey = form.poIds.slice().sort().join(',');
+  useEffect(()=>{
+    if (fwdManual) return;
+    let live = true;
+    (async()=>{
+      let pick = null;
+      const ids = poKey ? poKey.split(',') : [];
+      if (ids.length) {
+        const { data } = await SB.from('shipment_quotes').select('id,quote_number,status,forwarder_company_id,created_at')
+          .in('po_id', ids).order('created_at',{ascending:false});
+        const withFwd = (data||[]).filter(q=>q.forwarder_company_id);
+        const won = withFwd.find(q=>q.status==='awarded');
+        const open = withFwd.find(q=>q.status!=='archived');
+        if (won) pick = { id:won.forwarder_company_id, why:'From the awarded freight quote '+(won.quote_number||'') };
+        else if (open) pick = { id:open.forwarder_company_id, why:'From the PO’s freight quote '+(open.quote_number||'') };
+        const { data:sl } = await SB.from('shipment_pos').select('shipment_id,purchase_order_id').in('purchase_order_id', ids);
+        const m = {}; (sl||[]).forEach(x=>{ m[x.purchase_order_id] = (m[x.purchase_order_id]||0)+1; });
+        if (live) setPoShips(m);
+      } else if (live) setPoShips({});
+      if (!pick && form.client) {
+        const { data } = await SB.from('shipments').select('shipment_number,carrier_company_id')
+          .eq('client_company_id', form.client).not('carrier_company_id','is',null)
+          .order('created_at',{ascending:false}).limit(1);
+        const last = (data||[])[0];
+        if (last) pick = { id:last.carrier_company_id, why:'Last used for this client ('+(last.shipment_number||'a shipment')+')' };
+      }
+      if (!live) return;
+      setForm(prev=>({...prev, forwarder: pick ? pick.id : ''}));
+      setFwdHint(pick ? pick.why : '');
+    })();
+    return ()=>{ live = false; };
+  },[poKey, form.client, fwdManual]);
+
+  const clean = v => String(v||'').trim().toUpperCase().replace(/\s+/g,'');
+  const submit = async () => {
+    setErr('');
+    if (!form.client) { setErr('Pick the client, or a Sales Order that has one.'); return; }
+    if (so && !ticked.length) { setErr('Tick at least one of the Sales Order’s POs, or choose no Sales Order.'); return; }
+    if (!clean(form.bol) && !clean(form.box)) { setErr('Enter a bill of lading or a container number -- tracking needs one.'); return; }
+    setBusy(true);
+    const { data: ship, error } = await SB.from('shipments').insert({
+      shipment_number: number,
+      status: 'created',
+      client_company_id: form.client,
+      carrier_company_id: form.forwarder || null,
+      bill_of_lading: clean(form.bol) || null,
+      container_no: clean(form.box) || null,
+    }).select('id').single();
+    if (error) { setBusy(false); setErr('Could not save the shipment: '+error.message); return; }
+    if (ticked.length) {
+      const { error:lErr } = await SB.from('shipment_pos').insert(ticked.map(p=>({ shipment_id: ship.id, purchase_order_id: p.id })));
+      if (lErr) window._toast?.('Shipment saved, but linking the Sales Order’s POs failed: '+lErr.message,'err');
+    }
+    const out = await trackShipment(ship.id);
+    setBusy(false);
+    if (out.ok) onCreated(ship.id, trackOutcomeText(out, ship.id), false);
+    else onCreated(ship.id, 'Tracking did not start: '+(out.error||'unknown error')+' The shipment is saved as a manual row; fix the number and press Track.', true);
+  };
+  const already = ticked.filter(p=>poShips[p.id]);
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
+      <div ref={cardRef} className="modal-box">
+        <div className="modal-head"><h3>New tracked shipment</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
+        <div className="modal-body">
+          <div className="form-row-2">
+            <div><label>Shipment #</label><input className="form-input" value={number} readOnly style={{opacity:.7,cursor:'default'}} title="Made from the first PO number when a Sales Order is linked" /></div>
+            <div><label>Client *</label><select className="form-select" value={form.client} onChange={e=>{ const v=e.target.value; setForm(prev=>({...prev, client:v, ...(so && so.client_company_id!==v ? { soId:'', poIds:[] } : {})})); }}>
+              <option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+          </div>
+          <div className="form-row"><label>Link to Sales Order (optional)</label>
+            <select className="form-select" value={form.soId} onChange={e=>pickSo(e.target.value)}>
+              <option value="">None</option>
+              {sosShown.map(x=>{ const n = posOf(x.id).length; return (
+                <option key={x.id} value={x.id} disabled={n===0}>{soLabel(x)+(n===0?' — no PO':'')}</option>
+              ); })}
+            </select>
+            {so && soPos.length === 1 && (
+              <div style={{fontSize:'12px',marginTop:'6px',color:'var(--muted)'}}>{'Attaches PO '+soPos[0].number+'.'}</div>
+            )}
+            {so && soPos.length > 1 && (
+              <div style={{display:'flex',flexDirection:'column',gap:'4px',marginTop:'8px'}}>
+                <div style={{fontSize:'12px',color:'var(--muted)'}}>This Sales Order has {soPos.length} POs. Untick any that are not on this container.</div>
+                {soPos.map(p=>(
+                  <label key={p.id} style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',textTransform:'none',letterSpacing:0,fontWeight:500,color:'var(--ink)',margin:0}}>
+                    <input type="checkbox" checked={form.poIds.includes(p.id)} onChange={()=>togglePo(p.id)} />{'PO '+p.number}
+                  </label>
+                ))}
+              </div>
+            )}
+            {shared.map(({p, others})=>(
+              <div key={p.id} style={{fontSize:'12px',marginTop:'6px',color:'#B45309'}}>
+                {'PO '+p.number+' is also on '+others.map(o=>'SO '+(o.so_number||o.order_number||'?')).join(', ')+' — that Sales Order’s status will follow this shipment too.'}
+              </div>
+            ))}
+            {already.length > 0 && <div style={{fontSize:'12px',marginTop:'6px',color:'var(--muted)'}}>{already.map(p=>'PO '+p.number+' already has '+poShips[p.id]+' shipment'+(poShips[p.id]===1?'':'s')).join('; ')+'; this adds another (one per container is normal).'}</div>}
+          </div>
+          <div className="form-row-2">
+            <div><label>Bill of Lading</label><input className="form-input" value={form.bol} onChange={e=>f('bol')(e.target.value)} placeholder="e.g. CMDUXIA2035159" /></div>
+            <div><label>Container #</label><input className="form-input" value={form.box} onChange={e=>f('box')(e.target.value)} placeholder="e.g. MSKU1234567" /></div>
+          </div>
+          <div style={{fontSize:'12px',color:'var(--muted)',margin:'-4px 0 12px',lineHeight:1.5}}>
+            One is enough. With a B/L, every live shipment on it is tracked together for one credit (free if one is already tracked); a container alone is tracked on its own. The Sales Order and its POs move with the shipment status.
+          </div>
+          <div className="form-row"><label>Forwarder</label>
+            <select className="form-select" value={form.forwarder} onChange={e=>{ setFwdManual(true); setFwdHint(''); f('forwarder')(e.target.value); }}>
+              <option value="">—</option>{forwarders.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            {fwdHint && <div style={{fontSize:'12px',marginTop:'6px',color:'var(--muted)'}}>{fwdHint}</div>}
+          </div>
+          {err && <div style={{fontSize:'12.5px',color:'var(--hot)',marginTop:'4px'}}>{err}</div>}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn btn-dark" onClick={submit} disabled={busy}>{busy ? 'Saving and tracking…' : 'Save and track'}</button>
+        </div>
       </div>
     </div>
   );
@@ -10894,9 +11199,10 @@ function buildSODoc(d) {
   });
 }
 function ConfirmModal({ title, message, confirmLabel='Delete', danger=true, onConfirm, onCancel }) {
-  // Verified: zero controls, so both snapshots are "0", they compare equal, and
-  // clicking outside cancels silently -- which is what it already did.
-  const { ref: cardRef, guardedClose } = useDirtyGuard(onCancel);
+  // Verified: zero controls, so both snapshots are "0" and it is never dirty.
+  // A pure yes/no box, so it is exempt from the always-ask rule for clicks
+  // outside (ModalGuard): clicking outside cancels silently, as it always did.
+  const { ref: cardRef, guardedClose } = useDirtyGuard(onCancel, null, { confirm: true });
   return (
     <div className="modal-overlay" onClick={guardedClose} style={{zIndex:10000}}>
       <div ref={cardRef} className="modal-box" style={{maxWidth:'380px',padding:'32px 28px',textAlign:'center'}} onClick={e=>e.stopPropagation()}>

@@ -47,6 +47,26 @@ import { createContext, useCallback, useContext, useEffect, useRef } from 'react
 export const UNSAVED_MESSAGE = 'You have unsaved changes in this form.\n\nDiscard them and close?';
 const MESSAGE = UNSAVED_MESSAGE;
 
+// ── A CLICK OUTSIDE ALWAYS ASKS ─────────────────────────────────────────────
+// Platform rule (30 Oct): a click outside a modal never closes it silently,
+// typed into or not -- a stray click beside a pristine New form loses the
+// place as surely as one beside a full form loses the work. The X, Escape,
+// Back and a Cancel button inside the card are deliberate and keep the rule
+// above: silent when clean, MESSAGE when dirty.
+//
+// PURE CONFIRMS ARE EXEMPT. A yes/no box with no inputs -- ConfirmModal --
+// passes { confirm: true }: clicking outside it is its Cancel, and cancels
+// silently as it always did. Asking "Close this window?" about a box that only
+// asks a question would be a question about a question. Forms and viewers with
+// state do not pass it.
+//
+// Every backdrop, the X and Back all call the same guardedClose, so the guard
+// tells them apart itself rather than each modal passing a flag: a capture
+// listener on the document notes a click whose target is outside this card, and
+// guardedClose, called from inside that same click, reads it. The note lasts
+// only until the click has been dispatched.
+const OUTSIDE_MESSAGE = 'Close this window?';
+
 // Lets a child call markDirty without every modal threading a prop down. Default
 // is a no-op so a component using it outside a guarded modal still renders.
 const MarkDirtyContext = createContext(() => {});
@@ -136,8 +156,11 @@ export function closeTopModal() {
 //
 // ask, optional: (changed) => the confirm text, or null to close without one.
 // For a modal that confirms even when nothing changed -- the quote form. Left
-// out, a clean close is silent and a dirty one asks MESSAGE, as always.
-export function useDirtyGuard(onClose, ask = null) {
+// out, a clean close is silent and a dirty one asks MESSAGE, as always -- except
+// from a click outside the card, which asks OUTSIDE_MESSAGE when nothing else
+// would, unless opts.confirm marks a pure yes/no box (see above).
+export function useDirtyGuard(onClose, ask = null, opts = null) {
+  const confirmOnly = !!(opts && opts.confirm);
   const askRef = useRef(ask);
   askRef.current = ask;
   const ref = useRef(null);
@@ -147,6 +170,19 @@ export function useDirtyGuard(onClose, ask = null) {
   const sources = useRef(new Set());
   // The latest guardedClose, for the Back-button stack above.
   const closeRef = useRef(null);
+  // True while a click that started outside this card is being dispatched.
+  const outside = useRef(false);
+
+  useEffect(() => {
+    const onDocClick = (e) => {
+      const node = ref.current;
+      if (!node || !(e.target instanceof Node) || node.contains(e.target)) return;
+      outside.current = true;
+      setTimeout(() => { outside.current = false; }, 0);
+    };
+    document.addEventListener('click', onDocClick, true);
+    return () => document.removeEventListener('click', onDocClick, true);
+  }, []);
 
   useEffect(() => {
     openCards.push(closeRef);
@@ -210,11 +246,12 @@ export function useDirtyGuard(onClose, ask = null) {
       || [...sources.current].some(f => f.current);
     // A modal holding no controls at all -- a viewer, a picker, a confirm --
     // snapshots to "0" on both sides, so it can never be dirty and closes
-    // silently. No special-casing at any call site.
-    const text = askRef.current ? askRef.current(changed) : (changed ? MESSAGE : null);
+    // silently from the X; from a click outside it asks like every other.
+    const own = askRef.current ? askRef.current(changed) : (changed ? MESSAGE : null);
+    const text = own || (outside.current && !confirmOnly ? OUTSIDE_MESSAGE : null);
     if (!text) { onClose(); return; }
     if (window.confirm(text)) onClose();
-  }, [onClose]);
+  }, [onClose, confirmOnly]);
   closeRef.current = guardedClose;
 
   return { ref, guardedClose, markDirty, registerSource };
@@ -237,8 +274,9 @@ export function Overlay({
   backdrop = 'rgba(0,0,0,.42)',
   maxWidth = 560,
   cardStyle,
+  confirm = false,
 }) {
-  const { ref, guardedClose, markDirty, registerSource } = useDirtyGuard(onClose);
+  const { ref, guardedClose, markDirty, registerSource } = useDirtyGuard(onClose, null, confirm ? { confirm: true } : null);
   return (
     <div
       onClick={guardedClose}

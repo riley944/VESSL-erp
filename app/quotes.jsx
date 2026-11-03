@@ -4100,7 +4100,10 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
       {askNewFactory && (
         // Create / Not now, not a browser confirm: its buttons can only say OK
         // and Cancel. Not now leaves the red box and "+ Add new factory".
-        <div onClick={(e) => { e.stopPropagation(); setAskNewFactory(null); }}
+        // A click outside does nothing -- the answer is one of the two buttons,
+        // never a stray click. The backdrop still stops the click reaching the
+        // quote form behind it.
+        <div onClick={(e) => e.stopPropagation()}
           style={{ ...S.overlay, zIndex: 60, alignItems: "center" }}>
           <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}
             style={{ ...S.modal, maxWidth: 440, padding: "22px 24px" }}>

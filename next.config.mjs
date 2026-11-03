@@ -10,5 +10,9 @@ const nextConfig = {
   // Anything that does not set it -- next dev -- keeps the default.
   // On Vercel always .next, whatever the build script sets -- the platform reads it there.
   distDir: process.env.VERCEL ? '.next' : (process.env.NEXT_DIST_DIR || '.next'),
+  // Nothing imports next/image, so the optimizer at /_next/image has no use.
+  // Turned off for the image-optimizer advisories (GHSA-2xp9, GHSA-2464),
+  // which next 14 has no patch for.
+  images: { unoptimized: true },
 };
 export default nextConfig;
