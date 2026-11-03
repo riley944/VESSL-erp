@@ -8863,8 +8863,16 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
 // What a Track did, in one line: the move this shipment made, how the tracking
 // was got and what it cost, and the credits left. The result covers every
 // shipment on the B/L (apply_tracking_group); id picks this one's row.
+//
+// A delivered or cancelled row is never written (script 142): Refresh on one
+// reads "Closed \u2014 not updated", and names any open shipments on the same
+// B/L that the same read did refresh.
 function trackOutcomeText(out, id) {
   const rows = (out.result && out.result.rows) || [];
+  if (out.refreshed && !rows.some(x=>x.shipment_id===id) && Number((out.result || {}).closed) > 0) {
+    return 'Closed \u2014 not updated: a delivered or cancelled shipment keeps the tracking it last had.'
+      + (rows.length ? ' Refreshed '+rows.length+' other shipment'+(rows.length===1?'':'s')+' on this B/L, no credit used.' : '');
+  }
   const r = rows.find(x=>x.shipment_id===id) || {};
   const moved = r.moved ? 'Status moved to '+shipmentStatusLabel(r.status_after)+'. ' : '';
   const n = rows.length > 1 ? ' for '+rows.length+' shipments on this B/L' : '';
