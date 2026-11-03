@@ -141,7 +141,7 @@ import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompan
 import { usePageState, clearPageState } from '@/lib/pageState';
 import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
-import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord } from '@/lib/shipmentStatus';
+import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord, SHIPMENT_STATUS_ORDER, statusChoices, statusSourceMap, TRACKING_NOTE } from '@/lib/shipmentStatus';
 import { trackShipment, refreshStale } from '@/lib/trackShipment';
 import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
@@ -6744,6 +6744,9 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   // The row a New tracked shipment just made: lit up and scrolled to once the
   // list has it, then let go after a few seconds. No card opens on success.
   const [litId, setLitId] = useState(null);
+  // Each shipment's latest status note from order_history, so a row can say
+  // its status was set by tracking (statusSourceMap, lib/shipmentStatus).
+  const [statusSrc, setStatusSrc] = useState({});
   const litShown = useRef(null);
   useEffect(() => {
     if (!litId || litShown.current === litId || !rows.some(r => r.id === litId)) return;
@@ -6789,6 +6792,8 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
       .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,factory_company_id,client:companies!client_company_id(name))),shipment_tracking_events(event_code,event_status,location_code,location_name,event_time)')
       .order('created_at',{ascending:false});
     setRows(data||[]); setLoading(false);
+    SB.from('order_history').select('row_id,note,changed_at').eq('table_name','shipments').eq('field','status')
+      .order('changed_at',{ascending:false}).then(({ data:h }) => setStatusSrc(statusSourceMap(h)));
     if (sweep !== false) refreshStale(data).then(wrote => { if (wrote) reload(false); });
   };
   const reloadQuotes = async () => {
@@ -7155,7 +7160,6 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
     const map = { created:0.06, at_origin_port:0.18, in_transit:0.5, at_transshipment:0.6, at_destination_port:0.82, customs:0.9, out_for_delivery:0.96, delivered:1 };
     return map[st] ?? 0.1;
   };
-  const legLabel = (st) => (st||'').replace(/_/g,' ');
   const fd = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); };
   const money0 = v => '$'+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:0});
   const reopen = (q) => openFreightSheet(q, (q.client||{}).name||'', (q.forwarder||{}).name||'');
@@ -7664,7 +7668,8 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                   <div style={{position:'absolute',top:'50%',left:(frac*100)+'%',width:'9px',height:'9px',borderRadius:'50%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',transform:'translate(-50%,-50%)',border:'2px solid #fff',boxShadow:'0 1px 2px rgba(0,0,0,.2)'}} />
                 </div>
                 <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'6px',textTransform:'uppercase',letterSpacing:'.05em'}}>
-                  {legLabel(s.status)}
+                  {shipmentStatusLabel(s.status)}
+                  {statusSrc[s.id]===TRACKING_NOTE && <span title="Status last set by ShipsGo tracking" style={{textTransform:'none',letterSpacing:0}}>{' \u00b7 ShipsGo'}</span>}
                   {s.tracking_ref && s.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,color:'#B0B0B5'}}>{'ShipsGo: '+trackingWord(s.tracking_status)}</span>}
                 </div>
                 {s.tracking_ref && (
@@ -8935,6 +8940,15 @@ async function trackingEventsOf(sh) {
   return data || [];
 }
 
+// True when the shipment's latest status change in order_history was written by
+// tracking. False on any error -- the mark is a hint, never a gate.
+async function statusSetByTracking(id) {
+  if (!id) return false;
+  const { data, error } = await SB.from('order_history').select('note').eq('table_name','shipments').eq('row_id', id)
+    .eq('field','status').order('changed_at',{ascending:false}).limit(1);
+  return !error && !!(data && data[0] && data[0].note === TRACKING_NOTE);
+}
+
 // What a Track did, in one line: the move this shipment made, how the tracking
 // was got and what it cost, and the credits left. The result covers every
 // shipment on the B/L (apply_tracking_group); id picks this one's row.
@@ -8980,6 +8994,9 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
   // "SO # · PO #" for the first box: every PO on this shipment, and every Sales
   // Order those POs are on (the only way a shipment reaches an SO).
   const [soPoLine, setSoPoLine] = useState('');
+  // Was the status last set by tracking (order_history)?
+  const [byTracking, setByTracking] = useState(false);
+  useEffect(()=>{ statusSetByTracking(id).then(setByTracking); },[id]);
   const [companies, setCompanies] = useState([]);
   const [saving, setSaving] = useState(false);
   useEffect(()=>{
@@ -9010,7 +9027,6 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
     })();
   },[id]);
   const set = (k,v)=>setS(prev=>({...prev,[k]:v}));
-  const STAT = ['created','in_transit','at_origin_port','at_transshipment','at_destination_port','customs','out_for_delivery','delivered','delayed','exception','cancelled'];
   const dval = v => v ? String(v).slice(0,10) : '';
   const save = async () => {
     setSaving(true);
@@ -9086,7 +9102,9 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
             {soPoLine
               ? <div><label>SO # · PO #</label><input className="form-input" value={soPoLine} readOnly style={{opacity:.7,cursor:'default'}} title={soPoLine} /></div>
               : <div><label>Shipment #</label><input className="form-input" value={s.shipment_number||''} readOnly style={{opacity:.7,cursor:'default'}} /></div>}
-            <div><label>Status{tracked && orig.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,fontWeight:500,color:'var(--muted)'}}>{'ShipsGo: '+trackingWord(orig.tracking_status)}</span>}</label><select className="form-select" value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{STAT.map(x=><option key={x} value={x}>{shipmentStatusLabel(x)}</option>)}</select></div>
+            <div><label>Status{tracked && orig.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,fontWeight:500,color:'var(--muted)'}}>{'ShipsGo: '+trackingWord(orig.tracking_status)}</span>}</label><select className="form-select" value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{statusChoices((orig&&orig.status)||s.status||'created', tracked).map(x=><option key={x} value={x}>{shipmentStatusLabel(x)}</option>)}</select>
+              {byTracking && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'Set by ShipsGo tracking'+(tracked ? ' \u00b7 tracking moves it; staff can mark it Delivered or Cancelled' : '')}</div>}
+              {!byTracking && tracked && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'Tracking moves it; staff can mark it Delivered or Cancelled'}</div>}</div>
           </div>
           <div className="form-row-2">
             {/* The client the row shows (shipClient): the linked PO's, else the
@@ -9982,7 +10000,7 @@ function CreateShipmentModal({ onClose, onCreated }) {
   },[]);
   const clients  = companies.filter(c=>['client','brand','customer'].includes(c.type));
   const carriers = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
-  const STATUSES = ['created','in_transit','at_origin_port','at_transshipment','at_destination_port','customs','out_for_delivery','delivered','delayed','exception','cancelled'];
+  const STATUSES = SHIPMENT_STATUS_ORDER;
   const submit = async () => {
     if (!form.number) { alert('Shipment number required'); return; }
     const { data: ship, error } = await SB.from('shipments').insert({
