@@ -10273,7 +10273,7 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
             <div><label>Container #</label><input className="form-input" value={form.box} onChange={e=>f('box')(e.target.value)} placeholder="e.g. MSKU1234567" /></div>
           </div>
           <div style={{fontSize:'12px',color:'var(--muted)',margin:'-4px 0 12px',lineHeight:1.5}}>
-            One is enough. With a B/L, every live shipment on it is tracked together for one credit (free if one is already tracked); a container alone is tracked on its own. The Sales Order and its POs move with the shipment status.
+            One is enough. With a B/L, every live shipment on it is tracked together for one credit (free if one is already tracked); a container alone is tracked on its own. The shipment's live status shows on the Sales Order and its POs.
           </div>
           <div className="form-row"><label>Forwarder</label>
             <select className="form-select" value={form.forwarder} onChange={e=>{ setFwdManual(true); setFwdHint(''); f('forwarder')(e.target.value); }}>
