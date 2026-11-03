@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
+import { emailDisabled } from '@/lib/emailPolicy';
 
 // ── POST /api/tasks/notify ───────────────────────────────────────────────────
 // Emails the person a task was just assigned to, via Resend. Built the way
@@ -44,6 +45,7 @@ const when = iso => new Date(iso).toLocaleString('en-US', { timeZone:'America/Ne
   day:'numeric', hour:'numeric', minute:'2-digit' }) + ' ET';
 
 export async function POST(req) {
+  if (emailDisabled()) return json({ ok:false, error:'Email is disabled in the development environment.' }, 503);
   const apiKey = process.env.RESEND_API_KEY;
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;

@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
+import { emailDisabled } from '@/lib/emailPolicy';
 import ExcelJS from 'exceljs';
 import {
   groupBySheet, countsOf, buildTestingWorkbook, testingFileName, testingSubject,
@@ -54,6 +55,7 @@ export async function GET(req) {
   if (!secret) return json({ ok:false, error:'Not configured.' }, 500);
   const authz = req.headers.get('authorization') || '';
   if (authz !== 'Bearer ' + secret) return json({ ok:false, error:'Not authorised.' }, 401);
+  if (emailDisabled()) return json({ ok:false, error:'Email is disabled in the development environment.' }, 503);
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

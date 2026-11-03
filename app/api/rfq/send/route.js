@@ -3,6 +3,7 @@ import { Resend } from 'resend';
 import ExcelJS from 'exceljs';
 import { buildRfqWorkbook, rfqFileName, rfqSubject, rfqBody } from '@/lib/rfqSheet';
 import { OPS_TEAM } from '@/lib/opsTeam';
+import { emailDisabled } from '@/lib/emailPolicy';
 
 // ── POST /api/rfq/send ───────────────────────────────────────────────────────
 // Emails the freight RFQ workbook to one or more contacts at ONE forwarder, or
@@ -50,6 +51,7 @@ const isStaffEmail = email =>
 const json = (body, status) => Response.json(body, { status });
 
 export async function POST(req) {
+  if (emailDisabled()) return json({ ok:false, error:'Email is disabled in the development environment.' }, 503);
   // Fail closed on a missing key rather than letting the SDK throw something
   // shaped like a send failure -- those mean different things to a caller.
   const apiKey = process.env.RESEND_API_KEY;

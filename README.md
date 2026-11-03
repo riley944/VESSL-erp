@@ -39,9 +39,36 @@ npm run lint
 
 ## Deployment
 
-Vercel deploys automatically from `main`: every push to `main` goes to production.
-There are no feature branches. Two weekly Vercel cron jobs (`vercel.json`) run on
-Mondays at 13:00 UTC: the freight-quote digest and the testing digest.
+The existing Vercel project deploys `main` to production. The intended development
+deployment is a separate Vercel project connected to this repository, with
+`develop` as its production branch. Pushes to `develop` will then update its stable
+production URL. Set this up after the development Supabase project is ready:
+
+1. Create the development Supabase project and provision its schema, policies,
+   functions, storage and test users. The SQL history is incomplete in this repo;
+   see `sql/README.md` and obtain a current schema separately. Configure Supabase
+   Auth URLs for the development deployment.
+2. Create a separate Vercel project for this repository and set its production
+   branch to `develop`. Keep the existing project on `main`. Configure a stable
+   development domain if needed.
+3. In the development Vercel project, set `APP_ENV=development` for Production,
+   Preview and Development. Set `NEXT_PUBLIC_SUPABASE_URL`,
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY` and, if needed, `SUPABASE_SERVICE_ROLE_KEY` to
+   the **development** project's values in each environment. Never reuse production
+   Supabase credentials. Redeploy after changing environment variables.
+4. Leave `RESEND_API_KEY` unset in development. The app also blocks its email
+   routes when `APP_ENV=development`, and on deployments of the `develop` branch.
+   Blocked requests return an error rather than claiming an email was sent.
+5. Verify the development URL uses the development database and that email requests
+   are blocked. Keep other integration credentials separate or unset. Database
+   functions, Supabase Auth and the separate client portal can send their own
+   messages; configure those independently before enabling them in development.
+
+Vercel cron jobs in `vercel.json` run on each project's production deployment:
+the freight-quote and testing digests on Mondays at 13:00 UTC, and shipment
+tracking refresh daily at 12:00 UTC. In the development project, email routes are
+blocked; leave tracking credentials unset until a separate test integration is
+ready. Set a distinct `CRON_SECRET` if testing scheduled routes.
 
 ## Layout
 

@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
 import { personName, isEveryone } from '@/lib/people';
+import { emailDisabled } from '@/lib/emailPolicy';
 
 // ── POST /api/orders/notify ──────────────────────────────────────────────────
 // Emails the people picked on a note just posted on a purchase order, a sales
@@ -39,6 +40,7 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&l
 const same = (a, b) => (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
 
 export async function POST(req) {
+  if (emailDisabled()) return json({ ok:false, error:'Email is disabled in the development environment.' }, 503);
   try {
     const apiKey = process.env.RESEND_API_KEY;
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
