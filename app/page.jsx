@@ -8988,7 +8988,15 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
     <>
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box">
-        <div className="modal-head"><h3>{linkedPO?.order_number || s?.shipment_number || 'Shipment'}</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
+        {/* The shipment's own number, with the Sales Order and POs it reaches
+            beneath -- the same "SO # \u00b7 PO #" the first box shows. */}
+        <div className="modal-head">
+          <div style={{minWidth:0}}>
+            <h3>{s?.shipment_number || linkedPO?.order_number || 'Shipment'}</h3>
+            {soPoLine && <div title={soPoLine} style={{fontFamily:'var(--mono)',fontSize:'12px',color:'var(--muted)',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{soPoLine}</div>}
+          </div>
+          <button className="modal-close" onClick={guardedClose}>×</button>
+        </div>
         {!s ? <div className="modal-body">Loading…</div> : (
         <div className="modal-body">
           <div className="form-row-2">
