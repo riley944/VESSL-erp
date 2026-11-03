@@ -10957,7 +10957,7 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
                           </>
                         : <button type="button" onClick={()=>setPickFor(pickFor===l._k ? null : l._k)}
                             title="Fill this line from a product quote and link it to that quote"
-                            style={{background:'none',border:'1px solid #E5E7EB',borderRadius:'7px',padding:'3px 9px',fontSize:'12px',fontWeight:500,color:'#4A4A4E',cursor:'pointer'}}>
+                            style={{background:'none',border:'1px solid #0071E3',borderRadius:'7px',padding:'3px 9px',fontSize:'12px',fontWeight:500,color:'#0071E3',cursor:'pointer'}}>
                             {pickFor===l._k ? 'Close' : 'Pick quote'}
                           </button>}
                     </div>
