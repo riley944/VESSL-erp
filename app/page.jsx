@@ -4342,7 +4342,14 @@ function OrderDetail({ id, navigate }) {
     return s.id;
   };
   const setLg = k => v => setLogi(prev=>({...prev,[k]:v}));
+  // WHILE THE SHIPMENT IS TRACKED these fields are tracking's (scripts 140 and
+  // 141 write the numbers, vessel, voyage, ETD and ETA), so the panel shows them
+  // read-only and offers no Save -- a save here would put the old typed values
+  // back over what tracking wrote. The shipment card is where a tracked
+  // shipment is edited.
+  const poTracked = !!(ship && ship.tracking_ref);
   const saveLogistics = async () => {
+    if (poTracked) return;
     setSavingLogi(true);
     const sid = await getOrCreateShipmentId();
     if (!sid){ setSavingLogi(false); alert('Could not save logistics.'); return; }
@@ -4549,13 +4556,18 @@ function OrderDetail({ id, navigate }) {
         <TrackingSummary s={ship} events={shipEvents} />
         <div className="logi-grid">
           {[['Vessel / Boat','vessel_name','e.g. MAERSK SELETAR'],['Container #','container_no','e.g. MSKU1234567'],['Voyage #','voyage_no','e.g. 084W'],['Booking #','booking_number',''],['Bill of Lading','bill_of_lading','']].map(([lab,k,ph])=>(
-            <div key={k} className="logi-field"><label>{lab}</label><input className="form-input" value={logi[k]||''} placeholder={ph} onChange={e=>setLg(k)(e.target.value)} /></div>
+            <div key={k} className="logi-field"><label>{lab}</label><input className="form-input" value={logi[k]||''} placeholder={ph} onChange={e=>setLg(k)(e.target.value)}
+              readOnly={poTracked} title={poTracked ? 'Read from ShipsGo while this shipment is tracked' : undefined} style={poTracked ? {opacity:.7,cursor:'default'} : undefined} /></div>
           ))}
-          <div className="logi-field"><label>ETD</label><input type="date" className="form-input" value={logi.etd||''} onChange={e=>setLg('etd')(e.target.value)} /></div>
-          <div className="logi-field"><label>ETA</label><input type="date" className="form-input" value={logi.eta||''} onChange={e=>setLg('eta')(e.target.value)} /></div>
+          <div className="logi-field"><label>ETD</label><input type="date" className="form-input" value={logi.etd||''} onChange={e=>setLg('etd')(e.target.value)}
+            readOnly={poTracked} title={poTracked ? 'Read from ShipsGo while this shipment is tracked' : undefined} style={poTracked ? {opacity:.7,cursor:'default'} : undefined} /></div>
+          <div className="logi-field"><label>ETA</label><input type="date" className="form-input" value={logi.eta||''} onChange={e=>setLg('eta')(e.target.value)}
+            readOnly={poTracked} title={poTracked ? 'Read from ShipsGo while this shipment is tracked' : undefined} style={poTracked ? {opacity:.7,cursor:'default'} : undefined} /></div>
         </div>
         <div style={{display:'flex',alignItems:'center',gap:'12px',padding:'0 18px 16px'}}>
-          <button className="btn btn-dark btn-sm" onClick={saveLogistics} disabled={savingLogi}>{savingLogi?'Saving…':'Save logistics'}</button>
+          {poTracked
+            ? <span style={{fontSize:'12px',color:'var(--muted)'}}>{'Tracked with ShipsGo \u2014 these come from tracking. Edit the shipment from its card on the Shipments page.'}</span>
+            : <button className="btn btn-dark btn-sm" onClick={saveLogistics} disabled={savingLogi}>{savingLogi?'Saving…':'Save logistics'}</button>}
           {logiMsg && <span style={{fontSize:'12.5px',color:'var(--accent)'}}>{logiMsg}</span>}
           {!ship && <span style={{fontSize:'12px',color:'var(--muted)'}}>Saving will create a shipment for this PO.</span>}
         </div>
