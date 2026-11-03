@@ -142,7 +142,7 @@ import { usePageState, clearPageState } from '@/lib/pageState';
 import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord } from '@/lib/shipmentStatus';
-import { trackShipment } from '@/lib/trackShipment';
+import { trackShipment, refreshStale } from '@/lib/trackShipment';
 import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
@@ -6745,11 +6745,16 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
     const { data } = await SB.from('forwarder_bids').select('*').order('created_at',{ascending:false});
     setBids(data||[]);
   };
-  const reload = async () => {
+  // Reads every shipment, then keeps the active tracked ones current:
+  // refreshStale (lib/trackShipment) refreshes, in the background, any ref not
+  // checked in the last 2 hours, and the rows are read once more only if it
+  // wrote -- that second read does not sweep again.
+  const reload = async (sweep = true) => {
     const { data } = await SB.from('shipments')
       .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,factory_company_id,client:companies!client_company_id(name))),shipment_tracking_events(event_code,event_status,location_code,location_name,event_time)')
       .order('created_at',{ascending:false});
     setRows(data||[]); setLoading(false);
+    if (sweep !== false) refreshStale(data).then(wrote => { if (wrote) reload(false); });
   };
   const reloadQuotes = async () => {
     const { data } = await SB.from('shipment_quotes')
