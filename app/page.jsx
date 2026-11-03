@@ -7631,8 +7631,8 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                 </div>
                 {s.tracking_ref && (
                   <div style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                    {[lastEv ? trackingEventLabel(lastEv.event_code)+' '+(lastEv.location_name||lastEv.location_code||'')+' '+fmtDateShort(lastEv.event_time) : 'No events yet',
-                      s.tracking_checked_at ? 'checked '+checkedAgo(s.tracking_checked_at) : null].filter(Boolean).join(' · ')}
+                    {lastEv ? trackingEventLabel(lastEv.event_code)+' '+(lastEv.location_name||lastEv.location_code||'')+' '+fmtDateShort(lastEv.event_time) : 'No events yet'}
+                    {s.tracking_checked_at && <span title="Last checked with ShipsGo">{' · Last updated '+checkedAgo(s.tracking_checked_at)}</span>}
                   </div>
                 )}
               </div>
@@ -8878,11 +8878,14 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
             <>
               <span className="form-section-label">Tracking</span>
               <div style={{fontSize:'12.5px',color:'var(--ink-2)',lineHeight:1.6,marginBottom:'8px'}}>
-                {[orig.tracking_container ? 'Following container '+orig.tracking_container : null,
-                  orig.tracking_status, [orig.tracking_vessel, orig.tracking_voyage].filter(Boolean).join(' / ') || null,
-                  orig.tracking_eta ? 'ETA '+fmtDateShort(orig.tracking_eta) : null,
-                  orig.tracking_ata ? 'arrived '+fmtDateShort(orig.tracking_ata) : null,
-                  orig.tracking_checked_at ? 'checked '+checkedAgo(orig.tracking_checked_at) : null].filter(Boolean).join(' · ') || 'Waiting for ShipsGo'}
+                {(() => {
+                  const info = [orig.tracking_container ? 'Following container '+orig.tracking_container : null,
+                    orig.tracking_status, [orig.tracking_vessel, orig.tracking_voyage].filter(Boolean).join(' / ') || null,
+                    orig.tracking_eta ? 'ETA '+fmtDateShort(orig.tracking_eta) : null,
+                    orig.tracking_ata ? 'arrived '+fmtDateShort(orig.tracking_ata) : null].filter(Boolean).join(' · ');
+                  if (!info && !orig.tracking_checked_at) return 'Waiting for ShipsGo';
+                  return <>{info}{orig.tracking_checked_at && <span title="Last checked with ShipsGo">{(info ? ' · ' : '')+'Last updated '+checkedAgo(orig.tracking_checked_at)}</span>}</>;
+                })()}
                 {orig.tracking_error && <div style={{color:'var(--hot)'}}>{orig.tracking_error}</div>}
               </div>
               {/* The timeline. A filled dot is an actual movement, a hollow one an
