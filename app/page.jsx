@@ -34,7 +34,7 @@ import { tierTotalCost, tierHasSizeMold, tierMoldFee, effectiveQty } from '@/lib
 // size's own figures, and the price rule for a size (lib/quoteTiers).
 import { tierFromRow, tierIsSized, sizeQuotedPrice, isBagMode, htsRateFor } from '@/lib/quoteTiers';
 // The active HTS code list, for the duty a Bag size pays on its own EXW.
-import { useHtsCodes } from '@/app/components/HtsField';
+import { HtsField, useHtsCodes } from '@/app/components/HtsField';
 import { BANK_FIELDS, BANK_KEYS, hasAnyBankDetail } from '@/lib/bankFields';
 
 // ── Prefilling an order grid from a quote tier ───────────────────────────────
@@ -8167,6 +8167,7 @@ function ImportBidsModal({ quotes, onClose, onApplied }) {
 // ── Apply a winning bid into the product quote's freight builder ─────────────
 const APPLY_CAPS = { '20GP':32, '40GP':58, '40HQ':68, '45HQ':83 };
 const NO_IDS = [];
+const LINK_BTN = { background:'none', border:'none', padding:0, color:'#0071E3', fontSize:'11.5px', fontWeight:600, cursor:'pointer' };
 
 // ── THE PRODUCT QUOTE PICKER ─────────────────────────────────────────────────
 // A searchable combobox in the manner of HtsField: type to filter by product,
@@ -8248,11 +8249,13 @@ function QuotePicker({ quotes, value, onPick, linkedId, detail = false, suggestI
   );
 }
 
-function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
+function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward, preselectId = null }) {
   // The picker's filter box is data-noguard, so choosing a quote is marked by hand.
   const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
   const [pq, setPq] = useState([]);           // product quotes from the quotes DB
-  const [selId, setSelId] = useState('');
+  // preselectId comes from a breakdown line's "Apply to Q-..." -- the line named
+  // the quote, so that choice was made by whoever clicked it.
+  const [selId, setSelId] = useState(preselectId || '');
   const [busy, setBusy] = useState(false);
   const [loadingQ, setLoadingQ] = useState(true);
 
@@ -8271,7 +8274,7 @@ function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
   // source_quote_id column -- reading one gave undefined, so LINKED never showed.
   // The link is on the line items (line_items[].quote_id), written by the
   // freight generator; the first line that carries one is the one offered.
-  const linkedId = ((shipQuote.line_items||[]).find(l => l && l.quote_id) || {}).quote_id || null;
+  const linkedId = preselectId || ((shipQuote.line_items||[]).find(l => l && l.quote_id) || {}).quote_id || null;
   // LCL: one total for one shipment, with no container to spread it across.
   // The per-container build-up below does not apply, so nothing is offered.
   const lcl = isLCL(shipQuote);
@@ -8383,6 +8386,9 @@ function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
 //     the product's own, else a product quote for the same product or SKU.
 //   Otherwise: each line item's pieces, priced from the product quote it came
 //     from (line_items[].quote_id) at its nearest tier, HTS from that quote.
+//     Each such line also carries idx (its place in line_items), desc, linkId
+//     (the quote_id it names) and quoteSku, for linking and unlinking it in the
+//     breakdown; fromPo says the lines came from a PO, which are never linked.
 // The duty rate is the HTS library's total_duty for the code; a line with none
 // is left null for the panel to ask about. A line with no source has no cost.
 async function loadLandedInputs(sq) {
@@ -8408,7 +8414,7 @@ async function loadLandedInputs(sq) {
                hts, dutyRate: dutyRateFor(hts, codes) };
     });
   } else {
-    const li = (sq.line_items || []).filter(Boolean);
+    const li = (sq.line_items || []).map((l, idx) => (l ? { ...l, _idx: idx } : null)).filter(Boolean);
     const ids = li.map(l => l.quote_id).filter(Boolean);
     const { data: qs } = ids.length
       ? await SBQ.from('quotes').select('id,quote_code,sku,product,hts,tiers').in('id', ids)
@@ -8419,17 +8425,20 @@ async function loadLandedInputs(sq) {
       return { label: l.desc || (q && q.product) || 'Item', sku: l.sku || (q && q.sku) || '',
                quoteCode: (q && q.quote_code) || l.quote_code || '',
                qty, unitCost: q ? tierUnitCost(q.tiers, qty) : null,
-               hts: (q && q.hts) || '', dutyRate: q ? dutyRateFor(q.hts, codes) : null };
+               hts: (q && q.hts) || '', dutyRate: q ? dutyRateFor(q.hts, codes) : null,
+               idx: l._idx, desc: l.desc || '', linkId: l.quote_id || null, quoteSku: (q && q.sku) || '' };
     });
   }
-  return { lines, rates: settings || null };
+  return { lines, rates: settings || null, fromPo: !!sq.po_id };
 }
 
 function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
   // A viewer -- no controls at all, so it closes silently. ApplyBidModal opens
   // from here but renders outside this card, so it never joins this snapshot.
-  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
+  const { ref: cardRef, guardedClose, registerSource } = useDirtyGuard(onClose);
   const [applyBid, setApplyBid] = useState(null);
+  // The quote a breakdown line's Apply names; null for the bid's own Apply.
+  const [applyQuoteId, setApplyQuoteId] = useState(null);
   const ctType = quote.container_type||'40HQ';
   const ct = Math.max(1, Number(quote.containers_needed)||1);
   // ── LANDED COST ──
@@ -8449,6 +8458,115 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
     loadLandedInputs(quote).then(res => { if (alive) setLandedIn(res); }).catch(() => { if (alive) setLandedIn({ lines:[], rates:null, failed:true }); });
     return () => { alive = false; };
   },[quote.id]);
+  // ── LINKING A LINE TO ITS PRODUCT QUOTE ──
+  // A line on a freight quote with no PO is costed from the product quote its
+  // line_items entry names (quote_id). An unlinked one -- typed before the SKU
+  // box existed, or typed without it -- can be linked here: the picker lists
+  // the quotes with factory and carton, name and SKU matches first as
+  // SUGGESTED, and nothing is chosen for anyone. The link is written into
+  // line_items on EVERY row of the RFQ group (one row per forwarder, all
+  // holding the same lines), matched by position and description; if any row's
+  // line there reads differently, nothing is written. Unlink takes the link
+  // off the same way. Each write sets updated_at (shipment_quotes has no
+  // trigger) and the breakdown is read again from the database.
+  //
+  // SAVE HTS. A linked quote with no HTS code gets the code picker and "Save to
+  // Q-...": that writes quotes.hts only, stamped updated_at / updated_by as the
+  // quote form stamps a save. The duty % typed in the breakdown is never saved;
+  // the rate comes from the HTS library once the code is there. A code chosen
+  // and not saved makes closing ask.
+  const { codes: htsCodes } = useHtsCodes();
+  const [pq, setPq] = useState(null);          // product quotes, read on first Link
+  const [linkFor, setLinkFor] = useState(null); // the line idx whose picker is open
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [htsDraft, setHtsDraft] = useState({}); // quote id -> code chosen, not saved
+  const htsPending = useRef(false);
+  htsPending.current = Object.values(htsDraft).some(Boolean);
+  useEffect(() => registerSource(htsPending), [registerSource]);
+  const openLink = (idx) => {
+    setLinkFor(linkFor === idx ? null : idx);
+    if (!pq) SBQ.from('quotes').select('id,quote_code,sku,product,client,factory,units_per_carton,carton_l,carton_w,carton_h,hts')
+      .order('created_at',{ascending:false}).limit(2000).then(({ data }) => setPq(data || []));
+  };
+  const normKey = v => String(v || '').toLowerCase().replace(/\s+/g, '');
+  // Name and SKU matches for a line's description -- suggestions only.
+  const suggestFor = desc => {
+    const d = normKey(desc), D = String(desc || '').toUpperCase();
+    if (!d || !pq) return NO_IDS;
+    return pq.filter(q => (q.sku && normKey(q.sku) === d) || (q.product && normKey(q.product) === d)
+      || (q.sku && q.sku.trim().length > 3 && D.includes(q.sku.trim().toUpperCase()))).map(q => q.id).slice(0, 12);
+  };
+  const reloadLanded = async () => {
+    const { data } = await SB.from('shipment_quotes').select('line_items').eq('id', quote.id).maybeSingle();
+    try {
+      setLandedIn(await loadLandedInputs({ ...quote, line_items: data ? data.line_items : quote.line_items }));
+    } catch {
+      setLandedIn({ lines:[], rates:null, failed:true });
+    }
+  };
+  // Rewrites line idx on every row of the RFQ group, or on none. change(line) -> line.
+  const writeLine = async (idx, expectDesc, change) => {
+    setLinkBusy(true);
+    try {
+      const sel = 'id,quote_number,line_items';
+      const { data: rows, error } = quote.rfq_group_id
+        ? await SB.from('shipment_quotes').select(sel).eq('rfq_group_id', quote.rfq_group_id)
+        : await SB.from('shipment_quotes').select(sel).eq('id', quote.id);
+      if (error) { alert('Could not read the freight quote: ' + error.message); return false; }
+      const bad = (rows || []).filter(r => { const l = (r.line_items || [])[idx]; return !l || (l.desc || '') !== expectDesc; });
+      if (!rows || !rows.length || bad.length) {
+        alert('Nothing was changed. Line ' + (idx + 1) + ' does not read \u201c' + expectDesc + '\u201d on '
+          + (bad.map(r => r.quote_number).join(', ') || 'this freight quote') + ', so the RFQ\u2019s rows no longer match.');
+        return false;
+      }
+      const now = new Date().toISOString();
+      for (let n = 0; n < rows.length; n++) {
+        const r = rows[n];
+        const items = r.line_items.slice();
+        items[idx] = change(items[idx]);
+        const { error: uErr } = await SB.from('shipment_quotes').update({ line_items: items, updated_at: now }).eq('id', r.id);
+        if (uErr) { alert('Saved on ' + n + ' of ' + rows.length + ' rows, then: ' + uErr.message); return false; }
+      }
+      return true;
+    } finally {
+      setLinkBusy(false);
+      setCostIn(prev => { const c = { ...prev }; delete c[idx]; return c; });
+      setDutyIn(prev => { const c = { ...prev }; delete c[idx]; return c; });
+      await reloadLanded();
+    }
+  };
+  const linkLine = (line, q) => {
+    setLinkFor(null);
+    writeLine(line.idx, line.desc, l => ({ ...l, quote_id: q.id, quote_code: q.quote_code || null,
+      ...(String(l.sku || '').trim() ? {} : (q.sku ? { sku: q.sku } : {})) }));
+  };
+  // The SKU goes too when it is the quote's own -- the link wrote it there.
+  const unlinkLine = line => {
+    if (!window.confirm('Unlink line ' + (line.idx + 1) + ' (' + (line.desc || 'no description') + ') from ' + (line.quoteCode || 'its quote') + ' on every freight quote of this RFQ?')) return;
+    writeLine(line.idx, line.desc, l => {
+      const rest = { ...l };
+      delete rest.quote_id; delete rest.quote_code;
+      if (rest.sku && line.quoteSku && normKey(rest.sku) === normKey(line.quoteSku)) delete rest.sku;
+      return rest;
+    });
+  };
+  const saveHts = async (line) => {
+    const code = htsDraft[line.linkId];
+    if (!code) return;
+    setLinkBusy(true);
+    try {
+      const { data: cur, error: rErr } = await SBQ.from('quotes').select('hts').eq('id', line.linkId).maybeSingle();
+      if (rErr || !cur) { alert('Could not read ' + (line.quoteCode || 'the quote') + (rErr ? ': ' + rErr.message : '.')); return; }
+      if (String(cur.hts || '').trim()) { alert((line.quoteCode || 'The quote') + ' already has HTS ' + cur.hts + ' \u2014 nothing was changed.'); return; }
+      const { data: { user } } = await SB.auth.getUser();
+      const { error } = await SBQ.from('quotes').update({ hts: code, updated_at: new Date().toISOString(), updated_by: (user && user.email) || null }).eq('id', line.linkId);
+      if (error) { alert('Could not save the HTS code: ' + error.message); return; }
+      setHtsDraft(prev => { const c = { ...prev }; delete c[line.linkId]; return c; });
+    } finally {
+      setLinkBusy(false);
+      await reloadLanded();
+    }
+  };
   const typedNum = (v, positive) => {
     const t = String(v == null ? '' : v).replace(/[$,\s]/g, '');
     const n = Number(t);
@@ -8502,6 +8620,28 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
                     <span style={{fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{l.value!=null ? Number(l.qty).toLocaleString()+' \u00d7 '+money2(l.unitCost)+' = '+money2(l.value) : <span style={{color:'#B45309'}}>{l.unitCost==null ? 'no unit cost' : 'no quantity'}</span>}</span>
                   )}
                 </div>
+                {!landedIn.fromPo && l.idx != null && (
+                  <div style={{display:'flex',gap:'10px',flexWrap:'wrap',alignItems:'baseline',marginTop:'2px',fontSize:'11.5px'}}>
+                    {l.linkId
+                      ? <>
+                          <button type="button" disabled={linkBusy} onClick={()=>unlinkLine(l)} style={LINK_BTN}>Unlink</button>
+                          {!lcl && <button type="button" onClick={()=>{ setApplyQuoteId(l.linkId); setApplyBid(b); }} style={LINK_BTN}>{'Apply this bid to '+(l.quoteCode||'its quote')+' \u2192'}</button>}
+                        </>
+                      : <>
+                          <span style={{color:'#B45309',fontWeight:600}}>Unlinked</span>
+                          <button type="button" disabled={linkBusy} onClick={()=>openLink(l.idx)} style={LINK_BTN}>{linkFor===l.idx ? 'Close' : 'Link to quote'}</button>
+                        </>}
+                  </div>
+                )}
+                {linkFor===l.idx && !l.linkId && (
+                  <div style={{margin:'6px 0',padding:'8px',border:'1px solid #E5E7EB',borderRadius:'9px',background:'#fff'}}>
+                    {!pq ? <div style={{fontSize:'12px',color:'#8A8A8E'}}>Loading quotes\u2026</div> : (
+                      <QuotePicker quotes={pq} value="" detail suggestIds={suggestFor(l.desc)}
+                        onPick={id=>{ const q = pq.find(x=>x.id===id); if (q) linkLine(l, q); }} />
+                    )}
+                    <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'5px'}}>Links this line on every freight quote of the RFQ. Suggested rows match the line\u2019s name or SKU; check the carton before picking.</div>
+                  </div>
+                )}
                 {!L.allIn && (
                   <div style={{display:'flex',justifyContent:'space-between',gap:'10px',color:'#8A8A8E',marginTop:'2px',alignItems:'center'}}>
                     <span>{'HTS '+(l.hts||'\u2014')}</span>
@@ -8513,6 +8653,20 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
                         <span>%{l.duty!=null ? ' = '+money2(l.duty) : ''}</span>
                       </span>
                     ) : <span style={{fontVariantNumeric:'tabular-nums'}}>{'duty '+l.dutyRate+'% = '+money2(l.duty)}</span>}
+                  </div>
+                )}
+                {!L.allIn && !landedIn.fromPo && l.linkId && l.quoteCode && !l.hts && (
+                  <div style={{display:'flex',gap:'8px',alignItems:'flex-end',marginTop:'6px'}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <HtsField value={htsDraft[l.linkId]||''} codes={htsCodes} label={(l.quoteCode)+' has no HTS code'}
+                        onChange={code=>setHtsDraft(prev=>({ ...prev, [l.linkId]:code||'' }))}
+                        onAdd={()=>alert('Add a new code from the quote form or the HTS library, then pick it here.')}
+                        inputStyle={{border:'1px solid #E5E7EB',borderRadius:'8px',padding:'6px 9px',fontSize:'12.5px',background:'#fff',minHeight:'34px'}} />
+                    </div>
+                    <button type="button" disabled={linkBusy || !htsDraft[l.linkId]} onClick={()=>saveHts(l)}
+                      style={{background:(!linkBusy && htsDraft[l.linkId])?'#0071E3':'#C7C7CC',color:'#fff',border:'none',borderRadius:'8px',padding:'8px 12px',fontSize:'12px',fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}}>
+                      {'Save to '+l.quoteCode}
+                    </button>
                   </div>
                 )}
               </div>
@@ -8659,7 +8813,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
                   {!isSel && <button onClick={()=>selectWinner(b)} style={{background:'#F2F2F6',color:'#1A1A1C',border:'none',borderRadius:'8px',padding:'6px 14px',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>Select winner</button>}
                   {lcl
                     ? <span style={{fontSize:'11.5px',color:'#8A8A8E'}}>LCL freight is entered on the quote by hand</span>
-                    : <button onClick={()=>setApplyBid(b)} title="Write this bid's costs into the product quote's freight build-up" style={{background:'#0071E3',color:'#fff',border:'none',borderRadius:'8px',padding:'6px 14px',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>Apply to quote →</button>}
+                    : <button onClick={()=>{ setApplyQuoteId(null); setApplyBid(b); }} title="Write this bid's costs into the product quote's freight build-up" style={{background:'#0071E3',color:'#fff',border:'none',borderRadius:'8px',padding:'6px 14px',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>Apply to quote →</button>}
                 </div>
               </div>
             );
@@ -8694,7 +8848,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
           )}
         </div>
       </div>
-      {applyBid && <ApplyBidModal bid={applyBid} shipQuote={quote} onClose={()=>setApplyBid(null)} onAward={onAward} onDone={()=>{ setApplyBid(null); onDeleted&&onDeleted(); alert('Applied. The product quote\'s freight build-up now carries '+(applyBid.forwarder_name||'the bid')+"'s awarded costs."); }} />}
+      {applyBid && <ApplyBidModal bid={applyBid} shipQuote={quote} preselectId={applyQuoteId} onClose={()=>setApplyBid(null)} onAward={onAward} onDone={()=>{ setApplyBid(null); onDeleted&&onDeleted(); alert('Applied. The product quote\'s freight build-up now carries '+(applyBid.forwarder_name||'the bid')+"'s awarded costs."); }} />}
     </div>
   );
 }
