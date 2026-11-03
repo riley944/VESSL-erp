@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
+import { withCronRun } from '@/lib/cronRuns';
 import { OPS_TEAM } from '@/lib/opsTeam';
 
 // ── GET /api/rfq/digest ──────────────────────────────────────────────────────
@@ -105,6 +106,11 @@ export async function GET(req) {
   const authz = req.headers.get('authorization') || '';
   if (authz !== 'Bearer ' + secret) return json({ ok:false, error:'Not authorised.' }, 401);
 
+  // Recorded in vessl.cron_runs from here on (lib/cronRuns.js, script 144).
+  return withCronRun('/api/rfq/digest', req, () => run(req));
+}
+
+async function run(req) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   // SUPABASE_SERVICE_ROLE_KEY currently holds the LEGACY service_role JWT. The
   // project is on Supabase's newer API-key system, where the equivalent is an

@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
+import { withCronRun } from '@/lib/cronRuns';
 import ExcelJS from 'exceljs';
 import {
   groupBySheet, countsOf, buildTestingWorkbook, testingFileName, testingSubject,
@@ -55,6 +56,11 @@ export async function GET(req) {
   const authz = req.headers.get('authorization') || '';
   if (authz !== 'Bearer ' + secret) return json({ ok:false, error:'Not authorised.' }, 401);
 
+  // Recorded in vessl.cron_runs from here on (lib/cronRuns.js, script 144).
+  return withCronRun('/api/testing/digest', req, () => run(req));
+}
+
+async function run(req) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const apiKey = process.env.RESEND_API_KEY;

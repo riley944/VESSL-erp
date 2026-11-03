@@ -1,4 +1,5 @@
 import { serviceClient, applyShipsgo } from '@/lib/trackingServer';
+import { withCronRun } from '@/lib/cronRuns';
 
 // ── GET /api/tracking/refresh ────────────────────────────────────────────────
 // Daily at 12:00 UTC (vercel.json). The backstop behind the webhook: re-reads
@@ -24,6 +25,11 @@ export async function GET(req) {
   if (!secret) return json({ ok:false, error:'Not configured.' }, 500);
   if ((req.headers.get('authorization') || '') !== 'Bearer ' + secret) return json({ ok:false, error:'Not authorised.' }, 401);
 
+  // Recorded in vessl.cron_runs from here on (lib/cronRuns.js, script 144).
+  return withCronRun('/api/tracking/refresh', req, () => run());
+}
+
+async function run() {
   const svc = serviceClient();
   if (!svc || !process.env.SHIPSGO_API_KEY) return json({ ok:false, error:'Server is not configured for tracking.' }, 500);
 
