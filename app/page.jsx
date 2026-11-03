@@ -2262,6 +2262,7 @@ function SalesOrderDetail({id,navigate}){
   const [savingInv,setSavingInv]=useState(false);
   const [costs,setCosts]=useState([]);
   const [shipment,setShipment]=useState(null);
+  const [shipEvents,setShipEvents]=useState([]);   // its tracking events, when tracked
   const load=async()=>{
     setLoading(true);
     const [{data:soD},{data:itmD,error:itmErr},{data:posD,error:posErr},{data:costD}]=await Promise.all([
@@ -2296,6 +2297,7 @@ function SalesOrderDetail({id,navigate}){
       }
     }
     setShipment(sh);
+    setShipEvents(await trackingEventsOf(sh));
     setLoading(false);
   };
   useEffect(()=>{ load(); },[id]);
@@ -2506,6 +2508,7 @@ function SalesOrderDetail({id,navigate}){
                 <span style={{fontSize:'14px',fontWeight:600,color:'var(--ink)'}}>{shipment.destination_port?.name||shipment.destination_port?.unlocode||'—'}</span>
               </span>
             </div>
+            <TrackingSummary s={shipment} events={shipEvents} />
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',borderTop:'1px solid var(--line-2)'}}>
               {[['Vessel',shipment.vessel_name],['Voyage #',shipment.voyage_no],['Container #',shipment.container_no],['Booking #',shipment.booking_number],['Bill of Lading',shipment.bill_of_lading],['Carrier',shipment.carrier?.name],['ETD',fmtDate(shipment.estimated_departure)],['ETA',fmtDate(shipment.estimated_arrival)]].map(([l,v],i)=>(
                 <div key={l} style={{padding:'11px 18px',borderBottom:i<6?'1px solid var(--line-2)':'none',borderRight:i%2===0?'1px solid var(--line-2)':'none'}}>
@@ -4228,6 +4231,7 @@ function OrderDetail({ id, navigate }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [ship, setShip]   = useState(null);
+  const [shipEvents, setShipEvents] = useState([]);   // its tracking events, when tracked
   const [logi, setLogi]   = useState({});
   const [savingLogi, setSavingLogi] = useState(false);
   // Said beside Save logistics. It used to borrow the notes card's message,
@@ -4257,6 +4261,7 @@ function OrderDetail({ id, navigate }) {
       sh = s;
     }
     setShip(sh);
+    setShipEvents(await trackingEventsOf(sh));
     setLogi({
       vessel_name: sh?.vessel_name||'', container_no: sh?.container_no||'', booking_number: sh?.booking_number||'',
       bill_of_lading: sh?.bill_of_lading||'', voyage_no: sh?.voyage_no||'',
@@ -4541,6 +4546,7 @@ function OrderDetail({ id, navigate }) {
 
       <div className="section-card" style={{marginBottom:'20px'}}>
         <div className="section-head"><h3>Logistics</h3></div>
+        <TrackingSummary s={ship} events={shipEvents} />
         <div className="logi-grid">
           {[['Vessel / Boat','vessel_name','e.g. MAERSK SELETAR'],['Container #','container_no','e.g. MSKU1234567'],['Voyage #','voyage_no','e.g. 084W'],['Booking #','booking_number',''],['Bill of Lading','bill_of_lading','']].map(([lab,k,ph])=>(
             <div key={k} className="logi-field"><label>{lab}</label><input className="form-input" value={logi[k]||''} placeholder={ph} onChange={e=>setLg(k)(e.target.value)} /></div>
@@ -8877,6 +8883,44 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
       {applyBid && <ApplyBidModal bid={applyBid} shipQuote={quote} preselectId={applyQuoteId} onClose={()=>setApplyBid(null)} onAward={onAward} onDone={()=>{ setApplyBid(null); onDeleted&&onDeleted(); alert('Applied. The product quote\'s freight build-up now carries '+(applyBid.forwarder_name||'the bid')+"'s awarded costs."); }} />}
     </div>
   );
+}
+
+// ── THE TRACKING LINE ───────────────────────────────────────────────────────
+// What tracking says about a tracked shipment, in one block, for the pages that
+// show a shipment without being its card: the Sales Order's Logistics &
+// Shipment panel and the PO's Logistics panel. Read only. A manual shipment
+// shows nothing here, so those panels read as before. Vessel and voyage follow
+// the Shipments row: what staff typed when they typed it, else what tracking
+// reports. events are the shipment's shipment_tracking_events.
+function TrackingSummary({ s, events }) {
+  if (!s || !s.tracking_ref) return null;
+  const lastEv = lastActualEvent(events);
+  const vessel = s.vessel_name || s.tracking_vessel;
+  const voyage = s.vessel_name ? s.voyage_no : (s.voyage_no || s.tracking_voyage);
+  const parts = [
+    [vessel, voyage].filter(Boolean).join(' \u00b7 ') || null,
+    s.estimated_departure ? 'ETD '+fmtDateShort(s.estimated_departure) : null,
+    s.tracking_ata ? 'Arrived '+fmtDateShort(s.tracking_ata) : (s.estimated_arrival ? 'ETA '+fmtDateShort(s.estimated_arrival) : null),
+    lastEv ? (trackingEventLabel(lastEv.event_code)+' '+(lastEv.location_name||lastEv.location_code||'')+' '+fmtDateShort(lastEv.event_time)).replace(/\s+/g,' ') : 'No events yet',
+  ].filter(Boolean);
+  return (
+    <div style={{padding:'10px 18px',borderTop:'1px solid var(--line-2)',display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'4px 10px',fontSize:'12.5px',color:'var(--ink-2)'}}>
+      <span title={s.tracking_error || 'Tracked with ShipsGo'} style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',
+        color:s.tracking_error?'#B91C1C':'#0A84FF',background:s.tracking_error?'#FEE2E2':'#EAF3FE'}}>Tracked</span>
+      {s.tracking_status && <span title="ShipsGo's own status" style={{color:'var(--muted)'}}>{'ShipsGo: '+trackingWord(s.tracking_status)}</span>}
+      <span>{parts.join(' \u00b7 ')}</span>
+      {s.tracking_checked_at && <span title="Last checked with ShipsGo" style={{color:'var(--muted)'}}>{'Last updated '+checkedAgo(s.tracking_checked_at)}</span>}
+      {s.tracking_error && <div style={{flexBasis:'100%',color:'var(--hot)'}}>{s.tracking_error}</div>}
+    </div>
+  );
+}
+
+// The tracking events of one shipment, for TrackingSummary. [] for a manual one.
+async function trackingEventsOf(sh) {
+  if (!sh || !sh.tracking_ref) return [];
+  const { data } = await SB.from('shipment_tracking_events')
+    .select('event_code,event_status,location_code,location_name,event_time').eq('shipment_id', sh.id);
+  return data || [];
 }
 
 // What a Track did, in one line: the move this shipment made, how the tracking
