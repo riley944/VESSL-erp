@@ -141,7 +141,7 @@ import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompan
 import { usePageState, clearPageState } from '@/lib/pageState';
 import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
-import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord, SHIPMENT_STATUS_ORDER, statusChoices, statusSourceMap, TRACKING_NOTE } from '@/lib/shipmentStatus';
+import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord, SHIPMENT_STATUS_ORDER, statusChoices, statusSourceMap, TRACKING_NOTE, shipmentStatusStyle } from '@/lib/shipmentStatus';
 import { trackShipment, refreshStale } from '@/lib/trackShipment';
 import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
@@ -318,6 +318,22 @@ function Badge({ status, label, po = false }) {
     <span style={{width:'6px',height:'6px',borderRadius:'50%',background:m.color}} />{label || m.label}
   </span>;
 }
+
+// A shipment status as a pill, coloured by its stored value (shipmentStatusStyle,
+// lib/shipmentStatus.js) and worded by shipmentStatusLabel. Same shape as Badge;
+// size sm for the Shipments row, md for headings and the order pages.
+function ShipmentStatusPill({ status, size = 'sm' }) {
+  const c = shipmentStatusStyle(status);
+  const md = size === 'md';
+  return <span style={{display:'inline-flex',alignItems:'center',gap:'5px',padding:md?'3px 10px':'1px 7px',borderRadius:'20px',fontSize:md?'11px':'9.5px',fontWeight:700,
+    letterSpacing:'.03em',textTransform:'uppercase',background:c.bg,color:c.fg,whiteSpace:'nowrap',verticalAlign:'middle'}}>
+    <span style={{width:md?'6px':'5px',height:md?'6px':'5px',borderRadius:'50%',background:c.fg}} />{shipmentStatusLabel(status)}
+  </span>;
+}
+// A status select shows its current value in that value's colours; the open
+// list stays plain so every choice reads the same.
+const statusSelectStyle = st => { const c = shipmentStatusStyle(st); return { background:c.bg, color:c.fg, fontWeight:600 }; };
+const OPTION_PLAIN = { background:'#fff', color:'#1D1D1F', fontWeight:400 };
 
 // ── PO browsing helpers (search + client filter, shared by Orders & Dashboard) ──
 // poClient, poFactory and poProducts live in lib/ordersView.js.
@@ -7550,7 +7566,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                         {hit
                           ? <span style={{fontSize:'11.5px',color:'#8A8A8E'}}>
                               {hit.via==='so' ? 'sales order' : 'shipment'}
-                              {ship ? ' · '+shipmentStatusLabel(ship.status) : ''}
+                              {ship && <>{' · '}<span style={{color:shipmentStatusStyle(ship.status).fg,fontWeight:600}}>{shipmentStatusLabel(ship.status)}</span></>}
                               {ship && ship.container_no ? ' · '+ship.container_no : ''}
                               {hit.via==='so' && !ship ? ' · no shipment yet' : ''}
                               {hit.via==='so' && hit.ships.length>1 ? ' · +'+(hit.ships.length-1)+' more' : ''}
@@ -7674,7 +7690,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                   <div style={{position:'absolute',top:'50%',left:(frac*100)+'%',width:'9px',height:'9px',borderRadius:'50%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',transform:'translate(-50%,-50%)',border:'2px solid #fff',boxShadow:'0 1px 2px rgba(0,0,0,.2)'}} />
                 </div>
                 <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'6px',textTransform:'uppercase',letterSpacing:'.05em'}}>
-                  {shipmentStatusLabel(s.status)}
+                  <ShipmentStatusPill status={s.status} />
                   {statusSrc[s.id]===TRACKING_NOTE && <span title="Status last set by ShipsGo tracking" style={{textTransform:'none',letterSpacing:0}}>{' \u00b7 ShipsGo'}</span>}
                   {s.tracking_ref && s.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,color:'#B0B0B5'}}>{'ShipsGo: '+trackingWord(s.tracking_status)}</span>}
                 </div>
@@ -8947,7 +8963,7 @@ function ShipmentStatusArea({ s, byTracking }) {
   return (
     <div style={{display:'flex',alignItems:'baseline',flexWrap:'wrap',gap:'4px 10px',padding:'10px 18px',borderTop:'1px solid var(--line-2)'}}>
       <span style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)'}}>Shipment status</span>
-      <span style={{fontSize:'13px',fontWeight:600,color:'var(--ink)'}}>{shipmentStatusLabel(s.status)}</span>
+      <ShipmentStatusPill status={s.status} size="md" />
       {byTracking && <span title="Status last set by ShipsGo tracking" style={{fontSize:'12px',color:'var(--muted)'}}>{'\u00b7 ShipsGo'}</span>}
       <span title={tracked ? (s.tracking_error || 'Tracked with ShipsGo') : 'Not tracked -- staff keep this shipment up to date'}
         style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',
@@ -9115,7 +9131,10 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
             beneath -- the same "SO # \u00b7 PO #" the first box shows. */}
         <div className="modal-head">
           <div style={{minWidth:0}}>
-            <h3>{s?.shipment_number || linkedPO?.order_number || 'Shipment'}</h3>
+            <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
+              <h3>{s?.shipment_number || linkedPO?.order_number || 'Shipment'}</h3>
+              {orig && <ShipmentStatusPill status={orig.status} size="md" />}
+            </div>
             {soPoLine && <div title={soPoLine} style={{fontFamily:'var(--mono)',fontSize:'12px',color:'var(--muted)',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{soPoLine}</div>}
           </div>
           <button className="modal-close" onClick={guardedClose}>×</button>
@@ -9126,7 +9145,7 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
             {soPoLine
               ? <div><label>SO # · PO #</label><input className="form-input" value={soPoLine} readOnly style={{opacity:.7,cursor:'default'}} title={soPoLine} /></div>
               : <div><label>Shipment #</label><input className="form-input" value={s.shipment_number||''} readOnly style={{opacity:.7,cursor:'default'}} /></div>}
-            <div><label>Status{tracked && orig.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,fontWeight:500,color:'var(--muted)'}}>{'ShipsGo: '+trackingWord(orig.tracking_status)}</span>}</label><select className="form-select" value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{statusChoices((orig&&orig.status)||s.status||'created', tracked).map(x=><option key={x} value={x}>{shipmentStatusLabel(x)}</option>)}</select>
+            <div><label>Status{tracked && orig.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,fontWeight:500,color:'var(--muted)'}}>{'ShipsGo: '+trackingWord(orig.tracking_status)}</span>}</label><select className="form-select" style={statusSelectStyle(s.status||'created')} value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{statusChoices((orig&&orig.status)||s.status||'created', tracked).map(x=><option key={x} value={x} style={OPTION_PLAIN}>{shipmentStatusLabel(x)}</option>)}</select>
               {byTracking && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'Set by ShipsGo tracking'+(tracked ? ' \u00b7 tracking moves it; staff can mark it Delivered or Cancelled' : '')}</div>}
               {!byTracking && tracked && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'Tracking moves it; staff can mark it Delivered or Cancelled'}</div>}</div>
           </div>
@@ -10050,7 +10069,7 @@ function CreateShipmentModal({ onClose, onCreated }) {
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>Shipment # *</label><input className="form-input" value={form.number} onChange={e=>f('number')(e.target.value)} /></div>
-            <div><label>Status</label><select className="form-select" value={form.status} onChange={e=>f('status')(e.target.value)}>{STATUSES.map(s=><option key={s} value={s}>{shipmentStatusLabel(s)}</option>)}</select></div>
+            <div><label>Status</label><select className="form-select" style={statusSelectStyle(form.status)} value={form.status} onChange={e=>f('status')(e.target.value)}>{STATUSES.map(s=><option key={s} value={s} style={OPTION_PLAIN}>{shipmentStatusLabel(s)}</option>)}</select></div>
           </div>
           <div className="form-row-2">
             <div><label>Client</label><select className="form-select" value={form.client} onChange={e=>f('client')(e.target.value)}><option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
