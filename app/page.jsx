@@ -10302,7 +10302,7 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
             )}
             {shared.map(({p, others})=>(
               <div key={p.id} style={{fontSize:'12px',marginTop:'6px',color:'#B45309'}}>
-                {'PO '+p.number+' is also on '+others.map(o=>'SO '+(o.so_number||o.order_number||'?')).join(', ')+' — that Sales Order’s status will follow this shipment too.'}
+                {'PO '+p.number+' is also on '+others.map(o=>'SO '+(o.so_number||o.order_number||'?')).join(', ')+' — this shipment will show on that Sales Order too.'}
               </div>
             ))}
             {already.length > 0 && <div style={{fontSize:'12px',marginTop:'6px',color:'var(--muted)'}}>{already.map(p=>'PO '+p.number+' already has '+poShips[p.id]+' shipment'+(poShips[p.id]===1?'':'s')).join('; ')+'; this adds another (one per container is normal).'}</div>}
