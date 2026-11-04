@@ -141,7 +141,7 @@ import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompan
 import { usePageState, clearPageState } from '@/lib/pageState';
 import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
-import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord, SHIPMENT_STATUS_ORDER, statusChoices, statusSourceMap, TRACKING_NOTE, shipmentStatusStyle, TRANSPORT_MODES, MODE_LABEL, modeOf, modeFields } from '@/lib/shipmentStatus';
+import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord, SHIPMENT_STATUS_ORDER, statusChoices, statusSourceMap, TRACKING_NOTE, shipmentStatusStyle, TRANSPORT_MODES, MODE_LABEL, modeOf, modeFields, isCourierNumber, oceanTrackNumber, COURIER_NUMBER_ERROR } from '@/lib/shipmentStatus';
 import { trackShipment, refreshStale } from '@/lib/trackShipment';
 import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
@@ -9138,6 +9138,8 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
   const roStyle = {opacity:.7,cursor:'default'};
   const roTitle = 'Read from ShipsGo while this shipment is tracked';
   const track = async () => {
+    // A courier parcel number on an ocean row is refused here, before any ShipsGo call.
+    if (mode === 'ocean' && !tracked && isCourierNumber(oceanTrackNumber(orig))) { setTrackErr(COURIER_NUMBER_ERROR); return; }
     setTracking(true); setTrackErr('');
     const out = await trackShipment(id);
     setTracking(false);
@@ -10246,6 +10248,7 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
     if (so && !ticked.length) { setErr('Tick at least one of the Sales Order’s POs, or choose no Sales Order.'); return; }
     if (air && !awbOk(form.bol)) { setErr('Enter the AWB -- the airline prefix and 8 digits, e.g. 160-12345678.'); return; }
     if (!air && !clean(form.bol) && !clean(form.box)) { setErr('Enter a bill of lading or a container number -- tracking needs one.'); return; }
+    if (!air && isCourierNumber(form.bol)) { setErr(COURIER_NUMBER_ERROR); return; }
     setBusy(true);
     const { data: ship, error } = await SB.from('shipments').insert({
       shipment_number: number,

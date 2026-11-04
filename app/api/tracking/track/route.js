@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { createShipment, carrierByCode, ShipsgoError, createAirShipment, awbDigits } from '@/lib/shipsgo';
 import { serviceClient, applyShipsgo, TRACKING_PROVIDERS, kindOf } from '@/lib/trackingServer';
+import { isCourierNumber, COURIER_NUMBER_ERROR } from '@/lib/shipmentStatus';
 
 // ── POST /api/tracking/track ─────────────────────────────────────────────────
 // The Track button on a shipment. Body { shipment_id }, nothing else: the route
@@ -121,6 +122,10 @@ export async function POST(req) {
       const result = await applyShipsgo(svc, ref, null, 'air');
       return json({ ok:true, created:!made.existed, reused:made.existed, credits:made.credits, cost:made.cost, result }, 200);
     }
+
+    // Ocean from here. A courier parcel number is not a B/L or booking: refused
+    // before any ShipsGo call (lib/shipmentStatus isCourierNumber).
+    if (isCourierNumber(number)) return json({ ok:false, error:COURIER_NUMBER_ERROR }, 400);
 
     // ── 4. A SIBLING ALREADY TRACKED: ITS REF, NO CREDIT ─────────────────────
     if (number) {

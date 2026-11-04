@@ -2,12 +2,12 @@ import { serviceClient, applyShipsgo, TRACKING_PROVIDERS, kindOf } from '@/lib/t
 import { withCronRun } from '@/lib/cronRuns';
 
 // ── GET /api/tracking/refresh ────────────────────────────────────────────────
-// Daily at 12:00 UTC (vercel.json). The backstop behind the webhook: re-reads
+// Every hour, on the hour (vercel.json). The backstop behind the webhook: re-reads
 // every tracking ref that still has a shipment not delivered or cancelled, and
 // applies it to all the shipments carrying that ref -- one read per B/L, not
 // per container. Reads are free at ShipsGo; the company limit is 100 requests
 // a minute, so the run is sequential and stops at MAX refs, oldest check
-// first -- whatever is left goes first tomorrow.
+// first -- whatever is left goes first on the next run.
 //
 // The list comes from vessl.tracking_refs_due() (script 140, one row per ref),
 // the one read the service role has, and every write goes through
