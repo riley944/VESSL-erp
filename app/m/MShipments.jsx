@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { SB } from '@/lib/supabase';
 import { shipClient, etaDaysAt } from '@/lib/shipmentsView';
-import { shipmentStatusLabel, shipmentStatusStyle } from '@/lib/shipmentStatus';
+import { shipmentStatusLabel, shipmentStatusStyle, modeOf } from '@/lib/shipmentStatus';
 import { statusLabel } from '@/lib/ordersView';
 import { buildRecordSheets, recordFileName, recordPdfMeta, recordRef } from '@/lib/shipmentsExport';
 import { stampToday, exportUser } from '@/lib/recordExport';
@@ -99,7 +99,7 @@ function ShipCard({ sh, coNames, open, onToggle, user, displayName, onPending })
         <div className={s.fields}>
           <Field label="Vessel">{(sh.vessel_name || 'Vessel TBD') + (sh.voyage_no ? ' · ' + sh.voyage_no : '')}</Field>
           <Field label="Container">{sh.container_no || '—'}</Field>
-          <Field label="Status"><Pill tone={{ label: shipmentStatusLabel(sh.status) || '—', color: shipmentStatusStyle(sh.status).fg, bg: shipmentStatusStyle(sh.status).bg }} /></Field>
+          <Field label="Status"><Pill tone={{ label: shipmentStatusLabel(sh.status, modeOf(sh)) || '—', color: shipmentStatusStyle(sh.status).fg, bg: shipmentStatusStyle(sh.status).bg }} /></Field>
           <Field label="ETD">{dateText(sh.estimated_departure) || '—'}</Field>
           <Field label="ETA">{dateText(sh.estimated_arrival) || '—'}</Field>
           <Field label="Arrival"><span style={!delivered && days !== null && days < 0 ? { color: '#b4442c', fontWeight: 600 } : undefined}>{arrival}</span></Field>

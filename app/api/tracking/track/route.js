@@ -78,6 +78,13 @@ export async function POST(req) {
     }
   }
 
+  // ShipsGo tracks ocean only (script 147). Read on its own so a database
+  // without the column (before 147) still tracks; missing reads as ocean.
+  const { data:modeRow, error:modeErr } = await sb.from('shipments').select('transport_mode').eq('id', id).maybeSingle();
+  if (!modeErr && modeRow && modeRow.transport_mode && modeRow.transport_mode !== 'ocean') {
+    return json({ ok:false, error:'Tracking for this mode is coming -- ShipsGo tracks ocean shipments only.' }, 400);
+  }
+
   const number = numberOf(sh);
 
   try {

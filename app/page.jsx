@@ -141,7 +141,7 @@ import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompan
 import { usePageState, clearPageState } from '@/lib/pageState';
 import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
-import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord, SHIPMENT_STATUS_ORDER, statusChoices, statusSourceMap, TRACKING_NOTE, shipmentStatusStyle } from '@/lib/shipmentStatus';
+import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord, SHIPMENT_STATUS_ORDER, statusChoices, statusSourceMap, TRACKING_NOTE, shipmentStatusStyle, TRANSPORT_MODES, MODE_LABEL, modeOf, modeFields } from '@/lib/shipmentStatus';
 import { trackShipment, refreshStale } from '@/lib/trackShipment';
 import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
@@ -322,14 +322,22 @@ function Badge({ status, label, po = false }) {
 // A shipment status as a pill, coloured by its stored value (shipmentStatusStyle,
 // lib/shipmentStatus.js) and worded by shipmentStatusLabel. Same shape as Badge;
 // size sm for the Shipments row, md for headings and the order pages.
-function ShipmentStatusPill({ status, size = 'sm' }) {
+function ShipmentStatusPill({ status, size = 'sm', mode = 'ocean' }) {
   const c = shipmentStatusStyle(status);
   const md = size === 'md';
   return <span style={{display:'inline-flex',alignItems:'center',gap:'5px',padding:md?'3px 10px':'1px 7px',borderRadius:'20px',fontSize:md?'11px':'9.5px',fontWeight:700,
     letterSpacing:'.03em',textTransform:'uppercase',background:c.bg,color:c.fg,whiteSpace:'nowrap',verticalAlign:'middle'}}>
-    <span style={{width:md?'6px':'5px',height:md?'6px':'5px',borderRadius:'50%',background:c.fg}} />{shipmentStatusLabel(status)}
+    <span style={{width:md?'6px':'5px',height:md?'6px':'5px',borderRadius:'50%',background:c.fg}} />{shipmentStatusLabel(status, mode)}
   </span>;
 }
+// How a shipment travels, as a 13px line icon: a ship, a plane or a parcel.
+function ModeIcon({ mode, color = '#6B7280' }) {
+  const p = { width:13, height:13, viewBox:'0 0 24 24', fill:'none', stroke:color, strokeWidth:1.8, strokeLinecap:'round', strokeLinejoin:'round' };
+  if (mode === 'air') return <svg {...p}><title>Air</title><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>;
+  if (mode === 'courier') return <svg {...p}><title>Courier</title><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>;
+  return <svg {...p}><title>Ocean</title><path d="M3 18h18l-2-6H5l-2 6z"/><path d="M12 12V4M8 8h8"/></svg>;
+}
+
 // A status select shows its current value in that value's colours; the open
 // list stays plain so every choice reads the same.
 const statusSelectStyle = st => { const c = shipmentStatusStyle(st); return { background:c.bg, color:c.fg, fontWeight:600 }; };
@@ -6787,7 +6795,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   // navigation, and kept across the deliberate remount that follows creating a
   // shipment, which is what the key on this component does. openId and the respond-*
   // fields stay plain below, being a row somebody opened and a form in progress.
-  const [ui, setUi] = usePageState('shipments', { view:'quotes', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'', client:'', track:'' });
+  const [ui, setUi] = usePageState('shipments', { view:'quotes', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'', client:'', track:'', mode:'' });
   // qSel, shipFilter and search are ui.* now, in the page store above, and
   // QF_DEFAULT is at module scope above this component -- see the note there.
   const [quotes, setQuotes] = useState([]);
@@ -7164,7 +7172,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   const V = shipmentsView({ quotes, rows, dreqs, bids, coNames }, ui, new Date());
   const { cSel, quotesV, rowsV, dreqsV, openDreqsV, clientChoices, bidCount, winnerOf,
     activeShips, doneShips, arriving, overdueShips, awaiting, bidsIn, awarded, drafts, notSelected, archivedQ,
-    isDefaultQ, shownQuotes, shownShips, trackedCount, manualCount } = V;
+    isDefaultQ, shownQuotes, shownShips, trackedCount, manualCount, modeCounts } = V;
 
   // Counts are live and come from the same buckets the tiles read, so a number in
   // the dropdown and a number on a tile cannot disagree.
@@ -7357,6 +7365,14 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
               <button key={val} onClick={()=>setUi('track', ui.track===val?'':val)} title={val==='tracked'?'Shipments followed by ShipsGo':'Shipments kept by hand'}
                 style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:ui.track===val?'#0A84FF':'#fff',color:ui.track===val?'#fff':'#3A3A3E',boxShadow:ui.track===val?'none':'0 1px 2px rgba(0,0,0,.05)'}}>
                 {label} <span style={{opacity:.6,fontVariantNumeric:'tabular-nums'}}>{ct}</span>
+              </button>
+            ))}
+            {/* Mode (script 147): one at a time, like Tracked / Manual. */}
+            <span style={{width:'1px',alignSelf:'stretch',background:'#E5E5EA',margin:'0 2px'}} />
+            {TRANSPORT_MODES.map(m=>(
+              <button key={m} onClick={()=>setUi('mode', ui.mode===m?'':m)} title={'Shipments travelling by '+MODE_LABEL[m].toLowerCase()}
+                style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:ui.mode===m?'#0A84FF':'#fff',color:ui.mode===m?'#fff':'#3A3A3E',boxShadow:ui.mode===m?'none':'0 1px 2px rgba(0,0,0,.05)'}}>
+                <ModeIcon mode={m} color={ui.mode===m?'#fff':'#6B7280'} />{MODE_LABEL[m]} <span style={{opacity:.6,fontVariantNumeric:'tabular-nums'}}>{(modeCounts||{})[m]||0}</span>
               </button>
             ))}
             {ui.shipFilter && <button onClick={()=>setUi('shipFilter','')} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:'#1D1D1F',color:'#fff'}}>{(ui.shipFilter==='arriving'?'Arriving \u226414d':'Overdue')+' \u00d7'}</button>}
@@ -7566,7 +7582,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                         {hit
                           ? <span style={{fontSize:'11.5px',color:'#8A8A8E'}}>
                               {hit.via==='so' ? 'sales order' : 'shipment'}
-                              {ship && <>{' · '}<span style={{color:shipmentStatusStyle(ship.status).fg,fontWeight:600}}>{shipmentStatusLabel(ship.status)}</span></>}
+                              {ship && <>{' · '}<span style={{color:shipmentStatusStyle(ship.status).fg,fontWeight:600}}>{shipmentStatusLabel(ship.status, modeOf(ship))}</span></>}
                               {ship && ship.container_no ? ' · '+ship.container_no : ''}
                               {hit.via==='so' && !ship ? ' · no shipment yet' : ''}
                               {hit.via==='so' && hit.ships.length>1 ? ' · +'+(hit.ships.length-1)+' more' : ''}
@@ -7665,6 +7681,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             // At the port of discharge, not gated out: "At port · N days" in
             // place of a countdown, and never overdue (lib/shipmentsView.js).
             const port = atPort(s);
+            const mode = modeOf(s);
             const overdue = days!==null && days<0 && !gated && !port;
             const delivered = (s.status==='delivered' || s.actual_arrival);
             const frac = delivered ? 1 : progressOf(s.status);
@@ -7680,8 +7697,8 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
               </div>
               <div style={{minWidth:0}}>
                 <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={overdue?'#FF375F':'#6B7280'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18h18l-2-6H5l-2 6z"/><path d="M12 12V4M8 8h8"/></svg>
-                  <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}><span title={vesselTracked ? 'From tracking' : undefined}>{vessel||'Vessel TBD'}{voyage?' \u00b7 '+voyage:''}</span></span>
+                  <ModeIcon mode={mode} color={overdue?'#FF375F':'#6B7280'} />
+                  <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}><span title={vesselTracked ? 'From tracking' : undefined}>{vessel||modeFields(mode).vesselTbd}{voyage?' \u00b7 '+voyage:''}</span></span>
                   {s.container_no && <span style={{fontFamily:'var(--mono)',fontSize:'10.5px',color:'#A0A0A4',whiteSpace:'nowrap'}}>{s.container_no}</span>}
                   {s.tracking_ref && <span title={s.tracking_error || 'Tracked with ShipsGo'} style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',color:s.tracking_error?'#B91C1C':'#0A84FF',background:s.tracking_error?'#FEE2E2':'#EAF3FE'}}>Tracked</span>}
                 </div>
@@ -7690,7 +7707,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                   <div style={{position:'absolute',top:'50%',left:(frac*100)+'%',width:'9px',height:'9px',borderRadius:'50%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',transform:'translate(-50%,-50%)',border:'2px solid #fff',boxShadow:'0 1px 2px rgba(0,0,0,.2)'}} />
                 </div>
                 <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'6px',textTransform:'uppercase',letterSpacing:'.05em'}}>
-                  <ShipmentStatusPill status={s.status} />
+                  <ShipmentStatusPill status={s.status} mode={mode} />
                   {statusSrc[s.id]===TRACKING_NOTE && <span title="Status last set by ShipsGo tracking" style={{textTransform:'none',letterSpacing:0}}>{' \u00b7 ShipsGo'}</span>}
                   {s.tracking_ref && s.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,color:'#B0B0B5'}}>{'ShipsGo: '+trackingWord(s.tracking_status)}</span>}
                 </div>
@@ -7716,7 +7733,8 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                   <span title="Tracking has the container out of the port" style={{fontSize:'11.5px',fontWeight:600,color:'#86868B'}}>Gated out</span>
                 ) : port ? (
                   <span title={'At the port of discharge since '+fmtDateShort(s.tracking_ata)+', from tracking'} style={{fontSize:'11.5px',fontWeight:600,color:'#86868B',whiteSpace:'nowrap'}}>
-                    {(() => { const n = portDaysAt(s, Date.now()); return 'At port \u00b7 '+n+' day'+(n===1?'':'s'); })()}
+                    {(() => { const n = portDaysAt(s, Date.now()); const w = modeFields(mode).arrived;
+                      return mode === 'courier' ? w : w+' \u00b7 '+n+' day'+(n===1?'':'s'); })()}
                   </span>
                 ) : days!==null ? (
                   <>
@@ -8963,7 +8981,7 @@ function ShipmentStatusArea({ s, byTracking }) {
   return (
     <div style={{display:'flex',alignItems:'baseline',flexWrap:'wrap',gap:'4px 10px',padding:'10px 18px',borderTop:'1px solid var(--line-2)'}}>
       <span style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)'}}>Shipment status</span>
-      <ShipmentStatusPill status={s.status} size="md" />
+      <ShipmentStatusPill status={s.status} size="md" mode={modeOf(s)} />
       {byTracking && <span title="Status last set by ShipsGo tracking" style={{fontSize:'12px',color:'var(--muted)'}}>{'\u00b7 ShipsGo'}</span>}
       <span title={tracked ? (s.tracking_error || 'Tracked with ShipsGo') : 'Not tracked -- staff keep this shipment up to date'}
         style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',
@@ -9076,6 +9094,8 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
       client_company_id: s.client_company_id||null, carrier_company_id: s.carrier_company_id||null,
       vessel_name: s.vessel_name||null, container_no: s.container_no||null, voyage_no: s.voyage_no||null,
       booking_number: s.booking_number||null, bill_of_lading: s.bill_of_lading||null,
+      // The mode only when it changed, and never on a tracked shipment (ocean).
+      ...(!tracked && modeOf(s) !== modeOf(orig) ? { transport_mode: modeOf(s) } : {}),
       // While tracked the dates are tracking's (script 141) and the boxes are
       // read-only, so Save leaves them alone -- writing the loaded copy back would
       // undo a date tracking moved since this card opened.
@@ -9101,10 +9121,13 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
   // ── TRACK ─────────────────────────────────────────────────────────────────
   // The route reads the SAVED number, so Track waits until nothing is unsaved --
   // which is also what makes the remount afterwards safe (see openKey above).
-  const EDITABLE = ['shipment_number','status','client_company_id','carrier_company_id','vessel_name','container_no','voyage_no','booking_number','bill_of_lading'];
+  const EDITABLE = ['shipment_number','status','client_company_id','carrier_company_id','vessel_name','container_no','voyage_no','booking_number','bill_of_lading','transport_mode'];
   const unsaved = !!(s && orig) && (EDITABLE.some(k=>(s[k]||'')!==(orig[k]||''))
     || dval(s.estimated_departure)!==dval(orig.estimated_departure) || dval(s.estimated_arrival)!==dval(orig.estimated_arrival));
   const tracked = !!(orig && orig.tracking_ref);
+  // How it travels (script 147) and what its fields are called for that mode.
+  const mode = modeOf(s);
+  const F = modeFields(mode);
   const hasNumber = !!(orig && ((orig.bill_of_lading||'').trim() || (orig.booking_number||'').trim() || (orig.container_no||'').trim()));
   const closed = !tracked && !!orig && ['delivered','cancelled'].includes(orig.status);
   // WHILE TRACKED, THE TRACKED FIELDS ARE READ-ONLY: the numbers tracking was
@@ -9133,7 +9156,7 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
           <div style={{minWidth:0}}>
             <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
               <h3>{s?.shipment_number || linkedPO?.order_number || 'Shipment'}</h3>
-              {orig && <ShipmentStatusPill status={orig.status} size="md" />}
+              {orig && <ShipmentStatusPill status={orig.status} size="md" mode={modeOf(orig)} />}
             </div>
             {soPoLine && <div title={soPoLine} style={{fontFamily:'var(--mono)',fontSize:'12px',color:'var(--muted)',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{soPoLine}</div>}
           </div>
@@ -9145,7 +9168,7 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
             {soPoLine
               ? <div><label>SO # · PO #</label><input className="form-input" value={soPoLine} readOnly style={{opacity:.7,cursor:'default'}} title={soPoLine} /></div>
               : <div><label>Shipment #</label><input className="form-input" value={s.shipment_number||''} readOnly style={{opacity:.7,cursor:'default'}} /></div>}
-            <div><label>Status{tracked && orig.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,fontWeight:500,color:'var(--muted)'}}>{'ShipsGo: '+trackingWord(orig.tracking_status)}</span>}</label><select className="form-select" style={statusSelectStyle(s.status||'created')} value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{statusChoices((orig&&orig.status)||s.status||'created', tracked).map(x=><option key={x} value={x} style={OPTION_PLAIN}>{shipmentStatusLabel(x)}</option>)}</select>
+            <div><label>Status{tracked && orig.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,fontWeight:500,color:'var(--muted)'}}>{'ShipsGo: '+trackingWord(orig.tracking_status)}</span>}</label><select className="form-select" style={statusSelectStyle(s.status||'created')} value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{statusChoices((orig&&orig.status)||s.status||'created', tracked).map(x=><option key={x} value={x} style={OPTION_PLAIN}>{shipmentStatusLabel(x, mode)}</option>)}</select>
               {byTracking && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'Set by ShipsGo tracking'+(tracked ? ' \u00b7 tracking moves it; staff can mark it Delivered or Cancelled' : '')}</div>}
               {!byTracking && tracked && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'Tracking moves it; staff can mark it Delivered or Cancelled'}</div>}</div>
           </div>
@@ -9156,25 +9179,32 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
             <div><label>Client</label><input className="form-input" value={(linkedPO?.client?.name||(companies.find(c=>c.id===s.client_company_id)||{}).name||'—').toUpperCase()} readOnly style={{opacity:.7,cursor:'default',fontWeight:600}} /></div>
             <div><label>Forwarder</label><select className="form-select" value={s.carrier_company_id||''} onChange={e=>set('carrier_company_id',e.target.value)}><option value="">—</option>{companies.filter(c=>['carrier','freight_forwarder'].includes(c.type)).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           </div>
+          <div className="form-row"><label>Mode</label>
+            <select className="form-select" value={mode} onChange={e=>set('transport_mode',e.target.value)} disabled={tracked}
+              title={tracked ? 'A tracked shipment travels by ocean -- ShipsGo tracking is ocean only' : undefined} style={tracked?roStyle:undefined}>
+              {TRANSPORT_MODES.map(m=><option key={m} value={m}>{MODE_LABEL[m]}</option>)}
+            </select></div>
           <div className="form-row-2">
-            <div><label>Vessel / Boat</label>{ro
+            <div><label>{F.vessel}</label>{ro
               ? <input className="form-input" value={s.vessel_name||orig.tracking_vessel||''} readOnly style={roStyle} title={roTitle} />
-              : <input className="form-input" value={s.vessel_name||''} onChange={e=>set('vessel_name',e.target.value)} placeholder="e.g. MAERSK SELETAR" />}</div>
-            <div><label>Voyage #</label>{ro
+              : <input className="form-input" value={s.vessel_name||''} onChange={e=>set('vessel_name',e.target.value)} placeholder={F.vesselPh} />}</div>
+            {F.voyage && <div><label>{F.voyage}</label>{ro
               ? <input className="form-input" value={s.vessel_name ? (s.voyage_no||'') : (s.voyage_no||orig.tracking_voyage||'')} readOnly style={roStyle} title={roTitle} />
-              : <input className="form-input" value={s.voyage_no||''} onChange={e=>set('voyage_no',e.target.value)} placeholder="e.g. 084W" />}</div>
+              : <input className="form-input" value={s.voyage_no||''} onChange={e=>set('voyage_no',e.target.value)} placeholder={F.voyagePh} />}</div>}
           </div>
           <div className="form-row-2">
-            <div><label>Container #</label><input className="form-input" value={s.container_no||''} onChange={e=>set('container_no',e.target.value)} placeholder="e.g. MSKU1234567"
-              readOnly={roBox} style={roBox?roStyle:undefined} title={roBox?roTitle:(ro?'Not on the tracked B/L -- correct it, save, then Refresh tracking':undefined)} /></div>
+            {F.container && <div><label>{F.container}</label><input className="form-input" value={s.container_no||''} onChange={e=>set('container_no',e.target.value)} placeholder="e.g. MSKU1234567"
+              readOnly={roBox} style={roBox?roStyle:undefined} title={roBox?roTitle:(ro?'Not on the tracked B/L -- correct it, save, then Refresh tracking':undefined)} /></div>}
             <div><label>Booking #</label><input className="form-input" value={s.booking_number||''} onChange={e=>set('booking_number',e.target.value)}
               readOnly={ro} style={ro?roStyle:undefined} title={ro?roTitle:undefined} /></div>
           </div>
-          <div className="form-row"><label>Bill of Lading</label>
+          <div className="form-row"><label>{F.number}</label>
             <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
               <input className="form-input" style={ro?{flex:1,...roStyle}:{flex:1}} value={s.bill_of_lading||''} onChange={e=>set('bill_of_lading',e.target.value)}
                 readOnly={ro} title={ro?roTitle:undefined} />
-              <button type="button" className="btn btn-ghost btn-sm" style={{flexShrink:0,whiteSpace:'nowrap'}}
+              {mode !== 'ocean' && !tracked
+                ? <span style={{fontSize:'12px',color:'var(--muted)',whiteSpace:'nowrap'}} title="ShipsGo tracks ocean shipments only">{'Tracking for this mode is coming'}</span>
+                : <button type="button" className="btn btn-ghost btn-sm" style={{flexShrink:0,whiteSpace:'nowrap'}}
                       disabled={tracking || !hasNumber || unsaved || closed} onClick={track}
                       title={!hasNumber ? 'Save a bill of lading, booking number or container number first'
                         : unsaved ? 'Save your changes first — tracking uses the saved number'
@@ -9183,7 +9213,7 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
                         : trackedSibling ? (trackedSibling.shipment_number||'Another shipment')+' on this B/L is already tracked — this attaches to it, free'
                         : 'Start ShipsGo tracking — uses 1 credit, free if ShipsGo already tracks this number. Every shipment on this B/L is attached'}>
                 {tracking ? 'Tracking…' : tracked ? 'Refresh tracking' : trackedSibling ? 'Track (free, B/L already tracked)' : 'Track (1 credit)'}
-              </button>
+              </button>}
             </div>
             {(trackErr || notice) && <div style={{fontSize:'12px',marginTop:'6px',color:(trackErr||noticeErr)?'var(--hot)':'var(--muted)'}}>{trackErr || notice}</div>}
           </div>
@@ -10029,7 +10059,7 @@ function CreateShipmentModal({ onClose, onCreated }) {
   const [pos, setPos] = useState([]);
   const [form, setForm] = useState({
     number: `SHP-${Date.now().toString(36).slice(-5).toUpperCase()}`,
-    client:'', carrier:'', bol:'', etd:'', eta:'', status:'created', inco:'', poId:''
+    client:'', carrier:'', bol:'', etd:'', eta:'', status:'created', inco:'', poId:'', mode:'ocean'
   });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   // A note to post once the record exists (OrderNoteDraft): nothing is saved
@@ -10054,6 +10084,8 @@ function CreateShipmentModal({ onClose, onCreated }) {
       estimated_departure: form.etd ? new Date(form.etd+'T12:00:00').toISOString() : null,
       estimated_arrival:   form.eta ? new Date(form.eta+'T12:00:00').toISOString() : null,
       status: form.status,
+      // Only a mode other than the column default is sent (script 147).
+      ...(form.mode !== 'ocean' ? { transport_mode: form.mode } : {}),
     }).select('id').single();
     if (error) { alert('Error: '+error.message); return; }
     if (form.poId) await SB.from('shipment_pos').insert({ shipment_id: ship.id, purchase_order_id: form.poId });
@@ -10069,13 +10101,16 @@ function CreateShipmentModal({ onClose, onCreated }) {
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>Shipment # *</label><input className="form-input" value={form.number} onChange={e=>f('number')(e.target.value)} /></div>
-            <div><label>Status</label><select className="form-select" style={statusSelectStyle(form.status)} value={form.status} onChange={e=>f('status')(e.target.value)}>{STATUSES.map(s=><option key={s} value={s} style={OPTION_PLAIN}>{shipmentStatusLabel(s)}</option>)}</select></div>
+            <div><label>Status</label><select className="form-select" style={statusSelectStyle(form.status)} value={form.status} onChange={e=>f('status')(e.target.value)}>{STATUSES.map(s=><option key={s} value={s} style={OPTION_PLAIN}>{shipmentStatusLabel(s, form.mode)}</option>)}</select></div>
           </div>
           <div className="form-row-2">
             <div><label>Client</label><select className="form-select" value={form.client} onChange={e=>f('client')(e.target.value)}><option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
             <div><label>Forwarder</label><select className="form-select" value={form.carrier} onChange={e=>f('carrier')(e.target.value)}><option value="">—</option>{carriers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           </div>
-          <div className="form-row"><label>Bill of Lading</label><input className="form-input" value={form.bol} onChange={e=>f('bol')(e.target.value)} /></div>
+          <div className="form-row-2">
+            <div><label>Mode</label><select className="form-select" value={form.mode} onChange={e=>f('mode')(e.target.value)}>{TRANSPORT_MODES.map(m=><option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select></div>
+            <div><label>{modeFields(form.mode).number}</label><input className="form-input" value={form.bol} onChange={e=>f('bol')(e.target.value)} /></div>
+          </div>
           <div className="form-row-2">
             <div><label>ETD</label><input type="date" className="form-input" value={form.etd} onChange={e=>f('etd')(e.target.value)} /></div>
             <div><label>ETA</label><input type="date" className="form-input" value={form.eta} onChange={e=>f('eta')(e.target.value)} /></div>
@@ -10126,7 +10161,7 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
   const [companies, setCompanies] = useState([]);
   const [sos, setSos] = useState([]);
   const [links, setLinks] = useState([]);   // sales_order_pos with the PO's number
-  const [form, setForm] = useState({ client:'', soId:'', poIds:[], bol:'', box:'', forwarder:'' });
+  const [form, setForm] = useState({ client:'', soId:'', poIds:[], bol:'', box:'', forwarder:'', mode:'ocean' });
   const [fwdHint, setFwdHint] = useState('');
   const [fwdManual, setFwdManual] = useState(false);
   const [poShips, setPoShips] = useState({});   // PO id -> shipments it already has
@@ -10205,6 +10240,7 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
   const clean = v => String(v||'').trim().toUpperCase().replace(/\s+/g,'');
   const submit = async () => {
     setErr('');
+    if (form.mode !== 'ocean') return;
     if (!form.client) { setErr('Pick the client, or a Sales Order that has one.'); return; }
     if (so && !ticked.length) { setErr('Tick at least one of the Sales Order’s POs, or choose no Sales Order.'); return; }
     if (!clean(form.bol) && !clean(form.box)) { setErr('Enter a bill of lading or a container number -- tracking needs one.'); return; }
@@ -10268,6 +10304,12 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
             ))}
             {already.length > 0 && <div style={{fontSize:'12px',marginTop:'6px',color:'var(--muted)'}}>{already.map(p=>'PO '+p.number+' already has '+poShips[p.id]+' shipment'+(poShips[p.id]===1?'':'s')).join('; ')+'; this adds another (one per container is normal).'}</div>}
           </div>
+          {/* ShipsGo tracks ocean only (script 147): air and courier are kept by
+              hand from + New Shipment until their tracking exists. */}
+          <div className="form-row"><label>Mode</label>
+            <select className="form-select" value={form.mode} onChange={e=>f('mode')(e.target.value)}>{TRANSPORT_MODES.map(m=><option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select>
+            {form.mode !== 'ocean' && <div style={{fontSize:'12.5px',color:'var(--muted)',marginTop:'6px'}}>{'Tracking for this mode is coming. ShipsGo tracks ocean shipments only \u2014 use + New Shipment to keep an '+MODE_LABEL[form.mode].toLowerCase()+' shipment by hand.'}</div>}
+          </div>
           <div className="form-row-2">
             <div><label>Bill of Lading</label><input className="form-input" value={form.bol} onChange={e=>f('bol')(e.target.value)} placeholder="e.g. CMDUXIA2035159" /></div>
             <div><label>Container #</label><input className="form-input" value={form.box} onChange={e=>f('box')(e.target.value)} placeholder="e.g. MSKU1234567" /></div>
@@ -10286,7 +10328,7 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
         </div>
         <div className="modal-foot">
           <button className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
-          <button className="btn btn-dark" onClick={submit} disabled={busy}>{busy ? 'Saving and tracking…' : 'Save and track'}</button>
+          <button className="btn btn-dark" onClick={submit} disabled={busy || form.mode !== 'ocean'}>{busy ? 'Saving and tracking…' : 'Save and track'}</button>
         </div>
       </div>
     </div>
