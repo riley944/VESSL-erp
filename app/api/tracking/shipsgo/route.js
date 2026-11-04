@@ -22,7 +22,12 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const json = (body, status) => Response.json(body, { status });
-const ACTED_ON = ['OCEAN.SHIPMENTS.SHIPMENT_UPDATED', 'OCEAN.SHIPMENTS.SHIPMENT_CREATED'];
+// The events acted on, and which kind of ShipsGo shipment each names. An air
+// id and an ocean id can be the same number, so the kind picks the provider.
+const ACTED_ON = {
+  'OCEAN.SHIPMENTS.SHIPMENT_UPDATED': 'ocean', 'OCEAN.SHIPMENTS.SHIPMENT_CREATED': 'ocean',
+  'AIR.SHIPMENTS.SHIPMENT_UPDATED': 'air',     'AIR.SHIPMENTS.SHIPMENT_CREATED': 'air',
+};
 
 function signatureOk(raw, given, secret) {
   if (!given || !secret) return false;
@@ -33,12 +38,15 @@ function signatureOk(raw, given, secret) {
 }
 
 export async function POST(req) {
-  const secret = process.env.SHIPSGO_WEBHOOK_SECRET;
+  // The ocean webhook's secret, and the air webhook's when ShipsGo gives it one
+  // of its own (SHIPSGO_AIR_WEBHOOK_SECRET, optional). Either signs a delivery.
+  const secrets = [process.env.SHIPSGO_WEBHOOK_SECRET, process.env.SHIPSGO_AIR_WEBHOOK_SECRET].filter(Boolean);
   const svc = serviceClient();
-  if (!secret || !svc || !process.env.SHIPSGO_API_KEY) return json({ ok:false, error:'Not configured.' }, 500);
+  if (!secrets.length || !svc || !process.env.SHIPSGO_API_KEY) return json({ ok:false, error:'Not configured.' }, 500);
 
   const raw = await req.text();
-  if (!signatureOk(raw, req.headers.get('x-shipsgo-webhook-signature'), secret)) {
+  const given = req.headers.get('x-shipsgo-webhook-signature');
+  if (!secrets.some(sec => signatureOk(raw, given, sec))) {
     return json({ ok:false, error:'Bad signature.' }, 401);
   }
 
@@ -46,10 +54,11 @@ export async function POST(req) {
   try { payload = JSON.parse(raw); } catch { return json({ ok:false, error:'Malformed body.' }, 400); }
   const event = (payload && payload.event && payload.event.name) || '';
   const shipsgoId = payload && payload.shipment && payload.shipment.id;
-  if (!ACTED_ON.includes(event) || !shipsgoId) return json({ ok:true, ignored:event || 'no event' }, 200);
+  const kind = ACTED_ON[event];
+  if (!kind || !shipsgoId) return json({ ok:true, ignored:event || 'no event' }, 200);
 
   try {
-    const result = await applyShipsgo(svc, String(shipsgoId));
+    const result = await applyShipsgo(svc, String(shipsgoId), null, kind);
     return json({ ok:true, result }, 200);
   } catch (err) {
     // Not one of ours: apply_tracking_group raises P0002 when no shipment

@@ -9062,7 +9062,7 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
       // Same normalising as the Track route: B/L else booking, uppercase, no spaces.
       const num = r => (String(r.bill_of_lading||'').trim() || String(r.booking_number||'').trim()).toUpperCase().replace(/\s+/g,'');
       const mine = data ? num(data) : '';
-      if (mine && !data.tracking_ref) {
+      if (mine && !data.tracking_ref && modeOf(data) === 'ocean') {
         SB.from('shipments').select('id,shipment_number,bill_of_lading,booking_number').eq('tracking_provider','shipsgo').not('tracking_ref','is',null)
           .then(({data:rows})=>setTrackedSibling((rows||[]).find(r=>r.id!==id && num(r)===mine)||null));
       }
@@ -9201,7 +9201,7 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
             <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
               <input className="form-input" style={ro?{flex:1,...roStyle}:{flex:1}} value={s.bill_of_lading||''} onChange={e=>set('bill_of_lading',e.target.value)}
                 readOnly={ro} title={ro?roTitle:undefined} />
-              {mode !== 'ocean' && !tracked
+              {mode !== 'ocean' && mode !== 'air' && !tracked
                 ? <span style={{fontSize:'12px',color:'var(--muted)',whiteSpace:'nowrap'}} title="ShipsGo tracks ocean shipments only">{'Tracking for this mode is coming'}</span>
                 : <button type="button" className="btn btn-ghost btn-sm" style={{flexShrink:0,whiteSpace:'nowrap'}}
                       disabled={tracking || !hasNumber || unsaved || closed} onClick={track}
@@ -10237,20 +10237,24 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
   },[poKey, form.client, fwdManual]);
 
   const clean = v => String(v||'').trim().toUpperCase().replace(/\s+/g,'');
+  // An AWB as saved: NNN-NNNNNNNN, or null when it is not 3 + 8 digits.
+  const awbOk = v => { const d = String(v||'').replace(/[\s-]/g,''); return /^[0-9]{11}$/.test(d) ? d.slice(0,3)+'-'+d.slice(3) : null; };
   const submit = async () => {
     setErr('');
-    if (form.mode !== 'ocean') return;
+    const air = form.mode === 'air';
     if (!form.client) { setErr('Pick the client, or a Sales Order that has one.'); return; }
     if (so && !ticked.length) { setErr('Tick at least one of the Sales Order’s POs, or choose no Sales Order.'); return; }
-    if (!clean(form.bol) && !clean(form.box)) { setErr('Enter a bill of lading or a container number -- tracking needs one.'); return; }
+    if (air && !awbOk(form.bol)) { setErr('Enter the AWB -- the airline prefix and 8 digits, e.g. 160-12345678.'); return; }
+    if (!air && !clean(form.bol) && !clean(form.box)) { setErr('Enter a bill of lading or a container number -- tracking needs one.'); return; }
     setBusy(true);
     const { data: ship, error } = await SB.from('shipments').insert({
       shipment_number: number,
       status: 'created',
       client_company_id: form.client,
       carrier_company_id: form.forwarder || null,
-      bill_of_lading: clean(form.bol) || null,
-      container_no: clean(form.box) || null,
+      bill_of_lading: air ? awbOk(form.bol) : (clean(form.bol) || null),
+      container_no: air ? null : (clean(form.box) || null),
+      ...(air ? { transport_mode: 'air' } : {}),
     }).select('id').single();
     if (error) { setBusy(false); setErr('Could not save the shipment: '+error.message); return; }
     if (ticked.length) {
@@ -10303,12 +10307,16 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
             ))}
             {already.length > 0 && <div style={{fontSize:'12px',marginTop:'6px',color:'var(--muted)'}}>{already.map(p=>'PO '+p.number+' already has '+poShips[p.id]+' shipment'+(poShips[p.id]===1?'':'s')).join('; ')+'; this adds another (one per container is normal).'}</div>}
           </div>
-          {/* ShipsGo tracks ocean only (script 147): air is kept by hand from
-              + New Shipment until its tracking exists. */}
+          {/* Ocean tracks by B/L or container; air by its AWB alone (script 148). */}
           <div className="form-row"><label>Mode</label>
             <select className="form-select" value={form.mode} onChange={e=>f('mode')(e.target.value)}>{TRANSPORT_MODES.map(m=><option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select>
-            {form.mode !== 'ocean' && <div style={{fontSize:'12.5px',color:'var(--muted)',marginTop:'6px'}}>{'Tracking for this mode is coming. ShipsGo tracks ocean shipments only \u2014 use + New Shipment to keep an '+MODE_LABEL[form.mode].toLowerCase()+' shipment by hand.'}</div>}
           </div>
+          {form.mode === 'air' ? <>
+            <div className="form-row"><label>AWB</label><input className="form-input" value={form.bol} onChange={e=>f('bol')(e.target.value)} placeholder="e.g. 160-12345678" /></div>
+            <div style={{fontSize:'12px',color:'var(--muted)',margin:'-4px 0 12px',lineHeight:1.5}}>
+              {'The air waybill: the airline\u2019s 3-digit prefix and 8 digits, with or without the dash. ShipsGo tracks the AWB for 1 credit, free if it already tracks it. The shipment\u2019s live status shows on the Sales Order and its POs.'}
+            </div>
+          </> : <>
           <div className="form-row-2">
             <div><label>Bill of Lading</label><input className="form-input" value={form.bol} onChange={e=>f('bol')(e.target.value)} placeholder="e.g. CMDUXIA2035159" /></div>
             <div><label>Container #</label><input className="form-input" value={form.box} onChange={e=>f('box')(e.target.value)} placeholder="e.g. MSKU1234567" /></div>
@@ -10316,6 +10324,7 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
           <div style={{fontSize:'12px',color:'var(--muted)',margin:'-4px 0 12px',lineHeight:1.5}}>
             One is enough. With a B/L, every live shipment on it is tracked together for one credit (free if one is already tracked); a container alone is tracked on its own. The shipment's live status shows on the Sales Order and its POs.
           </div>
+          </>}
           <div className="form-row"><label>Forwarder</label>
             <select className="form-select" value={form.forwarder} onChange={e=>{ setFwdManual(true); setFwdHint(''); f('forwarder')(e.target.value); }}>
               <option value="">—</option>{forwarders.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
@@ -10327,7 +10336,7 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
         </div>
         <div className="modal-foot">
           <button className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
-          <button className="btn btn-dark" onClick={submit} disabled={busy || form.mode !== 'ocean'}>{busy ? 'Saving and tracking…' : 'Save and track'}</button>
+          <button className="btn btn-dark" onClick={submit} disabled={busy}>{busy ? 'Saving and tracking…' : 'Save and track'}</button>
         </div>
       </div>
     </div>

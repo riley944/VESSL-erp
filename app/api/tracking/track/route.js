@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-import { createShipment, carrierByCode, ShipsgoError } from '@/lib/shipsgo';
-import { serviceClient, applyShipsgo } from '@/lib/trackingServer';
+import { createShipment, carrierByCode, ShipsgoError, createAirShipment, awbDigits } from '@/lib/shipsgo';
+import { serviceClient, applyShipsgo, TRACKING_PROVIDERS, kindOf } from '@/lib/trackingServer';
 
 // ── POST /api/tracking/track ─────────────────────────────────────────────────
 // The Track button on a shipment. Body { shipment_id }, nothing else: the route
@@ -70,7 +70,7 @@ export async function POST(req) {
   if (!sh) return json({ ok:false, error:'That shipment could not be read.' }, 404);
 
   if (refreshOnly) {
-    if (sh.tracking_provider !== 'shipsgo' || !sh.tracking_ref) return json({ ok:true, skipped:'not tracked' }, 200);
+    if (!TRACKING_PROVIDERS.includes(sh.tracking_provider) || !sh.tracking_ref) return json({ ok:true, skipped:'not tracked' }, 200);
     if (['delivered', 'cancelled'].includes(sh.status)) return json({ ok:true, skipped:sh.status }, 200);
     const checked = sh.tracking_checked_at ? Date.parse(sh.tracking_checked_at) : 0;
     if (maxAgeHours > 0 && checked && Date.now() - checked < maxAgeHours * 3600000) {
@@ -78,19 +78,24 @@ export async function POST(req) {
     }
   }
 
-  // ShipsGo tracks ocean only (script 147). Read on its own so a database
-  // without the column (before 147) still tracks; missing reads as ocean.
+  // How it travels (script 147): ocean by B/L, booking or container; air by
+  // AWB (script 148). Read on its own so a database without the column still
+  // tracks; missing reads as ocean. A courier row (offered no more) reads air.
   const { data:modeRow, error:modeErr } = await sb.from('shipments').select('transport_mode').eq('id', id).maybeSingle();
-  if (!modeErr && modeRow && modeRow.transport_mode && modeRow.transport_mode !== 'ocean') {
-    return json({ ok:false, error:'Tracking for this mode is coming -- ShipsGo tracks ocean shipments only.' }, 400);
+  const rawMode = (!modeErr && modeRow && modeRow.transport_mode) || 'ocean';
+  const mode = rawMode === 'courier' ? 'air' : rawMode;
+  if (mode !== 'ocean' && mode !== 'air') {
+    return json({ ok:false, error:'Tracking for this mode is coming.' }, 400);
   }
 
   const number = numberOf(sh);
 
   try {
     // ── 3. ALREADY TRACKED: REFRESH, FREE ────────────────────────────────────
-    if (sh.tracking_provider === 'shipsgo' && sh.tracking_ref) {
-      const result = await applyShipsgo(svc, sh.tracking_ref, number || null);
+    // By the row's own provider -- air refreshes its ref alone, no siblings.
+    if (TRACKING_PROVIDERS.includes(sh.tracking_provider) && sh.tracking_ref) {
+      const kind = kindOf(sh.tracking_provider);
+      const result = await applyShipsgo(svc, sh.tracking_ref, kind === 'air' ? null : (number || null), kind);
       return json({ ok:true, created:false, refreshed:true, credits:null, result }, 200);
     }
 
@@ -98,6 +103,23 @@ export async function POST(req) {
     // cancelled one buys nothing, and apply_tracking_group would not attach it.
     if (['delivered', 'cancelled'].includes(sh.status)) {
       return json({ ok:false, error:'This shipment is '+sh.status+'; tracking is for shipments still on the way.' }, 400);
+    }
+
+    // ── AIR: THE AWB, ONE SHIPMENT ───────────────────────────────────────────
+    // The AWB is kept in bill_of_lading (labelled AWB on an air card). Created at
+    // ShipsGo, or reused free on a 409; the row is marked with the air provider
+    // and ref as the caller (under RLS), then applied with no number, so an AWB
+    // never attaches another row.
+    if (mode === 'air') {
+      const awb = awbDigits(sh.bill_of_lading);
+      if (!awb) return json({ ok:false, error:'Save the AWB first -- the airline prefix and 8 digits, e.g. 160-12345678.' }, 400);
+      const made = await createAirShipment({ awb_number: awb });
+      const ref = String(made.id);
+      const { error:mErr } = await sb.from('shipments')
+        .update({ tracking_provider:'shipsgo_air', tracking_ref:ref }).eq('id', sh.id);
+      if (mErr) return json({ ok:false, error:'Tracking was created but could not be saved: '+mErr.message, credits:made.credits }, 502);
+      const result = await applyShipsgo(svc, ref, null, 'air');
+      return json({ ok:true, created:!made.existed, reused:made.existed, credits:made.credits, cost:made.cost, result }, 200);
     }
 
     // ── 4. A SIBLING ALREADY TRACKED: ITS REF, NO CREDIT ─────────────────────

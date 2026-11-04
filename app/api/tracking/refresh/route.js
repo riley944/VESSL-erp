@@ -1,4 +1,4 @@
-import { serviceClient, applyShipsgo } from '@/lib/trackingServer';
+import { serviceClient, applyShipsgo, TRACKING_PROVIDERS, kindOf } from '@/lib/trackingServer';
 import { withCronRun } from '@/lib/cronRuns';
 
 // ── GET /api/tracking/refresh ────────────────────────────────────────────────
@@ -36,11 +36,12 @@ async function run() {
   const { data:due, error } = await svc.rpc('tracking_refs_due');
   if (error) return json({ ok:false, error:'Could not read the tracked shipments: '+error.message }, 502);
 
-  const refs = (due || []).filter(r => r.tracking_provider === 'shipsgo').slice(0, MAX);
+  // Ocean and air refs (script 148), each read from its own ShipsGo API.
+  const refs = (due || []).filter(r => TRACKING_PROVIDERS.includes(r.tracking_provider)).slice(0, MAX);
   const out = { ok:true, due:(due || []).length, checked:0, shipments:0, moved:0, failed:[] };
   for (const r of refs) {
     try {
-      const res = await applyShipsgo(svc, r.tracking_ref);
+      const res = await applyShipsgo(svc, r.tracking_ref, null, kindOf(r.tracking_provider));
       out.checked += 1;
       out.shipments += ((res && res.rows) || []).length;
       out.moved += Number((res && res.moved) || 0);
