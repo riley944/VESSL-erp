@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
-import { withCronRun } from '@/lib/cronRuns';
+import { withCronRun, noStoreFetch } from '@/lib/cronRuns';
 import { OPS_TEAM } from '@/lib/opsTeam';
 
 // ── GET /api/rfq/digest ──────────────────────────────────────────────────────
@@ -24,6 +24,8 @@ import { OPS_TEAM } from '@/lib/opsTeam';
 // effects and reads a secret header.
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// No fetch in this route is ever served from Next's data cache (lib/cronRuns).
+export const fetchCache = 'force-no-store';
 
 // Same verified sender as the RFQ itself.
 const FROM = 'King Universal Freight <rfq@vessl.io>';
@@ -135,6 +137,7 @@ async function run(req) {
   const sb = createClient(url, serviceKey, {
     db:{ schema:'vessl' },
     auth:{ persistSession:false, autoRefreshToken:false },
+    global:{ fetch: noStoreFetch },
   });
   const { data:rows, error } = await sb.rpc('rfq_digest_rows');
   if (error) return json({ ok:false, error:'Could not read the RFQ list: '+error.message }, 502);

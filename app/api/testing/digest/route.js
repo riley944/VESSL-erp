@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
-import { withCronRun } from '@/lib/cronRuns';
+import { withCronRun, noStoreFetch } from '@/lib/cronRuns';
 import ExcelJS from 'exceljs';
 import {
   groupBySheet, countsOf, buildTestingWorkbook, testingFileName, testingSubject,
@@ -33,6 +33,8 @@ import {
 // as the RFQ digest. On a Hobby plan Vercel may fire it up to 59 minutes late.
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// No fetch in this route is ever served from Next's data cache (lib/cronRuns).
+export const fetchCache = 'force-no-store';
 
 // Same verified domain as the RFQ mail and the portal notifications.
 const FROM = 'King Universal <notify@vessl.io>';
@@ -75,6 +77,7 @@ async function run(req) {
   const sb = createClient(url, serviceKey, {
     db:{ schema:'vessl' },
     auth:{ persistSession:false, autoRefreshToken:false },
+    global:{ fetch: noStoreFetch },
   });
   const { data:rows, error } = await sb.rpc('testing_digest_rows');
   if (error) return json({ ok:false, error:'Could not read the testing list: '+error.message }, 502);

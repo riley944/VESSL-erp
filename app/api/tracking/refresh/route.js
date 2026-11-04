@@ -14,6 +14,8 @@ import { withCronRun } from '@/lib/cronRuns';
 // apply_tracking_group.
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// No fetch in this route is ever served from Next's data cache (lib/cronRuns).
+export const fetchCache = 'force-no-store';
 export const maxDuration = 300;
 
 const MAX = 80;
