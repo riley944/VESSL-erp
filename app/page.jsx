@@ -143,7 +143,7 @@ import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName 
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord, SHIPMENT_STATUS_ORDER, statusChoices, statusSourceMap, TRACKING_NOTE, shipmentStatusStyle, TRANSPORT_MODES, MODE_LABEL, modeOf, modeFields, isCourierNumber, oceanTrackNumber, COURIER_NUMBER_ERROR } from '@/lib/shipmentStatus';
 import { trackShipment, refreshStale } from '@/lib/trackShipment';
-import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt } from '@/lib/shipmentsView';
+import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt, shipPOs, shipSkus, shipCompanies, firstTwo } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
          buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline, timelineBy, monthColor, INV_STATUS_COLORS } from '@/lib/inventoryView';
@@ -6744,7 +6744,10 @@ const newQuoteNumber = () => 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase
 // body can ever get above it again. It is now imported from lib/shipmentsView.js,
 // which is module scope too, so the same holds.
 
-function Shipments({ onNewShipment, userEmail, displayName = '' }) {
+// The manifest columns: Reference, Orders, Products, Voyage, ETD / ETA, Arrival.
+const SHIP_COLS = '150px 132px minmax(140px,1fr) minmax(200px,1.15fr) 128px 96px';
+
+function Shipments({ onNewShipment, userEmail, displayName = '', navigate }) {
   const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
   // Delivery requests the client filed from the portal. Nothing in this app has
@@ -6818,7 +6821,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   // wrote -- that second read does not sweep again.
   const reload = async (sweep = true) => {
     const { data } = await SB.from('shipments')
-      .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,factory_company_id,client:companies!client_company_id(name))),shipment_tracking_events(event_code,event_status,location_code,location_name,event_time)')
+      .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(id,order_number,client_po_number,factory_company_id,client:companies!client_company_id(name),purchase_order_items(product_sku,products(sku)))),shipment_tracking_events(event_code,event_status,location_code,location_name,event_time)')
       .order('created_at',{ascending:false});
     setRows(data||[]); setLoading(false);
     SB.from('order_history').select('row_id,note,changed_at').eq('table_name','shipments').eq('field','status')
@@ -7120,10 +7123,11 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
     return out;
   }, [soPos, shipPos, rows]);
 
-  // "SO # · PO #" for a row. A shipment reaches a Sales Order only through its
-  // POs (shipment_pos, then sales_order_pos), the chain shipsForSo walks the
-  // other way. Derived, so a PO moved to another SO moves its shipments' SO too.
-  const soNumsForShip = useMemo(() => {
+  // A row's Sales Orders, { id, label }, for the Orders column and the export. A
+  // shipment reaches a Sales Order only through its POs (shipment_pos, then
+  // sales_order_pos), the chain shipsForSo walks the other way. Derived, so a PO
+  // moved to another SO moves its shipments' SO too.
+  const soLinksForShip = useMemo(() => {
     const soNum = {};
     (salesOrders||[]).forEach(x => { soNum[x.id] = x.so_number || x.order_number || ''; });
     const sosOfPo = {};
@@ -7134,7 +7138,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
         const n = soNum[sid];
         if (!n) return;
         const list = out[x.shipment_id] = out[x.shipment_id] || [];
-        if (!list.includes(n)) list.push(n);
+        if (!list.some(o => o.id === sid)) list.push({ id: sid, label: n });
       });
     });
     return out;
@@ -7218,7 +7222,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
     try {
       const now = new Date();
       const who = userEmail ? ((displayName||'').trim() ? displayName.trim()+' ('+userEmail+')' : userEmail) : '';
-      const ctx = { exportedAt: now, user: who, ui, V, bids, coNames, refOf: matchRef };
+      const ctx = { exportedAt: now, user: who, ui, V, bids, coNames, refOf: matchRef, soOf: id => (soLinksForShip[id]||[]).map(o => o.label) };
       const out = build(ctx, now);
       // Excel, CSV files one after another, or the print document: the same
       // delivery as the order pages (lib/recordExport.js).
@@ -7645,19 +7649,25 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
         loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div>
         : shownShips.length ? (
         <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
-          <div className="ship-manifest-head" style={{display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
+          <div className="ship-manifest-head" style={{display:'grid',gridTemplateColumns:SHIP_COLS,gap:'18px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Reference</div>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Orders</div>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Products</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Voyage</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>ETD / ETA</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>Arrival</div>
           </div>
           {shownShips.map((s,i)=>{
             const po = ((s.shipment_pos||[])[0]||{}).purchase_orders;
-            const ref = (po||{}).client_po_number || (po||{}).order_number || s.shipment_number || '\u2014';
+            // Reference is our shipment number alone; the orders have their own column.
+            const ref = s.shipment_number || '\u2014';
             const clientName = (((po||{}).client||{}).name || (s.companies||{}).name || '\u2014').toUpperCase();
-            const soPoLine = [ (soNumsForShip[s.id]||[]).length ? 'SO '+soNumsForShip[s.id].join(', ') : null,
-                               (s.shipment_pos||[]).length ? 'PO '+(s.shipment_pos||[]).map(x=>(x.purchase_orders||{}).order_number).filter(Boolean).join(', ') : null ]
-                             .filter(Boolean).join(' \u00b7 ');
+            const sos = soLinksForShip[s.id] || [];
+            const pos = shipPOs(s).filter(x => x.order_number || x.client_po_number);
+            const skus = shipSkus(s);
+            const cos = shipCompanies(s, coNames);
+            // Tracked or Manual on every row: tracked when a provider is set.
+            const trackedRow = !!s.tracking_provider;
             // ETD and ETA are the columns, as the tiles, the filters and the export
             // read them. On a tracked row tracking writes them (script 141).
             const eta = s.estimated_arrival;
@@ -7685,21 +7695,34 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             const delivered = (s.status==='delivered' || s.actual_arrival);
             const frac = delivered ? 1 : progressOf(s.status);
             return (
-              <div key={s.id} data-ship-id={s.id} onClick={()=>setOpenId(s.id)} className="ship-manifest-row" style={{...(s.id===litId ? {background:'#EAF3FE',boxShadow:'inset 3px 0 0 #0A84FF'} : {}),display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'16px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',cursor:'pointer',transition:'.12s',alignItems:'center'}} onMouseEnter={e=>{ if (s.id!==litId) e.currentTarget.style.background='#FAFAFB'; }} onMouseLeave={e=>{ if (s.id!==litId) e.currentTarget.style.background='transparent'; }}>
+              <div key={s.id} data-ship-id={s.id} onClick={()=>setOpenId(s.id)} className="ship-manifest-row" style={{...(s.id===litId ? {background:'#EAF3FE',boxShadow:'inset 3px 0 0 #0A84FF'} : {}),display:'grid',gridTemplateColumns:SHIP_COLS,gap:'18px',padding:'16px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',cursor:'pointer',transition:'.12s',alignItems:'center'}} onMouseEnter={e=>{ if (s.id!==litId) e.currentTarget.style.background='#FAFAFB'; }} onMouseLeave={e=>{ if (s.id!==litId) e.currentTarget.style.background='transparent'; }}>
               <div style={{minWidth:0}}>
                 <div style={{display:'flex',alignItems:'center',gap:'4px',minWidth:0}}>
                   <div style={{fontFamily:'var(--mono)',fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',minWidth:0}}>{ref}</div>
                   {recordExport('shipment', s, 'shipment')}
                 </div>
                 <div style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{clientName}</div>
-                {soPoLine && <div title={soPoLine} style={{fontFamily:'var(--mono)',fontSize:'10.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{soPoLine}</div>}
+              </div>
+              {/* Orders: the Sales Orders, then the POs, one a line, each a link to its page. */}
+              <div style={{minWidth:0,fontFamily:'var(--mono)',fontSize:'11.5px',lineHeight:1.55,color:'#3A3A3E'}}>
+                {sos.map(o => <div key={'so'+o.id} title={'SO '+o.label} style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                  <LinkedRef label={'SO '+o.label} onGo={()=>navigate('so-detail',{id:o.id})} /></div>)}
+                {pos.map(x => <div key={'po'+x.id} title={'PO '+(x.order_number||x.client_po_number)} style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                  <LinkedRef label={'PO '+(x.order_number||x.client_po_number)} onGo={()=>navigate('order-detail',{id:x.id})} /></div>)}
+                {!sos.length && !pos.length && <span style={{color:'#C7C7CC'}}>{'\u2014'}</span>}
+              </div>
+              {/* Products: the SKUs on the linked POs, then the companies connected. */}
+              <div style={{minWidth:0}}>
+                <div title={skus.length > 2 ? skus.join(', ') : undefined} style={{fontFamily:'var(--mono)',fontSize:'12px',color:skus.length?'#1D1D1F':'#C7C7CC',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{skus.length ? firstTwo(skus) : '\u2014'}</div>
+                {cos.length > 0 && <div title={cos.join(', ')} style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{cos.join(' \u00b7 ')}</div>}
               </div>
               <div style={{minWidth:0}}>
                 <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
                   <ModeIcon mode={mode} color={overdue?'#FF375F':'#6B7280'} />
                   <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}><span title={vesselTracked ? 'From tracking' : undefined}>{vessel||modeFields(mode).vesselTbd}{voyage?' \u00b7 '+voyage:''}</span></span>
                   {s.container_no && <span style={{fontFamily:'var(--mono)',fontSize:'10.5px',color:'#A0A0A4',whiteSpace:'nowrap'}}>{s.container_no}</span>}
-                  {s.tracking_ref && <span title={s.tracking_error || 'Tracked with ShipsGo'} style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',color:s.tracking_error?'#B91C1C':'#0A84FF',background:s.tracking_error?'#FEE2E2':'#EAF3FE'}}>Tracked</span>}
+                  <span title={trackedRow ? (s.tracking_error || 'Tracked with ShipsGo') : 'Kept by hand'} style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',flexShrink:0,
+                    color:trackedRow?(s.tracking_error?'#B91C1C':'#0A84FF'):'#6B7280',background:trackedRow?(s.tracking_error?'#FEE2E2':'#EAF3FE'):'#F2F2F4'}}>{trackedRow ? 'Tracked' : 'Manual'}</span>
                 </div>
                 <div style={{position:'relative',height:'3px',background:'#ECECEE',borderRadius:'2px'}}>
                   <div style={{position:'absolute',left:0,top:0,height:'100%',width:(frac*100)+'%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',borderRadius:'2px',transition:'width .4s'}} />
@@ -12673,7 +12696,7 @@ export default function App() {
           {page===PRICING_PAGE && PRICING_ENABLED && <Pricing />}
           {page==='programs'         && <Programs userEmail={user?.email||''}
                                                   canOpenTesting={!allowedPages || allowedPages.includes('testing')} />}
-          {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} userEmail={user?.email||''} displayName={displayName} />}
+          {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} userEmail={user?.email||''} displayName={displayName} navigate={navigate} />}
           {page==='inventory'        && <Inventory />}
           {/* role and user are already in this scope for the gate and the header;
               onDisplayName is the shell's own setter, so saving a name in My Account
