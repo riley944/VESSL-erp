@@ -330,11 +330,10 @@ function ShipmentStatusPill({ status, size = 'sm', mode = 'ocean' }) {
     <span style={{width:md?'6px':'5px',height:md?'6px':'5px',borderRadius:'50%',background:c.fg}} />{shipmentStatusLabel(status, mode)}
   </span>;
 }
-// How a shipment travels, as a 13px line icon: a ship, a plane or a parcel.
+// How a shipment travels, as a 13px line icon: a ship or a plane.
 function ModeIcon({ mode, color = '#6B7280' }) {
   const p = { width:13, height:13, viewBox:'0 0 24 24', fill:'none', stroke:color, strokeWidth:1.8, strokeLinecap:'round', strokeLinejoin:'round' };
   if (mode === 'air') return <svg {...p}><title>Air</title><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>;
-  if (mode === 'courier') return <svg {...p}><title>Courier</title><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>;
   return <svg {...p}><title>Ocean</title><path d="M3 18h18l-2-6H5l-2 6z"/><path d="M12 12V4M8 8h8"/></svg>;
 }
 
@@ -7733,8 +7732,8 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                   <span title="Tracking has the container out of the port" style={{fontSize:'11.5px',fontWeight:600,color:'#86868B'}}>Gated out</span>
                 ) : port ? (
                   <span title={'At the port of discharge since '+fmtDateShort(s.tracking_ata)+', from tracking'} style={{fontSize:'11.5px',fontWeight:600,color:'#86868B',whiteSpace:'nowrap'}}>
-                    {(() => { const n = portDaysAt(s, Date.now()); const w = modeFields(mode).arrived;
-                      return mode === 'courier' ? w : w+' \u00b7 '+n+' day'+(n===1?'':'s'); })()}
+                    {(() => { const n = portDaysAt(s, Date.now());
+                      return modeFields(mode).arrived+' \u00b7 '+n+' day'+(n===1?'':'s'); })()}
                   </span>
                 ) : days!==null ? (
                   <>
@@ -10304,8 +10303,8 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
             ))}
             {already.length > 0 && <div style={{fontSize:'12px',marginTop:'6px',color:'var(--muted)'}}>{already.map(p=>'PO '+p.number+' already has '+poShips[p.id]+' shipment'+(poShips[p.id]===1?'':'s')).join('; ')+'; this adds another (one per container is normal).'}</div>}
           </div>
-          {/* ShipsGo tracks ocean only (script 147): air and courier are kept by
-              hand from + New Shipment until their tracking exists. */}
+          {/* ShipsGo tracks ocean only (script 147): air is kept by hand from
+              + New Shipment until its tracking exists. */}
           <div className="form-row"><label>Mode</label>
             <select className="form-select" value={form.mode} onChange={e=>f('mode')(e.target.value)}>{TRANSPORT_MODES.map(m=><option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select>
             {form.mode !== 'ocean' && <div style={{fontSize:'12.5px',color:'var(--muted)',marginTop:'6px'}}>{'Tracking for this mode is coming. ShipsGo tracks ocean shipments only \u2014 use + New Shipment to keep an '+MODE_LABEL[form.mode].toLowerCase()+' shipment by hand.'}</div>}
