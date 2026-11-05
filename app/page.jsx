@@ -7279,16 +7279,20 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
   );
   const TAB_TITLE = { quotes:'Freight Quotes', shipments:'Shipments', delivery:'Delivery Requests' };
 
-  // pulse tile helper -- the first three on Shipments, the last three on Freight Quotes.
+  // pulse tile helper -- the first four on Shipments, the last four on Freight
+  // Quotes. Each tab leads with its total: All shipments shows every shipment
+  // (In transit / Delivered / All set to All), All quotes clears the status filter.
   const pulseAll = [
+    { k:'All shipments', v:rowsV.length,        c:'#1D1D1F', go:()=>{ setUi('view','shipments'); setUi('tab','all'); setUi('shipFilter',''); }, on: ui.view==='shipments'&&ui.shipFilter===''&&ui.tab==='all' },
     { k:'In transit',    v:activeShips.length,  c:'#1D1D1F', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter',''); } , on: ui.view==='shipments'&&ui.shipFilter===''&&ui.tab==='active' },
     { k:'Arriving \u226414d', v:arriving.length, c:'#0A84FF', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='arriving'?'':'arriving'); }, on: ui.view==='shipments'&&ui.shipFilter==='arriving' },
     { k:'Overdue',       v:overdueShips.length, c:'#FF375F', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='overdue'?'':'overdue'); }, on: ui.view==='shipments'&&ui.shipFilter==='overdue' },
+    { k:'All quotes',    v:quotesV.length,      c:'#1D1D1F', go:()=>{ setUi('view','quotes'); setUi('qSel', []); }, on: ui.view==='quotes'&&ui.qSel.length===0 },
     { k:'Awaiting bids', v:awaiting.length,     c:'#FF9F0A', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='awaiting') ? QF_DEFAULT : ['awaiting']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='awaiting' },
     { k:'Bids in',       v:bidsIn.length,       c:'#30D158', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='bidsin') ? QF_DEFAULT : ['bidsin']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='bidsin' },
     { k:'Awarded',       v:awarded.length,      c:'#0A84FF', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='awarded') ? QF_DEFAULT : ['awarded']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='awarded' },
   ];
-  const pulse = freight ? pulseAll.slice(3) : pulseAll.slice(0, 3);
+  const pulse = freight ? pulseAll.slice(4) : pulseAll.slice(0, 4);
 
   return (
     <div className="db-apple" style={{padding:'24px 28px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
@@ -7296,7 +7300,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
       {/* ── Header: no page title, the live counts as a small muted line ── */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'16px',marginBottom:'22px',flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:'13px',color:'#86868B',letterSpacing:'-.01em'}}>{freight ? String(quotesV.length)+' quotes' : String(activeShips.length)+' in motion'}</div>
+          <div style={{fontSize:'13px',color:'#86868B',letterSpacing:'-.01em'}}>{freight ? String(quotesV.length)+' quotes' : String(rowsV.length)+' shipments · '+String(activeShips.length)+' in transit'}</div>
         </div>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           {freight && <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>}
