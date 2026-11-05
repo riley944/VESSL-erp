@@ -6731,10 +6731,11 @@ const newQuoteNumber = () => 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase
 // ever ask one question at a time, and "awarded or not selected" is a thing
 // somebody wants to see.
 //
-// THE DEFAULT IS ALL STATUSES (5 Nov, with Freight Quotes its own tab). It was
-// four of the six ticked, to keep resolved RFQs out of the way; now a fresh
-// visit and a cleared tile show every quote, Not selected and Archived
-// included, and the All statuses row reads as chosen.
+// THE DEFAULT IS EVERY STATUS BUT ARCHIVED (5 Nov, with Freight Quotes its own
+// tab). It was four of the six ticked; Not selected is now in it, so a fresh
+// visit and a cleared tile show every live quote. Archived is the one thing the
+// default hides, and it is not called out -- ticking Archived, or the All
+// statuses row, is how you see them.
 //
 // Empty still means All, per the FilterSelect multi contract -- unticking the
 // last option widens to everything rather than showing nothing.
@@ -7194,7 +7195,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
   const V = shipmentsView({ quotes, rows, dreqs, bids, coNames }, ui, new Date());
   const { cSel, quotesV, rowsV, dreqsV, openDreqsV, clientChoices, bidCount, winnerOf,
     activeShips, doneShips, arriving, overdueShips, awaiting, bidsIn, awarded, drafts, notSelected, archivedQ,
-    shownQuotes, shownShips, trackedCount, manualCount, modeCounts } = V;
+    isDefaultQ, shownQuotes, shownShips, trackedCount, manualCount, modeCounts } = V;
 
   // Counts are live and come from the same buckets the tiles read, so a number in
   // the dropdown and a number on a tile cannot disagree.
@@ -7287,7 +7288,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
     { k:'In transit',    v:activeShips.length,  c:'#1D1D1F', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter',''); } , on: ui.view==='shipments'&&ui.shipFilter===''&&ui.tab==='active' },
     { k:'Arriving \u226414d', v:arriving.length, c:'#0A84FF', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='arriving'?'':'arriving'); }, on: ui.view==='shipments'&&ui.shipFilter==='arriving' },
     { k:'Overdue',       v:overdueShips.length, c:'#FF375F', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='overdue'?'':'overdue'); }, on: ui.view==='shipments'&&ui.shipFilter==='overdue' },
-    { k:'All quotes',    v:quotesV.length,      c:'#1D1D1F', go:()=>{ setUi('view','quotes'); setUi('qSel', []); }, on: ui.view==='quotes'&&ui.qSel.length===0 },
+    { k:'All quotes',    v:quotesV.length,      c:'#1D1D1F', go:()=>{ setUi('view','quotes'); setUi('qSel', QF_DEFAULT); }, on: ui.view==='quotes'&&isDefaultQ },
     { k:'Awaiting bids', v:awaiting.length,     c:'#FF9F0A', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='awaiting') ? QF_DEFAULT : ['awaiting']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='awaiting' },
     { k:'Bids in',       v:bidsIn.length,       c:'#30D158', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='bidsin') ? QF_DEFAULT : ['bidsin']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='bidsin' },
     { k:'Awarded',       v:awarded.length,      c:'#0A84FF', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='awarded') ? QF_DEFAULT : ['awarded']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='awarded' },
@@ -7364,9 +7365,10 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
             {/* Right of the search bar, with Import reply beside it. One control
                 where six pills and a toggle used to sit. */}
             <FilterSelect multiple label="All statuses" value={ui.qSel} onChange={v=>setUi('qSel', v)} options={quoteStatusOptions} />
-            {/* N of M only once somebody narrows -- a status picked or a search
-                typed. The default hides nothing, so on load there is no line. */}
-            {shownQuotes.length !== quotesV.length && (
+            {/* N of M only once somebody narrows beyond the default -- statuses
+                picked or a search typed. The default hiding Archived is not called
+                out. */}
+            {(!isDefaultQ || !!ui.search) && shownQuotes.length !== quotesV.length && (
               <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>
                 {shownQuotes.length+' of '+quotesV.length}
               </span>
