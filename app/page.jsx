@@ -590,7 +590,7 @@ const devViewWithoutAnalytics = () =>
 // reached from the gear.
 const HASH_PAGES = [
   'programs', 'dashboard', 'sales-orders', 'orders', 'companies', 'products',
-  'testing', 'pricing', 'shipments', 'inventory', 'quotes', 'codes',
+  'testing', 'pricing', 'shipments', 'freight-quotes', 'inventory', 'quotes', 'codes',
   // Listed like any other page, and SAFE TO LIST. Membership here decides only
   // whether the id may travel through the URL, never who may see the page --
   // adopting '#company-banking' sets rawPage, and gate 2 still converts that to
@@ -779,6 +779,7 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, rol
     { id:'testing',            label:'Testing' },
     ...(PRICING_ENABLED ? [{ id:PRICING_PAGE, label:'Pricing' }] : []),
     { id:'shipments',          label:'Shipments' },
+    { id:'freight-quotes',     label:'Freight Quotes' },
     { id:'inventory',          label:'Inventory' },
     { id:'quotes',             label:'Quotes' },
     { id:'codes',              label:'Codes' },
@@ -6747,7 +6748,13 @@ const newQuoteNumber = () => 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase
 // The manifest columns: Reference, Orders, Products, Voyage, ETD / ETA, Arrival.
 const SHIP_COLS = '150px 132px minmax(140px,1fr) minmax(200px,1.15fr) 128px 96px';
 
-function Shipments({ onNewShipment, userEmail, displayName = '', navigate }) {
+// TWO TABS, ONE COMPONENT (5 Nov, per Riley). section 'shipments' is the
+// Shipments tab -- Shipments and Delivery Requests, their tiles, + New Shipment
+// and + Tracked Shipment; section 'freight' is the Freight Quotes tab -- the
+// quotes view, its tiles, its export and + Freight Quote. Each loads and does
+// exactly what the one page did; only what is drawn differs.
+function Shipments({ onNewShipment, userEmail, displayName = '', navigate, section = 'shipments' }) {
+  const freight = section === 'freight';
   const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
   // Delivery requests the client filed from the portal. Nothing in this app has
@@ -6797,7 +6804,15 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate }) {
   // navigation, and kept across the deliberate remount that follows creating a
   // shipment, which is what the key on this component does. openId and the respond-*
   // fields stay plain below, being a row somebody opened and a form in progress.
-  const [ui, setUi] = usePageState('shipments', { view:'quotes', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'', client:'', track:'', mode:'' });
+  // A store key per tab, so each remembers its own filters. The view is pinned to
+  // the tab: Freight Quotes is always quotes, and Shipments never is (a store
+  // written before the split may still say quotes).
+  const [uiStored, setUi] = usePageState(freight ? 'freight-quotes' : 'shipments',
+    { view: freight ? 'quotes' : 'shipments', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'', client:'', track:'', mode:'' });
+  const ui = useMemo(() => {
+    const view = freight ? 'quotes' : (uiStored.view === 'quotes' ? 'shipments' : uiStored.view);
+    return view === uiStored.view ? uiStored : { ...uiStored, view };
+  }, [uiStored, freight]);
   // qSel, shipFilter and search are ui.* now, in the page store above, and
   // QF_DEFAULT is at module scope above this component -- see the note there.
   const [quotes, setQuotes] = useState([]);
@@ -7239,7 +7254,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate }) {
   // view without the search, because switching tabs clears the search box. Test
   // records stay in, as on the page. Anyone who can open this page can export.
   const exportTab = (tab, fmt) => pickFormat(tab, fmt, (ctx, now) => {
-    const tabs = tab === 'all' ? SHIPMENTS_ALL : [tab];
+    const tabs = tab === 'all' ? SHIPMENTS_ALL.filter(t => t !== 'quotes') : [tab];
     const views = {};
     tabs.forEach(t => { views[t] = t === ui.view ? V : shipmentsView({ quotes, rows, dreqs, bids, coNames }, { ...ui, search:'' }, now); });
     const day = stampToday();
@@ -7260,8 +7275,8 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate }) {
   );
   const TAB_TITLE = { quotes:'Freight Quotes', shipments:'Shipments', delivery:'Delivery Requests' };
 
-  // pulse tile helper
-  const pulse = [
+  // pulse tile helper -- the first three on Shipments, the last three on Freight Quotes.
+  const pulseAll = [
     { k:'In transit',    v:activeShips.length,  c:'#1D1D1F', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter',''); } , on: ui.view==='shipments'&&ui.shipFilter===''&&ui.tab==='active' },
     { k:'Arriving \u226414d', v:arriving.length, c:'#0A84FF', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='arriving'?'':'arriving'); }, on: ui.view==='shipments'&&ui.shipFilter==='arriving' },
     { k:'Overdue',       v:overdueShips.length, c:'#FF375F', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='overdue'?'':'overdue'); }, on: ui.view==='shipments'&&ui.shipFilter==='overdue' },
@@ -7269,6 +7284,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate }) {
     { k:'Bids in',       v:bidsIn.length,       c:'#30D158', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='bidsin') ? QF_DEFAULT : ['bidsin']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='bidsin' },
     { k:'Awarded',       v:awarded.length,      c:'#0A84FF', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='awarded') ? QF_DEFAULT : ['awarded']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='awarded' },
   ];
+  const pulse = freight ? pulseAll.slice(3) : pulseAll.slice(0, 3);
 
   return (
     <div className="db-apple" style={{padding:'24px 28px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
@@ -7276,13 +7292,13 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate }) {
       {/* ── Header: no page title, the live counts as a small muted line ── */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'16px',marginBottom:'22px',flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:'13px',color:'#86868B',letterSpacing:'-.01em'}}>{String(quotesV.length)+' quotes \u00b7 '+String(activeShips.length)+' in motion'}</div>
+          <div style={{fontSize:'13px',color:'#86868B',letterSpacing:'-.01em'}}>{freight ? String(quotesV.length)+' quotes' : String(activeShips.length)+' in motion'}</div>
         </div>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
-          <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>
-          {onNewShipment && <button onClick={onNewShipment} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
-          <button onClick={()=>setNewTracked(true)} title="A shipment ShipsGo follows: client, PO, B/L or container, forwarder" style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Tracked Shipment</button>
-          <ExportMenu label="Export" className="export-pill" busy={exporting==='all'} disabled={!!exporting} title="Export Freight Quotes, Shipments and Delivery Requests" ariaLabel="Export Freight Quotes, Shipments and Delivery Requests" onPick={fmt => exportTab('all', fmt)} />
+          {freight && <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>}
+          {!freight && onNewShipment && <button onClick={onNewShipment} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
+          {!freight && <button onClick={()=>setNewTracked(true)} title="A shipment ShipsGo follows: client, PO, B/L or container, forwarder" style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Tracked Shipment</button>}
+          {!freight && <ExportMenu label="Export" className="export-pill" busy={exporting==='all'} disabled={!!exporting} title="Export Shipments and Delivery Requests" ariaLabel="Export Shipments and Delivery Requests" onPick={fmt => exportTab('all', fmt)} />}
         </div>
       </div>
 
@@ -7303,16 +7319,16 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate }) {
 
       {/* ── Controls row: segmented + search ── */}
       <div style={{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap',marginBottom:'18px'}}>
-        <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',boxShadow:'inset 0 1px 2px rgba(0,0,0,.05)'}}>
+        {!freight && <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',boxShadow:'inset 0 1px 2px rgba(0,0,0,.05)'}}>
           {/* The pill counts OPEN requests, not all of them -- consistent with
               the other two counting what is live rather than what exists, and it
               is the number that should make somebody click. */}
-          {[['quotes','Freight Quotes',quotesV.length],['shipments','Shipments',rowsV.length],['delivery','Delivery Requests',openDreqsV.length]].map(([v,l,ct])=>(
+          {[['shipments','Shipments',rowsV.length],['delivery','Delivery Requests',openDreqsV.length]].map(([v,l,ct])=>(
             <button key={v} onClick={()=>{setUi('view', v); setUi('search','');}} style={{display:'inline-flex',alignItems:'center',gap:'8px',padding:'9px 18px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:ui.view===v?'#1D1D1F':'transparent',color:ui.view===v?'#fff':'#5A5A5E',boxShadow:ui.view===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
               {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 8px',background:ui.view===v?'rgba(255,255,255,.22)':'#DCDCE0',color:ui.view===v?'#fff':'#6A6A6E'}}>{ct}</span>
             </button>
           ))}
-        </div>
+        </div>}
         {/* THE CLIENT FILTER, for all three tabs at once. A native select, styled as
             the pills beside it; on a phone it takes the full width at 44px. Clear
             sits beside it whenever a client is chosen, so a narrowed page says so. */}
@@ -7786,7 +7802,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate }) {
                                                    if (isErr) { setTrackNotice(note); setNoticeErr(true); setOpenKey(k=>k+1); setOpenId(id); }
                                                    else { window._toast?.(note); setLitId(id); } }} />}
       {/* ── LAND ON THE FREIGHT QUOTE JUST CREATED ──────────────────────────
-          + Freight Quote sits in the page header and is NOT guarded by ui.view,
+          (Before the split, 5 Nov:) + Freight Quote sat in the page header and was NOT guarded by ui.view,
           so it is clickable while the shipments half is on screen -- and the new
           quote then lands in the half nobody is looking at. Moving the view is
           the fix; clearing search stops a stale term hiding it once there.
@@ -12641,7 +12657,7 @@ export default function App() {
   if (hasProfile === false) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
 
   // Pages that draw their own action row at the top; the shared row stays off.
-  const SELF_HEADED = ['dashboard','sales-orders','testing','codes','inventory','shipments','pricing','programs'];
+  const SELF_HEADED = ['dashboard','sales-orders','testing','codes','inventory','shipments','freight-quotes','pricing','programs'];
   // Companies and Purchase Orders draw their + New in their own rows, so today
   // no page uses the shared row; it stays for a page whose actions have nowhere else.
   const showActionsRow = !SELF_HEADED.includes(page) && page !== 'so-detail' && page !== 'order-detail'
@@ -12697,6 +12713,7 @@ export default function App() {
           {page==='programs'         && <Programs userEmail={user?.email||''}
                                                   canOpenTesting={!allowedPages || allowedPages.includes('testing')} />}
           {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} userEmail={user?.email||''} displayName={displayName} navigate={navigate} />}
+          {page==='freight-quotes'   && <Shipments key={'fq'+shipmentsRefresh} section="freight" userEmail={user?.email||''} displayName={displayName} navigate={navigate} />}
           {page==='inventory'        && <Inventory />}
           {/* role and user are already in this scope for the gate and the header;
               onDisplayName is the shell's own setter, so saving a name in My Account
