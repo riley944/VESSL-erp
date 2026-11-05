@@ -6731,10 +6731,10 @@ const newQuoteNumber = () => 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase
 // ever ask one question at a time, and "awarded or not selected" is a thing
 // somebody wants to see.
 //
-// THE DEFAULT IS NON-EMPTY, which is the whole trick. Four of the six are
-// ticked on load, so resolved rows are out of the way without a second control
-// governing them -- ticking Not selected or Archived is how you see them, and
-// that replaces the toggle rather than sitting beside it.
+// THE DEFAULT IS ALL STATUSES (5 Nov, with Freight Quotes its own tab). It was
+// four of the six ticked, to keep resolved RFQs out of the way; now a fresh
+// visit and a cleared tile show every quote, Not selected and Archived
+// included, and the All statuses row reads as chosen.
 //
 // Empty still means All, per the FilterSelect multi contract -- unticking the
 // last option widens to everything rather than showing nothing.
@@ -7194,7 +7194,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
   const V = shipmentsView({ quotes, rows, dreqs, bids, coNames }, ui, new Date());
   const { cSel, quotesV, rowsV, dreqsV, openDreqsV, clientChoices, bidCount, winnerOf,
     activeShips, doneShips, arriving, overdueShips, awaiting, bidsIn, awarded, drafts, notSelected, archivedQ,
-    isDefaultQ, shownQuotes, shownShips, trackedCount, manualCount, modeCounts } = V;
+    shownQuotes, shownShips, trackedCount, manualCount, modeCounts } = V;
 
   // Counts are live and come from the same buckets the tiles read, so a number in
   // the dropdown and a number on a tile cannot disagree.
@@ -7364,14 +7364,11 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
             {/* Right of the search bar, with Import reply beside it. One control
                 where six pills and a toggle used to sit. */}
             <FilterSelect multiple label="All statuses" value={ui.qSel} onChange={v=>setUi('qSel', v)} options={quoteStatusOptions} />
-            {/* The default HIDES ROWS, which no other filter on this page does, so
-                the list would otherwise be short with nothing saying why. isDefaultQ
-                is what separates the two readings -- on load it names the reason,
-                and once somebody has narrowed it deliberately the count alone is
-                the answer. */}
+            {/* N of M only once somebody narrows -- a status picked or a search
+                typed. The default hides nothing, so on load there is no line. */}
             {shownQuotes.length !== quotesV.length && (
               <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>
-                {shownQuotes.length+' of '+quotesV.length}{(isDefaultQ && !ui.search) ? ' · resolved hidden' : ''}
+                {shownQuotes.length+' of '+quotesV.length}
               </span>
             )}
             <button onClick={()=>setShowBidImport(true)} style={{display:'inline-flex',alignItems:'center',gap:'6px',fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'1px dashed rgba(0,0,0,.18)',cursor:'pointer',background:'transparent',color:'#4A4A4E'}}>
