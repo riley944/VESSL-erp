@@ -7300,7 +7300,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
       {/* ── Header: no page title, the live counts as a small muted line ── */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'16px',marginBottom:'22px',flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:'13px',color:'#86868B',letterSpacing:'-.01em'}}>{freight ? String(quotesV.length)+' quotes' : String(rowsV.length)+' shipments · '+String(activeShips.length)+' in transit'}</div>
+          {!freight && <div style={{fontSize:'13px',color:'#86868B',letterSpacing:'-.01em'}}>{String(rowsV.length)+' shipments · '+String(activeShips.length)+' in transit'}</div>}
         </div>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
           {freight && <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>}
