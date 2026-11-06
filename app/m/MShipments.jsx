@@ -86,6 +86,7 @@ function ShipCard({ sh, coNames, open, onToggle, user, displayName, onPending })
   // Quotes & Products, read when the card opens (lib/shipmentProducts).
   const [prodInfo, setProdInfo] = useState(null);
   const [allProd, setAllProd] = useState(false);
+  const [showUnl, setShowUnl] = useState(null);
   useEffect(() => { if (open && !prodInfo) loadShipmentProducts(sh.id).then(setProdInfo); }, [open, prodInfo, sh.id]);
   const arrival = delivered ? 'Delivered'
     : days === null ? '—'
@@ -150,11 +151,10 @@ function ShipCard({ sh, coNames, open, onToggle, user, displayName, onPending })
           <div className={s.lines}>
             {!prodInfo ? <div className={s.meta}>Loading…</div>
               : prodInfo.error ? <div className={s.meta}>{'Could not read the products: ' + prodInfo.error}</div>
-              : !prodInfo.lines.length ? <div className={s.meta}>No products on the linked POs.</div>
+              : !prodInfo.lines.length && !prodInfo.unlinked.count ? <div className={s.meta}>No lines on the linked POs.</div>
               : (allProd ? prodInfo.lines : prodInfo.lines.slice(0, 6)).map((l) => (
                 <div key={l.key} className={s.lineItem}>
-                  <div className={s.lineName} title={l.noSku ? 'no SKU on the PO line' : undefined}
-                    style={l.noSku ? { fontStyle: 'italic', opacity: 0.75 } : undefined}>{(l.sku || '—') + ' · ' + (l.name || '—')}</div>
+                  <div className={s.lineName}>{(l.sku || '—') + ' · ' + (l.name || '—')}</div>
                   <div className={s.lineMeta}>
                     <span title={quoteVia(l.quote)}>{'Quote ' + (l.quote ? l.quote.code : '—')}</span>
                     {l.companies.length ? ' · ' + l.companies.join('; ') : ''}
@@ -165,6 +165,20 @@ function ShipCard({ sh, coNames, open, onToggle, user, displayName, onPending })
               <button type="button" className={s.meta} style={{ background: 'none', border: 'none', padding: '6px 0', textAlign: 'left', cursor: 'pointer', textDecoration: 'underline' }}
                 onClick={() => setAllProd((v) => !v)}>{allProd ? 'Show fewer' : 'Show all ' + prodInfo.lines.length}</button>
             )}
+            {/* PO lines linked to no product, one muted line; open when nothing is linked. */}
+            {prodInfo && !prodInfo.error && prodInfo.unlinked.count > 0 && (() => {
+              const openU = showUnl === null ? !prodInfo.lines.length : showUnl;
+              const n = prodInfo.unlinked.count;
+              return (
+                <div className={s.meta}>
+                  {'+' + n + ' PO line' + (n === 1 ? '' : 's') + ' without a product · '}
+                  <button type="button" onClick={() => setShowUnl(!openU)} style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}>{openU ? 'Hide' : 'Show'}</button>
+                  {openU && prodInfo.unlinked.descs.map((d) => (
+                    <div key={d.text} style={{ fontStyle: 'italic', paddingLeft: 10 }}>{d.text + (d.n > 1 ? ' ×' + d.n : '')}</div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
           {details.length > 0 && (
             <div className={s.details} style={{ marginTop: 14 }}>

@@ -144,7 +144,7 @@ import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord, SHIPMENT_STATUS_ORDER, statusChoices, statusSourceMap, TRACKING_NOTE, shipmentStatusStyle, TRANSPORT_MODES, MODE_LABEL, modeOf, modeFields, isCourierNumber, oceanTrackNumber, COURIER_NUMBER_ERROR } from '@/lib/shipmentStatus';
 import { trackShipment, refreshStale } from '@/lib/trackShipment';
 import { loadShipmentProducts, quoteVia } from '@/lib/shipmentProducts';
-import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt, shipPOs, shipProductLabels } from '@/lib/shipmentsView';
+import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt, shipPOs, shipProductSummary, firstTwo } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
          buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline, timelineBy, monthColor, INV_STATUS_COLORS } from '@/lib/inventoryView';
@@ -7692,7 +7692,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
             const clientName = (((po||{}).client||{}).name || (s.companies||{}).name || '\u2014').toUpperCase();
             const sos = soLinksForShip[s.id] || [];
             const pos = shipPOs(s).filter(x => x.order_number || x.client_po_number);
-            const prods = shipProductLabels(s);
+            const prods = shipProductSummary(s);
             // Tracked or Manual on every row: tracked when a provider is set.
             const trackedRow = !!s.tracking_provider;
             // ETD and ETA are the columns, as the tiles, the filters and the export
@@ -7740,12 +7740,15 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
               </div>
               {/* Products: the SKUs on the linked POs (the client is under Reference), centred. */}
               <div style={{minWidth:0,textAlign:'center'}}>
-                {/* A PO line with no SKU and no product shows its description,
-                    muted; the dash is only for a shipment whose POs have no lines. */}
-                <div title={prods.length > 2 ? prods.map(x => x.text).join(', ') : undefined} style={{fontFamily:'var(--mono)',fontSize:'12px',color:prods.length?'#1D1D1F':'#C7C7CC',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                  {prods.length ? <>{prods.slice(0, 2).map((x, j) => <span key={j}>{j ? ', ' : ''}{x.noSku
-                    ? <span title="no SKU on the PO line" style={{fontFamily:'inherit',color:'#86868B',fontStyle:'italic'}}>{x.text}</span> : x.text}</span>)}
-                    {prods.length > 2 ? ' +'+(prods.length - 2) : ''}</> : '\u2014'}
+                {/* SKUs only; PO lines linked to no product are a muted "+N
+                    unlinked" (their descriptions in the tooltip). The dash is only
+                    for a shipment whose POs have no lines. */}
+                <div title={[prods.skus.length > 2 ? prods.skus.join(', ') : '', prods.unlinked ? prods.unlinked+' PO line'+(prods.unlinked===1?'':'s')+' without a product: '+prods.descs.join(', ') : ''].filter(Boolean).join(' \u00b7 ') || undefined}
+                  style={{fontFamily:'var(--mono)',fontSize:'12px',color:prods.lines?'#1D1D1F':'#C7C7CC',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                  {!prods.lines ? '\u2014' : <>
+                    {firstTwo(prods.skus)}
+                    {prods.unlinked > 0 && <span style={{fontFamily:'inherit',color:'#A0A0A4'}}>{(prods.skus.length ? ' ' : '')+'+'+prods.unlinked+' unlinked'}</span>}
+                  </>}
                 </div>
               </div>
               <div className="ship-voyage" style={{minWidth:0}}>
@@ -9115,6 +9118,9 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
   // (lib/shipmentProducts). Display only; null while loading.
   const [prodInfo, setProdInfo] = useState(null);
   const [allProd, setAllProd] = useState(false);
+  // The PO lines linked to no product, folded into one line; null follows the
+  // default -- open when no line is linked, shut otherwise.
+  const [showUnl, setShowUnl] = useState(null);
   useEffect(()=>{ loadShipmentProducts(id).then(setProdInfo); },[id]);
   useEffect(()=>{
     SB.from('shipments').select('*').eq('id',id).single().then(({data})=>{
@@ -9296,19 +9302,19 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
           </div>
           {/* QUOTES & PRODUCTS: one line per product across the linked POs, with
               the quote its Sales Order line names, else its latest quote. Read-only,
-              built as the card opens; past six lines it folds. */}
+              built as the card opens; past six lines it folds. PO lines linked to no
+              product fold into one muted line, open when nothing is linked. */}
           <span className="form-section-label">{'Quotes & Products'}{prodInfo && prodInfo.lines.length ? ' ('+prodInfo.lines.length+')' : ''}</span>
           <div style={{marginBottom:'14px'}}>
             {!prodInfo ? <div style={{fontSize:'12px',color:'var(--muted)'}}>{'Loading\u2026'}</div>
               : prodInfo.error ? <div style={{fontSize:'12px',color:'var(--hot)'}}>{'Could not read the products: '+prodInfo.error}</div>
-              : !prodInfo.lines.length ? <div style={{fontSize:'12px',color:'var(--muted)'}}>{'No products on the linked POs.'}</div>
+              : !prodInfo.lines.length && !prodInfo.unlinked.count ? <div style={{fontSize:'12px',color:'var(--muted)'}}>{'No lines on the linked POs.'}</div>
               : <>
                 {(allProd ? prodInfo.lines : prodInfo.lines.slice(0, 6)).map(l => (
                   <div key={l.key} style={{display:'grid',gridTemplateColumns:'minmax(90px,auto) 1fr auto',gap:'10px',alignItems:'baseline',fontSize:'12.5px',padding:'4px 0',borderTop:'1px solid var(--line-2)'}}>
-                    <span title={l.noSku ? 'no SKU on the PO line' : undefined} style={{fontFamily:'var(--mono)',fontSize:'11.5px',color:l.noSku?'var(--faint)':'var(--ink)',whiteSpace:'nowrap'}}>{l.sku || '\u2014'}</span>
+                    <span style={{fontFamily:'var(--mono)',fontSize:'11.5px',color:'var(--ink)',whiteSpace:'nowrap'}}>{l.sku || '\u2014'}</span>
                     <span style={{minWidth:0}}>
-                      <span style={{display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',...(l.noSku ? {color:'var(--muted)',fontStyle:'italic'} : {})}}
-                        title={l.noSku ? l.name+' -- no SKU on the PO line' : l.name}>{l.name || '\u2014'}</span>
+                      <span style={{display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={l.name}>{l.name || '\u2014'}</span>
                       {l.companies.length > 0 && <span style={{display:'block',fontSize:'11px',color:'var(--muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={l.companies.join('; ')}>{l.companies.join('; ')}</span>}
                     </span>
                     <span title={quoteVia(l.quote)} style={{fontFamily:'var(--mono)',fontSize:'11.5px',whiteSpace:'nowrap',color:l.quote?'var(--ink-2)':'var(--faint)'}}>{l.quote ? l.quote.code : '\u2014'}</span>
@@ -9316,6 +9322,19 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
                 ))}
                 {prodInfo.lines.length > 6 && <button type="button" className="btn btn-ghost btn-sm" style={{marginTop:'6px'}} onClick={()=>setAllProd(v=>!v)}>
                   {allProd ? 'Show fewer' : 'Show all '+prodInfo.lines.length}</button>}
+                {prodInfo.unlinked.count > 0 && (() => {
+                  const open = showUnl === null ? !prodInfo.lines.length : showUnl;
+                  const n = prodInfo.unlinked.count;
+                  return (
+                    <div style={{fontSize:'12px',color:'var(--muted)',padding:'5px 0',borderTop:'1px solid var(--line-2)'}}>
+                      <span>{'+'+n+' PO line'+(n===1?'':'s')+' without a product \u00b7 '}</span>
+                      <button type="button" onClick={()=>setShowUnl(!open)} style={{background:'none',border:'none',padding:0,font:'inherit',color:'var(--muted)',textDecoration:'underline',textUnderlineOffset:'2px',cursor:'pointer'}}>{open ? 'Hide' : 'Show'}</button>
+                      {open && prodInfo.unlinked.descs.map(d => (
+                        <div key={d.text} style={{fontStyle:'italic',paddingLeft:'10px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={d.text}>{d.text+(d.n > 1 ? ' \u00d7'+d.n : '')}</div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </>}
           </div>
           {(tracked || events.length > 0) && (
