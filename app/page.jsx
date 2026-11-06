@@ -144,7 +144,7 @@ import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord, SHIPMENT_STATUS_ORDER, statusChoices, statusSourceMap, TRACKING_NOTE, shipmentStatusStyle, TRANSPORT_MODES, MODE_LABEL, modeOf, modeFields, isCourierNumber, oceanTrackNumber, COURIER_NUMBER_ERROR } from '@/lib/shipmentStatus';
 import { trackShipment, refreshStale } from '@/lib/trackShipment';
 import { loadShipmentProducts, quoteVia } from '@/lib/shipmentProducts';
-import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt, shipPOs, shipSkus, firstTwo } from '@/lib/shipmentsView';
+import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt, shipPOs, shipProductLabels } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
          buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline, timelineBy, monthColor, INV_STATUS_COLORS } from '@/lib/inventoryView';
@@ -6846,7 +6846,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
   // wrote -- that second read does not sweep again.
   const reload = async (sweep = true) => {
     const { data } = await SB.from('shipments')
-      .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(id,order_number,client_po_number,factory_company_id,client:companies!client_company_id(name),purchase_order_items(product_sku,products(sku)))),shipment_tracking_events(event_code,event_status,location_code,location_name,event_time)')
+      .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(id,order_number,client_po_number,factory_company_id,client:companies!client_company_id(name),purchase_order_items(product_id,product_sku,description,products(sku)))),shipment_tracking_events(event_code,event_status,location_code,location_name,event_time)')
       .order('created_at',{ascending:false});
     setRows(data||[]); setLoading(false);
     SB.from('order_history').select('row_id,note,changed_at').eq('table_name','shipments').eq('field','status')
@@ -7692,7 +7692,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
             const clientName = (((po||{}).client||{}).name || (s.companies||{}).name || '\u2014').toUpperCase();
             const sos = soLinksForShip[s.id] || [];
             const pos = shipPOs(s).filter(x => x.order_number || x.client_po_number);
-            const skus = shipSkus(s);
+            const prods = shipProductLabels(s);
             // Tracked or Manual on every row: tracked when a provider is set.
             const trackedRow = !!s.tracking_provider;
             // ETD and ETA are the columns, as the tiles, the filters and the export
@@ -7740,7 +7740,13 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
               </div>
               {/* Products: the SKUs on the linked POs (the client is under Reference), centred. */}
               <div style={{minWidth:0,textAlign:'center'}}>
-                <div title={skus.length > 2 ? skus.join(', ') : undefined} style={{fontFamily:'var(--mono)',fontSize:'12px',color:skus.length?'#1D1D1F':'#C7C7CC',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{skus.length ? firstTwo(skus) : '\u2014'}</div>
+                {/* A PO line with no SKU and no product shows its description,
+                    muted; the dash is only for a shipment whose POs have no lines. */}
+                <div title={prods.length > 2 ? prods.map(x => x.text).join(', ') : undefined} style={{fontFamily:'var(--mono)',fontSize:'12px',color:prods.length?'#1D1D1F':'#C7C7CC',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                  {prods.length ? <>{prods.slice(0, 2).map((x, j) => <span key={j}>{j ? ', ' : ''}{x.noSku
+                    ? <span title="no SKU on the PO line" style={{fontFamily:'inherit',color:'#86868B',fontStyle:'italic'}}>{x.text}</span> : x.text}</span>)}
+                    {prods.length > 2 ? ' +'+(prods.length - 2) : ''}</> : '\u2014'}
+                </div>
               </div>
               <div className="ship-voyage" style={{minWidth:0}}>
                 <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
@@ -9299,9 +9305,10 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
               : <>
                 {(allProd ? prodInfo.lines : prodInfo.lines.slice(0, 6)).map(l => (
                   <div key={l.key} style={{display:'grid',gridTemplateColumns:'minmax(90px,auto) 1fr auto',gap:'10px',alignItems:'baseline',fontSize:'12.5px',padding:'4px 0',borderTop:'1px solid var(--line-2)'}}>
-                    <span style={{fontFamily:'var(--mono)',fontSize:'11.5px',color:'var(--ink)',whiteSpace:'nowrap'}}>{l.sku || '\u2014'}</span>
+                    <span title={l.noSku ? 'no SKU on the PO line' : undefined} style={{fontFamily:'var(--mono)',fontSize:'11.5px',color:l.noSku?'var(--faint)':'var(--ink)',whiteSpace:'nowrap'}}>{l.sku || '\u2014'}</span>
                     <span style={{minWidth:0}}>
-                      <span style={{display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={l.name}>{l.name || '\u2014'}</span>
+                      <span style={{display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',...(l.noSku ? {color:'var(--muted)',fontStyle:'italic'} : {})}}
+                        title={l.noSku ? l.name+' -- no SKU on the PO line' : l.name}>{l.name || '\u2014'}</span>
                       {l.companies.length > 0 && <span style={{display:'block',fontSize:'11px',color:'var(--muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={l.companies.join('; ')}>{l.companies.join('; ')}</span>}
                     </span>
                     <span title={quoteVia(l.quote)} style={{fontFamily:'var(--mono)',fontSize:'11.5px',whiteSpace:'nowrap',color:l.quote?'var(--ink-2)':'var(--faint)'}}>{l.quote ? l.quote.code : '\u2014'}</span>

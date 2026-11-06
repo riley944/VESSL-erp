@@ -153,7 +153,8 @@ function ShipCard({ sh, coNames, open, onToggle, user, displayName, onPending })
               : !prodInfo.lines.length ? <div className={s.meta}>No products on the linked POs.</div>
               : (allProd ? prodInfo.lines : prodInfo.lines.slice(0, 6)).map((l) => (
                 <div key={l.key} className={s.lineItem}>
-                  <div className={s.lineName}>{(l.sku || '—') + ' · ' + (l.name || '—')}</div>
+                  <div className={s.lineName} title={l.noSku ? 'no SKU on the PO line' : undefined}
+                    style={l.noSku ? { fontStyle: 'italic', opacity: 0.75 } : undefined}>{(l.sku || '—') + ' · ' + (l.name || '—')}</div>
                   <div className={s.lineMeta}>
                     <span title={quoteVia(l.quote)}>{'Quote ' + (l.quote ? l.quote.code : '—')}</span>
                     {l.companies.length ? ' · ' + l.companies.join('; ') : ''}
