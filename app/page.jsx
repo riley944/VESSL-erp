@@ -7723,15 +7723,17 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
             const frac = delivered ? 1 : progressOf(s.status);
             return (
               <div key={s.id} data-ship-id={s.id} onClick={()=>setOpenId(s.id)} className="ship-manifest-row" style={{...(s.id===litId ? {background:'#EAF3FE',boxShadow:'inset 3px 0 0 #0A84FF'} : {}),display:'grid',gridTemplateColumns:SHIP_COLS,gap:'18px',padding:'16px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',cursor:'pointer',transition:'.12s',alignItems:'center'}} onMouseEnter={e=>{ if (s.id!==litId) e.currentTarget.style.background='#FAFAFB'; }} onMouseLeave={e=>{ if (s.id!==litId) e.currentTarget.style.background='transparent'; }}>
-              <div style={{minWidth:0}}>
-                <div style={{display:'flex',alignItems:'center',gap:'4px',minWidth:0}}>
+              {/* Reference and Orders are centred under their labels (.ship-ref,
+                  .ship-orders in globals.css), left-aligned again at phone width. */}
+              <div className="ship-ref" style={{minWidth:0}}>
+                <div className="ship-ref-line" style={{display:'flex',alignItems:'center',gap:'4px',minWidth:0}}>
                   <div style={{fontFamily:'var(--mono)',fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'normal',overflowWrap:'anywhere',lineHeight:1.3,minWidth:0}}>{ref}</div>
                   {recordExport('shipment', s, 'shipment')}
                 </div>
                 <div style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{clientName}</div>
               </div>
               {/* Orders: the Sales Orders, then the POs, one a line, each a link to its page. */}
-              <div style={{minWidth:0,fontFamily:'var(--mono)',fontSize:'11.5px',lineHeight:1.55,color:'#3A3A3E'}}>
+              <div className="ship-orders" style={{minWidth:0,fontFamily:'var(--mono)',fontSize:'11.5px',lineHeight:1.55,color:'#3A3A3E'}}>
                 {sos.map(o => <div key={'so'+o.id} title={'SO '+o.label} style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
                   <LinkedRef label={'SO '+o.label} onGo={()=>navigate('so-detail',{id:o.id})} /></div>)}
                 {pos.map(x => <div key={'po'+x.id} title={'PO '+(x.order_number||x.client_po_number)} style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
