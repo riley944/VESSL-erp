@@ -7290,8 +7290,8 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
   // (In transit / Delivered / All set to All), All quotes clears the status filter.
   const pulseAll = [
     { k:'All shipments', v:rowsV.length,        c:'#1D1D1F', go:()=>{ setUi('view','shipments'); setUi('tab','all'); setUi('shipFilter',''); }, on: ui.view==='shipments'&&ui.shipFilter===''&&ui.tab==='all' },
-    { k:'In transit',    v:activeShips.length,  c:'#1D1D1F', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter',''); } , on: ui.view==='shipments'&&ui.shipFilter===''&&ui.tab==='active' },
-    { k:'Arriving \u226414d', v:arriving.length, c:'#0A84FF', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='arriving'?'':'arriving'); }, on: ui.view==='shipments'&&ui.shipFilter==='arriving' },
+    { k:'In transit',    v:activeShips.length,  c:'#0A84FF', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter',''); } , on: ui.view==='shipments'&&ui.shipFilter===''&&ui.tab==='active' },
+    { k:'Arriving \u226414d', v:arriving.length, c:'#30D158', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='arriving'?'':'arriving'); }, on: ui.view==='shipments'&&ui.shipFilter==='arriving' },
     { k:'Overdue',       v:overdueShips.length, c:'#FF375F', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='overdue'?'':'overdue'); }, on: ui.view==='shipments'&&ui.shipFilter==='overdue' },
     { k:'All quotes',    v:quotesV.length,      c:'#1D1D1F', go:()=>{ setUi('view','quotes'); setUi('qSel', QF_DEFAULT); }, on: ui.view==='quotes'&&isDefaultQ },
     { k:'Awaiting bids', v:awaiting.length,     c:'#FF9F0A', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='awaiting') ? QF_DEFAULT : ['awaiting']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='awaiting' },
