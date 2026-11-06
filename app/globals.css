@@ -733,8 +733,11 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 /* Sales Orders card grid — single column on tablet/mobile */
 @media (max-width:860px){.so-card-grid{grid-template-columns:1fr !important;}}
 
+/* Shipments manifest — 24px more before the Voyage column; none on a phone */
+.ship-voyage{padding-left:24px;}
 /* Shipments manifest — reflow on mobile */
 @media (max-width:720px){
+  .ship-voyage{padding-left:0;}
   .ship-manifest-head{display:none !important;}
   .ship-manifest-row{grid-template-columns:1fr auto !important;gap:12px !important;row-gap:12px !important;}
   .ship-manifest-row > div:nth-child(2),

@@ -6751,7 +6751,9 @@ const newQuoteNumber = () => 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase
 // which is module scope too, so the same holds.
 
 // The manifest columns: Reference, Orders, Products, Voyage, ETD / ETA, Arrival.
-const SHIP_COLS = '150px 132px minmax(140px,1fr) minmax(200px,1.15fr) 128px 96px';
+// Voyage takes most of the flexible width, so its progress bar runs nearly to
+// ETD / ETA; .ship-voyage (globals.css) adds 24px before it, off on a phone.
+const SHIP_COLS = '150px 132px minmax(200px,.6fr) minmax(360px,1.8fr) 128px 96px';
 
 // TWO TABS, ONE COMPONENT (5 Nov, per Riley). section 'shipments' is the
 // Shipments tab -- Shipments and Delivery Requests, their tiles, + New Shipment
@@ -7676,7 +7678,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Reference</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Orders</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Products</div>
-            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Voyage</div>
+            <div className="ship-voyage" style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Voyage</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>ETD / ETA</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>Arrival</div>
           </div>
@@ -7739,7 +7741,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
                 <div title={skus.length > 2 ? skus.join(', ') : undefined} style={{fontFamily:'var(--mono)',fontSize:'12px',color:skus.length?'#1D1D1F':'#C7C7CC',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{skus.length ? firstTwo(skus) : '\u2014'}</div>
                 {cos.length > 0 && <div title={cos.join(', ')} style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{cos.join(' \u00b7 ')}</div>}
               </div>
-              <div style={{minWidth:0}}>
+              <div className="ship-voyage" style={{minWidth:0}}>
                 <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
                   <ModeIcon mode={mode} color={overdue?'#FF375F':'#6B7280'} />
                   <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}><span title={vesselTracked ? 'From tracking' : undefined}>{vessel||modeFields(mode).vesselTbd}{voyage?' \u00b7 '+voyage:''}</span></span>
