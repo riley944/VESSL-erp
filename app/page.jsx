@@ -7678,10 +7678,10 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
         : shownShips.length ? (
         <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
           <div className="ship-manifest-head" style={{display:'grid',gridTemplateColumns:SHIP_COLS,gap:'18px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
-            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Reference</div>
-            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Orders</div>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'center'}}>Reference</div>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'center'}}>Orders</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'center'}}>Products</div>
-            <div className="ship-voyage" style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Voyage</div>
+            <div className="ship-voyage" style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'center'}}>Voyage</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>ETD / ETA</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>Arrival</div>
           </div>
@@ -7744,10 +7744,10 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
                     unlinked" (their descriptions in the tooltip). The dash is only
                     for a shipment whose POs have no lines. */}
                 <div title={[prods.skus.length > 2 ? prods.skus.join(', ') : '', prods.unlinked ? prods.unlinked+' PO line'+(prods.unlinked===1?'':'s')+' without a product: '+prods.descs.join(', ') : ''].filter(Boolean).join(' \u00b7 ') || undefined}
-                  style={{fontFamily:'var(--mono)',fontSize:'12px',color:prods.lines?'#1D1D1F':'#C7C7CC',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                  style={{fontFamily:'var(--mono)',fontSize:'12px',color:prods.lines?'#1D1D1F':'#C7C7CC',whiteSpace:'normal',overflowWrap:'anywhere',lineHeight:1.4}}>
                   {!prods.lines ? '\u2014' : <>
-                    {firstTwo(prods.skus)}
-                    {prods.unlinked > 0 && <span style={{fontFamily:'inherit',color:'#A0A0A4'}}>{(prods.skus.length ? ' ' : '')+'+'+prods.unlinked+' unlinked'}</span>}
+                    {firstTwo(prods.skus)}{prods.skus.length && prods.unlinked > 0 ? ' ' : ''}
+                    {prods.unlinked > 0 && <span style={{fontFamily:'inherit',color:'#A0A0A4',whiteSpace:'nowrap'}}>{'+'+prods.unlinked+' unlinked'}</span>}
                   </>}
                 </div>
               </div>
