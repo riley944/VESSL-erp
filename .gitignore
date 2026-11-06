@@ -5,3 +5,5 @@ node_modules/
 .next/
 .next-build/
 tmp/
+# Dev-database scripts and the prod schema dump (vessldev): local only
+sql/dev/
