@@ -6756,7 +6756,7 @@ const newQuoteNumber = () => 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase
 // line rather than cutting one off.
 // Voyage takes most of the flexible width, so its progress bar runs nearly to
 // ETD / ETA; .ship-voyage (globals.css) adds 24px before it, off on a phone.
-const SHIP_COLS = '196px 132px minmax(200px,.6fr) minmax(360px,1.8fr) 128px 96px';
+const SHIP_COLS = '196px 132px minmax(170px,.4fr) minmax(390px,2fr) 128px 96px';
 
 // TWO TABS, ONE COMPONENT (5 Nov, per Riley). section 'shipments' is the
 // Shipments tab -- Shipments and Delivery Requests, their tiles, + New Shipment
