@@ -7,6 +7,7 @@ import { statusLabel } from '@/lib/ordersView';
 import { buildRecordSheets, recordFileName, recordPdfMeta } from '@/lib/shipmentsExport';
 import { stampToday, exportUser } from '@/lib/recordExport';
 import { matches, normalizeTerm } from '@/lib/textFilter';
+import { loadShipmentProducts, quoteVia } from '@/lib/shipmentProducts';
 import { Field, Pill, dateText, useCardExport, ExportButtons, ReadyBar, Filters, Count } from './shared';
 import s from './m.module.css';
 
@@ -80,6 +81,12 @@ function ShipCard({ sh, coNames, open, onToggle, user, displayName, onPending })
   const orders = [...sos.map((n) => 'SO ' + n), ...pos.map((p) => p.order_number || p.client_po_number).filter(Boolean).map((n) => 'PO ' + n)];
   const skus = shipSkus(sh);
   const cos = shipCompanies(sh, coNames);
+  // The linked POs' factories, as the desktop card shows them.
+  const factories = [...new Set(pos.map((p) => coNames[p.factory_company_id]).filter(Boolean))];
+  // Quotes & Products, read when the card opens (lib/shipmentProducts).
+  const [prodInfo, setProdInfo] = useState(null);
+  const [allProd, setAllProd] = useState(false);
+  useEffect(() => { if (open && !prodInfo) loadShipmentProducts(sh.id).then(setProdInfo); }, [open, prodInfo, sh.id]);
   const arrival = delivered ? 'Delivered'
     : days === null ? '—'
     : days < 0 ? '+' + Math.abs(days) + 'd overdue' : days + 'd to ETA';
@@ -110,6 +117,7 @@ function ShipCard({ sh, coNames, open, onToggle, user, displayName, onPending })
           <Field label="Orders">{orders.length ? orders.map((o) => <div key={o}>{o}</div>) : '—'}</Field>
           <Field label="Products"><span title={skus.length > 2 ? skus.join(', ') : undefined}>{skus.length ? firstTwo(skus) : '—'}</span></Field>
           <Field label="Companies">{cos.length ? cos.join(' · ') : '—'}</Field>
+          <Field label="Factory">{factories.length ? factories.join(', ') : '—'}</Field>
           <Field label="Vessel">{(sh.vessel_name || 'Vessel TBD') + (sh.voyage_no ? ' · ' + sh.voyage_no : '')}
             {' '}<span style={{ fontSize: 11, fontWeight: 600, color: sh.tracking_provider ? '#0A84FF' : '#6B7280' }}>{sh.tracking_provider ? 'Tracked' : 'Manual'}</span></Field>
           <Field label="Container">{sh.container_no || '—'}</Field>
@@ -137,6 +145,25 @@ function ShipCard({ sh, coNames, open, onToggle, user, displayName, onPending })
               );
             })}
             {pos.length === 0 && <div className={s.meta}>No POs linked.</div>}
+          </div>
+          <div className={s.section}>{'Quotes & Products' + (prodInfo && prodInfo.lines.length ? ' (' + prodInfo.lines.length + ')' : '')}</div>
+          <div className={s.lines}>
+            {!prodInfo ? <div className={s.meta}>Loading…</div>
+              : prodInfo.error ? <div className={s.meta}>{'Could not read the products: ' + prodInfo.error}</div>
+              : !prodInfo.lines.length ? <div className={s.meta}>No products on the linked POs.</div>
+              : (allProd ? prodInfo.lines : prodInfo.lines.slice(0, 6)).map((l) => (
+                <div key={l.key} className={s.lineItem}>
+                  <div className={s.lineName}>{(l.sku || '—') + ' · ' + (l.name || '—')}</div>
+                  <div className={s.lineMeta}>
+                    <span title={quoteVia(l.quote)}>{'Quote ' + (l.quote ? l.quote.code : '—')}</span>
+                    {l.companies.length ? ' · ' + l.companies.join('; ') : ''}
+                  </div>
+                </div>
+              ))}
+            {prodInfo && prodInfo.lines.length > 6 && (
+              <button type="button" className={s.meta} style={{ background: 'none', border: 'none', padding: '6px 0', textAlign: 'left', cursor: 'pointer', textDecoration: 'underline' }}
+                onClick={() => setAllProd((v) => !v)}>{allProd ? 'Show fewer' : 'Show all ' + prodInfo.lines.length}</button>
+            )}
           </div>
           {details.length > 0 && (
             <div className={s.details} style={{ marginTop: 14 }}>

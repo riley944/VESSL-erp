@@ -143,7 +143,8 @@ import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName 
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
 import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord, SHIPMENT_STATUS_ORDER, statusChoices, statusSourceMap, TRACKING_NOTE, shipmentStatusStyle, TRANSPORT_MODES, MODE_LABEL, modeOf, modeFields, isCourierNumber, oceanTrackNumber, COURIER_NUMBER_ERROR } from '@/lib/shipmentStatus';
 import { trackShipment, refreshStale } from '@/lib/trackShipment';
-import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt, shipPOs, shipSkus, shipCompanies, firstTwo } from '@/lib/shipmentsView';
+import { loadShipmentProducts, quoteVia } from '@/lib/shipmentProducts';
+import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt, shipPOs, shipSkus, firstTwo } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
          buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline, timelineBy, monthColor, INV_STATUS_COLORS } from '@/lib/inventoryView';
@@ -6751,9 +6752,11 @@ const newQuoteNumber = () => 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase
 // which is module scope too, so the same holds.
 
 // The manifest columns: Reference, Orders, Products, Voyage, ETD / ETA, Arrival.
+// Reference is wide enough for a whole shipment number and wraps to a second
+// line rather than cutting one off.
 // Voyage takes most of the flexible width, so its progress bar runs nearly to
 // ETD / ETA; .ship-voyage (globals.css) adds 24px before it, off on a phone.
-const SHIP_COLS = '150px 132px minmax(200px,.6fr) minmax(360px,1.8fr) 128px 96px';
+const SHIP_COLS = '196px 132px minmax(200px,.6fr) minmax(360px,1.8fr) 128px 96px';
 
 // TWO TABS, ONE COMPONENT (5 Nov, per Riley). section 'shipments' is the
 // Shipments tab -- Shipments and Delivery Requests, their tiles, + New Shipment
@@ -7690,7 +7693,6 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
             const sos = soLinksForShip[s.id] || [];
             const pos = shipPOs(s).filter(x => x.order_number || x.client_po_number);
             const skus = shipSkus(s);
-            const cos = shipCompanies(s, coNames);
             // Tracked or Manual on every row: tracked when a provider is set.
             const trackedRow = !!s.tracking_provider;
             // ETD and ETA are the columns, as the tiles, the filters and the export
@@ -7723,7 +7725,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
               <div key={s.id} data-ship-id={s.id} onClick={()=>setOpenId(s.id)} className="ship-manifest-row" style={{...(s.id===litId ? {background:'#EAF3FE',boxShadow:'inset 3px 0 0 #0A84FF'} : {}),display:'grid',gridTemplateColumns:SHIP_COLS,gap:'18px',padding:'16px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',cursor:'pointer',transition:'.12s',alignItems:'center'}} onMouseEnter={e=>{ if (s.id!==litId) e.currentTarget.style.background='#FAFAFB'; }} onMouseLeave={e=>{ if (s.id!==litId) e.currentTarget.style.background='transparent'; }}>
               <div style={{minWidth:0}}>
                 <div style={{display:'flex',alignItems:'center',gap:'4px',minWidth:0}}>
-                  <div style={{fontFamily:'var(--mono)',fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',minWidth:0}}>{ref}</div>
+                  <div style={{fontFamily:'var(--mono)',fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'normal',overflowWrap:'anywhere',lineHeight:1.3,minWidth:0}}>{ref}</div>
                   {recordExport('shipment', s, 'shipment')}
                 </div>
                 <div style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{clientName}</div>
@@ -7736,10 +7738,9 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
                   <LinkedRef label={'PO '+(x.order_number||x.client_po_number)} onGo={()=>navigate('order-detail',{id:x.id})} /></div>)}
                 {!sos.length && !pos.length && <span style={{color:'#C7C7CC'}}>{'\u2014'}</span>}
               </div>
-              {/* Products: the SKUs on the linked POs, then the companies connected. */}
+              {/* Products: the SKUs on the linked POs (the client is under Reference). */}
               <div style={{minWidth:0}}>
                 <div title={skus.length > 2 ? skus.join(', ') : undefined} style={{fontFamily:'var(--mono)',fontSize:'12px',color:skus.length?'#1D1D1F':'#C7C7CC',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{skus.length ? firstTwo(skus) : '\u2014'}</div>
-                {cos.length > 0 && <div title={cos.join(', ')} style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{cos.join(' \u00b7 ')}</div>}
               </div>
               <div className="ship-voyage" style={{minWidth:0}}>
                 <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
@@ -9104,6 +9105,11 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
   useEffect(()=>{ statusSetByTracking(id).then(setByTracking); },[id]);
   const [companies, setCompanies] = useState([]);
   const [saving, setSaving] = useState(false);
+  // Factory and Quotes & Products, read from the linked POs as the card opens
+  // (lib/shipmentProducts). Display only; null while loading.
+  const [prodInfo, setProdInfo] = useState(null);
+  const [allProd, setAllProd] = useState(false);
+  useEffect(()=>{ loadShipmentProducts(id).then(setProdInfo); },[id]);
   useEffect(()=>{
     SB.from('shipments').select('*').eq('id',id).single().then(({data})=>{
       setS(data||{}); setOrig(data||{});
@@ -9221,11 +9227,14 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
               {byTracking && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'Set by ShipsGo tracking'+(tracked ? ' \u00b7 tracking moves it; staff can mark it Delivered or Cancelled' : '')}</div>}
               {!byTracking && tracked && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'Tracking moves it; staff can mark it Delivered or Cancelled'}</div>}</div>
           </div>
-          <div className="form-row-2">
+          <div className="form-row-3">
             {/* The client the row shows (shipClient): the linked PO's, else the
                 shipment's own. The row is loaded with select('*'), so its own
                 client is named from the companies this card already loads. */}
             <div><label>Client</label><input className="form-input" value={(linkedPO?.client?.name||(companies.find(c=>c.id===s.client_company_id)||{}).name||'—').toUpperCase()} readOnly style={{opacity:.7,cursor:'default',fontWeight:600}} /></div>
+            {/* The linked POs' factories, read-only -- a shipment has no factory of its own. */}
+            <div><label>Factory</label><input className="form-input" readOnly style={{opacity:.7,cursor:'default'}}
+              value={!prodInfo ? 'Loading\u2026' : (prodInfo.factories.join(', ') || '\u2014')} title={prodInfo && prodInfo.factories.length ? prodInfo.factories.join(', ') : 'From the linked POs'} /></div>
             <div><label>Forwarder</label><select className="form-select" value={s.carrier_company_id||''} onChange={e=>set('carrier_company_id',e.target.value)}><option value="">—</option>{companies.filter(c=>['carrier','freight_forwarder'].includes(c.type)).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           </div>
           <div className="form-row"><label>Mode</label>
@@ -9278,6 +9287,29 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
                   readOnly style={roStyle} title="Arrived at the port of discharge, from tracking" /></div>
               : <div><label>ETA</label><input type="date" className="form-input" value={dval(s.estimated_arrival)} onChange={e=>set('estimated_arrival',e.target.value)}
                   readOnly={ro} style={ro?roStyle:undefined} title={ro?'From tracking':undefined} /></div>}
+          </div>
+          {/* QUOTES & PRODUCTS: one line per product across the linked POs, with
+              the quote its Sales Order line names, else its latest quote. Read-only,
+              built as the card opens; past six lines it folds. */}
+          <span className="form-section-label">{'Quotes & Products'}{prodInfo && prodInfo.lines.length ? ' ('+prodInfo.lines.length+')' : ''}</span>
+          <div style={{marginBottom:'14px'}}>
+            {!prodInfo ? <div style={{fontSize:'12px',color:'var(--muted)'}}>{'Loading\u2026'}</div>
+              : prodInfo.error ? <div style={{fontSize:'12px',color:'var(--hot)'}}>{'Could not read the products: '+prodInfo.error}</div>
+              : !prodInfo.lines.length ? <div style={{fontSize:'12px',color:'var(--muted)'}}>{'No products on the linked POs.'}</div>
+              : <>
+                {(allProd ? prodInfo.lines : prodInfo.lines.slice(0, 6)).map(l => (
+                  <div key={l.key} style={{display:'grid',gridTemplateColumns:'minmax(90px,auto) 1fr auto',gap:'10px',alignItems:'baseline',fontSize:'12.5px',padding:'4px 0',borderTop:'1px solid var(--line-2)'}}>
+                    <span style={{fontFamily:'var(--mono)',fontSize:'11.5px',color:'var(--ink)',whiteSpace:'nowrap'}}>{l.sku || '\u2014'}</span>
+                    <span style={{minWidth:0}}>
+                      <span style={{display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={l.name}>{l.name || '\u2014'}</span>
+                      {l.companies.length > 0 && <span style={{display:'block',fontSize:'11px',color:'var(--muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={l.companies.join('; ')}>{l.companies.join('; ')}</span>}
+                    </span>
+                    <span title={quoteVia(l.quote)} style={{fontFamily:'var(--mono)',fontSize:'11.5px',whiteSpace:'nowrap',color:l.quote?'var(--ink-2)':'var(--faint)'}}>{l.quote ? l.quote.code : '\u2014'}</span>
+                  </div>
+                ))}
+                {prodInfo.lines.length > 6 && <button type="button" className="btn btn-ghost btn-sm" style={{marginTop:'6px'}} onClick={()=>setAllProd(v=>!v)}>
+                  {allProd ? 'Show fewer' : 'Show all '+prodInfo.lines.length}</button>}
+              </>}
           </div>
           {(tracked || events.length > 0) && (
             <>
