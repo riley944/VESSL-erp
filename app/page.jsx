@@ -7680,7 +7680,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
           <div className="ship-manifest-head" style={{display:'grid',gridTemplateColumns:SHIP_COLS,gap:'18px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Reference</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Orders</div>
-            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Products</div>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'center'}}>Products</div>
             <div className="ship-voyage" style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Voyage</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>ETD / ETA</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>Arrival</div>
@@ -7738,8 +7738,8 @@ function Shipments({ onNewShipment, userEmail, displayName = '', navigate, secti
                   <LinkedRef label={'PO '+(x.order_number||x.client_po_number)} onGo={()=>navigate('order-detail',{id:x.id})} /></div>)}
                 {!sos.length && !pos.length && <span style={{color:'#C7C7CC'}}>{'\u2014'}</span>}
               </div>
-              {/* Products: the SKUs on the linked POs (the client is under Reference). */}
-              <div style={{minWidth:0}}>
+              {/* Products: the SKUs on the linked POs (the client is under Reference), centred. */}
+              <div style={{minWidth:0,textAlign:'center'}}>
                 <div title={skus.length > 2 ? skus.join(', ') : undefined} style={{fontFamily:'var(--mono)',fontSize:'12px',color:skus.length?'#1D1D1F':'#C7C7CC',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{skus.length ? firstTwo(skus) : '\u2014'}</div>
               </div>
               <div className="ship-voyage" style={{minWidth:0}}>
