@@ -1,12 +1,13 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { SB } from '@/lib/supabase';
-import { shipClient, etaDaysAt } from '@/lib/shipmentsView';
-import { shipmentStatusLabel } from '@/lib/shipmentStatus';
+import { shipClient, etaDaysAt, shipSkus, shipCompanies, firstTwo } from '@/lib/shipmentsView';
+import { shipmentStatusLabel, shipmentStatusStyle, modeOf } from '@/lib/shipmentStatus';
 import { statusLabel } from '@/lib/ordersView';
-import { buildRecordSheets, recordFileName, recordPdfMeta, recordRef } from '@/lib/shipmentsExport';
+import { buildRecordSheets, recordFileName, recordPdfMeta } from '@/lib/shipmentsExport';
 import { stampToday, exportUser } from '@/lib/recordExport';
 import { matches, normalizeTerm } from '@/lib/textFilter';
+import { loadShipmentProducts, quoteVia } from '@/lib/shipmentProducts';
 import { Field, Pill, dateText, useCardExport, ExportButtons, ReadyBar, Filters, Count } from './shared';
 import s from './m.module.css';
 
@@ -20,7 +21,7 @@ import s from './m.module.css';
 // to the linked POs and their sales orders. Export PDF / CSV / XLSX is the
 // desktop row's own export (lib/shipmentsExport.js, 'shipment').
 const SELECT = '*,companies!client_company_id(name),shipment_pos(purchase_orders(id,order_number,client_po_number,factory_company_id,status,'
-  + 'client:companies!client_company_id(name),sales_order_pos(sales_orders(id,so_number,client_po_number))))';
+  + 'client:companies!client_company_id(name),purchase_order_items(product_sku,products(sku)),sales_order_pos(sales_orders(id,so_number,order_number,client_po_number))))';
 const clientOf = (sh) => shipClient(sh) || 'No client';
 
 export function MShipments({ user, displayName }) {
@@ -70,6 +71,23 @@ function ShipCard({ sh, coNames, open, onToggle, user, displayName, onPending })
   const pos = (sh.shipment_pos || []).map((x) => x.purchase_orders).filter(Boolean);
   const delivered = sh.status === 'delivered' || !!sh.actual_arrival;
   const days = sh.actual_arrival ? null : etaDaysAt(sh.estimated_arrival, new Date());
+  // The desktop row's Orders and Products columns: SOs then POs; SKUs, then the
+  // companies connected (lib/shipmentsView).
+  const sos = [];
+  pos.forEach((p) => (p.sales_order_pos || []).forEach((l) => {
+    const so = l.sales_orders; const n = so && (so.so_number || so.order_number);
+    if (n && !sos.includes(n)) sos.push(n);
+  }));
+  const orders = [...sos.map((n) => 'SO ' + n), ...pos.map((p) => p.order_number || p.client_po_number).filter(Boolean).map((n) => 'PO ' + n)];
+  const skus = shipSkus(sh);
+  const cos = shipCompanies(sh, coNames);
+  // The linked POs' factories, as the desktop card shows them.
+  const factories = [...new Set(pos.map((p) => coNames[p.factory_company_id]).filter(Boolean))];
+  // Quotes & Products, read when the card opens (lib/shipmentProducts).
+  const [prodInfo, setProdInfo] = useState(null);
+  const [allProd, setAllProd] = useState(false);
+  const [showUnl, setShowUnl] = useState(null);
+  useEffect(() => { if (open && !prodInfo) loadShipmentProducts(sh.id).then(setProdInfo); }, [open, prodInfo, sh.id]);
   const arrival = delivered ? 'Delivered'
     : days === null ? '—'
     : days < 0 ? '+' + Math.abs(days) + 'd overdue' : days + 'd to ETA';
@@ -95,11 +113,16 @@ function ShipCard({ sh, coNames, open, onToggle, user, displayName, onPending })
     <div className={s.card + (open ? ' ' + s.cardOpen : '')}>
       <button type="button" className={s.cardHead} aria-expanded={open} onClick={onToggle}>
         <div className={s.client}>{clientOf(sh)}</div>
-        <div className={s.product}>{recordRef('shipment', sh) || '—'}</div>
+        <div className={s.product}>{sh.shipment_number || '—'}</div>
         <div className={s.fields}>
-          <Field label="Vessel">{(sh.vessel_name || 'Vessel TBD') + (sh.voyage_no ? ' · ' + sh.voyage_no : '')}</Field>
+          <Field label="Orders">{orders.length ? orders.map((o) => <div key={o}>{o}</div>) : '—'}</Field>
+          <Field label="Products"><span title={skus.length > 2 ? skus.join(', ') : undefined}>{skus.length ? firstTwo(skus) : '—'}</span></Field>
+          <Field label="Companies">{cos.length ? cos.join(' · ') : '—'}</Field>
+          <Field label="Factory">{factories.length ? factories.join(', ') : '—'}</Field>
+          <Field label="Vessel">{(sh.vessel_name || 'Vessel TBD') + (sh.voyage_no ? ' · ' + sh.voyage_no : '')}
+            {' '}<span style={{ fontSize: 11, fontWeight: 600, color: sh.tracking_provider ? '#0A84FF' : '#6B7280' }}>{sh.tracking_provider ? 'Tracked' : 'Manual'}</span></Field>
           <Field label="Container">{sh.container_no || '—'}</Field>
-          <Field label="Status"><Pill tone={{ label: shipmentStatusLabel(sh.status) || '—', color: delivered ? '#059669' : '#0891b2', bg: delivered ? '#ecfdf5' : '#ecfeff' }} /></Field>
+          <Field label="Status"><Pill tone={{ label: shipmentStatusLabel(sh.status, modeOf(sh)) || '—', color: shipmentStatusStyle(sh.status).fg, bg: shipmentStatusStyle(sh.status).bg }} /></Field>
           <Field label="ETD">{dateText(sh.estimated_departure) || '—'}</Field>
           <Field label="ETA">{dateText(sh.estimated_arrival) || '—'}</Field>
           <Field label="Arrival"><span style={!delivered && days !== null && days < 0 ? { color: '#b4442c', fontWeight: 600 } : undefined}>{arrival}</span></Field>
@@ -123,6 +146,39 @@ function ShipCard({ sh, coNames, open, onToggle, user, displayName, onPending })
               );
             })}
             {pos.length === 0 && <div className={s.meta}>No POs linked.</div>}
+          </div>
+          <div className={s.section}>{'Quotes & Products' + (prodInfo && prodInfo.lines.length ? ' (' + prodInfo.lines.length + ')' : '')}</div>
+          <div className={s.lines}>
+            {!prodInfo ? <div className={s.meta}>Loading…</div>
+              : prodInfo.error ? <div className={s.meta}>{'Could not read the products: ' + prodInfo.error}</div>
+              : !prodInfo.lines.length && !prodInfo.unlinked.count ? <div className={s.meta}>No lines on the linked POs.</div>
+              : (allProd ? prodInfo.lines : prodInfo.lines.slice(0, 6)).map((l) => (
+                <div key={l.key} className={s.lineItem}>
+                  <div className={s.lineName}>{(l.sku || '—') + ' · ' + (l.name || '—')}</div>
+                  <div className={s.lineMeta}>
+                    <span title={quoteVia(l.quote)}>{'Quote ' + (l.quote ? l.quote.code : '—')}</span>
+                    {l.companies.length ? ' · ' + l.companies.join('; ') : ''}
+                  </div>
+                </div>
+              ))}
+            {prodInfo && prodInfo.lines.length > 6 && (
+              <button type="button" className={s.meta} style={{ background: 'none', border: 'none', padding: '6px 0', textAlign: 'left', cursor: 'pointer', textDecoration: 'underline' }}
+                onClick={() => setAllProd((v) => !v)}>{allProd ? 'Show fewer' : 'Show all ' + prodInfo.lines.length}</button>
+            )}
+            {/* PO lines linked to no product, one muted line; open when nothing is linked. */}
+            {prodInfo && !prodInfo.error && prodInfo.unlinked.count > 0 && (() => {
+              const openU = showUnl === null ? !prodInfo.lines.length : showUnl;
+              const n = prodInfo.unlinked.count;
+              return (
+                <div className={s.meta}>
+                  {'+' + n + ' PO line' + (n === 1 ? '' : 's') + ' without a product · '}
+                  <button type="button" onClick={() => setShowUnl(!openU)} style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}>{openU ? 'Hide' : 'Show'}</button>
+                  {openU && prodInfo.unlinked.descs.map((d) => (
+                    <div key={d.text} style={{ fontStyle: 'italic', paddingLeft: 10 }}>{d.text + (d.n > 1 ? ' ×' + d.n : '')}</div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
           {details.length > 0 && (
             <div className={s.details} style={{ marginTop: 14 }}>

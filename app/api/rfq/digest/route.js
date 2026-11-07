@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
+import { withCronRun, noStoreFetch } from '@/lib/cronRuns';
 import { OPS_TEAM } from '@/lib/opsTeam';
 
 // ── GET /api/rfq/digest ──────────────────────────────────────────────────────
@@ -23,6 +24,8 @@ import { OPS_TEAM } from '@/lib/opsTeam';
 // effects and reads a secret header.
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// No fetch in this route is ever served from Next's data cache (lib/cronRuns).
+export const fetchCache = 'force-no-store';
 
 // Same verified sender as the RFQ itself.
 const FROM = 'King Universal Freight <rfq@vessl.io>';
@@ -105,6 +108,11 @@ export async function GET(req) {
   const authz = req.headers.get('authorization') || '';
   if (authz !== 'Bearer ' + secret) return json({ ok:false, error:'Not authorised.' }, 401);
 
+  // Recorded in vessl.cron_runs from here on (lib/cronRuns.js, script 144).
+  return withCronRun('/api/rfq/digest', req, () => run(req));
+}
+
+async function run(req) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   // SUPABASE_SERVICE_ROLE_KEY currently holds the LEGACY service_role JWT. The
   // project is on Supabase's newer API-key system, where the equivalent is an
@@ -129,6 +137,7 @@ export async function GET(req) {
   const sb = createClient(url, serviceKey, {
     db:{ schema:'vessl' },
     auth:{ persistSession:false, autoRefreshToken:false },
+    global:{ fetch: noStoreFetch },
   });
   const { data:rows, error } = await sb.rpc('rfq_digest_rows');
   if (error) return json({ ok:false, error:'Could not read the RFQ list: '+error.message }, 502);

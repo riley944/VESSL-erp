@@ -34,7 +34,7 @@ import { tierTotalCost, tierHasSizeMold, tierMoldFee, effectiveQty } from '@/lib
 // size's own figures, and the price rule for a size (lib/quoteTiers).
 import { tierFromRow, tierIsSized, sizeQuotedPrice, isBagMode, htsRateFor } from '@/lib/quoteTiers';
 // The active HTS code list, for the duty a Bag size pays on its own EXW.
-import { useHtsCodes } from '@/app/components/HtsField';
+import { HtsField, useHtsCodes } from '@/app/components/HtsField';
 import { BANK_FIELDS, BANK_KEYS, hasAnyBankDetail } from '@/lib/bankFields';
 
 // ── Prefilling an order grid from a quote tier ───────────────────────────────
@@ -141,9 +141,10 @@ import { CreateCompanyModal, COMPANY_TYPES } from '@/app/components/CreateCompan
 import { usePageState, clearPageState } from '@/lib/pageState';
 import { prodKey, productByKey, productByName, ensureProductForQuote, cleanName } from '@/lib/products';
 import { PAYMENT_TERMS_OPTS, SHIPPING_METHOD_OPTS } from '@/lib/productOptions';
-import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord } from '@/lib/shipmentStatus';
-import { trackShipment } from '@/lib/trackShipment';
-import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut } from '@/lib/shipmentsView';
+import { shipmentStatusLabel, trackingEventLabel, lastActualEvent, checkedAgo, trackingWord, SHIPMENT_STATUS_ORDER, statusChoices, statusSourceMap, TRACKING_NOTE, shipmentStatusStyle, TRANSPORT_MODES, MODE_LABEL, modeOf, modeFields, isCourierNumber, oceanTrackNumber, COURIER_NUMBER_ERROR } from '@/lib/shipmentStatus';
+import { trackShipment, refreshStale } from '@/lib/trackShipment';
+import { loadShipmentProducts, quoteVia } from '@/lib/shipmentProducts';
+import { QF_DEFAULT, shipmentsView, rfqPill, gatedOut, atPort, portDaysAt, shipPOs, shipProductSummary, firstTwo } from '@/lib/shipmentsView';
 import { SO_STATUSES, SO_SM, alignStatus, statusLabel, PO_STATUS, PO_STATUS_ORDER, poStatusChoices, soMetrics, soListView, poClient, poFactory, poProducts, filterPOs, PROD_COLUMNS, poListView, PO_FILTER_DEFAULTS, isPoFiltered, PO_CRD_LABEL } from '@/lib/ordersView';
 import { INV_DEFAULTS, INV_PO_STATUSES, INV_DATES_BY, INV_DATES_WORD, inventoryLines, filterInventory, isInventoryFiltered, clearInventoryFilters, sumBy, inventoryTiles,
          buildInventorySheets, inventoryFileName, inventoryCsvName, inventoryPdfMeta, byProduct, timeline, timelineBy, monthColor, INV_STATUS_COLORS } from '@/lib/inventoryView';
@@ -319,6 +320,29 @@ function Badge({ status, label, po = false }) {
   </span>;
 }
 
+// A shipment status as a pill, coloured by its stored value (shipmentStatusStyle,
+// lib/shipmentStatus.js) and worded by shipmentStatusLabel. Same shape as Badge;
+// size sm for the Shipments row, md for headings and the order pages.
+function ShipmentStatusPill({ status, size = 'sm', mode = 'ocean' }) {
+  const c = shipmentStatusStyle(status);
+  const md = size === 'md';
+  return <span style={{display:'inline-flex',alignItems:'center',gap:'5px',padding:md?'3px 10px':'1px 7px',borderRadius:'20px',fontSize:md?'11px':'9.5px',fontWeight:700,
+    letterSpacing:'.03em',textTransform:'uppercase',background:c.bg,color:c.fg,whiteSpace:'nowrap',verticalAlign:'middle'}}>
+    <span style={{width:md?'6px':'5px',height:md?'6px':'5px',borderRadius:'50%',background:c.fg}} />{shipmentStatusLabel(status, mode)}
+  </span>;
+}
+// How a shipment travels, as a 13px line icon: a ship or a plane.
+function ModeIcon({ mode, color = '#6B7280' }) {
+  const p = { width:13, height:13, viewBox:'0 0 24 24', fill:'none', stroke:color, strokeWidth:1.8, strokeLinecap:'round', strokeLinejoin:'round' };
+  if (mode === 'air') return <svg {...p}><title>Air</title><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>;
+  return <svg {...p}><title>Ocean</title><path d="M3 18h18l-2-6H5l-2 6z"/><path d="M12 12V4M8 8h8"/></svg>;
+}
+
+// A status select shows its current value in that value's colours; the open
+// list stays plain so every choice reads the same.
+const statusSelectStyle = st => { const c = shipmentStatusStyle(st); return { background:c.bg, color:c.fg, fontWeight:600 }; };
+const OPTION_PLAIN = { background:'#fff', color:'#1D1D1F', fontWeight:400 };
+
 // ── PO browsing helpers (search + client filter, shared by Orders & Dashboard) ──
 // poClient, poFactory and poProducts live in lib/ordersView.js.
 // ── One membership test for every multi-select filter ────────────────────────
@@ -483,6 +507,10 @@ const Ic = {
   pricing:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
   programs:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-5"/></svg>,
   shipments:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6h13v9H1zM14 9h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg>,
+  // A sheet with three lines of text -- the freight quote. Same 17px, 1.7 stroke,
+  // round caps and joins and currentColor as the rest; a plain page, so it reads
+  // apart from the folded-corner documents of Sales Orders and Quotes.
+  'freight-quotes':<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>,
   inventory:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
   quotes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9.5 14.5h3.5a1.5 1.5 0 0 0 0-3h-2a1.5 1.5 0 0 1 0-3H14"/></svg>,
   codes:<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>,
@@ -567,7 +595,7 @@ const devViewWithoutAnalytics = () =>
 // reached from the gear.
 const HASH_PAGES = [
   'programs', 'dashboard', 'sales-orders', 'orders', 'companies', 'products',
-  'testing', 'pricing', 'shipments', 'inventory', 'quotes', 'codes',
+  'testing', 'pricing', 'shipments', 'freight-quotes', 'inventory', 'quotes', 'codes',
   // Listed like any other page, and SAFE TO LIST. Membership here decides only
   // whether the id may travel through the URL, never who may see the page --
   // adopting '#company-banking' sets rawPage, and gate 2 still converts that to
@@ -756,6 +784,7 @@ function Sidebar({ page, navigate, user, open, badges={}, allowedPages=null, rol
     { id:'testing',            label:'Testing' },
     ...(PRICING_ENABLED ? [{ id:PRICING_PAGE, label:'Pricing' }] : []),
     { id:'shipments',          label:'Shipments' },
+    { id:'freight-quotes',     label:'Freight Quotes' },
     { id:'inventory',          label:'Inventory' },
     { id:'quotes',             label:'Quotes' },
     { id:'codes',              label:'Codes' },
@@ -2262,6 +2291,8 @@ function SalesOrderDetail({id,navigate}){
   const [savingInv,setSavingInv]=useState(false);
   const [costs,setCosts]=useState([]);
   const [shipment,setShipment]=useState(null);
+  const [shipEvents,setShipEvents]=useState([]);   // its tracking events, when tracked
+  const [shipBy,setShipBy]=useState(false);        // its status last set by tracking
   const load=async()=>{
     setLoading(true);
     const [{data:soD},{data:itmD,error:itmErr},{data:posD,error:posErr},{data:costD}]=await Promise.all([
@@ -2296,6 +2327,8 @@ function SalesOrderDetail({id,navigate}){
       }
     }
     setShipment(sh);
+    setShipEvents(await trackingEventsOf(sh));
+    setShipBy(sh ? await statusSetByTracking(sh.id) : false);
     setLoading(false);
   };
   useEffect(()=>{ load(); },[id]);
@@ -2491,7 +2524,7 @@ function SalesOrderDetail({id,navigate}){
       </div>
 
       <div className="section-card" style={{marginBottom:'20px'}}>
-        <div className="section-head"><h3>Logistics &amp; Shipment</h3>{shipment&&<Badge status={shipment.status==='in_transit'?'shipped':shipment.status==='delivered'?'delivered':'confirmed'} />}</div>
+        <div className="section-head"><h3>Logistics &amp; Shipment</h3></div>
         {!shipment ? (
           <div style={{padding:'20px 18px',fontSize:'13px',color:'var(--muted)',display:'flex',alignItems:'center',gap:'12px'}}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M1 6h13v9H1zM14 9h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg>
@@ -2506,6 +2539,8 @@ function SalesOrderDetail({id,navigate}){
                 <span style={{fontSize:'14px',fontWeight:600,color:'var(--ink)'}}>{shipment.destination_port?.name||shipment.destination_port?.unlocode||'—'}</span>
               </span>
             </div>
+            <ShipmentStatusArea s={shipment} byTracking={shipBy} />
+            <TrackingSummary s={shipment} events={shipEvents} />
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',borderTop:'1px solid var(--line-2)'}}>
               {[['Vessel',shipment.vessel_name],['Voyage #',shipment.voyage_no],['Container #',shipment.container_no],['Booking #',shipment.booking_number],['Bill of Lading',shipment.bill_of_lading],['Carrier',shipment.carrier?.name],['ETD',fmtDate(shipment.estimated_departure)],['ETA',fmtDate(shipment.estimated_arrival)]].map(([l,v],i)=>(
                 <div key={l} style={{padding:'11px 18px',borderBottom:i<6?'1px solid var(--line-2)':'none',borderRight:i%2===0?'1px solid var(--line-2)':'none'}}>
@@ -4228,6 +4263,8 @@ function OrderDetail({ id, navigate }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [ship, setShip]   = useState(null);
+  const [shipEvents, setShipEvents] = useState([]);   // its tracking events, when tracked
+  const [shipBy, setShipBy] = useState(false);         // its status last set by tracking
   const [logi, setLogi]   = useState({});
   const [savingLogi, setSavingLogi] = useState(false);
   // Said beside Save logistics. It used to borrow the notes card's message,
@@ -4257,6 +4294,8 @@ function OrderDetail({ id, navigate }) {
       sh = s;
     }
     setShip(sh);
+    setShipEvents(await trackingEventsOf(sh));
+    setShipBy(sh ? await statusSetByTracking(sh.id) : false);
     setLogi({
       vessel_name: sh?.vessel_name||'', container_no: sh?.container_no||'', booking_number: sh?.booking_number||'',
       bill_of_lading: sh?.bill_of_lading||'', voyage_no: sh?.voyage_no||'',
@@ -4337,7 +4376,14 @@ function OrderDetail({ id, navigate }) {
     return s.id;
   };
   const setLg = k => v => setLogi(prev=>({...prev,[k]:v}));
+  // WHILE THE SHIPMENT IS TRACKED these fields are tracking's (scripts 140 and
+  // 141 write the numbers, vessel, voyage, ETD and ETA), so the panel shows them
+  // read-only and offers no Save -- a save here would put the old typed values
+  // back over what tracking wrote. The shipment card is where a tracked
+  // shipment is edited.
+  const poTracked = !!(ship && ship.tracking_ref);
   const saveLogistics = async () => {
+    if (poTracked) return;
     setSavingLogi(true);
     const sid = await getOrCreateShipmentId();
     if (!sid){ setSavingLogi(false); alert('Could not save logistics.'); return; }
@@ -4541,15 +4587,22 @@ function OrderDetail({ id, navigate }) {
 
       <div className="section-card" style={{marginBottom:'20px'}}>
         <div className="section-head"><h3>Logistics</h3></div>
+        <ShipmentStatusArea s={ship} byTracking={shipBy} />
+        <TrackingSummary s={ship} events={shipEvents} />
         <div className="logi-grid">
           {[['Vessel / Boat','vessel_name','e.g. MAERSK SELETAR'],['Container #','container_no','e.g. MSKU1234567'],['Voyage #','voyage_no','e.g. 084W'],['Booking #','booking_number',''],['Bill of Lading','bill_of_lading','']].map(([lab,k,ph])=>(
-            <div key={k} className="logi-field"><label>{lab}</label><input className="form-input" value={logi[k]||''} placeholder={ph} onChange={e=>setLg(k)(e.target.value)} /></div>
+            <div key={k} className="logi-field"><label>{lab}</label><input className="form-input" value={logi[k]||''} placeholder={ph} onChange={e=>setLg(k)(e.target.value)}
+              readOnly={poTracked} title={poTracked ? 'Read from ShipsGo while this shipment is tracked' : undefined} style={poTracked ? {opacity:.7,cursor:'default'} : undefined} /></div>
           ))}
-          <div className="logi-field"><label>ETD</label><input type="date" className="form-input" value={logi.etd||''} onChange={e=>setLg('etd')(e.target.value)} /></div>
-          <div className="logi-field"><label>ETA</label><input type="date" className="form-input" value={logi.eta||''} onChange={e=>setLg('eta')(e.target.value)} /></div>
+          <div className="logi-field"><label>ETD</label><input type="date" className="form-input" value={logi.etd||''} onChange={e=>setLg('etd')(e.target.value)}
+            readOnly={poTracked} title={poTracked ? 'Read from ShipsGo while this shipment is tracked' : undefined} style={poTracked ? {opacity:.7,cursor:'default'} : undefined} /></div>
+          <div className="logi-field"><label>ETA</label><input type="date" className="form-input" value={logi.eta||''} onChange={e=>setLg('eta')(e.target.value)}
+            readOnly={poTracked} title={poTracked ? 'Read from ShipsGo while this shipment is tracked' : undefined} style={poTracked ? {opacity:.7,cursor:'default'} : undefined} /></div>
         </div>
         <div style={{display:'flex',alignItems:'center',gap:'12px',padding:'0 18px 16px'}}>
-          <button className="btn btn-dark btn-sm" onClick={saveLogistics} disabled={savingLogi}>{savingLogi?'Saving…':'Save logistics'}</button>
+          {poTracked
+            ? <span style={{fontSize:'12px',color:'var(--muted)'}}>{'Tracked with ShipsGo \u2014 these come from tracking. Edit the shipment from its card on the Shipments page.'}</span>
+            : <button className="btn btn-dark btn-sm" onClick={saveLogistics} disabled={savingLogi}>{savingLogi?'Saving…':'Save logistics'}</button>}
           {logiMsg && <span style={{fontSize:'12.5px',color:'var(--accent)'}}>{logiMsg}</span>}
           {!ship && <span style={{fontSize:'12px',color:'var(--muted)'}}>Saving will create a shipment for this PO.</span>}
         </div>
@@ -6679,10 +6732,11 @@ const newQuoteNumber = () => 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase
 // ever ask one question at a time, and "awarded or not selected" is a thing
 // somebody wants to see.
 //
-// THE DEFAULT IS NON-EMPTY, which is the whole trick. Four of the six are
-// ticked on load, so resolved rows are out of the way without a second control
-// governing them -- ticking Not selected or Archived is how you see them, and
-// that replaces the toggle rather than sitting beside it.
+// THE DEFAULT IS EVERY STATUS BUT ARCHIVED (5 Nov, with Freight Quotes its own
+// tab). It was four of the six ticked; Not selected is now in it, so a fresh
+// visit and a cleared tile show every live quote. Archived is the one thing the
+// default hides, and it is not called out -- ticking Archived, or the All
+// statuses row, is how you see them.
 //
 // Empty still means All, per the FilterSelect multi contract -- unticking the
 // last option widens to everything rather than showing nothing.
@@ -6697,7 +6751,20 @@ const newQuoteNumber = () => 'FQ-'+Date.now().toString(36).slice(-5).toUpperCase
 // body can ever get above it again. It is now imported from lib/shipmentsView.js,
 // which is module scope too, so the same holds.
 
-function Shipments({ onNewShipment, userEmail, displayName = '' }) {
+// The manifest columns: Reference, Orders, Products, Voyage, ETD / ETA, Arrival.
+// Reference is wide enough for a whole shipment number and wraps to a second
+// line rather than cutting one off.
+// Voyage takes most of the flexible width, so its progress bar runs nearly to
+// ETD / ETA; .ship-voyage (globals.css) adds 24px before it, off on a phone.
+const SHIP_COLS = '196px 132px minmax(170px,.4fr) minmax(390px,2fr) 128px 96px';
+
+// TWO TABS, ONE COMPONENT (5 Nov, per Riley). section 'shipments' is the
+// Shipments tab -- Shipments and Delivery Requests, their tiles, + New Shipment
+// and + Tracked Shipment; section 'freight' is the Freight Quotes tab -- the
+// quotes view, its tiles, its export and + Freight Quote. Each loads and does
+// exactly what the one page did; only what is drawn differs.
+function Shipments({ onNewShipment, userEmail, displayName = '', navigate, section = 'shipments' }) {
+  const freight = section === 'freight';
   const [rows, setRows]   = useState([]);
   const [loading, setLoading] = useState(true);
   // Delivery requests the client filed from the portal. Nothing in this app has
@@ -6723,11 +6790,39 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   // A New tracked shipment whose Track failed opens its card with the error.
   const [noticeErr, setNoticeErr] = useState(false);
   const [newTracked, setNewTracked] = useState(false);
+  // The row a New tracked shipment just made: lit up and scrolled to once the
+  // list has it, then let go after a few seconds. No card opens on success.
+  const [litId, setLitId] = useState(null);
+  // Each shipment's latest status note from order_history, so a row can say
+  // its status was set by tracking (statusSourceMap, lib/shipmentStatus).
+  const [statusSrc, setStatusSrc] = useState({});
+  const litShown = useRef(null);
+  useEffect(() => {
+    if (!litId || litShown.current === litId || !rows.some(r => r.id === litId)) return;
+    litShown.current = litId;
+    requestAnimationFrame(() => {
+      const el = document.querySelector('[data-ship-id="'+litId+'"]');
+      if (el) el.scrollIntoView({ block:'center', behavior:'smooth' });
+    });
+  }, [litId, rows]);
+  useEffect(() => {
+    if (!litId) return;
+    const timer = setTimeout(() => setLitId(null), 6000);
+    return () => clearTimeout(timer);
+  }, [litId]);
   // Which half of the page, which sub-tab, and the three narrowings -- kept across
   // navigation, and kept across the deliberate remount that follows creating a
   // shipment, which is what the key on this component does. openId and the respond-*
   // fields stay plain below, being a row somebody opened and a form in progress.
-  const [ui, setUi] = usePageState('shipments', { view:'quotes', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'', client:'', track:'' });
+  // A store key per tab, so each remembers its own filters. The view is pinned to
+  // the tab: Freight Quotes is always quotes, and Shipments never is (a store
+  // written before the split may still say quotes).
+  const [uiStored, setUi] = usePageState(freight ? 'freight-quotes' : 'shipments',
+    { view: freight ? 'quotes' : 'shipments', tab:'active', qSel:QF_DEFAULT, shipFilter:'', search:'', client:'', track:'', mode:'' });
+  const ui = useMemo(() => {
+    const view = freight ? 'quotes' : (uiStored.view === 'quotes' ? 'shipments' : uiStored.view);
+    return view === uiStored.view ? uiStored : { ...uiStored, view };
+  }, [uiStored, freight]);
   // qSel, shipFilter and search are ui.* now, in the page store above, and
   // QF_DEFAULT is at module scope above this component -- see the note there.
   const [quotes, setQuotes] = useState([]);
@@ -6745,11 +6840,18 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
     const { data } = await SB.from('forwarder_bids').select('*').order('created_at',{ascending:false});
     setBids(data||[]);
   };
-  const reload = async () => {
+  // Reads every shipment, then keeps the active tracked ones current:
+  // refreshStale (lib/trackShipment) refreshes, in the background, any ref not
+  // checked in the last 2 hours, and the rows are read once more only if it
+  // wrote -- that second read does not sweep again.
+  const reload = async (sweep = true) => {
     const { data } = await SB.from('shipments')
-      .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(order_number,client_po_number,factory_company_id,client:companies!client_company_id(name))),shipment_tracking_events(event_code,event_status,location_code,location_name,event_time)')
+      .select('*,companies!client_company_id(name),shipment_pos(purchase_orders(id,order_number,client_po_number,factory_company_id,client:companies!client_company_id(name),purchase_order_items(product_id,product_sku,description,products(sku)))),shipment_tracking_events(event_code,event_status,location_code,location_name,event_time)')
       .order('created_at',{ascending:false});
     setRows(data||[]); setLoading(false);
+    SB.from('order_history').select('row_id,note,changed_at').eq('table_name','shipments').eq('field','status')
+      .order('changed_at',{ascending:false}).then(({ data:h }) => setStatusSrc(statusSourceMap(h)));
+    if (sweep !== false) refreshStale(data).then(wrote => { if (wrote) reload(false); });
   };
   const reloadQuotes = async () => {
     const { data } = await SB.from('shipment_quotes')
@@ -7046,10 +7148,11 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
     return out;
   }, [soPos, shipPos, rows]);
 
-  // "SO # · PO #" for a row. A shipment reaches a Sales Order only through its
-  // POs (shipment_pos, then sales_order_pos), the chain shipsForSo walks the
-  // other way. Derived, so a PO moved to another SO moves its shipments' SO too.
-  const soNumsForShip = useMemo(() => {
+  // A row's Sales Orders, { id, label }, for the Orders column and the export. A
+  // shipment reaches a Sales Order only through its POs (shipment_pos, then
+  // sales_order_pos), the chain shipsForSo walks the other way. Derived, so a PO
+  // moved to another SO moves its shipments' SO too.
+  const soLinksForShip = useMemo(() => {
     const soNum = {};
     (salesOrders||[]).forEach(x => { soNum[x.id] = x.so_number || x.order_number || ''; });
     const sosOfPo = {};
@@ -7060,7 +7163,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
         const n = soNum[sid];
         if (!n) return;
         const list = out[x.shipment_id] = out[x.shipment_id] || [];
-        if (!list.includes(n)) list.push(n);
+        if (!list.some(o => o.id === sid)) list.push({ id: sid, label: n });
       });
     });
     return out;
@@ -7097,7 +7200,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   const V = shipmentsView({ quotes, rows, dreqs, bids, coNames }, ui, new Date());
   const { cSel, quotesV, rowsV, dreqsV, openDreqsV, clientChoices, bidCount, winnerOf,
     activeShips, doneShips, arriving, overdueShips, awaiting, bidsIn, awarded, drafts, notSelected, archivedQ,
-    isDefaultQ, shownQuotes, shownShips, trackedCount, manualCount } = V;
+    isDefaultQ, shownQuotes, shownShips, trackedCount, manualCount, modeCounts } = V;
 
   // Counts are live and come from the same buckets the tiles read, so a number in
   // the dropdown and a number on a tile cannot disagree.
@@ -7115,7 +7218,6 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
     const map = { created:0.06, at_origin_port:0.18, in_transit:0.5, at_transshipment:0.6, at_destination_port:0.82, customs:0.9, out_for_delivery:0.96, delivered:1 };
     return map[st] ?? 0.1;
   };
-  const legLabel = (st) => (st||'').replace(/_/g,' ');
   const fd = s => { if(!s) return '—'; const d=new Date(/^\d{4}-\d{2}-\d{2}$/.test(s)?s+'T12:00:00':s); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); };
   const money0 = v => '$'+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:0});
   const reopen = (q) => openFreightSheet(q, (q.client||{}).name||'', (q.forwarder||{}).name||'');
@@ -7145,7 +7247,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
     try {
       const now = new Date();
       const who = userEmail ? ((displayName||'').trim() ? displayName.trim()+' ('+userEmail+')' : userEmail) : '';
-      const ctx = { exportedAt: now, user: who, ui, V, bids, coNames, refOf: matchRef };
+      const ctx = { exportedAt: now, user: who, ui, V, bids, coNames, refOf: matchRef, soOf: id => (soLinksForShip[id]||[]).map(o => o.label) };
       const out = build(ctx, now);
       // Excel, CSV files one after another, or the print document: the same
       // delivery as the order pages (lib/recordExport.js).
@@ -7162,7 +7264,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   // view without the search, because switching tabs clears the search box. Test
   // records stay in, as on the page. Anyone who can open this page can export.
   const exportTab = (tab, fmt) => pickFormat(tab, fmt, (ctx, now) => {
-    const tabs = tab === 'all' ? SHIPMENTS_ALL : [tab];
+    const tabs = tab === 'all' ? SHIPMENTS_ALL.filter(t => t !== 'quotes') : [tab];
     const views = {};
     tabs.forEach(t => { views[t] = t === ui.view ? V : shipmentsView({ quotes, rows, dreqs, bids, coNames }, { ...ui, search:'' }, now); });
     const day = stampToday();
@@ -7183,15 +7285,20 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
   );
   const TAB_TITLE = { quotes:'Freight Quotes', shipments:'Shipments', delivery:'Delivery Requests' };
 
-  // pulse tile helper
-  const pulse = [
-    { k:'In transit',    v:activeShips.length,  c:'#1D1D1F', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter',''); } , on: ui.view==='shipments'&&ui.shipFilter===''&&ui.tab==='active' },
-    { k:'Arriving \u226414d', v:arriving.length, c:'#0A84FF', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='arriving'?'':'arriving'); }, on: ui.view==='shipments'&&ui.shipFilter==='arriving' },
+  // pulse tile helper -- the first four on Shipments, the last four on Freight
+  // Quotes. Each tab leads with its total: All shipments shows every shipment
+  // (In transit / Delivered / All set to All), All quotes clears the status filter.
+  const pulseAll = [
+    { k:'All shipments', v:rowsV.length,        c:'#1D1D1F', go:()=>{ setUi('view','shipments'); setUi('tab','all'); setUi('shipFilter',''); }, on: ui.view==='shipments'&&ui.shipFilter===''&&ui.tab==='all' },
+    { k:'In transit',    v:activeShips.length,  c:'#0A84FF', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter',''); } , on: ui.view==='shipments'&&ui.shipFilter===''&&ui.tab==='active' },
+    { k:'Arriving \u226414d', v:arriving.length, c:'#30D158', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='arriving'?'':'arriving'); }, on: ui.view==='shipments'&&ui.shipFilter==='arriving' },
     { k:'Overdue',       v:overdueShips.length, c:'#FF375F', go:()=>{ setUi('view','shipments'); setUi('tab','active'); setUi('shipFilter', ui.shipFilter==='overdue'?'':'overdue'); }, on: ui.view==='shipments'&&ui.shipFilter==='overdue' },
+    { k:'All quotes',    v:quotesV.length,      c:'#1D1D1F', go:()=>{ setUi('view','quotes'); setUi('qSel', QF_DEFAULT); }, on: ui.view==='quotes'&&isDefaultQ },
     { k:'Awaiting bids', v:awaiting.length,     c:'#FF9F0A', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='awaiting') ? QF_DEFAULT : ['awaiting']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='awaiting' },
     { k:'Bids in',       v:bidsIn.length,       c:'#30D158', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='bidsin') ? QF_DEFAULT : ['bidsin']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='bidsin' },
     { k:'Awarded',       v:awarded.length,      c:'#0A84FF', go:()=>{ setUi('view','quotes'); setUi('qSel', prev => (prev.length===1 && prev[0]==='awarded') ? QF_DEFAULT : ['awarded']); }, on: ui.view==='quotes'&&ui.qSel.length===1&&ui.qSel[0]==='awarded' },
   ];
+  const pulse = freight ? pulseAll.slice(4) : pulseAll.slice(0, 4);
 
   return (
     <div className="db-apple" style={{padding:'24px 28px 80px',background:'#F5F5F7',minHeight:'calc(100vh - 54px)',boxSizing:'border-box',overflowX:'hidden',maxWidth:'100%'}}>
@@ -7199,13 +7306,13 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
       {/* ── Header: no page title, the live counts as a small muted line ── */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'16px',marginBottom:'22px',flexWrap:'wrap'}}>
         <div>
-          <div style={{fontSize:'13px',color:'#86868B',letterSpacing:'-.01em'}}>{String(quotesV.length)+' quotes \u00b7 '+String(activeShips.length)+' in motion'}</div>
+          {!freight && <div style={{fontSize:'13px',color:'#86868B',letterSpacing:'-.01em'}}>{String(rowsV.length)+' shipments · '+String(activeShips.length)+' in transit'}</div>}
         </div>
         <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
-          <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>
-          {onNewShipment && <button onClick={onNewShipment} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
-          <button onClick={()=>setNewTracked(true)} title="A shipment ShipsGo follows: client, PO, B/L or container, forwarder" style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Tracked Shipment</button>
-          <ExportMenu label="Export" className="export-pill" busy={exporting==='all'} disabled={!!exporting} title="Export Freight Quotes, Shipments and Delivery Requests" ariaLabel="Export Freight Quotes, Shipments and Delivery Requests" onPick={fmt => exportTab('all', fmt)} />
+          {freight && <button onClick={()=>setQuoteModal('new')} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Freight Quote</button>}
+          {!freight && onNewShipment && <button onClick={onNewShipment} style={{background:'#fff',color:'#1D1D1F',border:'1px solid rgba(0,0,0,.1)',borderRadius:'980px',padding:'9px 17px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ New Shipment</button>}
+          {!freight && <button onClick={()=>setNewTracked(true)} title="A shipment ShipsGo follows: client, PO, B/L or container, forwarder" style={{background:'#1D1D1F',color:'#fff',border:'none',borderRadius:'980px',padding:'9px 18px',fontSize:'13.5px',fontWeight:500,cursor:'pointer'}}>+ Tracked Shipment</button>}
+          {!freight && <ExportMenu label="Export" className="export-pill" busy={exporting==='all'} disabled={!!exporting} title="Export Shipments and Delivery Requests" ariaLabel="Export Shipments and Delivery Requests" onPick={fmt => exportTab('all', fmt)} />}
         </div>
       </div>
 
@@ -7226,16 +7333,16 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
 
       {/* ── Controls row: segmented + search ── */}
       <div style={{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap',marginBottom:'18px'}}>
-        <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',boxShadow:'inset 0 1px 2px rgba(0,0,0,.05)'}}>
+        {!freight && <div style={{display:'inline-flex',background:'#ECECF0',borderRadius:'12px',padding:'4px',boxShadow:'inset 0 1px 2px rgba(0,0,0,.05)'}}>
           {/* The pill counts OPEN requests, not all of them -- consistent with
               the other two counting what is live rather than what exists, and it
               is the number that should make somebody click. */}
-          {[['quotes','Freight Quotes',quotesV.length],['shipments','Shipments',rowsV.length],['delivery','Delivery Requests',openDreqsV.length]].map(([v,l,ct])=>(
+          {[['shipments','Shipments',rowsV.length],['delivery','Delivery Requests',openDreqsV.length]].map(([v,l,ct])=>(
             <button key={v} onClick={()=>{setUi('view', v); setUi('search','');}} style={{display:'inline-flex',alignItems:'center',gap:'8px',padding:'9px 18px',borderRadius:'9px',border:'none',cursor:'pointer',fontSize:'13.5px',fontWeight:600,letterSpacing:'-.01em',background:ui.view===v?'#1D1D1F':'transparent',color:ui.view===v?'#fff':'#5A5A5E',boxShadow:ui.view===v?'0 1px 3px rgba(0,0,0,.18)':'none',transition:'.14s'}}>
               {l}<span style={{fontSize:'11px',fontWeight:700,borderRadius:'20px',padding:'1px 8px',background:ui.view===v?'rgba(255,255,255,.22)':'#DCDCE0',color:ui.view===v?'#fff':'#6A6A6E'}}>{ct}</span>
             </button>
           ))}
-        </div>
+        </div>}
         {/* THE CLIENT FILTER, for all three tabs at once. A native select, styled as
             the pills beside it; on a phone it takes the full width at 44px. Clear
             sits beside it whenever a client is chosen, so a narrowed page says so. */}
@@ -7263,14 +7370,12 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             {/* Right of the search bar, with Import reply beside it. One control
                 where six pills and a toggle used to sit. */}
             <FilterSelect multiple label="All statuses" value={ui.qSel} onChange={v=>setUi('qSel', v)} options={quoteStatusOptions} />
-            {/* The default HIDES ROWS, which no other filter on this page does, so
-                the list would otherwise be short with nothing saying why. isDefaultQ
-                is what separates the two readings -- on load it names the reason,
-                and once somebody has narrowed it deliberately the count alone is
-                the answer. */}
-            {shownQuotes.length !== quotesV.length && (
+            {/* N of M only once somebody narrows beyond the default -- statuses
+                picked or a search typed. The default hiding Archived is not called
+                out. */}
+            {(!isDefaultQ || !!ui.search) && shownQuotes.length !== quotesV.length && (
               <span style={{fontSize:'11.5px',color:'#8A8A8E',fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>
-                {shownQuotes.length+' of '+quotesV.length}{(isDefaultQ && !ui.search) ? ' · resolved hidden' : ''}
+                {shownQuotes.length+' of '+quotesV.length}
               </span>
             )}
             <button onClick={()=>setShowBidImport(true)} style={{display:'inline-flex',alignItems:'center',gap:'6px',fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'1px dashed rgba(0,0,0,.18)',cursor:'pointer',background:'transparent',color:'#4A4A4E'}}>
@@ -7291,6 +7396,14 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
               <button key={val} onClick={()=>setUi('track', ui.track===val?'':val)} title={val==='tracked'?'Shipments followed by ShipsGo':'Shipments kept by hand'}
                 style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:ui.track===val?'#0A84FF':'#fff',color:ui.track===val?'#fff':'#3A3A3E',boxShadow:ui.track===val?'none':'0 1px 2px rgba(0,0,0,.05)'}}>
                 {label} <span style={{opacity:.6,fontVariantNumeric:'tabular-nums'}}>{ct}</span>
+              </button>
+            ))}
+            {/* Mode (script 147): one at a time, like Tracked / Manual. */}
+            <span style={{width:'1px',alignSelf:'stretch',background:'#E5E5EA',margin:'0 2px'}} />
+            {TRANSPORT_MODES.map(m=>(
+              <button key={m} onClick={()=>setUi('mode', ui.mode===m?'':m)} title={'Shipments travelling by '+MODE_LABEL[m].toLowerCase()}
+                style={{display:'inline-flex',alignItems:'center',gap:'5px',fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:ui.mode===m?'#0A84FF':'#fff',color:ui.mode===m?'#fff':'#3A3A3E',boxShadow:ui.mode===m?'none':'0 1px 2px rgba(0,0,0,.05)'}}>
+                <ModeIcon mode={m} color={ui.mode===m?'#fff':'#6B7280'} />{MODE_LABEL[m]} <span style={{opacity:.6,fontVariantNumeric:'tabular-nums'}}>{(modeCounts||{})[m]||0}</span>
               </button>
             ))}
             {ui.shipFilter && <button onClick={()=>setUi('shipFilter','')} style={{fontSize:'12px',fontWeight:600,borderRadius:'980px',padding:'6px 13px',border:'none',cursor:'pointer',background:'#1D1D1F',color:'#fff'}}>{(ui.shipFilter==='arriving'?'Arriving \u226414d':'Overdue')+' \u00d7'}</button>}
@@ -7500,7 +7613,7 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                         {hit
                           ? <span style={{fontSize:'11.5px',color:'#8A8A8E'}}>
                               {hit.via==='so' ? 'sales order' : 'shipment'}
-                              {ship ? ' · '+shipmentStatusLabel(ship.status) : ''}
+                              {ship && <>{' · '}<span style={{color:shipmentStatusStyle(ship.status).fg,fontWeight:600}}>{shipmentStatusLabel(ship.status, modeOf(ship))}</span></>}
                               {ship && ship.container_no ? ' · '+ship.container_no : ''}
                               {hit.via==='so' && !ship ? ' · no shipment yet' : ''}
                               {hit.via==='so' && hit.ships.length>1 ? ' · +'+(hit.ships.length-1)+' more' : ''}
@@ -7564,19 +7677,24 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
         loading ? <div style={{padding:'60px',textAlign:'center',color:'#86868B',fontSize:'14px'}}>Loading…</div>
         : shownShips.length ? (
         <div style={{background:'#fff',borderRadius:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.04)',overflow:'hidden'}}>
-          <div className="ship-manifest-head" style={{display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
-            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Reference</div>
-            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4'}}>Voyage</div>
+          <div className="ship-manifest-head" style={{display:'grid',gridTemplateColumns:SHIP_COLS,gap:'18px',padding:'13px 22px',borderBottom:'1px solid rgba(0,0,0,.06)',background:'#FAFAFB'}}>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'center'}}>Reference</div>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'center'}}>Orders</div>
+            <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'center'}}>Products</div>
+            <div className="ship-voyage" style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'center'}}>Voyage</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>ETD / ETA</div>
             <div style={{fontSize:'10px',fontWeight:600,letterSpacing:'.07em',textTransform:'uppercase',color:'#A0A0A4',textAlign:'right'}}>Arrival</div>
           </div>
           {shownShips.map((s,i)=>{
             const po = ((s.shipment_pos||[])[0]||{}).purchase_orders;
-            const ref = (po||{}).client_po_number || (po||{}).order_number || s.shipment_number || '\u2014';
+            // Reference is our shipment number alone; the orders have their own column.
+            const ref = s.shipment_number || '\u2014';
             const clientName = (((po||{}).client||{}).name || (s.companies||{}).name || '\u2014').toUpperCase();
-            const soPoLine = [ (soNumsForShip[s.id]||[]).length ? 'SO '+soNumsForShip[s.id].join(', ') : null,
-                               (s.shipment_pos||[]).length ? 'PO '+(s.shipment_pos||[]).map(x=>(x.purchase_orders||{}).order_number).filter(Boolean).join(', ') : null ]
-                             .filter(Boolean).join(' \u00b7 ');
+            const sos = soLinksForShip[s.id] || [];
+            const pos = shipPOs(s).filter(x => x.order_number || x.client_po_number);
+            const prods = shipProductSummary(s);
+            // Tracked or Manual on every row: tracked when a provider is set.
+            const trackedRow = !!s.tracking_provider;
             // ETD and ETA are the columns, as the tiles, the filters and the export
             // read them. On a tracked row tracking writes them (script 141).
             const eta = s.estimated_arrival;
@@ -7596,38 +7714,66 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
             // Gated out at the port of discharge: on the road to the client, so a
             // passed ETA is not flagged (lib/shipmentsView.js, gatedOut).
             const gated = gatedOut(s);
-            const overdue = days!==null && days<0 && !gated;
+            // At the port of discharge, not gated out: "At port · N days" in
+            // place of a countdown, and never overdue (lib/shipmentsView.js).
+            const port = atPort(s);
+            const mode = modeOf(s);
+            const overdue = days!==null && days<0 && !gated && !port;
             const delivered = (s.status==='delivered' || s.actual_arrival);
             const frac = delivered ? 1 : progressOf(s.status);
             return (
-              <div key={s.id} onClick={()=>setOpenId(s.id)} className="ship-manifest-row" style={{display:'grid',gridTemplateColumns:'150px 1fr 128px 96px',gap:'18px',padding:'16px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',cursor:'pointer',transition:'.12s',alignItems:'center'}} onMouseEnter={e=>e.currentTarget.style.background='#FAFAFB'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-              <div style={{minWidth:0}}>
-                <div style={{display:'flex',alignItems:'center',gap:'4px',minWidth:0}}>
-                  <div style={{fontFamily:'var(--mono)',fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',minWidth:0}}>{ref}</div>
+              <div key={s.id} data-ship-id={s.id} onClick={()=>setOpenId(s.id)} className="ship-manifest-row" style={{...(s.id===litId ? {background:'#EAF3FE',boxShadow:'inset 3px 0 0 #0A84FF'} : {}),display:'grid',gridTemplateColumns:SHIP_COLS,gap:'18px',padding:'16px 22px',borderTop:i>0?'1px solid #F5F5F7':'none',cursor:'pointer',transition:'.12s',alignItems:'center'}} onMouseEnter={e=>{ if (s.id!==litId) e.currentTarget.style.background='#FAFAFB'; }} onMouseLeave={e=>{ if (s.id!==litId) e.currentTarget.style.background='transparent'; }}>
+              {/* Reference and Orders are centred under their labels (.ship-ref,
+                  .ship-orders in globals.css), left-aligned again at phone width. */}
+              <div className="ship-ref" style={{minWidth:0}}>
+                <div className="ship-ref-line" style={{display:'flex',alignItems:'center',gap:'4px',minWidth:0}}>
+                  <div style={{fontFamily:'var(--mono)',fontSize:'13.5px',fontWeight:600,color:'#1D1D1F',whiteSpace:'normal',overflowWrap:'anywhere',lineHeight:1.3,minWidth:0}}>{ref}</div>
                   {recordExport('shipment', s, 'shipment')}
                 </div>
                 <div style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{clientName}</div>
-                {soPoLine && <div title={soPoLine} style={{fontFamily:'var(--mono)',fontSize:'10.5px',color:'#A0A0A4',marginTop:'2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{soPoLine}</div>}
               </div>
-              <div style={{minWidth:0}}>
+              {/* Orders: the Sales Orders, then the POs, one a line, each a link to its page. */}
+              <div className="ship-orders" style={{minWidth:0,fontFamily:'var(--mono)',fontSize:'11.5px',lineHeight:1.55,color:'#3A3A3E'}}>
+                {sos.map(o => <div key={'so'+o.id} title={'SO '+o.label} style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                  <LinkedRef label={'SO '+o.label} onGo={()=>navigate('so-detail',{id:o.id})} /></div>)}
+                {pos.map(x => <div key={'po'+x.id} title={'PO '+(x.order_number||x.client_po_number)} style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                  <LinkedRef label={'PO '+(x.order_number||x.client_po_number)} onGo={()=>navigate('order-detail',{id:x.id})} /></div>)}
+                {!sos.length && !pos.length && <span style={{color:'#C7C7CC'}}>{'\u2014'}</span>}
+              </div>
+              {/* Products: the SKUs on the linked POs (the client is under Reference), centred. */}
+              <div style={{minWidth:0,textAlign:'center'}}>
+                {/* SKUs only; PO lines linked to no product are a muted "+N
+                    unlinked" (their descriptions in the tooltip). The dash is only
+                    for a shipment whose POs have no lines. */}
+                <div title={[prods.skus.length > 2 ? prods.skus.join(', ') : '', prods.unlinked ? prods.unlinked+' PO line'+(prods.unlinked===1?'':'s')+' without a product: '+prods.descs.join(', ') : ''].filter(Boolean).join(' \u00b7 ') || undefined}
+                  style={{fontFamily:'var(--mono)',fontSize:'12px',color:prods.lines?'#1D1D1F':'#C7C7CC',whiteSpace:'normal',overflowWrap:'anywhere',lineHeight:1.4}}>
+                  {!prods.lines ? '\u2014' : <>
+                    {firstTwo(prods.skus)}{prods.skus.length && prods.unlinked > 0 ? ' ' : ''}
+                    {prods.unlinked > 0 && <span style={{fontFamily:'inherit',color:'#A0A0A4',whiteSpace:'nowrap'}}>{'+'+prods.unlinked+' unlinked'}</span>}
+                  </>}
+                </div>
+              </div>
+              <div className="ship-voyage" style={{minWidth:0}}>
                 <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={overdue?'#FF375F':'#6B7280'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18h18l-2-6H5l-2 6z"/><path d="M12 12V4M8 8h8"/></svg>
-                  <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}><span title={vesselTracked ? 'From tracking' : undefined}>{vessel||'Vessel TBD'}{voyage?' \u00b7 '+voyage:''}</span></span>
+                  <ModeIcon mode={mode} color={overdue?'#FF375F':'#6B7280'} />
+                  <span style={{fontSize:'12.5px',fontWeight:500,color:'#3A3A3E',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}><span title={vesselTracked ? 'From tracking' : undefined}>{vessel||modeFields(mode).vesselTbd}{voyage?' \u00b7 '+voyage:''}</span></span>
                   {s.container_no && <span style={{fontFamily:'var(--mono)',fontSize:'10.5px',color:'#A0A0A4',whiteSpace:'nowrap'}}>{s.container_no}</span>}
-                  {s.tracking_ref && <span title={s.tracking_error || 'Tracked with ShipsGo'} style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',color:s.tracking_error?'#B91C1C':'#0A84FF',background:s.tracking_error?'#FEE2E2':'#EAF3FE'}}>Tracked</span>}
+                  <span title={trackedRow ? (s.tracking_error || 'Tracked with ShipsGo') : 'Kept by hand'} style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',flexShrink:0,
+                    color:trackedRow?(s.tracking_error?'#B91C1C':'#0A84FF'):'#6B7280',background:trackedRow?(s.tracking_error?'#FEE2E2':'#EAF3FE'):'#F2F2F4'}}>{trackedRow ? 'Tracked' : 'Manual'}</span>
                 </div>
                 <div style={{position:'relative',height:'3px',background:'#ECECEE',borderRadius:'2px'}}>
                   <div style={{position:'absolute',left:0,top:0,height:'100%',width:(frac*100)+'%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',borderRadius:'2px',transition:'width .4s'}} />
                   <div style={{position:'absolute',top:'50%',left:(frac*100)+'%',width:'9px',height:'9px',borderRadius:'50%',background:overdue?'#FF375F':delivered?'#30D158':'#0A84FF',transform:'translate(-50%,-50%)',border:'2px solid #fff',boxShadow:'0 1px 2px rgba(0,0,0,.2)'}} />
                 </div>
                 <div style={{fontSize:'10px',color:'#A0A0A4',marginTop:'6px',textTransform:'uppercase',letterSpacing:'.05em'}}>
-                  {legLabel(s.status)}
+                  <ShipmentStatusPill status={s.status} mode={mode} />
+                  {statusSrc[s.id]===TRACKING_NOTE && <span title="Status last set by ShipsGo tracking" style={{textTransform:'none',letterSpacing:0}}>{' \u00b7 ShipsGo'}</span>}
                   {s.tracking_ref && s.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,color:'#B0B0B5'}}>{'ShipsGo: '+trackingWord(s.tracking_status)}</span>}
                 </div>
                 {s.tracking_ref && (
                   <div style={{fontSize:'11px',color:'#86868B',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                    {[lastEv ? trackingEventLabel(lastEv.event_code)+' '+(lastEv.location_name||lastEv.location_code||'')+' '+fmtDateShort(lastEv.event_time) : 'No events yet',
-                      s.tracking_checked_at ? 'checked '+checkedAgo(s.tracking_checked_at) : null].filter(Boolean).join(' · ')}
+                    {lastEv ? trackingEventLabel(lastEv.event_code)+' '+(lastEv.location_name||lastEv.location_code||'')+' '+fmtDateShort(lastEv.event_time) : 'No events yet'}
+                    {s.tracking_checked_at && <span title="Last checked with ShipsGo">{' · Last updated '+checkedAgo(s.tracking_checked_at)}</span>}
                   </div>
                 )}
               </div>
@@ -7644,6 +7790,11 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                   </span>
                 ) : gated ? (
                   <span title="Tracking has the container out of the port" style={{fontSize:'11.5px',fontWeight:600,color:'#86868B'}}>Gated out</span>
+                ) : port ? (
+                  <span title={'At the port of discharge since '+fmtDateShort(s.tracking_ata)+', from tracking'} style={{fontSize:'11.5px',fontWeight:600,color:'#86868B',whiteSpace:'nowrap'}}>
+                    {(() => { const n = portDaysAt(s, Date.now());
+                      return modeFields(mode).arrived+' \u00b7 '+n+' day'+(n===1?'':'s'); })()}
+                  </span>
                 ) : days!==null ? (
                   <>
                     <div style={{fontSize:'16px',fontWeight:700,color:overdue?'#FF375F':'#1D1D1F',fontVariantNumeric:'tabular-nums',lineHeight:1}}>{overdue?'+'+Math.abs(days):days}<span style={{fontSize:'11px',color:'#A0A0A4',fontWeight:400}}>d</span></div>
@@ -7667,10 +7818,12 @@ function Shipments({ onNewShipment, userEmail, displayName = '' }) {
                     onSaved={()=>{setOpenId(null);setTrackNotice(null);setNoticeErr(false);reload();}}
                     onTracked={note=>{setTrackNotice(note);setNoticeErr(false);setOpenKey(k=>k+1);reload();}} />}
       {newTracked && <CreateTrackedShipmentModal onClose={()=>setNewTracked(false)}
-                    onCreated={(id, note, isErr)=>{ setNewTracked(false); setUi('view','shipments'); reload(); reloadDreqs();
-                                                   setTrackNotice(note); setNoticeErr(isErr); setOpenKey(k=>k+1); setOpenId(id); }} />}
+                    onCreated={(id, note, isErr)=>{ setNewTracked(false); setUi('view','shipments'); setUi('shipFilter',''); setUi('search',''); setUi('track','');
+                                                   reload(); reloadDreqs();
+                                                   if (isErr) { setTrackNotice(note); setNoticeErr(true); setOpenKey(k=>k+1); setOpenId(id); }
+                                                   else { window._toast?.(note); setLitId(id); } }} />}
       {/* ── LAND ON THE FREIGHT QUOTE JUST CREATED ──────────────────────────
-          + Freight Quote sits in the page header and is NOT guarded by ui.view,
+          (Before the split, 5 Nov:) + Freight Quote sat in the page header and was NOT guarded by ui.view,
           so it is clickable while the shipments half is on screen -- and the new
           quote then lands in the half nobody is looking at. Moving the view is
           the fix; clearing search stops a stale term hiding it once there.
@@ -8161,6 +8314,8 @@ function ImportBidsModal({ quotes, onClose, onApplied }) {
 
 // ── Apply a winning bid into the product quote's freight builder ─────────────
 const APPLY_CAPS = { '20GP':32, '40GP':58, '40HQ':68, '45HQ':83 };
+const NO_IDS = [];
+const LINK_BTN = { background:'none', border:'none', padding:0, color:'#0071E3', fontSize:'11.5px', fontWeight:600, cursor:'pointer' };
 
 // ── THE PRODUCT QUOTE PICKER ─────────────────────────────────────────────────
 // A searchable combobox in the manner of HtsField: type to filter by product,
@@ -8169,10 +8324,19 @@ const APPLY_CAPS = { '20GP':32, '40GP':58, '40HQ':68, '45HQ':83 };
 // and a guess left in place wrote one bid's freight onto the wrong product.
 // Rows lead with the quote ID and SKU, newest quote first; the freight quote's
 // own product quote, when it has one, is listed first and tagged.
+// detail adds the factory and the carton to each row, for the places a line is
+// being linked to a quote and the carton is what tells two alike quotes apart.
+// suggestIds are listed next and tagged SUGGESTED -- a hint (a name or SKU
+// match), never a choice: nothing is picked until somebody picks.
 const quoteHead = q => [(q.quote_code||'').trim(), (q.sku||'').trim()].filter(Boolean).join(' \u00b7 ');
 const quoteSub = q => [(q.product||'').trim(), (q.client||'').trim()].filter(Boolean).join(' \u00b7 ');
 const quoteLabel = q => [quoteHead(q), quoteSub(q)].filter(Boolean).join(' \u00b7 ') || q.id.slice(0,8);
-function QuotePicker({ quotes, value, onPick, linkedId }) {
+const quoteCarton = q => {
+  const L=Number(q.carton_l)||0, W=Number(q.carton_w)||0, H=Number(q.carton_h)||0, u=Number(q.units_per_carton)||0;
+  if (!(L>0&&W>0&&H>0) && !u) return 'no carton data';
+  return [(L>0&&W>0&&H>0) ? L+'\u00d7'+W+'\u00d7'+H+' cm' : 'no dimensions', u ? u+' pcs/ctn' : 'pcs/ctn not set'].join(' \u00b7 ');
+};
+function QuotePicker({ quotes, value, onPick, linkedId, detail = false, suggestIds = NO_IDS }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState('');
   const [active, setActive] = useState(0);
@@ -8182,8 +8346,9 @@ function QuotePicker({ quotes, value, onPick, linkedId }) {
     // Q-0400 before Q-0399: numeric compare, so Q-1000 will sort above Q-0999.
     const sorted = [...quotes].sort((a, b) => String(b.quote_code||'').localeCompare(String(a.quote_code||''), undefined, { numeric:true }));
     const list = term ? sorted.filter(q => matches(term, q.quote_code, q.sku, q.product, q.client)) : sorted;
-    return linkedId ? [...list.filter(q => q.id === linkedId), ...list.filter(q => q.id !== linkedId)] : list;
-  }, [quotes, term, linkedId]);
+    const rank = q => q.id === linkedId ? 0 : suggestIds.includes(q.id) ? 1 : 2;
+    return [0, 1, 2].flatMap(r => list.filter(q => rank(q) === r));
+  }, [quotes, term, linkedId, suggestIds]);
   useEffect(() => { setActive(0); }, [term, open]);
   // The highlighted row stays in view as the arrows move it.
   useEffect(() => {
@@ -8221,7 +8386,9 @@ function QuotePicker({ quotes, value, onPick, linkedId }) {
                       background: i === active ? '#EAF3FE' : 'transparent', color:'#1A1A1C'}}>
               <span style={{fontWeight:700,fontSize:'14px'}}>{quoteHead(q) || (q.product||'').trim() || '\u2014'}</span>
               {q.id === linkedId && <span style={{fontSize:'10px',fontWeight:700,color:'#15803D',background:'#DCFCE7',borderRadius:'5px',padding:'1px 6px',marginLeft:'7px'}}>LINKED</span>}
+              {q.id !== linkedId && suggestIds.includes(q.id) && <span style={{fontSize:'10px',fontWeight:700,color:'#B45309',background:'#FEF3C7',borderRadius:'5px',padding:'1px 6px',marginLeft:'7px'}}>SUGGESTED</span>}
               <span style={{display:'block',fontSize:'12.5px',color:'#8A8A8E',marginTop:'2px'}}>{quoteSub(q) || '\u00a0'}</span>
+              {detail && <span style={{display:'block',fontSize:'12px',color:'#8A8A8E',marginTop:'1px'}}>{[(q.factory||'').trim() || 'no factory', quoteCarton(q)].join(' \u00b7 ')}</span>}
             </button>
           ))}
         </div>
@@ -8230,11 +8397,13 @@ function QuotePicker({ quotes, value, onPick, linkedId }) {
   );
 }
 
-function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
+function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward, preselectId = null }) {
   // The picker's filter box is data-noguard, so choosing a quote is marked by hand.
   const { ref: cardRef, guardedClose, markDirty } = useDirtyGuard(onClose);
   const [pq, setPq] = useState([]);           // product quotes from the quotes DB
-  const [selId, setSelId] = useState('');
+  // preselectId comes from a breakdown line's "Apply to Q-..." -- the line named
+  // the quote, so that choice was made by whoever clicked it.
+  const [selId, setSelId] = useState(preselectId || '');
   const [busy, setBusy] = useState(false);
   const [loadingQ, setLoadingQ] = useState(true);
 
@@ -8253,7 +8422,7 @@ function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
   // source_quote_id column -- reading one gave undefined, so LINKED never showed.
   // The link is on the line items (line_items[].quote_id), written by the
   // freight generator; the first line that carries one is the one offered.
-  const linkedId = ((shipQuote.line_items||[]).find(l => l && l.quote_id) || {}).quote_id || null;
+  const linkedId = preselectId || ((shipQuote.line_items||[]).find(l => l && l.quote_id) || {}).quote_id || null;
   // LCL: one total for one shipment, with no container to spread it across.
   // The per-container build-up below does not apply, so nothing is offered.
   const lcl = isLCL(shipQuote);
@@ -8365,6 +8534,9 @@ function ApplyBidModal({ bid, shipQuote, onClose, onDone, onAward }) {
 //     the product's own, else a product quote for the same product or SKU.
 //   Otherwise: each line item's pieces, priced from the product quote it came
 //     from (line_items[].quote_id) at its nearest tier, HTS from that quote.
+//     Each such line also carries idx (its place in line_items), desc, linkId
+//     (the quote_id it names) and quoteSku, for linking and unlinking it in the
+//     breakdown; fromPo says the lines came from a PO, which are never linked.
 // The duty rate is the HTS library's total_duty for the code; a line with none
 // is left null for the panel to ask about. A line with no source has no cost.
 async function loadLandedInputs(sq) {
@@ -8390,7 +8562,7 @@ async function loadLandedInputs(sq) {
                hts, dutyRate: dutyRateFor(hts, codes) };
     });
   } else {
-    const li = (sq.line_items || []).filter(Boolean);
+    const li = (sq.line_items || []).map((l, idx) => (l ? { ...l, _idx: idx } : null)).filter(Boolean);
     const ids = li.map(l => l.quote_id).filter(Boolean);
     const { data: qs } = ids.length
       ? await SBQ.from('quotes').select('id,quote_code,sku,product,hts,tiers').in('id', ids)
@@ -8401,17 +8573,20 @@ async function loadLandedInputs(sq) {
       return { label: l.desc || (q && q.product) || 'Item', sku: l.sku || (q && q.sku) || '',
                quoteCode: (q && q.quote_code) || l.quote_code || '',
                qty, unitCost: q ? tierUnitCost(q.tiers, qty) : null,
-               hts: (q && q.hts) || '', dutyRate: q ? dutyRateFor(q.hts, codes) : null };
+               hts: (q && q.hts) || '', dutyRate: q ? dutyRateFor(q.hts, codes) : null,
+               idx: l._idx, desc: l.desc || '', linkId: l.quote_id || null, quoteSku: (q && q.sku) || '' };
     });
   }
-  return { lines, rates: settings || null };
+  return { lines, rates: settings || null, fromPo: !!sq.po_id };
 }
 
 function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
   // A viewer -- no controls at all, so it closes silently. ApplyBidModal opens
   // from here but renders outside this card, so it never joins this snapshot.
-  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
+  const { ref: cardRef, guardedClose, registerSource } = useDirtyGuard(onClose);
   const [applyBid, setApplyBid] = useState(null);
+  // The quote a breakdown line's Apply names; null for the bid's own Apply.
+  const [applyQuoteId, setApplyQuoteId] = useState(null);
   const ctType = quote.container_type||'40HQ';
   const ct = Math.max(1, Number(quote.containers_needed)||1);
   // ── LANDED COST ──
@@ -8431,6 +8606,115 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
     loadLandedInputs(quote).then(res => { if (alive) setLandedIn(res); }).catch(() => { if (alive) setLandedIn({ lines:[], rates:null, failed:true }); });
     return () => { alive = false; };
   },[quote.id]);
+  // ── LINKING A LINE TO ITS PRODUCT QUOTE ──
+  // A line on a freight quote with no PO is costed from the product quote its
+  // line_items entry names (quote_id). An unlinked one -- typed before the SKU
+  // box existed, or typed without it -- can be linked here: the picker lists
+  // the quotes with factory and carton, name and SKU matches first as
+  // SUGGESTED, and nothing is chosen for anyone. The link is written into
+  // line_items on EVERY row of the RFQ group (one row per forwarder, all
+  // holding the same lines), matched by position and description; if any row's
+  // line there reads differently, nothing is written. Unlink takes the link
+  // off the same way. Each write sets updated_at (shipment_quotes has no
+  // trigger) and the breakdown is read again from the database.
+  //
+  // SAVE HTS. A linked quote with no HTS code gets the code picker and "Save to
+  // Q-...": that writes quotes.hts only, stamped updated_at / updated_by as the
+  // quote form stamps a save. The duty % typed in the breakdown is never saved;
+  // the rate comes from the HTS library once the code is there. A code chosen
+  // and not saved makes closing ask.
+  const { codes: htsCodes } = useHtsCodes();
+  const [pq, setPq] = useState(null);          // product quotes, read on first Link
+  const [linkFor, setLinkFor] = useState(null); // the line idx whose picker is open
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [htsDraft, setHtsDraft] = useState({}); // quote id -> code chosen, not saved
+  const htsPending = useRef(false);
+  htsPending.current = Object.values(htsDraft).some(Boolean);
+  useEffect(() => registerSource(htsPending), [registerSource]);
+  const openLink = (idx) => {
+    setLinkFor(linkFor === idx ? null : idx);
+    if (!pq) SBQ.from('quotes').select('id,quote_code,sku,product,client,factory,units_per_carton,carton_l,carton_w,carton_h,hts')
+      .order('created_at',{ascending:false}).limit(2000).then(({ data }) => setPq(data || []));
+  };
+  const normKey = v => String(v || '').toLowerCase().replace(/\s+/g, '');
+  // Name and SKU matches for a line's description -- suggestions only.
+  const suggestFor = desc => {
+    const d = normKey(desc), D = String(desc || '').toUpperCase();
+    if (!d || !pq) return NO_IDS;
+    return pq.filter(q => (q.sku && normKey(q.sku) === d) || (q.product && normKey(q.product) === d)
+      || (q.sku && q.sku.trim().length > 3 && D.includes(q.sku.trim().toUpperCase()))).map(q => q.id).slice(0, 12);
+  };
+  const reloadLanded = async () => {
+    const { data } = await SB.from('shipment_quotes').select('line_items').eq('id', quote.id).maybeSingle();
+    try {
+      setLandedIn(await loadLandedInputs({ ...quote, line_items: data ? data.line_items : quote.line_items }));
+    } catch {
+      setLandedIn({ lines:[], rates:null, failed:true });
+    }
+  };
+  // Rewrites line idx on every row of the RFQ group, or on none. change(line) -> line.
+  const writeLine = async (idx, expectDesc, change) => {
+    setLinkBusy(true);
+    try {
+      const sel = 'id,quote_number,line_items';
+      const { data: rows, error } = quote.rfq_group_id
+        ? await SB.from('shipment_quotes').select(sel).eq('rfq_group_id', quote.rfq_group_id)
+        : await SB.from('shipment_quotes').select(sel).eq('id', quote.id);
+      if (error) { alert('Could not read the freight quote: ' + error.message); return false; }
+      const bad = (rows || []).filter(r => { const l = (r.line_items || [])[idx]; return !l || (l.desc || '') !== expectDesc; });
+      if (!rows || !rows.length || bad.length) {
+        alert('Nothing was changed. Line ' + (idx + 1) + ' does not read \u201c' + expectDesc + '\u201d on '
+          + (bad.map(r => r.quote_number).join(', ') || 'this freight quote') + ', so the RFQ\u2019s rows no longer match.');
+        return false;
+      }
+      const now = new Date().toISOString();
+      for (let n = 0; n < rows.length; n++) {
+        const r = rows[n];
+        const items = r.line_items.slice();
+        items[idx] = change(items[idx]);
+        const { error: uErr } = await SB.from('shipment_quotes').update({ line_items: items, updated_at: now }).eq('id', r.id);
+        if (uErr) { alert('Saved on ' + n + ' of ' + rows.length + ' rows, then: ' + uErr.message); return false; }
+      }
+      return true;
+    } finally {
+      setLinkBusy(false);
+      setCostIn(prev => { const c = { ...prev }; delete c[idx]; return c; });
+      setDutyIn(prev => { const c = { ...prev }; delete c[idx]; return c; });
+      await reloadLanded();
+    }
+  };
+  const linkLine = (line, q) => {
+    setLinkFor(null);
+    writeLine(line.idx, line.desc, l => ({ ...l, quote_id: q.id, quote_code: q.quote_code || null,
+      ...(String(l.sku || '').trim() ? {} : (q.sku ? { sku: q.sku } : {})) }));
+  };
+  // The SKU goes too when it is the quote's own -- the link wrote it there.
+  const unlinkLine = line => {
+    if (!window.confirm('Unlink line ' + (line.idx + 1) + ' (' + (line.desc || 'no description') + ') from ' + (line.quoteCode || 'its quote') + ' on every freight quote of this RFQ?')) return;
+    writeLine(line.idx, line.desc, l => {
+      const rest = { ...l };
+      delete rest.quote_id; delete rest.quote_code;
+      if (rest.sku && line.quoteSku && normKey(rest.sku) === normKey(line.quoteSku)) delete rest.sku;
+      return rest;
+    });
+  };
+  const saveHts = async (line) => {
+    const code = htsDraft[line.linkId];
+    if (!code) return;
+    setLinkBusy(true);
+    try {
+      const { data: cur, error: rErr } = await SBQ.from('quotes').select('hts').eq('id', line.linkId).maybeSingle();
+      if (rErr || !cur) { alert('Could not read ' + (line.quoteCode || 'the quote') + (rErr ? ': ' + rErr.message : '.')); return; }
+      if (String(cur.hts || '').trim()) { alert((line.quoteCode || 'The quote') + ' already has HTS ' + cur.hts + ' \u2014 nothing was changed.'); return; }
+      const { data: { user } } = await SB.auth.getUser();
+      const { error } = await SBQ.from('quotes').update({ hts: code, updated_at: new Date().toISOString(), updated_by: (user && user.email) || null }).eq('id', line.linkId);
+      if (error) { alert('Could not save the HTS code: ' + error.message); return; }
+      setHtsDraft(prev => { const c = { ...prev }; delete c[line.linkId]; return c; });
+    } finally {
+      setLinkBusy(false);
+      await reloadLanded();
+    }
+  };
   const typedNum = (v, positive) => {
     const t = String(v == null ? '' : v).replace(/[$,\s]/g, '');
     const n = Number(t);
@@ -8484,6 +8768,28 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
                     <span style={{fontVariantNumeric:'tabular-nums',whiteSpace:'nowrap'}}>{l.value!=null ? Number(l.qty).toLocaleString()+' \u00d7 '+money2(l.unitCost)+' = '+money2(l.value) : <span style={{color:'#B45309'}}>{l.unitCost==null ? 'no unit cost' : 'no quantity'}</span>}</span>
                   )}
                 </div>
+                {!landedIn.fromPo && l.idx != null && (
+                  <div style={{display:'flex',gap:'10px',flexWrap:'wrap',alignItems:'baseline',marginTop:'2px',fontSize:'11.5px'}}>
+                    {l.linkId
+                      ? <>
+                          <button type="button" disabled={linkBusy} onClick={()=>unlinkLine(l)} style={LINK_BTN}>Unlink</button>
+                          {!lcl && <button type="button" onClick={()=>{ setApplyQuoteId(l.linkId); setApplyBid(b); }} style={LINK_BTN}>{'Apply this bid to '+(l.quoteCode||'its quote')+' \u2192'}</button>}
+                        </>
+                      : <>
+                          <span style={{color:'#B45309',fontWeight:600}}>Unlinked</span>
+                          <button type="button" disabled={linkBusy} onClick={()=>openLink(l.idx)} style={LINK_BTN}>{linkFor===l.idx ? 'Close' : 'Link to quote'}</button>
+                        </>}
+                  </div>
+                )}
+                {linkFor===l.idx && !l.linkId && (
+                  <div style={{margin:'6px 0',padding:'8px',border:'1px solid #E5E7EB',borderRadius:'9px',background:'#fff'}}>
+                    {!pq ? <div style={{fontSize:'12px',color:'#8A8A8E'}}>{'Loading quotes\u2026'}</div> : (
+                      <QuotePicker quotes={pq} value="" detail suggestIds={suggestFor(l.desc)}
+                        onPick={id=>{ const q = pq.find(x=>x.id===id); if (q) linkLine(l, q); }} />
+                    )}
+                    <div style={{fontSize:'11px',color:'#8A8A8E',marginTop:'5px'}}>{'Links this line on every freight quote of the RFQ. Suggested rows match the line\u2019s name or SKU; check the carton before picking.'}</div>
+                  </div>
+                )}
                 {!L.allIn && (
                   <div style={{display:'flex',justifyContent:'space-between',gap:'10px',color:'#8A8A8E',marginTop:'2px',alignItems:'center'}}>
                     <span>{'HTS '+(l.hts||'\u2014')}</span>
@@ -8495,6 +8801,20 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
                         <span>%{l.duty!=null ? ' = '+money2(l.duty) : ''}</span>
                       </span>
                     ) : <span style={{fontVariantNumeric:'tabular-nums'}}>{'duty '+l.dutyRate+'% = '+money2(l.duty)}</span>}
+                  </div>
+                )}
+                {!L.allIn && !landedIn.fromPo && l.linkId && l.quoteCode && !l.hts && (
+                  <div style={{display:'flex',gap:'8px',alignItems:'flex-end',marginTop:'6px'}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <HtsField value={htsDraft[l.linkId]||''} codes={htsCodes} label={(l.quoteCode)+' has no HTS code'}
+                        onChange={code=>setHtsDraft(prev=>({ ...prev, [l.linkId]:code||'' }))}
+                        onAdd={()=>alert('Add a new code from the quote form or the HTS library, then pick it here.')}
+                        inputStyle={{border:'1px solid #E5E7EB',borderRadius:'8px',padding:'6px 9px',fontSize:'12.5px',background:'#fff',minHeight:'34px'}} />
+                    </div>
+                    <button type="button" disabled={linkBusy || !htsDraft[l.linkId]} onClick={()=>saveHts(l)}
+                      style={{background:(!linkBusy && htsDraft[l.linkId])?'#0071E3':'#C7C7CC',color:'#fff',border:'none',borderRadius:'8px',padding:'8px 12px',fontSize:'12px',fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}}>
+                      {'Save to '+l.quoteCode}
+                    </button>
                   </div>
                 )}
               </div>
@@ -8641,7 +8961,7 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
                   {!isSel && <button onClick={()=>selectWinner(b)} style={{background:'#F2F2F6',color:'#1A1A1C',border:'none',borderRadius:'8px',padding:'6px 14px',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>Select winner</button>}
                   {lcl
                     ? <span style={{fontSize:'11.5px',color:'#8A8A8E'}}>LCL freight is entered on the quote by hand</span>
-                    : <button onClick={()=>setApplyBid(b)} title="Write this bid's costs into the product quote's freight build-up" style={{background:'#0071E3',color:'#fff',border:'none',borderRadius:'8px',padding:'6px 14px',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>Apply to quote →</button>}
+                    : <button onClick={()=>{ setApplyQuoteId(null); setApplyBid(b); }} title="Write this bid's costs into the product quote's freight build-up" style={{background:'#0071E3',color:'#fff',border:'none',borderRadius:'8px',padding:'6px 14px',fontSize:'12px',fontWeight:600,cursor:'pointer'}}>Apply to quote →</button>}
                 </div>
               </div>
             );
@@ -8676,16 +8996,89 @@ function BidsCompareModal({ quote, bids, onClose, onDeleted, onAward }) {
           )}
         </div>
       </div>
-      {applyBid && <ApplyBidModal bid={applyBid} shipQuote={quote} onClose={()=>setApplyBid(null)} onAward={onAward} onDone={()=>{ setApplyBid(null); onDeleted&&onDeleted(); alert('Applied. The product quote\'s freight build-up now carries '+(applyBid.forwarder_name||'the bid')+"'s awarded costs."); }} />}
+      {applyBid && <ApplyBidModal bid={applyBid} shipQuote={quote} preselectId={applyQuoteId} onClose={()=>setApplyBid(null)} onAward={onAward} onDone={()=>{ setApplyBid(null); onDeleted&&onDeleted(); alert('Applied. The product quote\'s freight build-up now carries '+(applyBid.forwarder_name||'the bid')+"'s awarded costs."); }} />}
     </div>
   );
+}
+
+// ── THE TRACKING LINE ───────────────────────────────────────────────────────
+// What tracking says about a tracked shipment, in one block, for the pages that
+// show a shipment without being its card: the Sales Order's Logistics &
+// Shipment panel and the PO's Logistics panel. Read only. A manual shipment
+// shows nothing here, so those panels read as before. Vessel and voyage follow
+// the Shipments row: what staff typed when they typed it, else what tracking
+// reports. events are the shipment's shipment_tracking_events.
+function TrackingSummary({ s, events }) {
+  if (!s || !s.tracking_ref) return null;
+  const lastEv = lastActualEvent(events);
+  const vessel = s.vessel_name || s.tracking_vessel;
+  const voyage = s.vessel_name ? s.voyage_no : (s.voyage_no || s.tracking_voyage);
+  const parts = [
+    [vessel, voyage].filter(Boolean).join(' \u00b7 ') || null,
+    s.estimated_departure ? 'ETD '+fmtDateShort(s.estimated_departure) : null,
+    s.tracking_ata ? 'Arrived '+fmtDateShort(s.tracking_ata) : (s.estimated_arrival ? 'ETA '+fmtDateShort(s.estimated_arrival) : null),
+    lastEv ? (trackingEventLabel(lastEv.event_code)+' '+(lastEv.location_name||lastEv.location_code||'')+' '+fmtDateShort(lastEv.event_time)).replace(/\s+/g,' ') : 'No events yet',
+  ].filter(Boolean);
+  return (
+    <div style={{padding:'10px 18px',borderTop:'1px solid var(--line-2)',display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'4px 10px',fontSize:'12.5px',color:'var(--ink-2)'}}>
+      {s.tracking_status && <span title="ShipsGo's own status" style={{color:'var(--muted)'}}>{'ShipsGo: '+trackingWord(s.tracking_status)}</span>}
+      <span>{parts.join(' \u00b7 ')}</span>
+      {s.tracking_checked_at && <span title="Last checked with ShipsGo" style={{color:'var(--muted)'}}>{'Last updated '+checkedAgo(s.tracking_checked_at)}</span>}
+      {s.tracking_error && <div style={{flexBasis:'100%',color:'var(--hot)'}}>{s.tracking_error}</div>}
+    </div>
+  );
+}
+
+// ── SHIPMENT STATUS ON AN ORDER ─────────────────────────────────────────────
+// The Sales Order and PO pages show their shipment's own status here, in the
+// shipment's words (shipmentStatusLabel), with Tracked or Manual and the
+// ShipsGo mark when tracking set it last. The order's own status is shown where
+// it always was and is not touched.
+function ShipmentStatusArea({ s, byTracking }) {
+  if (!s) return null;
+  const tracked = !!s.tracking_ref;
+  return (
+    <div style={{display:'flex',alignItems:'baseline',flexWrap:'wrap',gap:'4px 10px',padding:'10px 18px',borderTop:'1px solid var(--line-2)'}}>
+      <span style={{fontSize:'9px',textTransform:'uppercase',letterSpacing:'.1em',color:'var(--muted)'}}>Shipment status</span>
+      <ShipmentStatusPill status={s.status} size="md" mode={modeOf(s)} />
+      {byTracking && <span title="Status last set by ShipsGo tracking" style={{fontSize:'12px',color:'var(--muted)'}}>{'\u00b7 ShipsGo'}</span>}
+      <span title={tracked ? (s.tracking_error || 'Tracked with ShipsGo') : 'Not tracked -- staff keep this shipment up to date'}
+        style={{fontSize:'9.5px',fontWeight:600,letterSpacing:'.04em',textTransform:'uppercase',padding:'1px 6px',borderRadius:'980px',whiteSpace:'nowrap',
+          color:tracked?(s.tracking_error?'#B91C1C':'#0A84FF'):'#6B7280',background:tracked?(s.tracking_error?'#FEE2E2':'#EAF3FE'):'#F2F2F4'}}>{tracked ? 'Tracked' : 'Manual'}</span>
+    </div>
+  );
+}
+
+// The tracking events of one shipment, for TrackingSummary. [] for a manual one.
+async function trackingEventsOf(sh) {
+  if (!sh || !sh.tracking_ref) return [];
+  const { data } = await SB.from('shipment_tracking_events')
+    .select('event_code,event_status,location_code,location_name,event_time').eq('shipment_id', sh.id);
+  return data || [];
+}
+
+// True when the shipment's latest status change in order_history was written by
+// tracking. False on any error -- the mark is a hint, never a gate.
+async function statusSetByTracking(id) {
+  if (!id) return false;
+  const { data, error } = await SB.from('order_history').select('note').eq('table_name','shipments').eq('row_id', id)
+    .eq('field','status').order('changed_at',{ascending:false}).limit(1);
+  return !error && !!(data && data[0] && data[0].note === TRACKING_NOTE);
 }
 
 // What a Track did, in one line: the move this shipment made, how the tracking
 // was got and what it cost, and the credits left. The result covers every
 // shipment on the B/L (apply_tracking_group); id picks this one's row.
+//
+// A delivered or cancelled row is never written (script 142): Refresh on one
+// reads "Closed \u2014 not updated", and names any open shipments on the same
+// B/L that the same read did refresh.
 function trackOutcomeText(out, id) {
   const rows = (out.result && out.result.rows) || [];
+  if (out.refreshed && !rows.some(x=>x.shipment_id===id) && Number((out.result || {}).closed) > 0) {
+    return 'Closed \u2014 not updated: a delivered or cancelled shipment keeps the tracking it last had.'
+      + (rows.length ? ' Refreshed '+rows.length+' other shipment'+(rows.length===1?'':'s')+' on this B/L, no credit used.' : '');
+  }
   const r = rows.find(x=>x.shipment_id===id) || {};
   const moved = r.moved ? 'Status moved to '+shipmentStatusLabel(r.status_after)+'. ' : '';
   const n = rows.length > 1 ? ' for '+rows.length+' shipments on this B/L' : '';
@@ -8718,15 +9111,26 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
   // "SO # · PO #" for the first box: every PO on this shipment, and every Sales
   // Order those POs are on (the only way a shipment reaches an SO).
   const [soPoLine, setSoPoLine] = useState('');
+  // Was the status last set by tracking (order_history)?
+  const [byTracking, setByTracking] = useState(false);
+  useEffect(()=>{ statusSetByTracking(id).then(setByTracking); },[id]);
   const [companies, setCompanies] = useState([]);
   const [saving, setSaving] = useState(false);
+  // Factory and Quotes & Products, read from the linked POs as the card opens
+  // (lib/shipmentProducts). Display only; null while loading.
+  const [prodInfo, setProdInfo] = useState(null);
+  const [allProd, setAllProd] = useState(false);
+  // The PO lines linked to no product, folded into one line; null follows the
+  // default -- open when no line is linked, shut otherwise.
+  const [showUnl, setShowUnl] = useState(null);
+  useEffect(()=>{ loadShipmentProducts(id).then(setProdInfo); },[id]);
   useEffect(()=>{
     SB.from('shipments').select('*').eq('id',id).single().then(({data})=>{
       setS(data||{}); setOrig(data||{});
       // Same normalising as the Track route: B/L else booking, uppercase, no spaces.
       const num = r => (String(r.bill_of_lading||'').trim() || String(r.booking_number||'').trim()).toUpperCase().replace(/\s+/g,'');
       const mine = data ? num(data) : '';
-      if (mine && !data.tracking_ref) {
+      if (mine && !data.tracking_ref && modeOf(data) === 'ocean') {
         SB.from('shipments').select('id,shipment_number,bill_of_lading,booking_number').eq('tracking_provider','shipsgo').not('tracking_ref','is',null)
           .then(({data:rows})=>setTrackedSibling((rows||[]).find(r=>r.id!==id && num(r)===mine)||null));
       }
@@ -8748,7 +9152,6 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
     })();
   },[id]);
   const set = (k,v)=>setS(prev=>({...prev,[k]:v}));
-  const STAT = ['created','in_transit','at_origin_port','at_transshipment','at_destination_port','customs','out_for_delivery','delivered','delayed','exception','cancelled'];
   const dval = v => v ? String(v).slice(0,10) : '';
   const save = async () => {
     setSaving(true);
@@ -8758,6 +9161,8 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
       client_company_id: s.client_company_id||null, carrier_company_id: s.carrier_company_id||null,
       vessel_name: s.vessel_name||null, container_no: s.container_no||null, voyage_no: s.voyage_no||null,
       booking_number: s.booking_number||null, bill_of_lading: s.bill_of_lading||null,
+      // The mode only when it changed, and never on a tracked shipment (ocean).
+      ...(!tracked && modeOf(s) !== modeOf(orig) ? { transport_mode: modeOf(s) } : {}),
       // While tracked the dates are tracking's (script 141) and the boxes are
       // read-only, so Save leaves them alone -- writing the loaded copy back would
       // undo a date tracking moved since this card opened.
@@ -8783,10 +9188,13 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
   // ── TRACK ─────────────────────────────────────────────────────────────────
   // The route reads the SAVED number, so Track waits until nothing is unsaved --
   // which is also what makes the remount afterwards safe (see openKey above).
-  const EDITABLE = ['shipment_number','status','client_company_id','carrier_company_id','vessel_name','container_no','voyage_no','booking_number','bill_of_lading'];
+  const EDITABLE = ['shipment_number','status','client_company_id','carrier_company_id','vessel_name','container_no','voyage_no','booking_number','bill_of_lading','transport_mode'];
   const unsaved = !!(s && orig) && (EDITABLE.some(k=>(s[k]||'')!==(orig[k]||''))
     || dval(s.estimated_departure)!==dval(orig.estimated_departure) || dval(s.estimated_arrival)!==dval(orig.estimated_arrival));
   const tracked = !!(orig && orig.tracking_ref);
+  // How it travels (script 147) and what its fields are called for that mode.
+  const mode = modeOf(s);
+  const F = modeFields(mode);
   const hasNumber = !!(orig && ((orig.bill_of_lading||'').trim() || (orig.booking_number||'').trim() || (orig.container_no||'').trim()));
   const closed = !tracked && !!orig && ['delivered','cancelled'].includes(orig.status);
   // WHILE TRACKED, THE TRACKED FIELDS ARE READ-ONLY: the numbers tracking was
@@ -8798,6 +9206,8 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
   const roStyle = {opacity:.7,cursor:'default'};
   const roTitle = 'Read from ShipsGo while this shipment is tracked';
   const track = async () => {
+    // A courier parcel number on an ocean row is refused here, before any ShipsGo call.
+    if (mode === 'ocean' && !tracked && isCourierNumber(oceanTrackNumber(orig))) { setTrackErr(COURIER_NUMBER_ERROR); return; }
     setTracking(true); setTrackErr('');
     const out = await trackShipment(id);
     setTracking(false);
@@ -8809,41 +9219,64 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
     <>
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box">
-        <div className="modal-head"><h3>{linkedPO?.order_number || s?.shipment_number || 'Shipment'}</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
+        {/* The shipment's own number, with the Sales Order and POs it reaches
+            beneath -- the same "SO # \u00b7 PO #" the first box shows. */}
+        <div className="modal-head">
+          <div style={{minWidth:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
+              <h3>{s?.shipment_number || linkedPO?.order_number || 'Shipment'}</h3>
+              {orig && <ShipmentStatusPill status={orig.status} size="md" mode={modeOf(orig)} />}
+            </div>
+            {soPoLine && <div title={soPoLine} style={{fontFamily:'var(--mono)',fontSize:'12px',color:'var(--muted)',marginTop:'3px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{soPoLine}</div>}
+          </div>
+          <button className="modal-close" onClick={guardedClose}>×</button>
+        </div>
         {!s ? <div className="modal-body">Loading…</div> : (
         <div className="modal-body">
           <div className="form-row-2">
             {soPoLine
               ? <div><label>SO # · PO #</label><input className="form-input" value={soPoLine} readOnly style={{opacity:.7,cursor:'default'}} title={soPoLine} /></div>
               : <div><label>Shipment #</label><input className="form-input" value={s.shipment_number||''} readOnly style={{opacity:.7,cursor:'default'}} /></div>}
-            <div><label>Status{tracked && orig.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,fontWeight:500,color:'var(--muted)'}}>{'ShipsGo: '+trackingWord(orig.tracking_status)}</span>}</label><select className="form-select" value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{STAT.map(x=><option key={x} value={x}>{shipmentStatusLabel(x)}</option>)}</select></div>
+            <div><label>Status{tracked && orig.tracking_status && <span title="ShipsGo's own status" style={{marginLeft:'6px',textTransform:'none',letterSpacing:0,fontWeight:500,color:'var(--muted)'}}>{'ShipsGo: '+trackingWord(orig.tracking_status)}</span>}</label><select className="form-select" style={statusSelectStyle(s.status||'created')} value={s.status||'created'} onChange={e=>set('status',e.target.value)}>{statusChoices((orig&&orig.status)||s.status||'created', tracked).map(x=><option key={x} value={x} style={OPTION_PLAIN}>{shipmentStatusLabel(x, mode)}</option>)}</select>
+              {byTracking && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'Set by ShipsGo tracking'+(tracked ? ' \u00b7 tracking moves it; staff can mark it Delivered or Cancelled' : '')}</div>}
+              {!byTracking && tracked && <div style={{fontSize:'11.5px',color:'var(--muted)',marginTop:'4px'}}>{'Tracking moves it; staff can mark it Delivered or Cancelled'}</div>}</div>
           </div>
-          <div className="form-row-2">
+          <div className="form-row-3">
             {/* The client the row shows (shipClient): the linked PO's, else the
                 shipment's own. The row is loaded with select('*'), so its own
                 client is named from the companies this card already loads. */}
             <div><label>Client</label><input className="form-input" value={(linkedPO?.client?.name||(companies.find(c=>c.id===s.client_company_id)||{}).name||'—').toUpperCase()} readOnly style={{opacity:.7,cursor:'default',fontWeight:600}} /></div>
+            {/* The linked POs' factories, read-only -- a shipment has no factory of its own. */}
+            <div><label>Factory</label><input className="form-input" readOnly style={{opacity:.7,cursor:'default'}}
+              value={!prodInfo ? 'Loading\u2026' : (prodInfo.factories.join(', ') || '\u2014')} title={prodInfo && prodInfo.factories.length ? prodInfo.factories.join(', ') : 'From the linked POs'} /></div>
             <div><label>Forwarder</label><select className="form-select" value={s.carrier_company_id||''} onChange={e=>set('carrier_company_id',e.target.value)}><option value="">—</option>{companies.filter(c=>['carrier','freight_forwarder'].includes(c.type)).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           </div>
+          <div className="form-row"><label>Mode</label>
+            <select className="form-select" value={mode} onChange={e=>set('transport_mode',e.target.value)} disabled={tracked}
+              title={tracked ? 'A tracked shipment travels by ocean -- ShipsGo tracking is ocean only' : undefined} style={tracked?roStyle:undefined}>
+              {TRANSPORT_MODES.map(m=><option key={m} value={m}>{MODE_LABEL[m]}</option>)}
+            </select></div>
           <div className="form-row-2">
-            <div><label>Vessel / Boat</label>{ro
+            <div><label>{F.vessel}</label>{ro
               ? <input className="form-input" value={s.vessel_name||orig.tracking_vessel||''} readOnly style={roStyle} title={roTitle} />
-              : <input className="form-input" value={s.vessel_name||''} onChange={e=>set('vessel_name',e.target.value)} placeholder="e.g. MAERSK SELETAR" />}</div>
-            <div><label>Voyage #</label>{ro
+              : <input className="form-input" value={s.vessel_name||''} onChange={e=>set('vessel_name',e.target.value)} placeholder={F.vesselPh} />}</div>
+            {F.voyage && <div><label>{F.voyage}</label>{ro
               ? <input className="form-input" value={s.vessel_name ? (s.voyage_no||'') : (s.voyage_no||orig.tracking_voyage||'')} readOnly style={roStyle} title={roTitle} />
-              : <input className="form-input" value={s.voyage_no||''} onChange={e=>set('voyage_no',e.target.value)} placeholder="e.g. 084W" />}</div>
+              : <input className="form-input" value={s.voyage_no||''} onChange={e=>set('voyage_no',e.target.value)} placeholder={F.voyagePh} />}</div>}
           </div>
           <div className="form-row-2">
-            <div><label>Container #</label><input className="form-input" value={s.container_no||''} onChange={e=>set('container_no',e.target.value)} placeholder="e.g. MSKU1234567"
-              readOnly={roBox} style={roBox?roStyle:undefined} title={roBox?roTitle:(ro?'Not on the tracked B/L -- correct it, save, then Refresh tracking':undefined)} /></div>
+            {F.container && <div><label>{F.container}</label><input className="form-input" value={s.container_no||''} onChange={e=>set('container_no',e.target.value)} placeholder="e.g. MSKU1234567"
+              readOnly={roBox} style={roBox?roStyle:undefined} title={roBox?roTitle:(ro?'Not on the tracked B/L -- correct it, save, then Refresh tracking':undefined)} /></div>}
             <div><label>Booking #</label><input className="form-input" value={s.booking_number||''} onChange={e=>set('booking_number',e.target.value)}
               readOnly={ro} style={ro?roStyle:undefined} title={ro?roTitle:undefined} /></div>
           </div>
-          <div className="form-row"><label>Bill of Lading</label>
+          <div className="form-row"><label>{F.number}</label>
             <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
               <input className="form-input" style={ro?{flex:1,...roStyle}:{flex:1}} value={s.bill_of_lading||''} onChange={e=>set('bill_of_lading',e.target.value)}
                 readOnly={ro} title={ro?roTitle:undefined} />
-              <button type="button" className="btn btn-ghost btn-sm" style={{flexShrink:0,whiteSpace:'nowrap'}}
+              {mode !== 'ocean' && mode !== 'air' && !tracked
+                ? <span style={{fontSize:'12px',color:'var(--muted)',whiteSpace:'nowrap'}} title="ShipsGo tracks ocean shipments only">{'Tracking for this mode is coming'}</span>
+                : <button type="button" className="btn btn-ghost btn-sm" style={{flexShrink:0,whiteSpace:'nowrap'}}
                       disabled={tracking || !hasNumber || unsaved || closed} onClick={track}
                       title={!hasNumber ? 'Save a bill of lading, booking number or container number first'
                         : unsaved ? 'Save your changes first — tracking uses the saved number'
@@ -8852,7 +9285,7 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
                         : trackedSibling ? (trackedSibling.shipment_number||'Another shipment')+' on this B/L is already tracked — this attaches to it, free'
                         : 'Start ShipsGo tracking — uses 1 credit, free if ShipsGo already tracks this number. Every shipment on this B/L is attached'}>
                 {tracking ? 'Tracking…' : tracked ? 'Refresh tracking' : trackedSibling ? 'Track (free, B/L already tracked)' : 'Track (1 credit)'}
-              </button>
+              </button>}
             </div>
             {(trackErr || notice) && <div style={{fontSize:'12px',marginTop:'6px',color:(trackErr||noticeErr)?'var(--hot)':'var(--muted)'}}>{trackErr || notice}</div>}
           </div>
@@ -8869,15 +9302,55 @@ function ShipmentDetailModal({ id, onClose, onSaved, onTracked, notice = null, n
               : <div><label>ETA</label><input type="date" className="form-input" value={dval(s.estimated_arrival)} onChange={e=>set('estimated_arrival',e.target.value)}
                   readOnly={ro} style={ro?roStyle:undefined} title={ro?'From tracking':undefined} /></div>}
           </div>
+          {/* QUOTES & PRODUCTS: one line per product across the linked POs, with
+              the quote its Sales Order line names, else its latest quote. Read-only,
+              built as the card opens; past six lines it folds. PO lines linked to no
+              product fold into one muted line, open when nothing is linked. */}
+          <span className="form-section-label">{'Quotes & Products'}{prodInfo && prodInfo.lines.length ? ' ('+prodInfo.lines.length+')' : ''}</span>
+          <div style={{marginBottom:'14px'}}>
+            {!prodInfo ? <div style={{fontSize:'12px',color:'var(--muted)'}}>{'Loading\u2026'}</div>
+              : prodInfo.error ? <div style={{fontSize:'12px',color:'var(--hot)'}}>{'Could not read the products: '+prodInfo.error}</div>
+              : !prodInfo.lines.length && !prodInfo.unlinked.count ? <div style={{fontSize:'12px',color:'var(--muted)'}}>{'No lines on the linked POs.'}</div>
+              : <>
+                {(allProd ? prodInfo.lines : prodInfo.lines.slice(0, 6)).map(l => (
+                  <div key={l.key} style={{display:'grid',gridTemplateColumns:'minmax(90px,auto) 1fr auto',gap:'10px',alignItems:'baseline',fontSize:'12.5px',padding:'4px 0',borderTop:'1px solid var(--line-2)'}}>
+                    <span style={{fontFamily:'var(--mono)',fontSize:'11.5px',color:'var(--ink)',whiteSpace:'nowrap'}}>{l.sku || '\u2014'}</span>
+                    <span style={{minWidth:0}}>
+                      <span style={{display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={l.name}>{l.name || '\u2014'}</span>
+                      {l.companies.length > 0 && <span style={{display:'block',fontSize:'11px',color:'var(--muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={l.companies.join('; ')}>{l.companies.join('; ')}</span>}
+                    </span>
+                    <span title={quoteVia(l.quote)} style={{fontFamily:'var(--mono)',fontSize:'11.5px',whiteSpace:'nowrap',color:l.quote?'var(--ink-2)':'var(--faint)'}}>{l.quote ? l.quote.code : '\u2014'}</span>
+                  </div>
+                ))}
+                {prodInfo.lines.length > 6 && <button type="button" className="btn btn-ghost btn-sm" style={{marginTop:'6px'}} onClick={()=>setAllProd(v=>!v)}>
+                  {allProd ? 'Show fewer' : 'Show all '+prodInfo.lines.length}</button>}
+                {prodInfo.unlinked.count > 0 && (() => {
+                  const open = showUnl === null ? !prodInfo.lines.length : showUnl;
+                  const n = prodInfo.unlinked.count;
+                  return (
+                    <div style={{fontSize:'12px',color:'var(--muted)',padding:'5px 0',borderTop:'1px solid var(--line-2)'}}>
+                      <span>{'+'+n+' PO line'+(n===1?'':'s')+' without a product \u00b7 '}</span>
+                      <button type="button" onClick={()=>setShowUnl(!open)} style={{background:'none',border:'none',padding:0,font:'inherit',color:'var(--muted)',textDecoration:'underline',textUnderlineOffset:'2px',cursor:'pointer'}}>{open ? 'Hide' : 'Show'}</button>
+                      {open && prodInfo.unlinked.descs.map(d => (
+                        <div key={d.text} style={{fontStyle:'italic',paddingLeft:'10px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={d.text}>{d.text+(d.n > 1 ? ' \u00d7'+d.n : '')}</div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </>}
+          </div>
           {(tracked || events.length > 0) && (
             <>
               <span className="form-section-label">Tracking</span>
               <div style={{fontSize:'12.5px',color:'var(--ink-2)',lineHeight:1.6,marginBottom:'8px'}}>
-                {[orig.tracking_container ? 'Following container '+orig.tracking_container : null,
-                  orig.tracking_status, [orig.tracking_vessel, orig.tracking_voyage].filter(Boolean).join(' / ') || null,
-                  orig.tracking_eta ? 'ETA '+fmtDateShort(orig.tracking_eta) : null,
-                  orig.tracking_ata ? 'arrived '+fmtDateShort(orig.tracking_ata) : null,
-                  orig.tracking_checked_at ? 'checked '+checkedAgo(orig.tracking_checked_at) : null].filter(Boolean).join(' · ') || 'Waiting for ShipsGo'}
+                {(() => {
+                  const info = [orig.tracking_container ? 'Following container '+orig.tracking_container : null,
+                    orig.tracking_status, [orig.tracking_vessel, orig.tracking_voyage].filter(Boolean).join(' / ') || null,
+                    orig.tracking_eta ? 'ETA '+fmtDateShort(orig.tracking_eta) : null,
+                    orig.tracking_ata ? 'arrived '+fmtDateShort(orig.tracking_ata) : null].filter(Boolean).join(' · ');
+                  if (!info && !orig.tracking_checked_at) return 'Waiting for ShipsGo';
+                  return <>{info}{orig.tracking_checked_at && <span title="Last checked with ShipsGo">{(info ? ' · ' : '')+'Last updated '+checkedAgo(orig.tracking_checked_at)}</span>}</>;
+                })()}
                 {orig.tracking_error && <div style={{color:'var(--hot)'}}>{orig.tracking_error}</div>}
               </div>
               {/* The timeline. A filled dot is an actual movement, a hollow one an
@@ -9695,7 +10168,7 @@ function CreateShipmentModal({ onClose, onCreated }) {
   const [pos, setPos] = useState([]);
   const [form, setForm] = useState({
     number: `SHP-${Date.now().toString(36).slice(-5).toUpperCase()}`,
-    client:'', carrier:'', bol:'', etd:'', eta:'', status:'created', inco:'', poId:''
+    client:'', carrier:'', bol:'', etd:'', eta:'', status:'created', inco:'', poId:'', mode:'ocean'
   });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   // A note to post once the record exists (OrderNoteDraft): nothing is saved
@@ -9709,7 +10182,7 @@ function CreateShipmentModal({ onClose, onCreated }) {
   },[]);
   const clients  = companies.filter(c=>['client','brand','customer'].includes(c.type));
   const carriers = companies.filter(c=>['carrier','freight_forwarder'].includes(c.type));
-  const STATUSES = ['created','in_transit','at_origin_port','at_transshipment','at_destination_port','customs','out_for_delivery','delivered','delayed','exception','cancelled'];
+  const STATUSES = SHIPMENT_STATUS_ORDER;
   const submit = async () => {
     if (!form.number) { alert('Shipment number required'); return; }
     const { data: ship, error } = await SB.from('shipments').insert({
@@ -9720,6 +10193,8 @@ function CreateShipmentModal({ onClose, onCreated }) {
       estimated_departure: form.etd ? new Date(form.etd+'T12:00:00').toISOString() : null,
       estimated_arrival:   form.eta ? new Date(form.eta+'T12:00:00').toISOString() : null,
       status: form.status,
+      // Only a mode other than the column default is sent (script 147).
+      ...(form.mode !== 'ocean' ? { transport_mode: form.mode } : {}),
     }).select('id').single();
     if (error) { alert('Error: '+error.message); return; }
     if (form.poId) await SB.from('shipment_pos').insert({ shipment_id: ship.id, purchase_order_id: form.poId });
@@ -9735,13 +10210,16 @@ function CreateShipmentModal({ onClose, onCreated }) {
         <div className="modal-body">
           <div className="form-row-2">
             <div><label>Shipment # *</label><input className="form-input" value={form.number} onChange={e=>f('number')(e.target.value)} /></div>
-            <div><label>Status</label><select className="form-select" value={form.status} onChange={e=>f('status')(e.target.value)}>{STATUSES.map(s=><option key={s} value={s}>{shipmentStatusLabel(s)}</option>)}</select></div>
+            <div><label>Status</label><select className="form-select" style={statusSelectStyle(form.status)} value={form.status} onChange={e=>f('status')(e.target.value)}>{STATUSES.map(s=><option key={s} value={s} style={OPTION_PLAIN}>{shipmentStatusLabel(s, form.mode)}</option>)}</select></div>
           </div>
           <div className="form-row-2">
             <div><label>Client</label><select className="form-select" value={form.client} onChange={e=>f('client')(e.target.value)}><option value="">—</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
             <div><label>Forwarder</label><select className="form-select" value={form.carrier} onChange={e=>f('carrier')(e.target.value)}><option value="">—</option>{carriers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           </div>
-          <div className="form-row"><label>Bill of Lading</label><input className="form-input" value={form.bol} onChange={e=>f('bol')(e.target.value)} /></div>
+          <div className="form-row-2">
+            <div><label>Mode</label><select className="form-select" value={form.mode} onChange={e=>f('mode')(e.target.value)}>{TRANSPORT_MODES.map(m=><option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select></div>
+            <div><label>{modeFields(form.mode).number}</label><input className="form-input" value={form.bol} onChange={e=>f('bol')(e.target.value)} /></div>
+          </div>
           <div className="form-row-2">
             <div><label>ETD</label><input type="date" className="form-input" value={form.etd} onChange={e=>f('etd')(e.target.value)} /></div>
             <div><label>ETA</label><input type="date" className="form-input" value={form.eta} onChange={e=>f('eta')(e.target.value)} /></div>
@@ -9784,10 +10262,15 @@ function CreateShipmentModal({ onClose, onCreated }) {
 // forwarder by hand stops the filling.
 function CreateTrackedShipmentModal({ onClose, onCreated }) {
   const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
+  // A note to post once the shipment exists (OrderNoteDraft), as New Shipment
+  // does: nothing is saved until then, and an empty box posts nothing.
+  const staff = useStaff();
+  const [noteText, setNoteText] = useState('');
+  const [noteTo, setNoteTo] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [sos, setSos] = useState([]);
   const [links, setLinks] = useState([]);   // sales_order_pos with the PO's number
-  const [form, setForm] = useState({ client:'', soId:'', poIds:[], bol:'', box:'', forwarder:'' });
+  const [form, setForm] = useState({ client:'', soId:'', poIds:[], bol:'', box:'', forwarder:'', mode:'ocean' });
   const [fwdHint, setFwdHint] = useState('');
   const [fwdManual, setFwdManual] = useState(false);
   const [poShips, setPoShips] = useState({});   // PO id -> shipments it already has
@@ -9864,25 +10347,34 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
   },[poKey, form.client, fwdManual]);
 
   const clean = v => String(v||'').trim().toUpperCase().replace(/\s+/g,'');
+  // An AWB as saved: NNN-NNNNNNNN, or null when it is not 3 + 8 digits.
+  const awbOk = v => { const d = String(v||'').replace(/[\s-]/g,''); return /^[0-9]{11}$/.test(d) ? d.slice(0,3)+'-'+d.slice(3) : null; };
   const submit = async () => {
     setErr('');
+    const air = form.mode === 'air';
     if (!form.client) { setErr('Pick the client, or a Sales Order that has one.'); return; }
     if (so && !ticked.length) { setErr('Tick at least one of the Sales Order’s POs, or choose no Sales Order.'); return; }
-    if (!clean(form.bol) && !clean(form.box)) { setErr('Enter a bill of lading or a container number -- tracking needs one.'); return; }
+    if (air && !awbOk(form.bol)) { setErr('Enter the AWB -- the airline prefix and 8 digits, e.g. 160-12345678.'); return; }
+    if (!air && !clean(form.bol) && !clean(form.box)) { setErr('Enter a bill of lading or a container number -- tracking needs one.'); return; }
+    if (!air && isCourierNumber(form.bol)) { setErr(COURIER_NUMBER_ERROR); return; }
     setBusy(true);
     const { data: ship, error } = await SB.from('shipments').insert({
       shipment_number: number,
       status: 'created',
       client_company_id: form.client,
       carrier_company_id: form.forwarder || null,
-      bill_of_lading: clean(form.bol) || null,
-      container_no: clean(form.box) || null,
+      bill_of_lading: air ? awbOk(form.bol) : (clean(form.bol) || null),
+      container_no: air ? null : (clean(form.box) || null),
+      ...(air ? { transport_mode: 'air' } : {}),
     }).select('id').single();
     if (error) { setBusy(false); setErr('Could not save the shipment: '+error.message); return; }
     if (ticked.length) {
       const { error:lErr } = await SB.from('shipment_pos').insert(ticked.map(p=>({ shipment_id: ship.id, purchase_order_id: p.id })));
       if (lErr) window._toast?.('Shipment saved, but linking the Sales Order’s POs failed: '+lErr.message,'err');
     }
+    // The note goes on before Track, so it is there whatever tracking says. It
+    // cannot fail the shipment: whatever happens is said in a toast.
+    await postNoteAfterCreate({ what:'Shipment', column:'shipment_id', orderId:ship.id, body:noteText, picked:noteTo, staff });
     const out = await trackShipment(ship.id);
     setBusy(false);
     if (out.ok) onCreated(ship.id, trackOutcomeText(out, ship.id), false);
@@ -9921,24 +10413,36 @@ function CreateTrackedShipmentModal({ onClose, onCreated }) {
             )}
             {shared.map(({p, others})=>(
               <div key={p.id} style={{fontSize:'12px',marginTop:'6px',color:'#B45309'}}>
-                {'PO '+p.number+' is also on '+others.map(o=>'SO '+(o.so_number||o.order_number||'?')).join(', ')+' — that Sales Order’s status will follow this shipment too.'}
+                {'PO '+p.number+' is also on '+others.map(o=>'SO '+(o.so_number||o.order_number||'?')).join(', ')+' — this shipment will show on that Sales Order too.'}
               </div>
             ))}
             {already.length > 0 && <div style={{fontSize:'12px',marginTop:'6px',color:'var(--muted)'}}>{already.map(p=>'PO '+p.number+' already has '+poShips[p.id]+' shipment'+(poShips[p.id]===1?'':'s')).join('; ')+'; this adds another (one per container is normal).'}</div>}
           </div>
+          {/* Ocean tracks by B/L or container; air by its AWB alone (script 148). */}
+          <div className="form-row"><label>Mode</label>
+            <select className="form-select" value={form.mode} onChange={e=>f('mode')(e.target.value)}>{TRANSPORT_MODES.map(m=><option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select>
+          </div>
+          {form.mode === 'air' ? <>
+            <div className="form-row"><label>AWB</label><input className="form-input" value={form.bol} onChange={e=>f('bol')(e.target.value)} placeholder="e.g. 160-12345678" /></div>
+            <div style={{fontSize:'12px',color:'var(--muted)',margin:'-4px 0 12px',lineHeight:1.5}}>
+              {'The air waybill: the airline\u2019s 3-digit prefix and 8 digits, with or without the dash. ShipsGo tracks the AWB for 1 credit, free if it already tracks it. The shipment\u2019s live status shows on the Sales Order and its POs.'}
+            </div>
+          </> : <>
           <div className="form-row-2">
             <div><label>Bill of Lading</label><input className="form-input" value={form.bol} onChange={e=>f('bol')(e.target.value)} placeholder="e.g. CMDUXIA2035159" /></div>
             <div><label>Container #</label><input className="form-input" value={form.box} onChange={e=>f('box')(e.target.value)} placeholder="e.g. MSKU1234567" /></div>
           </div>
           <div style={{fontSize:'12px',color:'var(--muted)',margin:'-4px 0 12px',lineHeight:1.5}}>
-            One is enough. With a B/L, every live shipment on it is tracked together for one credit (free if one is already tracked); a container alone is tracked on its own. The Sales Order and its POs move with the shipment status.
+            One is enough. With a B/L, every live shipment on it is tracked together for one credit (free if one is already tracked); a container alone is tracked on its own. The shipment's live status shows on the Sales Order and its POs.
           </div>
+          </>}
           <div className="form-row"><label>Forwarder</label>
             <select className="form-select" value={form.forwarder} onChange={e=>{ setFwdManual(true); setFwdHint(''); f('forwarder')(e.target.value); }}>
               <option value="">—</option>{forwarders.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
             {fwdHint && <div style={{fontSize:'12px',marginTop:'6px',color:'var(--muted)'}}>{fwdHint}</div>}
           </div>
+          <OrderNoteDraft staff={staff} text={noteText} setText={setNoteText} to={noteTo} setTo={setNoteTo} disabled={busy} />
           {err && <div style={{fontSize:'12.5px',color:'var(--hot)',marginTop:'4px'}}>{err}</div>}
         </div>
         <div className="modal-foot">
@@ -10329,6 +10833,9 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
   // { kind:'none', text } | { kind:'pick', options } | { kind:'confirm', quote, fill, clash, others }
   // | { kind:'note', text }.
   const [skuMsg, setSkuMsg] = useState({});
+  // The line (_k) whose Pick quote list is open. Picking runs the same
+  // offerQuote as the SKU box: fill, or ask before replacing what is there.
+  const [pickFor, setPickFor] = useState(null);
   // _k -> true once the SKU box has been typed in since its last lookup. Leaving
   // the box looks up only then, so tabbing through a saved line's SKU on a
   // reopened RFQ asks nothing; Enter always looks up.
@@ -10424,8 +10931,10 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
   const cartonSig = q => { const x = fillOf(q); return x.upc+'|'+x.cbmPer+'|'+x.weight; };
   const setMsg = (k, m) => setSkuMsg(prev => { const n = { ...prev }; if (m) n[k] = m; else delete n[k]; return n; });
 
+  // A SKU typed in the line's box stays; a line filled by Pick quote takes the
+  // quote's SKU, so the saved line names it either way.
   const applyFill = (k, q, fill, others) => {
-    setLines(prev=>prev.map(l=>l._k===k ? { ...l, ...fill, quoteId:q.id, quoteCode:q.quote_code||'' } : l));
+    setLines(prev=>prev.map(l=>l._k===k ? { ...l, ...fill, sku: l.sku.trim() ? l.sku : (q.sku||''), quoteId:q.id, quoteCode:q.quote_code||'' } : l));
     const notes = [];
     if (others>0) notes.push(others+' other quote'+(others===1?' has':'s have')+' this SKU with the same carton');
     if (!fill.upc && !fill.cbmPer && !fill.weight) notes.push('that quote has no carton data, so only the description was filled');
@@ -10747,8 +11256,10 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
             </div>
             {lines.map((l,i)=>{
               const lineCbm = (Number(l.cartons)||0)*(Number(l.cbmPer)||0);
-              const linePcs = (Number(l.cartons)||0)*(Number(l.upc)||0);
               const m = skuMsg[l._k];
+              // Under the SKU box: Pick quote while the box is empty, the source
+              // once the line is linked. A typed SKU not yet looked up shows neither.
+              const showPick = !l.sku.trim() || l.quoteId || pickFor===l._k;
               return (
                 <div key={l._k} style={{marginBottom:'6px'}}>
                 <div style={{display:'grid',gridTemplateColumns:LINE_COLS,gap:'6px',alignItems:'center'}}>
@@ -10763,10 +11274,31 @@ function ShipmentQuoteModal({ data, onClose, onSaved }) {
                   <div style={{fontSize:'12.5px',fontWeight:600,color:'#1A1A1C',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>{lineCbm>0?lineCbm.toFixed(3):'—'}</div>
                   <button type="button" onClick={()=>rmLine(i)} style={{background:'none',border:'none',color:'#C0C0C4',cursor:'pointer',fontSize:'17px',lineHeight:1}}>×</button>
                 </div>
-                {(linePcs>0 || l.quoteId) && (
-                  <div style={{fontSize:'10.5px',color:'#8A8A8E',paddingLeft:'10px',marginTop:'3px',display:'flex',gap:'12px',flexWrap:'wrap'}}>
-                    {l.quoteId && <span>from <b style={{fontFamily:'var(--mono)',color:'#3461e0'}}>{l.quoteCode||'a quote'}</b></span>}
-                    {linePcs>0 && <span>= {fmtNum(linePcs)} pcs</span>}
+                {showPick && (
+                  <div style={{display:'grid',gridTemplateColumns:LINE_COLS,gap:'6px',marginTop:'4px'}}>
+                    <div style={{gridColumn:(l.quoteId && pickFor!==l._k) ? '1 / 3' : '1 / 2',display:'flex',alignItems:'center',
+                      justifyContent:(l.quoteId && pickFor!==l._k) ? 'flex-start' : 'center',gap:'6px',fontSize:'12px',color:'#8A8A8E',whiteSpace:'nowrap'}}>
+                      {l.quoteId && pickFor!==l._k
+                        ? <>
+                            <span>from <b style={{fontFamily:'var(--mono)',color:'#3461e0'}}>{l.quoteCode||'a quote'}</b></span>
+                            <span>{'\u00b7'}</span>
+                            <button type="button" onClick={()=>setPickFor(l._k)} title="Fill this line from a different product quote"
+                              style={{background:'none',border:'none',padding:0,color:'#0071E3',fontSize:'12px',fontWeight:500,cursor:'pointer'}}>Pick another quote</button>
+                          </>
+                        : <button type="button" onClick={()=>setPickFor(pickFor===l._k ? null : l._k)}
+                            title="Fill this line from a product quote and link it to that quote"
+                            style={{background:'none',border:'none',padding:0,fontFamily:'var(--mono)',fontSize:'12px',fontWeight:700,color:'#3461e0',cursor:'pointer',position:'relative',left:'-4px'}}>
+                            {pickFor===l._k ? 'Close' : 'Pick quote'}
+                          </button>}
+                    </div>
+                  </div>
+                )}
+                {pickFor===l._k && (
+                  <div style={{...SKU_PANEL}}>
+                    {!quotesReady ? 'Quotes are still loading\u2026' : (
+                      <QuotePicker quotes={products} value={l.quoteId} detail
+                        onPick={id=>{ const q=products.find(x=>x.id===id); setPickFor(null); if (q) { markDirty(); offerQuote(l._k, q); } }} />
+                    )}
                   </div>
                 )}
                 {m && (m.kind==='none' || m.kind==='note') && (
@@ -12194,7 +12726,7 @@ export default function App() {
   if (hasProfile === false) return <div className="loading" style={{paddingTop:'40vh'}}>Loading...</div>;
 
   // Pages that draw their own action row at the top; the shared row stays off.
-  const SELF_HEADED = ['dashboard','sales-orders','testing','codes','inventory','shipments','pricing','programs'];
+  const SELF_HEADED = ['dashboard','sales-orders','testing','codes','inventory','shipments','freight-quotes','pricing','programs'];
   // Companies and Purchase Orders draw their + New in their own rows, so today
   // no page uses the shared row; it stays for a page whose actions have nowhere else.
   const showActionsRow = !SELF_HEADED.includes(page) && page !== 'so-detail' && page !== 'order-detail'
@@ -12249,7 +12781,8 @@ export default function App() {
           {page===PRICING_PAGE && PRICING_ENABLED && <Pricing />}
           {page==='programs'         && <Programs userEmail={user?.email||''}
                                                   canOpenTesting={!allowedPages || allowedPages.includes('testing')} />}
-          {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} userEmail={user?.email||''} displayName={displayName} />}
+          {page==='shipments'        && <Shipments key={shipmentsRefresh} onNewShipment={()=>setModal('create-shipment')} userEmail={user?.email||''} displayName={displayName} navigate={navigate} />}
+          {page==='freight-quotes'   && <Shipments key={'fq'+shipmentsRefresh} section="freight" userEmail={user?.email||''} displayName={displayName} navigate={navigate} />}
           {page==='inventory'        && <Inventory />}
           {/* role and user are already in this scope for the gate and the header;
               onDisplayName is the shell's own setter, so saving a name in My Account

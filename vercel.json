@@ -10,7 +10,7 @@
     },
     {
       "path": "/api/tracking/refresh",
-      "schedule": "0 12 * * *"
+      "schedule": "0 * * * *"
     }
   ]
 }
