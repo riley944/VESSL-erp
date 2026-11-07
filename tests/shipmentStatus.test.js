@@ -3,7 +3,9 @@ import { lastActualEvent, shipmentStatusLabel } from '@/lib/shipmentStatus';
 
 describe('shipment status', () => {
   it('uses readable labels and falls back for unknown statuses', () => {
-    expect(shipmentStatusLabel('out_for_delivery')).toBe('Out for Delivery');
+    expect(shipmentStatusLabel('out_for_delivery')).toBe('Gate out');
+    expect(shipmentStatusLabel('out_for_delivery', 'ocean')).toBe('Gate out');
+    expect(shipmentStatusLabel('out_for_delivery', 'air')).toBe('Out for Delivery');
     expect(shipmentStatusLabel('awaiting_pickup')).toBe('awaiting pickup');
   });
 
