@@ -5,3 +5,6 @@ node_modules/
 .next/
 .next-build/
 tmp/
+supabase/.temp/
+supabase/.branches/
+supabase/migrations/*_remote_schema.sql
