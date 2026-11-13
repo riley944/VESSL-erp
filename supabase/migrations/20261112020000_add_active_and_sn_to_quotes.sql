@@ -7,6 +7,7 @@ alter table vessl.companies
 
 alter table vessl.quotes
   add column style_number text,
+  add column active boolean not null default true,
   add constraint quotes_style_number_key unique (style_number);
 
 comment on column vessl.companies.last_style_iteration is
