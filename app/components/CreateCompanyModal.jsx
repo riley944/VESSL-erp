@@ -80,7 +80,11 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
   const typeLabel = (COMPANY_TYPES.find(([v]) => v === form.type) || [null, 'Company'])[1];
   const word = noun && form.type === initialType ? noun : (TYPE_NOUN[form.type] || typeLabel);
   const submit = async () => {
-    if (!form.name) { alert(word + ' name required'); return; }
+    // TRIMMED BEFORE ANYTHING READS IT. A trailing space saved here made the quote
+    // form's client link miss (it trims the quote's text and looks for an exact
+    // name), and a name of spaces alone is no name.
+    const typed = (form.name || '').trim();
+    if (!typed) { alert(word + ' name required'); return; }
     // ── A CARRIER'S TRACKING PAGE, AND ITS NAME IN ANY CASE ─────────────────
     // companies.tracking_url (script 85) is the carrier tracking page with
     // {number} where the number goes, and the database refuses any other shape,
@@ -95,7 +99,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     if (url && !(url.startsWith('https') && url.includes('{number}'))) {
       alert('The tracking URL must start with https and contain {number} where the tracking number goes.'); return;
     }
-    let name = form.name;
+    let name = typed;
     if (form.type === 'carrier') {
       const { data: same } = await SB.from('companies').select('name').eq('type', 'carrier');
       const hit = (same || []).find(c => (c.name || '').trim().toLowerCase() === name.trim().toLowerCase());
@@ -126,9 +130,9 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     // created here is the row those two fields get typed into later.
     try {
       if (form.type==='client') {
-        await SBQ.from('client_contacts').insert({client:form.name,contact:form.cname||null,email:form.cemail||null,phone:form.phone||null}).select();
+        await SBQ.from('client_contacts').insert({client:typed,contact:form.cname||null,email:form.cemail||null,phone:form.phone||null}).select();
       } else if (form.type==='factory') {
-        await SBQ.from('factory_presets').insert({factory:form.name,factory_email:form.email||null,factory_phone:form.phone||null,country:form.country||null}).select();
+        await SBQ.from('factory_presets').insert({factory:typed,factory_email:form.email||null,factory_phone:form.phone||null,country:form.country||null}).select();
       }
     } catch(e) {}
     // THE TYPE TRAVELS BACK, because the Companies list is fetched per type and
