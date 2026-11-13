@@ -5642,13 +5642,16 @@ function CompanyDetailModal({ id, onClose, onSaved }) {
   };
 
   const save = async () => {
-    if(!form.name){alert('Name required');return;}
+    // Trimmed, as CreateCompanyModal does: a stray space breaks the quote form's
+    // exact-name client link, and a name of spaces alone is no name.
+    const name = (form.name||'').trim();
+    if(!name){alert('Name required');return;}
     // A carrier's tracking page, checked with the rule script 85 put on the
     // column. Any other type writes null, so a company moved off Carrier does
     // not keep a pattern nothing reads.
     const trackUrl = form.type==='carrier' ? (form.tracking_url||'').trim() : '';
     if(trackUrl && !(trackUrl.startsWith('https') && trackUrl.includes('{number}'))){alert('The tracking URL must start with https and contain {number} where the tracking number goes.');return;}
-    await SB.from('companies').update({tracking_url:trackUrl||null,name:form.name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,kui_ior:form.type==='client'?iorFromSelect(form.kui_ior):null,po_notes:form.po_notes||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null}).eq('id',id);
+    await SB.from('companies').update({tracking_url:trackUrl||null,name,type:form.type,email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,kui_ior:form.type==='client'?iorFromSelect(form.kui_ior):null,po_notes:form.po_notes||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null}).eq('id',id);
     // DELETES FIRST. A row being removed must not be counted when the primary is
     // settled below, and doing them last would mean writing is_primary onto a
     // row that is about to disappear.
