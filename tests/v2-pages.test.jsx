@@ -6,14 +6,15 @@ import HomePage from '@/app/v2/page';
 import QuotesPage from '@/app/v2/quotes/page';
 import QuotePage from '@/app/v2/quotes/[id]/page';
 import ProductPage from '@/app/v2/products/[id]/page';
+import SectionPage from '@/app/v2/[section]/page';
 
 const mock = vi.hoisted(() => ({
-  session: null, profile: null, pages: [], detail: null, id: 'record-1',
+  session: null, profile: null, pages: [], detail: null, id: 'record-1', pathname: '/v2',
   signOut: vi.fn(), unsubscribe: vi.fn(), from: vi.fn(), authCallback: null, queries: [],
 }));
 
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a> }));
-vi.mock('next/navigation', () => ({ useParams: () => ({ id: mock.id }) }));
+vi.mock('next/navigation', () => ({ useParams: () => ({ id: mock.id }), usePathname: () => mock.pathname, notFound: () => { throw new Error('NEXT_NOT_FOUND'); } }));
 vi.mock('@/app/m/MLogin', () => ({ MLogin: () => <div>Login form</div> }));
 vi.mock('@/lib/supabase', () => ({ SB: {
   auth: {
@@ -39,6 +40,8 @@ beforeEach(() => {
   mock.pages = [{ data: [], error: null }];
   mock.detail = Promise.resolve({ data: null, error: null });
   mock.id = 'record-1';
+  mock.pathname = '/v2';
+  localStorage.clear();
   mock.queries = [];
   mock.signOut.mockReset();
   mock.unsubscribe.mockReset();
@@ -54,6 +57,66 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('V2 home and staff access', () => {
+  it('shows navigation, highlights the current section and remembers the hidden menu', async () => {
+    mock.pathname = '/v2/quotes/record-1';
+    render(<HomePage />);
+    const nav = await screen.findByRole('navigation', { name: 'Main navigation' });
+    const quotes = within(nav).getByRole('link', { name: /Quotes/ });
+    expect(quotes.getAttribute('href')).toBe('/v2/quotes');
+    expect(quotes.getAttribute('aria-current')).toBe('page');
+    expect(within(nav).getByRole('link', { name: 'Samples' }).getAttribute('href')).toBe('/v2/samples');
+    await userEvent.click(screen.getByRole('button', { name: 'Hide menu' }));
+    expect(localStorage.getItem('vessl-v2-menu-hidden')).toBe('1');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Show menu' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Show menu' }));
+    expect(localStorage.getItem('vessl-v2-menu-hidden')).toBe('0');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Hide menu' }));
+  });
+
+  it('restores a hidden menu and closes the drawer on Escape, backdrop, and navigation', async () => {
+    localStorage.setItem('vessl-v2-menu-hidden', '1');
+    const user = userEvent.setup();
+    render(<HomePage />);
+    await screen.findByRole('heading', { name: 'Welcome, Monica.' });
+    expect(screen.getByRole('button', { name: 'Show menu' })).toBeTruthy();
+    const menu = screen.getByRole('button', { name: 'Menu', hidden: true });
+    // jsdom does not apply media queries; exercise the mobile control directly.
+    await act(async () => { menu.click(); });
+    expect(menu.getAttribute('aria-expanded')).toBe('true');
+    await user.keyboard('{Escape}');
+    expect(menu.getAttribute('aria-expanded')).toBe('false');
+    await act(async () => { menu.click(); });
+    await user.click(screen.getByRole('button', { name: 'Close menu' }));
+    expect(menu.getAttribute('aria-expanded')).toBe('false');
+    await act(async () => { menu.click(); });
+    const samples = screen.getByRole('link', { name: 'Samples' });
+    samples.addEventListener('click', event => event.preventDefault(), { once: true });
+    await user.click(samples);
+    expect(menu.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('renders all mockup destinations with placeholder counts', async () => {
+    render(<HomePage />);
+    const nav = await screen.findByRole('navigation', { name: 'Main navigation' });
+    const links = within(nav).getAllByRole('link');
+    expect(links.map(link => link.getAttribute('href'))).toEqual([
+      '/v2/todos', '/v2/quotes', '/v2/samples', '/v2/orders', '/v2/production',
+      '/v2/shipments', '/v2/freight-quotes', '/v2/clients', '/v2/products',
+      '/v2/factories', '/v2/forwarders', '/v2/codes',
+    ]);
+    expect(within(nav).getByLabelText('8 need attention (placeholder)')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Help' }).getAttribute('href')).toBe('/v2/help');
+  });
+
+  it('renders known placeholder destinations and rejects unknown routes', async () => {
+    mock.pathname = '/v2/samples';
+    render(await SectionPage({ params: Promise.resolve({ section: 'samples' }) }));
+    expect(await screen.findByRole('heading', { name: 'Samples' })).toBeTruthy();
+    expect(screen.getByText('This page is coming soon.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Samples' }).getAttribute('aria-current')).toBe('page');
+    await expect(SectionPage({ params: Promise.resolve({ section: 'unknown' }) })).rejects.toThrow('NEXT_NOT_FOUND');
+  });
+
   it('shows loading before the session resolves', () => {
     mock.session = new Promise(() => {});
     render(<HomePage />);
