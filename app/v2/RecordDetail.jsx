@@ -43,7 +43,7 @@ function Detail({ type }) {
   const record = result.data;
   const tiers = isQuote && record ? quoteTiers(record) : [];
   return <main className={s.main}>
-    <Link className={s.back} href="/v2/quotes">← Quotes</Link>
+    <Link className={s.back} href={isQuote ? '/v2/quotes' : '/v2/products'}>← {isQuote ? 'Quotes' : 'Products'}</Link>
     {result.loading ? <p className={s.message}>Loading {type}…</p> : result.error ? <p className={s.message} role="alert">Could not load {type}: {result.error.message}</p> : !record ? <p className={s.message}>{isQuote ? 'Quote' : 'Product'} not found.</p> : <>
       <p className={s.eyebrow}>{isQuote ? 'Quote' : 'Product'}</p>
       <h1>{(isQuote ? record.product_row?.style_number : record.style_number) || (isQuote ? record.quote_code : record.name) || (isQuote ? 'Quote details' : 'Product details')}</h1>

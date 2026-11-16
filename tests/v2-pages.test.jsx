@@ -11,11 +11,11 @@ import SectionPage from '@/app/v2/[section]/page';
 
 const mock = vi.hoisted(() => ({
   session: null, profile: null, pages: [], detail: null, id: 'record-1', pathname: '/v2',
-  signOut: vi.fn(), unsubscribe: vi.fn(), from: vi.fn(), authCallback: null, queries: [],
+  signOut: vi.fn(), unsubscribe: vi.fn(), from: vi.fn(), authCallback: null, queries: [], searchParams: '',
 }));
 
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a> }));
-vi.mock('next/navigation', () => ({ useParams: () => ({ id: mock.id }), usePathname: () => mock.pathname, notFound: () => { throw new Error('NEXT_NOT_FOUND'); } }));
+vi.mock('next/navigation', () => ({ useParams: () => ({ id: mock.id }), usePathname: () => mock.pathname, useSearchParams: () => new URLSearchParams(mock.searchParams), notFound: () => { throw new Error('NEXT_NOT_FOUND'); } }));
 vi.mock('@/app/m/MLogin', () => ({ MLogin: () => <div>Login form</div> }));
 vi.mock('@/lib/supabase', () => ({ SB: {
   auth: {
@@ -42,6 +42,7 @@ beforeEach(() => {
   mock.detail = Promise.resolve({ data: null, error: null });
   mock.id = 'record-1';
   mock.pathname = '/v2';
+  mock.searchParams = '';
   localStorage.clear();
   mock.queries = [];
   mock.signOut.mockReset();
@@ -83,6 +84,31 @@ describe('V2 client details', () => {
     render(<ClientPage />);
     expect((await screen.findByRole('alert')).textContent).toContain('Database unavailable');
   });
+});
+
+it('opens quotes filtered by client id, including legacy unlinked quotes, and can clear the filter', async () => {
+  mock.searchParams = 'clientId=client-1&clientName=Acme';
+  mock.pages = [{ data: [
+    quote('1', { client_company_id: 'client-1' }),
+    quote('2', { client_company_id: 'client-2', company: { name: 'Acme' } }),
+    quote('3', { client_company_id: null, company: null, client: 'Acme' }),
+  ], error: null }];
+  const user = userEvent.setup();
+  render(<QuotesPage />);
+  expect(await screen.findByText('Q-1')).toBeTruthy();
+  expect(screen.getByText('Q-3')).toBeTruthy();
+  expect(screen.queryByText('Q-2')).toBeNull();
+  expect(screen.getByLabelText('Client').value).toBe('Acme');
+  await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+  expect(screen.getByText('Q-2')).toBeTruthy();
+});
+
+it('keeps the selected client visible when it has no quotes', async () => {
+  mock.searchParams = 'clientId=client-1&clientName=Acme';
+  mock.pages = [{ data: [quote('2', { client_company_id: 'client-2', company: { name: 'Other' } })], error: null }];
+  render(<QuotesPage />);
+  expect(await screen.findByText('No quotes match these filters.')).toBeTruthy();
+  expect(screen.getByLabelText('Client').value).toBe('Acme');
 });
 
 describe('V2 home and staff access', () => {
@@ -339,7 +365,7 @@ describe.each([['quote', QuotePage], ['product', ProductPage]])('V2 %s detail pa
     mock.detail = new Promise(r => { resolve = r; });
     render(<Page />);
     expect(await screen.findByText(`Loading ${type}…`)).toBeTruthy();
-    expect(screen.getByRole('link', { name: '← Quotes' }).getAttribute('href')).toBe('/v2/quotes');
+    expect(screen.getByRole('link', { name: type === 'quote' ? '← Quotes' : '← Products' }).getAttribute('href')).toBe(type === 'quote' ? '/v2/quotes' : '/v2/products');
     resolve({ data: null, error: null });
     expect(await screen.findByText(`${type === 'quote' ? 'Quote' : 'Product'} not found.`)).toBeTruthy();
     expect(mock.queries).toContainEqual(expect.objectContaining({ table: type === 'quote' ? 'quotes' : 'products', column: 'id', value: 'record-1' }));

@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { SB } from '@/lib/supabase';
 import V2Shell from '../V2Shell';
 import s from './quotes.module.css';
@@ -10,13 +11,19 @@ const BATCH = 1000;
 const TABS = ['Incomplete', 'Needs approval', 'Ready to send', 'Waiting on the client', 'All open'];
 
 function QuotesList() {
+  const params = useSearchParams();
+  const requestedId = params.get('clientId') || '';
+  const requestedName = params.get('clientName') || '';
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [client, setClient] = useState('');
+  const [clientId, setClientId] = useState('');
   const [sort, setSort] = useState('style');
   const [tab, setTab] = useState('All open');
   const [retry, setRetry] = useState(0);
+
+  useEffect(() => { setClientId(requestedId); setClient(requestedId ? requestedName : ''); }, [requestedId, requestedName]);
 
   useEffect(() => {
     let active = true;
@@ -26,7 +33,7 @@ function QuotesList() {
       const all = [];
       for (let start = 0; ; start += BATCH) {
         const { data, error: err } = await SB.from('quotes')
-          .select('id,product_id,quote_code,sku,product,client,factory,created_at,updated_at,company:companies!client_company_id(name),product_row:products!product_id(style_number)')
+          .select('id,product_id,client_company_id,quote_code,sku,product,client,factory,created_at,updated_at,company:companies!client_company_id(name),product_row:products!product_id(style_number)')
           .order('id', { ascending: true }).range(start, start + BATCH - 1);
         if (!active) return;
         if (err) { setError(err.message); return; }
@@ -43,10 +50,10 @@ function QuotesList() {
     return () => { active = false; };
   }, [retry]);
 
-  const clients = useMemo(() => [...new Set((rows || []).map(q => q.clientName).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [rows]);
+  const clients = useMemo(() => [...new Set([...(rows || []).map(q => q.clientName), clientId ? client : ''].filter(Boolean))].sort((a, b) => a.localeCompare(b)), [rows, clientId, client]);
   const shown = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return (rows || []).filter(q => (!client || q.clientName === client) &&
+    return (rows || []).filter(q => (clientId ? q.client_company_id === clientId || (!q.client_company_id && !!client && q.clientName === client) : !client || q.clientName === client) &&
       (!term || [q.style, q.sku, q.product, q.clientName, q.factory, q.quote_code].some(v => (v || '').toLowerCase().includes(term))))
       .sort((a, b) => {
         if (sort === 'new' || sort === 'old') {
@@ -56,7 +63,7 @@ function QuotesList() {
         const key = sort === 'client' ? 'clientName' : 'style';
         return (a[key] || '\uffff').localeCompare(b[key] || '\uffff', undefined, { numeric: true }) || (a.quote_code || '').localeCompare(b.quote_code || '', undefined, { numeric: true });
       });
-  }, [rows, search, client, sort]);
+  }, [rows, search, client, clientId, sort]);
 
   return <main className={s.main}>
     <Link href="/v2" className={s.back}>← V2 home</Link>
@@ -68,9 +75,9 @@ function QuotesList() {
     <p className={s.preview}>Status tabs are a preview. All quotes are shown.</p>
     <div className={s.filters}>
       <input type="search" placeholder="Search style, client or product" aria-label="Search quotes" value={search} onChange={e => setSearch(e.target.value)} />
-      <label>Client <select value={client} onChange={e => setClient(e.target.value)}><option value="">All clients</option>{clients.map(c => <option key={c}>{c}</option>)}</select></label>
+      <label>Client <select value={client} onChange={e => { setClientId(''); setClient(e.target.value); }}><option value="">All clients</option>{clients.map(c => <option key={c}>{c}</option>)}</select></label>
       <label>Sort <select value={sort} onChange={e => setSort(e.target.value)}><option value="style">Style number</option><option value="client">Client</option><option value="new">Last edited, newest first</option><option value="old">Last edited, oldest first</option></select></label>
-      {(search || client || sort !== 'style') && <button className={s.clear} onClick={() => { setSearch(''); setClient(''); setSort('style'); }}>Clear filters</button>}
+      {(search || client || clientId || sort !== 'style') && <button className={s.clear} onClick={() => { setSearch(''); setClient(''); setClientId(''); setSort('style'); }}>Clear filters</button>}
     </div>
     <div className={s.card}>
       {error ? <div className={s.empty} role="alert">Could not load quotes. {error} <button onClick={() => setRetry(n => n + 1)}>Try again</button></div> : !rows ? <p className={s.empty}>Loading quotes…</p> : !shown.length ? <p className={s.empty}>{rows.length ? 'No quotes match these filters.' : 'No quotes found.'}</p> : <>
@@ -90,5 +97,5 @@ function QuotesList() {
 }
 
 export default function QuotesPage() {
-  return <V2Shell><QuotesList /></V2Shell>;
+  return <V2Shell><Suspense fallback={<main className={s.main}>Loading quotes…</main>}><QuotesList /></Suspense></V2Shell>;
 }
