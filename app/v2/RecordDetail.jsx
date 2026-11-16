@@ -16,6 +16,13 @@ function list(value) {
   try { const parsed = JSON.parse(value || '[]'); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
 }
 
+function quoteTiers(record) {
+  const tiers = list(record.tiers).filter(tier => tier && typeof tier === 'object' && !Array.isArray(tier));
+  if (tiers.length) return tiers;
+  if (record.qty != null || record.landed != null) return [{ qty: record.qty, landed: record.landed }];
+  return [];
+}
+
 function Detail({ type }) {
   const { id } = useParams();
   const isQuote = type === 'quote';
@@ -34,7 +41,7 @@ function Detail({ type }) {
   }, [id, isQuote]);
 
   const record = result.data;
-  const tiers = isQuote && record ? list(record.tiers) : [];
+  const tiers = isQuote && record ? quoteTiers(record) : [];
   return <main className={s.main}>
     <Link className={s.back} href="/v2/quotes">← Quotes</Link>
     {result.loading ? <p className={s.message}>Loading {type}…</p> : result.error ? <p className={s.message} role="alert">Could not load {type}: {result.error.message}</p> : !record ? <p className={s.message}>{isQuote ? 'Quote' : 'Product'} not found.</p> : <>
@@ -67,15 +74,23 @@ function Detail({ type }) {
       </section>
       {isQuote && <section className={s.card}>
         <h2>Quantity tiers</h2>
-        {tiers.length ? <div className={s.tiers}>{tiers.map((tier, index) => <div className={s.tier} key={index}>
+        {tiers.length ? <div className={s.tiers}>{tiers.map((tier, index) => {
+          const quantities = list(tier.sizeQty).filter(item => item && item.qty !== '' && item.qty != null && Number.isFinite(Number(item.qty)));
+          const sizeCosts = list(tier.sizeCost).filter(item => item && typeof item === 'object');
+          const quantity = quantities.length ? quantities.reduce((sum, item) => sum + Number(item.qty), 0) : tier.qty;
+          return <div className={s.tier} key={index}>
           <h3>Tier {index + 1}</h3>
           <dl className={s.fields}>
-            <Field label="Quantity" value={tier.qty} />
-            <Field label="Factory price" value={tier.landed} />
-            <Field label="Client price" value={tier.client} />
+            <Field label="Quantity" value={quantity} />
+            <Field label={sizeCosts.length ? 'Base factory price' : 'Factory price'} value={tier.landed} />
+            <Field label={sizeCosts.length ? 'Base client price' : 'Client price'} value={tier.client} />
           </dl>
-          {(list(tier.sizeQty).length > 0 || list(tier.sizeCost).length > 0) && <p className={s.note}>This tier also has size-specific quantities or prices.</p>}
-        </div>)}</div> : <p className={s.note}>No quantity tiers recorded.</p>}
+          {(quantities.length > 0 || sizeCosts.length > 0) && <div className={s.sizeDetails}>
+            <h4>Size details</h4>
+            {quantities.map((item, i) => <p key={`qty-${i}`}>{[item.scale, item.size].filter(Boolean).join(' / ') || 'Unspecified size'}: {item.qty} units</p>)}
+            {sizeCosts.map((item, i) => <p key={`cost-${i}`}>{[item.scale, item.size].filter(Boolean).join(' / ') || 'Unspecified size'}: {[item.landed != null && item.landed !== '' ? `factory ${item.landed}` : null, item.client != null && item.client !== '' ? `client ${item.client}` : null, item.mold != null && item.mold !== '' ? `mold fee ${item.mold}` : null].filter(Boolean).join(' · ') || 'No size-specific prices'}</p>)}
+          </div>}
+        </div>; })}</div> : <p className={s.note}>No quantity tiers recorded.</p>}
       </section>}
       {isQuote && record.notes && <section className={s.card}><h2>Notes</h2><p className={s.notes}>{record.notes}</p></section>}
     </>}

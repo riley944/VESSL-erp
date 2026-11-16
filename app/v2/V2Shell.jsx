@@ -12,9 +12,17 @@ export default function V2Shell({ children }) {
   const [profile, setProfile] = useState(null);
 
   useEffect(() => {
-    SB.auth.getSession().then(({ data: { session: current } }) => setSession(current || null));
-    const { data: { subscription } } = SB.auth.onAuthStateChange((_event, current) => setSession(current || null));
-    return () => subscription.unsubscribe();
+    let active = true;
+    let authEventSeen = false;
+    SB.auth.getSession().then(({ data: { session: current } }) => {
+      if (active && !authEventSeen) setSession(current || null);
+    });
+    const { data: { subscription } } = SB.auth.onAuthStateChange((_event, current) => {
+      authEventSeen = true;
+      setProfile(previous => previous?.email === current?.user?.email ? previous : null);
+      setSession(current || null);
+    });
+    return () => { active = false; subscription.unsubscribe(); };
   }, []);
 
   const email = session?.user?.email || '';
