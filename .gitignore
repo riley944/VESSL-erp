@@ -5,3 +5,8 @@ node_modules/
 .next/
 .next-build/
 tmp/
+
+# Supabase directory
+supabase/.*
+
+agents.md
