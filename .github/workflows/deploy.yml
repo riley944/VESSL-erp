@@ -1,0 +1,67 @@
+name: Deploy
+
+on:
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Test, migrate and deploy
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'production' || 'develop' }}
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm test
+      - name: Install Vercel CLI
+        run: npm install --global vercel@41.7.3
+      - name: Pull Vercel settings
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+      - name: Build deployment
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.67.1
+      - name: Apply Supabase migrations
+        run: |
+          supabase init
+          supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+          supabase db push --password "$SUPABASE_DB_PASSWORD"
+      - name: Deploy to Vercel
+        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+
+  notify-failure:
+    name: Notify Slack on failure
+    needs: deploy
+    if: ${{ always() && needs.deploy.result == 'failure' }}
+    runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      BRANCH: ${{ github.ref_name }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Report failure
+        run: |
+          test -n "$SLACK_WEBHOOK_URL" || { printf '%s\n' 'SLACK_WEBHOOK_URL is not configured'; exit 1; }
+          payload=$(jq -n --arg branch "$BRANCH" --arg url "$RUN_URL" '{text: ("VESSL deployment failed for " + $branch + ". See " + $url)}')
+          curl --fail-with-body --silent --show-error -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL"

@@ -22,5 +22,5 @@
 
 - Verify the resulting tables and constraints locally. Supabase records applied migrations, so repeating `migration up` applies only pending files.
 - Keep applied migration files unchanged; make a new migration for later changes. Commit the migration file alongside the application code that needs it.
-- Local migrations do not update production. Review the pending migration and target before deploying to a remote project.
+- Local migrations do not update remote projects. The deployment workflow applies pending migrations to the configured develop or production project after tests and a successful build. Review migrations and their compatibility with the running app before merging. See [deployment setup](deployment.md).
 - The older files in `sql/` are manual scripts; `migration up` reads `supabase/migrations/` instead.
