@@ -6,6 +6,7 @@ import HomePage from '@/app/v2/page';
 import QuotesPage from '@/app/v2/quotes/page';
 import QuotePage from '@/app/v2/quotes/[id]/page';
 import ProductPage from '@/app/v2/products/[id]/page';
+import ClientPage from '@/app/v2/clients/[id]/page';
 import SectionPage from '@/app/v2/[section]/page';
 
 const mock = vi.hoisted(() => ({
@@ -50,11 +51,39 @@ beforeEach(() => {
       ? { ilike: (column, value) => { mock.queries.push({ table, columns, column, value }); return mock.profile; } }
       : {
           order: (order, options) => ({ range: (start, end) => { mock.queries.push({ table, columns, order, options, start, end }); return Promise.resolve(mock.pages[start / 1000] || { data: [], error: null }); } }),
-          eq: (column, value) => ({ maybeSingle: () => { mock.queries.push({ table, columns, column, value }); return mock.detail; } }),
+          eq: (column, value) => {
+            mock.queries.push({ table, columns, column, value });
+            const detail = { maybeSingle: () => mock.detail, eq: (nextColumn, nextValue) => { mock.queries.push({ table, columns, column: nextColumn, value: nextValue }); return detail; } };
+            return detail;
+          },
         },
   }));
 });
 afterEach(() => cleanup());
+
+describe('V2 client details', () => {
+  it('loads a client by id and shows its details', async () => {
+    mock.detail = Promise.resolve({ data: { id: 'record-1', name: 'Acme', email: 'hello@acme.test', phone: '555-0100' }, error: null });
+    render(<ClientPage />);
+    expect(await screen.findByRole('heading', { name: 'Acme' })).toBeTruthy();
+    expect(screen.getByText('hello@acme.test')).toBeTruthy();
+    expect(mock.queries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ table: 'companies', column: 'id', value: 'record-1' }),
+      expect.objectContaining({ table: 'companies', column: 'type', value: 'client' }),
+    ]));
+  });
+
+  it('shows when a client cannot be found', async () => {
+    render(<ClientPage />);
+    expect(await screen.findByText('Client not found.')).toBeTruthy();
+  });
+
+  it('shows client loading errors', async () => {
+    mock.detail = Promise.resolve({ data: null, error: { message: 'Database unavailable' } });
+    render(<ClientPage />);
+    expect((await screen.findByRole('alert')).textContent).toContain('Database unavailable');
+  });
+});
 
 describe('V2 home and staff access', () => {
   it('shows navigation, highlights the current section and remembers the hidden menu', async () => {

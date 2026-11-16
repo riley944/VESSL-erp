@@ -9,6 +9,7 @@ import { isStaffEmail } from '@/lib/access';
 import { MLogin } from '@/app/m/MLogin';
 import s from './v2.module.css';
 import { navigation, help } from './navigation';
+import GlobalSearch from './GlobalSearch';
 
 export default function V2Shell({ children }) {
   const [session, setSession] = useState(undefined);
@@ -93,6 +94,7 @@ export default function V2Shell({ children }) {
       <header className={s.header}>
         {hidden && <button ref={showButtonRef} className={s.showButton} type="button" aria-label="Show menu" onClick={() => toggleHidden(false)}><PanelLeftOpen size={18} /></button>}
         <button className={s.mobileButton} type="button" aria-expanded={mobileOpen} aria-controls="v2-menu" onClick={() => setMobileOpen(!mobileOpen)}><Menu size={18} /> Menu</button>
+        <GlobalSearch />
         <span className={s.badge}>V2 preview</span>
       </header>
       {children || <main className={s.main}>

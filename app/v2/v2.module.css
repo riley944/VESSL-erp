@@ -71,6 +71,15 @@
 .sidebar a:focus-visible, .sidebar button:focus-visible { outline: 2px solid #f6edcc; outline-offset: 2px; }
 .content { min-width: 0; overflow-y: auto; }
 .shell .header { min-height: 58px; padding: 10px 24px; justify-content: flex-start; border-color: #eaeaea; }
+.globalSearch { position: relative; display: flex; align-items: center; gap: 9px; width: min(420px, 100%); min-width: 0; padding: 0 12px; height: 38px; border: 1px solid #d8dce0; border-radius: 10px; color: #64748b; background: #f8faf9; }
+.globalSearch:focus-within { border-color: #008a25; }
+.globalSearch input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #0f172a; font: inherit; font-size: 14px; }
+.searchResults { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 15; max-height: 360px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 10px; background: white; box-shadow: 0 8px 24px #0f172a1a; color: #334155; }
+.searchResults p { margin: 0; padding: 14px; font-size: 13px; }
+.searchResult { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; color: #0f172a; text-decoration: none; font-size: 14px; }
+.searchResult:hover, .searchResult:focus-visible { background: #f2faf4; outline-color: #008a25; }
+.searchResult small { display: block; color: #64748b; margin-top: 2px; }
+.searchType { color: #64748b; font-size: 12px; }
 .mobileButton, .backdrop { display: none; }
 @media (min-width: 641px) and (max-height: 900px) {
   .sidebar { padding: 14px 12px; }
@@ -88,6 +97,8 @@
   .mobileOpen .backdrop { display: block; position: fixed; inset: 0; z-index: 10; border: 0; background: rgba(16,24,40,.35); }
   .hideButton, .showButton { display: none; }
   .mobileButton { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border: 1px solid #eaeaea; border-radius: 10px; background: white; font: 600 15px Inter, system-ui, sans-serif; cursor: pointer; }
+  .shell .header { padding: 10px 12px; gap: 8px; }
+  .badge { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .sidebar { transition: none; } }
 
