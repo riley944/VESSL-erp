@@ -4,7 +4,7 @@ set local search_path = extensions, public;
 select plan(10);
 
 insert into vessl.companies (id, name) values
-  ('a1b20000-0000-4000-8000-000000000001', 'Acme pgTAP fixture'),
+  ('a1b20000-0000-4000-8000-000000000001', 'Zqx pgTAP fixture'),
   ('c3d40000-0000-4000-8000-000000000002', 'Bravo pgTAP fixture');
 
 insert into vessl.products (id, name, client_company_id) values
@@ -12,18 +12,18 @@ insert into vessl.products (id, name, client_company_id) values
   ('10000000-0000-4000-8000-000000000002', 'Second product', 'a1b20000-0000-4000-8000-000000000001'),
   ('10000000-0000-4000-8000-000000000003', 'Other company product', 'c3d40000-0000-4000-8000-000000000002');
 
-select is((select style_number from vessl.products where id = '10000000-0000-4000-8000-000000000001'), 'ACM-00001-A1B2', 'first product receives the expected style number');
-select is((select style_number from vessl.products where id = '10000000-0000-4000-8000-000000000002'), 'ACM-00002-A1B2', 'second product receives the next style number');
+select is((select style_number from vessl.products where id = '10000000-0000-4000-8000-000000000001'), 'ZQX-00001-A1B2', 'first product receives the expected style number');
+select is((select style_number from vessl.products where id = '10000000-0000-4000-8000-000000000002'), 'ZQX-00002-A1B2', 'second product receives the next style number');
 select is((select last_style_iteration from vessl.companies where id = 'a1b20000-0000-4000-8000-000000000001'), 2, 'company counter advances per product');
 select is((select style_number from vessl.products where id = '10000000-0000-4000-8000-000000000003'), 'BRA-00001-C3D4', 'another company has its own sequence');
 
 update vessl.products set name = 'Renamed product' where id = '10000000-0000-4000-8000-000000000001';
-select is((select style_number from vessl.products where id = '10000000-0000-4000-8000-000000000001'), 'ACM-00001-A1B2', 'updating a product preserves its style number');
+select is((select style_number from vessl.products where id = '10000000-0000-4000-8000-000000000001'), 'ZQX-00001-A1B2', 'updating a product preserves its style number');
 select is((select last_style_iteration from vessl.companies where id = 'a1b20000-0000-4000-8000-000000000001'), 2, 'updating a product does not advance the counter');
 
-insert into vessl.companies (id, name) values ('a1b20000-0000-4000-8000-000000000003', 'Acme collision fixture');
+insert into vessl.companies (id, name) values ('a1b20000-0000-4000-8000-000000000003', 'Zqx collision fixture');
 insert into vessl.products (id, client_company_id) values ('10000000-0000-4000-8000-000000000004', 'a1b20000-0000-4000-8000-000000000003');
-select is((select style_number from vessl.products where id = '10000000-0000-4000-8000-000000000004'), 'ACM-00003-A1B2', 'colliding style numbers are skipped');
+select is((select style_number from vessl.products where id = '10000000-0000-4000-8000-000000000004'), 'ZQX-00003-A1B2', 'colliding style numbers are skipped');
 select is((select last_style_iteration from vessl.companies where id = 'a1b20000-0000-4000-8000-000000000003'), 3, 'counter records the assigned iteration');
 
 update vessl.companies set last_style_iteration = 99999 where id = 'c3d40000-0000-4000-8000-000000000002';
