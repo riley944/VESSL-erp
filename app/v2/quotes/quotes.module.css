@@ -1,0 +1,27 @@
+.main { max-width: 1440px; margin: 0 auto; padding: 28px 24px 48px; color: #111; font-family: Inter, system-ui, sans-serif; }
+.back { color: #555; font-size: 14px; }
+.main h1 { margin: 20px 0 0; font-family: Georgia, serif; font-size: 32px; font-weight: 400; }
+.subtitle { color: #555; margin: 4px 0 20px; }
+.tabs { border-bottom: 2px solid #eaeaea; margin-bottom: 16px; }
+.tabs span { display: inline-flex; align-items: center; gap: 8px; padding: 8px 2px 12px; margin-bottom: -2px; border-bottom: 4px solid #111; font-size: 17px; font-weight: 600; }
+.tabs b { background: #111; color: white; border-radius: 6px; padding: 2px 7px; font-size: 13px; }
+.filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px; }
+.filters input, .filters select { height: 38px; border: 1px solid #d4d4d4; border-radius: 10px; background: white; color: #111; padding: 0 12px; font: inherit; }
+.filters input { flex: 1 1 240px; max-width: 360px; }
+.filters label { display: flex; align-items: center; gap: 8px; color: #555; font-size: 14px; font-weight: 600; }
+.clear { border: 0; background: none; text-decoration: underline; cursor: pointer; font: inherit; }
+.card { background: #fff; border: 1px solid #eaeaea; border-radius: 14px; overflow: hidden; }
+.grid { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(120px, 1.2fr) minmax(120px, 1.2fr) minmax(90px, .8fr) minmax(120px, 1fr); gap: 12px; align-items: center; padding: 14px 18px; }
+.heading { background: #f5f5f5; color: #6a6a6a; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.row { border-top: 1px solid #f0f0f0; font-size: 15px; overflow-wrap: anywhere; }
+.sub { display: block; margin-top: 3px; color: #555; font-size: 14px; }
+.mobileLabel { display: none; }
+.empty { padding: 28px 18px; text-align: center; color: #555; }
+.count { color: #555; font-size: 14px; }
+@media (max-width: 720px) {
+  .main { padding: 20px 16px 40px; }
+  .filters input { max-width: none; }
+  .heading { display: none; }
+  .grid { grid-template-columns: 1fr; gap: 6px; }
+  .mobileLabel { display: inline; color: #555; }
+}

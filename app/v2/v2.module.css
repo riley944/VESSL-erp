@@ -1,5 +1,7 @@
 .root {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
   background: #f6f7f9;
   color: #172033;
   font-family: 'Spline Sans', sans-serif;
