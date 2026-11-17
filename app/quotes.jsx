@@ -50,6 +50,7 @@ import { HtsField, useHtsCodes } from "@/app/components/HtsField";
 // The factory box is a closed select now, the same shape as HtsField and for the
 // same reason -- free text is how one firm ends up in the catalogue twice.
 import { sameCompany } from "@/lib/companyName";
+import { productQuoteLinks } from "@/lib/productQuote";
 import { suggestedMarkup, roundToPricePoint, suggestClientPrice, mapToDeltas, mapToPlates, mapToCartons, qtyMapToRow, rowToForm } from "@/lib/quoteRow";
 import { fmt, fmtUnit, tierMargin, moldFeeText, tierQtyShown, sizeLineText, freightCell, dutyCell, NO_PRICE_TEXT, NO_PRICE_TIP, SOME_UNPRICED_TEXT, SOME_UNPRICED_TIP, pricedState, quoteSummary, fmtStamp } from "@/lib/quoteFigures";
 import { PriceTag, TierCards } from "@/app/components/TierCards";
@@ -544,7 +545,7 @@ const BLANK = {
 //  Login is handled by the ERP shell; we read the existing session
 //  and render the Platform directly.
 // ============================================================
-export default function Quotes({ session: erpSession, newQuote = null, isAdmin = false }) {
+export default function Quotes({ session: erpSession, newQuote = null, isAdmin = false, modalOnly = false, onClose, onSaved }) {
   const [session, setSession] = useState(erpSession || null);
 
   useEffect(() => {
@@ -555,7 +556,7 @@ export default function Quotes({ session: erpSession, newQuote = null, isAdmin =
   }, [erpSession]);
 
   if (!session) return <div style={S.shell}><style>{CSS}</style><div style={S.center}>Loading quotes…</div></div>;
-  return <Platform session={session} newQuote={newQuote} isAdmin={isAdmin} />;
+  return <Platform session={session} newQuote={newQuote} isAdmin={isAdmin} modalOnly={modalOnly} onClose={onClose} onSaved={onSaved} />;
 }
 
 // The same two as plain values for the CSV: numbers, "incl." or blank.
@@ -570,7 +571,7 @@ function dutyValue(t) {
 const ALL = "__all_clients__";
 
 // ---------- main platform ----------
-function Platform({ session, newQuote = null, isAdmin = false }) {
+function Platform({ session, newQuote = null, isAdmin = false, modalOnly = false, onClose, onSaved }) {
   const userEmail = session?.user?.email || "unknown";
   // The HTS rate each quote's duty is worked out at, for the card, the detail view,
   // the printed quote and the CSV -- the same rate the form uses, from the same list.
@@ -613,8 +614,8 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
   // Keyed on that object, so a later visit to this page without one opens nothing.
   useEffect(() => {
     if (!newQuote) return;
-    setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), sku: newQuote.sku || "", product: newQuote.product || "", client: newQuote.client || "", tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] });
-  }, [newQuote]);
+    setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), sku: newQuote.sku || "", product: newQuote.product || "", client: newQuote.client || "", ...(modalOnly ? { __productId: newQuote.productId, __clientId: newQuote.clientId, __clientName: newQuote.client } : {}), tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] });
+  }, [newQuote, modalOnly]);
 
   const loadTasks = useCallback(async () => {
     const { data, error } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
@@ -833,12 +834,18 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
   // Returns { savedId, failed } so the form can keep any task that did not land;
   // failed holds one entry per person, assigned_to a single email.
   const saveQuote = async (f, queuedTasks = []) => {
+    const links = productQuoteLinks(f);
+    if (links.error) {
+      flash(links.error);
+      return null;
+    }
     lastSaveRef.current = Date.now();
     // The pre-edit row, read from state rather than re-fetched. The rename keys
     // on the OLD sku and name: that is what vessl.products still holds, because
     // saving a quote never touches that table.
     const before = f.id ? quotes.find(x => x.id === f.id) : null;
     const row = formToRow({ ...f, updatedBy: userEmail });
+    Object.assign(row, links.row);
     let savedRow = null;
     if (f.id) {
       const { data, error } = await supabase.from("quotes").update(row).eq("id", f.id).select();
@@ -950,7 +957,8 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
       try {
         const name = (savedRow.client || "").trim();
         let cid = null;
-        if (name) {
+        if (links.clientId) cid = links.clientId;
+        else if (name) {
           const { data: hits } = await supabase.from("companies").select("id").ilike("name", name);
           if (hits && hits.length === 1) cid = hits[0].id;
         }
@@ -1139,6 +1147,12 @@ function Platform({ session, newQuote = null, isAdmin = false }) {
 
   // Open tasks assigned to me that I have not seen; 0 while the modal is open.
   const myUnseenTaskCount = showTasks ? 0 : unseenCount(tasks, userEmail);
+
+  if (modalOnly) return <><style>{CSS}</style>{editing && <QuoteForm key={editing.__key || editing.id || 'new'} initial={editing} onClose={onClose} onSave={async (form, queued) => {
+    const result = await saveQuote(form, queued);
+    if (result?.savedId && !result.failed?.length && !form.pdfChain) onSaved?.();
+    return result;
+  }} onSkip={(chain, form, notice) => { if (chainForm(chain, form, notice)) skipChained(chain, form, notice); else onSaved?.(); }} userEmail={userEmail} assignees={assignees} existingTasks={editing.id ? tasks.filter(t => t.quote_id === editing.id) : []} />}{toast && <div style={S.toast}>{toast}</div>}</>;
 
   return (
     <div style={{ ...S.shell, ...(isMobile ? { padding: "16px 12px 60px" } : {}) }}>
@@ -4123,7 +4137,7 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
           </div>
         </div>
       )}
-      <div ref={cardRef} style={{ ...S.modal, maxWidth: QUOTE_FORM_MAX_W }} onClick={(e) => e.stopPropagation()}>
+      <div ref={cardRef} role="dialog" aria-modal="true" aria-label={initial.id ? 'Edit Quote' : 'New Quote'} style={{ ...S.modal, maxWidth: QUOTE_FORM_MAX_W }} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHead}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
             <h2 style={S.modalTitle}>{initial.id ? "Edit Quote" : "New Quote"}</h2>

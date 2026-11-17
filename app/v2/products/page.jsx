@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Backpack, CupSoda, Package, Shirt, ShoppingBag } from 'lucide-react';
+import { Backpack, CupSoda, FilePlus2, FileText, Package, Pencil, Shirt, ShoppingBag, Trash2 } from 'lucide-react';
 import { SB } from '@/lib/supabase';
 import V2Shell from '../V2Shell';
 import EditProductModal from './EditProductModal';
 import NewProductModal from './NewProductModal';
+import Quotes from '@/app/quotes';
 import s from './products.module.css';
 
 const BATCH = 1000;
@@ -42,12 +43,31 @@ function ProductsList() {
   const [tab, setTab] = useState('all');
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [quoteProduct, setQuoteProduct] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+  const [deleteError, setDeleteError] = useState('');
+
+  const deleteProduct = async product => {
+    if (deleting) return;
+    const label = product.style_number || product.name || 'this product';
+    if (!window.confirm(`Delete ${label}?\n\nLinked records, including test reports, material links, compliance tasks, inventory records, and product notes, may also be deleted. This cannot be undone.`)) return;
+    setDeleting(product.id);
+    setDeleteError('');
+    try {
+      const { data, error: err } = await SB.from('products').delete().eq('id', product.id).select('id');
+      if (err) throw err;
+      if (!data?.length) throw new Error('No product was deleted. It may no longer exist or you may not have permission.');
+      setProducts(rows => rows.filter(row => row.id !== product.id));
+    } catch (err) {
+      setDeleteError(err.code === '23503' ? 'This product is linked to other records and cannot be deleted.' : `Could not delete product — ${err.message || 'Please try again.'}`);
+    } finally { setDeleting(null); }
+  };
 
   useEffect(() => {
     let active = true;
     setProducts(null); setError(false);
     Promise.all([
-      fetchAll('products', 'id,style_number,name,description,active,company:companies!client_company_id(name)'),
+      fetchAll('products', 'id,style_number,sku,name,description,active,client_company_id,company:companies!client_company_id(name)'),
       fetchAll('quotes', 'id,product_id,quote_code,created_at'),
     ]).then(([rows, quotes]) => {
       if (!active) return;
@@ -77,6 +97,7 @@ function ProductsList() {
       {TABS.map(([key, label]) => <button type="button" key={key} aria-pressed={tab === key} onClick={() => setTab(key)}>{label}{products && <b>{key === 'all' ? products.length : products.filter(product => statusOf(product) === key).length}</b>}</button>)}
     </div>
     <input className={s.search} type="search" aria-label="Search products" placeholder="Search style number, product or client" value={search} onChange={event => setSearch(event.target.value)} />
+    {deleteError && <p className={s.error} role="alert">{deleteError}</p>}
     <div className={s.card}>
       {error ? <div className={s.empty} role="alert">Could not load products. <button type="button" onClick={() => setRetry(n => n + 1)}>Try again</button></div> : !products ? <p className={s.empty}>Loading products…</p> : !shown.length ? <p className={s.empty}>{products.length ? 'No products match these filters.' : 'No products found.'}</p> : <>
         <div className={`${s.grid} ${s.heading}`} aria-hidden="true"><span>Style number</span><span>Product description</span><span>Client</span><span>Status</span><span /></div>
@@ -86,8 +107,8 @@ function ProductsList() {
           <div><span className={s.mobileLabel}>Client: </span>{product.company?.name || '—'}</div>
           <div><span className={s.mobileLabel}>Status: </span>{statusOf(product) === 'unset' ? 'Not set' : statusOf(product) === 'active' ? 'Active' : 'Inactive'}</div>
           <div><div className={s.actions}>{product.quotes.length ? <>
-            <Link className={s.button} href={`/v2/quotes/${product.quotes[0].id}`} aria-label={`View quote for ${product.style_number || product.name || 'product'}`}>View quote</Link>
-          </> : <span className={s.noQuote}>No linked quote</span>}<button className={s.edit} aria-label={`Edit ${product.style_number || product.name || 'product'}`} onClick={() => setEditing(product.id)}>Edit</button></div>
+            <Link className={s.button} href={`/v2/quotes/${product.quotes[0].id}`} title="View quote" aria-label={`View quote for ${product.style_number || product.name || 'product'}`}><FileText size={18} aria-hidden="true" /></Link>
+          </> : <button className={s.addQuote} title="Add quote" aria-label={`Add quote for ${product.style_number || product.name || 'product'}`} onClick={() => setQuoteProduct({ productId: product.id, sku: product.sku || '', product: product.name || product.description || '', clientId: product.client_company_id || null, client: product.company?.name || '' })}><FilePlus2 size={18} aria-hidden="true" /></button>}<button className={s.edit} title="Edit product" aria-label={`Edit ${product.style_number || product.name || 'product'}`} onClick={() => setEditing(product.id)}><Pencil size={18} aria-hidden="true" /></button><button className={s.delete} title="Delete product" aria-label={`Delete ${product.style_number || product.name || 'product'}`} disabled={!!deleting} onClick={() => deleteProduct(product)}><Trash2 size={18} aria-hidden="true" /></button></div>
             {product.quotes.length > 1 && <span className={s.latest}>Latest quote</span>}
             {product.quotes.length > 1 && <details className={s.more}><summary>{product.quotes.length - 1} more {product.quotes.length === 2 ? 'quote' : 'quotes'}</summary><ul>{product.quotes.slice(1).map(quote => <li key={quote.id}><Link href={`/v2/quotes/${quote.id}`}>{quote.quote_code || 'View quote'}</Link></li>)}</ul></details>}
           </div>
@@ -97,6 +118,7 @@ function ProductsList() {
     {products && <p className={s.count}>{shown.length} {shown.length === 1 ? 'product' : 'products'} shown</p>}
     {editing && <EditProductModal id={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); setRetry(n => n + 1); }} />}
     {creating && <NewProductModal onClose={() => setCreating(false)} onSaved={() => { setCreating(false); setSearch(''); setTab('all'); setRetry(n => n + 1); }} />}
+    {quoteProduct && <Quotes modalOnly newQuote={quoteProduct} onClose={() => { setQuoteProduct(null); setRetry(n => n + 1); }} onSaved={() => { setQuoteProduct(null); setRetry(n => n + 1); }} />}
   </main>;
 }
 
