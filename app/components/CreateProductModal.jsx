@@ -70,7 +70,7 @@ function parseCountryInput(raw, existing) {
 // Pass `data` to edit that row, omit it to create — the same shape MaterialModal
 // uses. Every class name below resolves from globals.css, so this file needs no
 // styles of its own.
-export function CreateProductModal({ data, regs = [], links = [], matLinks = [], onClose, onCreated, wizard = false }) {
+export function CreateProductModal({ data, regs = [], links = [], matLinks = [], onClose, onCreated, wizard = false, clients = [] }) {
   const editing = !!(data && data.id);
   // Read-only. LinkRulesModal is the only writer of product_regulations.
   //
@@ -123,6 +123,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
     // handling ShipmentQuoteModal gives ready_date.
     manualTestDate: data?.manual_test_date ? String(data.manual_test_date).slice(0,10) : '',
     active: data?.active === true ? 'active' : data?.active === false ? 'inactive' : '',
+    clientCompanyId: data?.client_company_id || '',
   });
   const original = useRef(form);
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -175,11 +176,13 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
     setForm(prev=>({...prev, hs:row.code}));   // select it without leaving the modal
   };
   const submit = async () => {
+    if (saving) return;
     // Name identifies a product here; a SKU is nice to have and often assigned later.
     // Saved in its one written shape (lib/products cleanName).
     const name = cleanName(form.name);
     const sku  = form.sku.trim();
     if (!name) { if (wizard) setStep(0); alert('Product name required'); return; }
+    if (wizard && !editing && !form.clientCompanyId) { setStep(0); alert('Select a client to create a product.'); return; }
     if (wizard && countryDraft.trim()) { setStep(3); alert('Press Enter to add the shipping country before saving.'); return; }
     if (wizard && countryErr) { setStep(3); alert(countryErr); return; }
     setSaving(true);
@@ -240,10 +243,13 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
     // rather than nulled, so a category set elsewhere survives a save here.
     if (wizard) {
       payload.active = form.active === '' ? null : form.active === 'active';
-      const keys = { sku:'sku', name:'name', desc:'description', composition:'composition', hs:'hts_code', uom:'unit_of_measure', wt:'weight_kg', upc:'units_per_carton', cwt:'carton_weight_kg', cl:'carton_l_cm', cw:'carton_w_cm', ch:'carton_h_cm', cpscType:'cpsc_type', shipsTo:'ships_to', tradeDirection:'trade_direction', kuiIor:'kui_ior', testingPaidBy:'testing_paid_by', manualTestDate:'manual_test_date', active:'active' };
-      Object.entries(keys).forEach(([field, column]) => {
-        if (JSON.stringify(form[field]) === JSON.stringify(original.current[field])) delete payload[column];
-      });
+      if (!editing) payload.client_company_id = form.clientCompanyId || null;
+      else {
+        const keys = { sku:'sku', name:'name', desc:'description', composition:'composition', hs:'hts_code', uom:'unit_of_measure', wt:'weight_kg', upc:'units_per_carton', cwt:'carton_weight_kg', cl:'carton_l_cm', cw:'carton_w_cm', ch:'carton_h_cm', cpscType:'cpsc_type', shipsTo:'ships_to', tradeDirection:'trade_direction', kuiIor:'kui_ior', testingPaidBy:'testing_paid_by', manualTestDate:'manual_test_date', active:'active' };
+        Object.entries(keys).forEach(([field, column]) => {
+          if (JSON.stringify(form[field]) === JSON.stringify(original.current[field])) delete payload[column];
+        });
+      }
     }
     let error;
     try {
@@ -292,6 +298,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
             {skus.length>0 && <datalist id="cpm-sku-list">{skus.map(s=><option key={s.sku} value={s.sku}>{s.product}</option>)}</datalist>}
           </div>
           <div className="form-row"><label htmlFor="product-edit-name">Product Name *</label><input id="product-edit-name" className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
+          {wizard && !editing && <div className="form-row"><label htmlFor="product-client">Client *</label><select id="product-client" className="form-select" required value={form.clientCompanyId} onChange={e=>f('clientCompanyId')(e.target.value)}><option value="">Select a client</option>{clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select></div>}
           <div className="form-row"><label htmlFor="product-edit-description">Description</label><textarea id="product-edit-description" className="form-textarea" value={form.desc} onChange={e=>f('desc')(e.target.value)} /></div>
           {wizard && <div className="form-row"><label htmlFor="product-edit-active">Status</label><select id="product-edit-active" className="form-select" value={form.active} onChange={e=>f('active')(e.target.value)}><option value="">Not set</option><option value="active">Active</option><option value="inactive">Inactive</option></select></div>}
           </section>

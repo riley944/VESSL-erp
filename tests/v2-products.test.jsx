@@ -8,6 +8,7 @@ const mock = vi.hoisted(() => ({ products: [], quotes: [], fail: false, ranges: 
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a> }));
 vi.mock('@/app/v2/V2Shell', () => ({ default: ({ children }) => <>{children}</> }));
 vi.mock('@/app/v2/products/EditProductModal', () => ({ default: ({ id, onSaved }) => <button onClick={() => { mock.products = mock.products.map(p => p.id === id ? { ...p, name: 'Updated tote' } : p); onSaved(); }}>Save test product</button> }));
+vi.mock('@/app/v2/products/NewProductModal', () => ({ default: ({ onSaved }) => <button onClick={() => { mock.products.push({ id: 'new', name: 'New product', style_number: 'NEW-1' }); onSaved(); }}>Create test product</button> }));
 vi.mock('@/lib/supabase', () => ({ SB: { from: table => ({ select: () => ({ order: () => ({ range: (start, end) => {
   mock.ranges.push([table, start, end]);
   return Promise.resolve(mock.fail === table ? { data: null, error: { message: 'Unavailable' } } : { data: mock[table].slice(start, end + 1), error: null });
@@ -83,4 +84,13 @@ it('opens editing for a product and reloads the updated list', async () => {
   await user.click(screen.getByRole('button', { name: 'Save test product' }));
   expect(await screen.findByText('Updated tote')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Edit Sample' })).toBeTruthy();
+});
+
+it('opens creation and shows the new product after saving', async () => {
+  const user = userEvent.setup();
+  render(<ProductsPage />);
+  await screen.findByRole('link', { name: 'ABC-2' });
+  await user.click(screen.getByRole('button', { name: '+ New product' }));
+  await user.click(screen.getByRole('button', { name: 'Create test product' }));
+  expect(await screen.findByRole('link', { name: 'NEW-1' })).toBeTruthy();
 });

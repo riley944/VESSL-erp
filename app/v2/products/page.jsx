@@ -6,6 +6,7 @@ import { Backpack, CupSoda, Package, Shirt, ShoppingBag } from 'lucide-react';
 import { SB } from '@/lib/supabase';
 import V2Shell from '../V2Shell';
 import EditProductModal from './EditProductModal';
+import NewProductModal from './NewProductModal';
 import s from './products.module.css';
 
 const BATCH = 1000;
@@ -40,6 +41,7 @@ function ProductsList() {
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('all');
   const [editing, setEditing] = useState(null);
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -70,7 +72,7 @@ function ProductsList() {
   }, [products, search, tab]);
 
   return <main className={s.main}>
-    <h1>Products</h1><p className={s.subtitle}>Every style number, across all clients</p>
+    <div className={s.header}><div><h1>Products</h1><p className={s.subtitle}>Every style number, across all clients</p></div><button className={s.create} onClick={() => setCreating(true)}>+ New product</button></div>
     <div className={s.tabs} role="group" aria-label="Product status">
       {TABS.map(([key, label]) => <button type="button" key={key} aria-pressed={tab === key} onClick={() => setTab(key)}>{label}{products && <b>{key === 'all' ? products.length : products.filter(product => statusOf(product) === key).length}</b>}</button>)}
     </div>
@@ -94,6 +96,7 @@ function ProductsList() {
     </div>
     {products && <p className={s.count}>{shown.length} {shown.length === 1 ? 'product' : 'products'} shown</p>}
     {editing && <EditProductModal id={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); setRetry(n => n + 1); }} />}
+    {creating && <NewProductModal onClose={() => setCreating(false)} onSaved={() => { setCreating(false); setSearch(''); setTab('all'); setRetry(n => n + 1); }} />}
   </main>;
 }
 
