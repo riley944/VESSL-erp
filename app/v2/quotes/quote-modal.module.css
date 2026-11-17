@@ -5,3 +5,10 @@
 .tier { border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px; margin: 0 0 12px; }
 .tierFields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .tierFields label { min-width: 0; }
+.productPicker { position: relative; }
+.productResults { position: absolute; z-index: 10; top: 100%; left: 0; right: 0; max-height: 250px; overflow-y: auto; background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; box-shadow: 0 10px 24px rgba(15, 23, 42, .14); }
+.productResults ul { list-style: none; padding: 4px; margin: 0; }
+.productResults li { padding: 9px 10px; border-radius: 6px; cursor: pointer; }
+.productResults li:hover, .productResults .activeProduct { background: #e8f7ec; }
+.productResults p { margin: 10px; color: #475569; }
+.selectedProduct { margin: 8px 0 0; color: #334155; }

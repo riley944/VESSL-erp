@@ -53,8 +53,10 @@ it('selects a product on a new quote and saves its exact product and client', as
   render(<QuoteModal onClose={() => {}} onSaved={() => {}} />);
   await user.click(screen.getByRole('button', { name: 'Save quote' }));
   expect((await screen.findByRole('alert')).textContent).toContain('Select a product');
-  await screen.findByRole('option', { name: 'ABC-1 · Bottle · Acme' });
-  await user.selectOptions(screen.getByLabelText('Product *'), 'p1');
+  const search = screen.getByRole('combobox', { name: 'Product *' });
+  await waitFor(() => expect(search.disabled).toBe(false));
+  await user.type(search, 'abc 1');
+  await user.click(screen.getByRole('option', { name: 'ABC-1 · Bottle · Acme' }));
   expect(screen.queryByRole('alert')).toBeNull();
   expect(screen.getByText('SKU-1')).toBeTruthy();
   await user.click(screen.getByRole('tab', { name: 'Client' }));
@@ -71,8 +73,10 @@ it('retries a failed product lookup and supports a product with no client', asyn
   expect((await screen.findByRole('alert')).textContent).toContain('Could not load products');
   mock.productError = null;
   await user.click(screen.getByRole('button', { name: 'Try again' }));
-  await screen.findByRole('option', { name: 'XYZ-2 · Tote' });
-  await user.selectOptions(screen.getByLabelText('Product *'), 'p2');
+  const search = screen.getByRole('combobox', { name: 'Product *' });
+  await waitFor(() => expect(search.disabled).toBe(false));
+  await user.type(search, 'tote');
+  await user.click(screen.getByRole('option', { name: 'XYZ-2 · Tote' }));
   await user.click(screen.getByRole('button', { name: 'Save quote' }));
   await screen.findByText('Quote saved.');
   expect(mock.writes[0][2]).toMatchObject({ product_id: 'p2', client_company_id: null, client: null, product: 'Tote', sku: null });
@@ -85,25 +89,64 @@ it('loads all product pages and explains when no products exist', async () => {
   view.unmount();
   mock.products = Array.from({ length: 1001 }, (_, i) => ({ id: `p${i}`, name: `Product ${i}` }));
   render(<QuoteModal onClose={() => {}} onSaved={() => {}} />);
-  expect(await screen.findByRole('option', { name: 'Style not assigned · Product 1000' })).toBeTruthy();
+  const search = screen.getByRole('combobox', { name: 'Product *' });
+  await waitFor(() => expect(search.disabled).toBe(false));
+  await userEvent.type(search, 'Product 1000');
+  expect(screen.getByRole('option', { name: 'Style not assigned · Product 1000' })).toBeTruthy();
   expect(mock.ranges).toContainEqual([1000, 1999]);
 });
 
 it('confirms before replacing client contact details when the product changes', async () => {
   const user = userEvent.setup();
   render(<QuoteModal onClose={() => {}} onSaved={() => {}} />);
-  await screen.findByRole('option', { name: 'ABC-1 · Bottle · Acme' });
-  await user.selectOptions(screen.getByLabelText('Product *'), 'p1');
+  const search = screen.getByRole('combobox', { name: 'Product *' });
+  await waitFor(() => expect(search.disabled).toBe(false));
+  await user.type(search, 'bottle');
+  await user.click(screen.getByRole('option', { name: 'ABC-1 · Bottle · Acme' }));
   await user.click(screen.getByRole('tab', { name: 'Client' }));
   await user.type(screen.getByLabelText('Client contact'), 'Jane');
   await user.click(screen.getByRole('tab', { name: 'Quote details' }));
   window.confirm.mockReturnValue(false);
-  await user.selectOptions(screen.getByLabelText('Product *'), 'p2');
-  expect(screen.getByLabelText('Product *').value).toBe('p1');
+  await user.type(search, 'tote');
+  await user.click(screen.getByRole('option', { name: 'XYZ-2 · Tote' }));
+  expect(screen.getByText('Selected: ABC-1 · Bottle · Acme')).toBeTruthy();
   window.confirm.mockReturnValue(true);
-  await user.selectOptions(screen.getByLabelText('Product *'), 'p2');
+  await user.click(screen.getByRole('option', { name: 'XYZ-2 · Tote' }));
   await user.click(screen.getByRole('tab', { name: 'Client' }));
   expect(screen.getByLabelText('Client contact').value).toBe('');
+});
+
+it('filters by SKU or client and lets keyboard users choose a result', async () => {
+  const user = userEvent.setup();
+  render(<QuoteModal onClose={() => {}} onSaved={() => {}} />);
+  const search = screen.getByRole('combobox', { name: 'Product *' });
+  await waitFor(() => expect(search.disabled).toBe(false));
+  await user.type(search, 'sku-1');
+  expect(screen.getByRole('option', { name: 'ABC-1 · Bottle · Acme' })).toBeTruthy();
+  expect(screen.queryByRole('option', { name: 'XYZ-2 · Tote' })).toBeNull();
+  await user.clear(search);
+  await user.type(search, 'acme');
+  await user.keyboard('{ArrowDown}{Enter}');
+  expect(screen.getByText('Selected: ABC-1 · Bottle · Acme')).toBeTruthy();
+  expect(search.getAttribute('aria-expanded')).toBe('false');
+  await user.type(search, 'no match');
+  expect(screen.getByText('No matching products.')).toBeTruthy();
+  await user.keyboard('{Escape}');
+  expect(screen.queryByText('No matching products.')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await screen.findByText('Quote saved.');
+  expect(mock.writes[0][2].product_id).toBe('p1');
+});
+
+it('does not treat typed search text as a selected product', async () => {
+  const user = userEvent.setup();
+  render(<QuoteModal onClose={() => {}} onSaved={() => {}} />);
+  const search = screen.getByRole('combobox', { name: 'Product *' });
+  await waitFor(() => expect(search.disabled).toBe(false));
+  await user.type(search, 'Bottle');
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  expect((await screen.findByRole('alert')).textContent).toContain('Select a product');
+  expect(mock.writes).toHaveLength(0);
 });
 
 it('updates only changed quote fields and keeps detailed pricing intact', async () => {
