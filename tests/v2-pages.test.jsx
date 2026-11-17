@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import HomePage from '@/app/v2/page';
 import QuotesPage from '@/app/v2/quotes/page';
@@ -8,10 +8,13 @@ import QuotePage from '@/app/v2/quotes/[id]/page';
 import ProductPage from '@/app/v2/products/[id]/page';
 import ClientPage from '@/app/v2/clients/[id]/page';
 import SectionPage from '@/app/v2/[section]/page';
+import { navigation } from '@/app/v2/navigation';
+import { QUOTES_CHANGED } from '@/app/v2/quoteEvents';
 
 const mock = vi.hoisted(() => ({
   session: null, profile: null, pages: [], detail: null, id: 'record-1', pathname: '/v2',
   signOut: vi.fn(), unsubscribe: vi.fn(), from: vi.fn(), authCallback: null, queries: [], searchParams: '', deleted: [], editProductId: null,
+  countResult: null, countQueries: [], realtimeCallback: null, removeChannel: vi.fn(), channel: null,
 }));
 
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a> }));
@@ -28,6 +31,8 @@ vi.mock('@/lib/supabase', () => ({ SB: {
     signOut: mock.signOut,
   },
   from: mock.from,
+  channel: () => mock.channel,
+  removeChannel: mock.removeChannel,
 } }));
 
 const session = email => ({ data: { session: email ? { user: { email } } : null } });
@@ -49,13 +54,20 @@ beforeEach(() => {
   mock.searchParams = '';
   mock.deleted = [];
   mock.editProductId = null;
+  mock.countResult = Promise.resolve({ count: 0, error: null });
+  mock.countQueries = [];
+  mock.realtimeCallback = null;
+  mock.removeChannel.mockReset();
+  mock.channel = { on: vi.fn((event, filter, callback) => { mock.realtimeCallback = callback; return mock.channel; }), subscribe: vi.fn(() => mock.channel) };
   localStorage.clear();
   mock.queries = [];
   mock.signOut.mockReset();
   mock.unsubscribe.mockReset();
   mock.from.mockReset().mockImplementation(table => ({
     delete: () => { mock.deleted.push(table); throw new Error('Unexpected deletion'); },
-    select: columns => table === 'staff_profiles'
+    select: (columns, options) => table === 'quotes' && options?.count === 'exact'
+      ? (mock.countQueries.push({ table, columns, options }), mock.countResult)
+      : table === 'staff_profiles'
       ? { ilike: (column, value) => { mock.queries.push({ table, columns, column, value }); return mock.profile; } }
       : {
           order: (order, options) => ({ range: (start, end) => { mock.queries.push({ table, columns, order, options, start, end }); return Promise.resolve(mock.pages[start / 1000] || { data: [], error: null }); } }),
@@ -177,7 +189,7 @@ describe('V2 home and staff access', () => {
     expect(menu.getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('renders all mockup destinations with placeholder counts', async () => {
+  it('renders all destinations without placeholder counts', async () => {
     render(<HomePage />);
     const nav = await screen.findByRole('navigation', { name: 'Main navigation' });
     const links = within(nav).getAllByRole('link');
@@ -186,8 +198,67 @@ describe('V2 home and staff access', () => {
       '/v2/shipments', '/v2/freight-quotes', '/v2/clients', '/v2/products',
       '/v2/factories', '/v2/forwarders', '/v2/codes',
     ]);
-    expect(within(nav).getByLabelText('8 need attention (placeholder)')).toBeTruthy();
+    expect(within(nav).queryByLabelText(/need attention/i)).toBeNull();
     expect(screen.getByRole('link', { name: 'Help' }).getAttribute('href')).toBe('/v2/help');
+  });
+
+  it('shows a positive count and hides a zero count', async () => {
+    const todo = navigation[0].items[0];
+    const quotes = navigation[1].items[0];
+    todo.count = 2;
+    quotes.count = 0;
+    try {
+      render(<HomePage />);
+      const nav = await screen.findByRole('navigation', { name: 'Main navigation' });
+      expect(within(nav).getByLabelText('2 need attention').textContent).toBe('2');
+      expect(within(nav).queryByLabelText('0 need attention')).toBeNull();
+    } finally {
+      delete todo.count;
+      delete quotes.count;
+    }
+  });
+
+  it('shows the real quote count and refreshes after changes', async () => {
+    mock.countResult = Promise.resolve({ count: 12, error: null });
+    render(<HomePage />);
+    const nav = await screen.findByRole('navigation', { name: 'Main navigation' });
+    expect(await within(nav).findByLabelText('12 quotes')).toBeTruthy();
+    expect(mock.countQueries[0]).toEqual({ table: 'quotes', columns: 'id', options: { count: 'exact', head: true } });
+    mock.countResult = Promise.resolve({ count: 13, error: null });
+    await act(async () => window.dispatchEvent(new Event(QUOTES_CHANGED)));
+    expect(await within(nav).findByLabelText('13 quotes')).toBeTruthy();
+    mock.countResult = Promise.resolve({ count: 1, error: null });
+    await act(async () => mock.realtimeCallback());
+    expect(await within(nav).findByLabelText('1 quote')).toBeTruthy();
+    mock.countResult = Promise.resolve({ count: 0, error: null });
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    await waitFor(() => expect(within(nav).queryByLabelText(/\d+ quotes?/)).toBeNull());
+  });
+
+  it('hides the quote count on an error and cleans up its subscription', async () => {
+    mock.countResult = Promise.resolve({ count: 5, error: null });
+    const view = render(<HomePage />);
+    const nav = await screen.findByRole('navigation', { name: 'Main navigation' });
+    await within(nav).findByLabelText('5 quotes');
+    mock.countResult = Promise.resolve({ count: null, error: { message: 'offline' } });
+    await act(async () => window.dispatchEvent(new Event(QUOTES_CHANGED)));
+    await waitFor(() => expect(within(nav).queryByLabelText('5 quotes')).toBeNull());
+    view.unmount();
+    expect(mock.removeChannel).toHaveBeenCalledWith(mock.channel);
+  });
+
+  it('ignores an older count response after a newer refresh', async () => {
+    let resolveOld;
+    mock.countResult = new Promise(resolve => { resolveOld = resolve; });
+    render(<HomePage />);
+    const nav = await screen.findByRole('navigation', { name: 'Main navigation' });
+    await waitFor(() => expect(mock.countQueries).toHaveLength(1));
+    mock.countResult = Promise.resolve({ count: 4, error: null });
+    await act(async () => window.dispatchEvent(new Event(QUOTES_CHANGED)));
+    expect(await within(nav).findByLabelText('4 quotes')).toBeTruthy();
+    await act(async () => resolveOld({ count: 2, error: null }));
+    expect(within(nav).queryByLabelText('2 quotes')).toBeNull();
+    expect(within(nav).getByLabelText('4 quotes')).toBeTruthy();
   });
 
   it('renders known placeholder destinations and rejects unknown routes', async () => {

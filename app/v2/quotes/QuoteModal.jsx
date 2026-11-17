@@ -7,6 +7,7 @@ import { notifyTaskAssigned } from '@/lib/taskNotify';
 import { HtsField, useHtsCodes } from '@/app/components/HtsField';
 import { CodeModal } from '@/app/components/CodeModal';
 import { DUTY_SPLIT_AT } from '@/lib/quoteRow';
+import { QUOTES_CHANGED } from '../quoteEvents';
 import styles from './quote-modal.module.css';
 
 const TABS = ['Quote details', 'Client', 'Factory', 'Pricing', 'Carton', 'Tasks'];
@@ -113,6 +114,7 @@ export default function QuoteModal({ quote = null, newQuote = null, onClose, onS
       const { data, error: saveError } = await query.select('*');
       if (saveError) throw saveError;
       if (!data?.length) throw new Error('No quote was saved. It may no longer exist or you may not have permission.');
+      if (!savedQuote) window.dispatchEvent(new Event(QUOTES_CHANGED));
       setSavedQuote(data[0]);
       original.current = form;
       setChanged(true);

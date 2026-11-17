@@ -10,12 +10,14 @@ import { MLogin } from '@/app/m/MLogin';
 import s from './v2.module.css';
 import { navigation, help } from './navigation';
 import GlobalSearch from './GlobalSearch';
+import { QUOTES_CHANGED } from './quoteEvents';
 
 export default function V2Shell({ children }) {
   const [session, setSession] = useState(undefined);
   const [profile, setProfile] = useState(null);
   const [hidden, setHidden] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [quoteCount, setQuoteCount] = useState(null);
   const hideButtonRef = useRef(null);
   const showButtonRef = useRef(null);
   const focusMenuToggle = useRef(false);
@@ -67,6 +69,32 @@ export default function V2Shell({ children }) {
     return () => { active = false; };
   }, [email]);
 
+  useEffect(() => {
+    if (!isStaffEmail(email) || profile?.email !== email || !profile?.row || profile.error) {
+      setQuoteCount(null);
+      return;
+    }
+    let active = true;
+    let request = 0;
+    const refresh = async () => {
+      const current = ++request;
+      try {
+        const { count, error } = await SB.from('quotes').select('id', { count: 'exact', head: true });
+        if (active && current === request) setQuoteCount(error || count == null ? null : count);
+      } catch { if (active && current === request) setQuoteCount(null); }
+    };
+    refresh();
+    window.addEventListener(QUOTES_CHANGED, refresh);
+    window.addEventListener('focus', refresh);
+    const channel = SB.channel('v2-quote-count').on('postgres_changes', { event: '*', schema: 'vessl', table: 'quotes' }, refresh).subscribe();
+    return () => {
+      active = false;
+      window.removeEventListener(QUOTES_CHANGED, refresh);
+      window.removeEventListener('focus', refresh);
+      SB.removeChannel(channel);
+    };
+  }, [email, profile]);
+
   if (session === undefined) return <Status>Loading…</Status>;
   if (!session) return <MLogin />;
   if (!isStaffEmail(email)) {
@@ -85,7 +113,7 @@ export default function V2Shell({ children }) {
       <aside className={s.sidebar} id="v2-menu" aria-label="Vessl menu">
         <div className={s.logo}><span className={s.mark} aria-hidden="true">V</span><b className={s.wordmark}>VESSL</b><span className={s.by}>by KUI</span><button ref={hideButtonRef} className={s.hideButton} type="button" aria-label="Hide menu" onClick={() => toggleHidden(true)}><PanelLeftClose size={18} /></button></div>
         <nav aria-label="Main navigation">
-          {navigation.map(section => <section key={section.group}><h2 className={s.group}>{section.group}</h2><ul className={s.navList}>{section.items.map(item => <NavItem key={item.slug} item={item} pathname={pathname} close={() => setMobileOpen(false)} />)}</ul></section>)}
+          {navigation.map(section => <section key={section.group}><h2 className={s.group}>{section.group}</h2><ul className={s.navList}>{section.items.map(item => <NavItem key={item.slug} item={item.slug === 'quotes' ? { ...item, count: quoteCount, countLabel: `${quoteCount} ${quoteCount === 1 ? 'quote' : 'quotes'}` } : item} pathname={pathname} close={() => setMobileOpen(false)} />)}</ul></section>)}
         </nav>
         <div className={s.footer}><ul className={s.navList}><NavItem item={help} pathname={pathname} close={() => setMobileOpen(false)} /></ul><div className={s.person}><span className={s.avatar}>{(profile.row.full_name || email).split(/\s+/).map(part => part[0]).slice(0, 2).join('').toUpperCase()}</span><div><b>{profile.row.full_name || email}</b><small>KUI</small></div></div><button className={s.signOut} type="button" onClick={() => SB.auth.signOut()}>Sign out</button></div>
       </aside>
@@ -113,7 +141,7 @@ function NavItem({ item, pathname, close }) {
   const href = `/v2/${item.slug}`;
   const current = pathname === href || pathname?.startsWith(`${href}/`);
   const Icon = item.icon;
-  return <li className={item.separator ? s.separator : undefined}><Link className={s.navItem} href={href} aria-current={current ? 'page' : undefined} onClick={close}><Icon size={20} strokeWidth={1.7} aria-hidden="true" /><span className={s.navLabel}>{item.label}</span>{item.count != null && <span className={`${s.count} ${s[item.tone]}`} aria-label={`${item.count} need attention (placeholder)`}>{item.count}</span>}</Link></li>;
+  return <li className={item.separator ? s.separator : undefined}><Link className={s.navItem} href={href} aria-current={current ? 'page' : undefined} onClick={close}><Icon size={20} strokeWidth={1.7} aria-hidden="true" /><span className={s.navLabel}>{item.label}</span>{item.count > 0 && <span className={`${s.count} ${s[item.tone] || ''}`} aria-label={item.countLabel || `${item.count} need attention`}>{item.count}</span>}</Link></li>;
 }
 
 function Status({ title, children, signOut = false }) {

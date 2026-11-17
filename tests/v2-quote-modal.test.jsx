@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import QuoteModal from '@/app/v2/quotes/QuoteModal';
+import { QUOTES_CHANGED } from '@/app/v2/quoteEvents';
 
 const mock = vi.hoisted(() => ({ writes: [], quoteError: null, empty: false, taskError: null, products: [], productError: null, ranges: [] }));
 vi.mock('@/app/components/HtsField', () => ({ HtsField: ({ value, onChange }) => <button type="button" onClick={() => onChange('123456')}>HTS: {value || 'not set'}</button>, useHtsCodes: () => ({ codes: [], addCode: () => {} }) }));
@@ -37,6 +38,8 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 it('creates a product-linked quote and saves without writing tasks', async () => {
   const user = userEvent.setup();
   const saved = vi.fn();
+  const changed = vi.fn();
+  window.addEventListener(QUOTES_CHANGED, changed, { once: true });
   render(<QuoteModal newQuote={{ productId: 'p1', product: 'Bottle', clientId: 'c1', client: 'Acme', sku: 'SKU-1' }} onClose={() => {}} onSaved={saved} />);
   await user.click(screen.getByRole('tab', { name: 'Tasks' }));
   expect(screen.getByText('Save the quote before adding a task.')).toBeTruthy();
@@ -44,6 +47,7 @@ it('creates a product-linked quote and saves without writing tasks', async () =>
   expect(await screen.findByText('Quote saved.')).toBeTruthy();
   expect(mock.writes).toHaveLength(1);
   expect(mock.writes[0]).toEqual(['quotes', 'insert', expect.objectContaining({ product_id: 'p1', client_company_id: 'c1', product: 'Bottle', client: 'Acme' })]);
+  expect(changed).toHaveBeenCalledOnce();
   await user.click(screen.getAllByRole('button', { name: 'Close' })[0]);
   expect(saved).toHaveBeenCalledOnce();
 });
