@@ -4,8 +4,9 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ProductsPage from '@/app/v2/products/page';
 
-const mock = vi.hoisted(() => ({ products: [], quotes: [], fail: false, ranges: [], deleteError: null, deleteEmpty: false, deletedIds: [] }));
+const mock = vi.hoisted(() => ({ products: [], quotes: [], companies: [], purchase_order_items: [], factoryId: '', fail: false, ranges: [], deleteError: null, deleteEmpty: false, deletedIds: [] }));
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a> }));
+vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(mock.factoryId ? { factoryId: mock.factoryId } : {}) }));
 vi.mock('@/app/v2/V2Shell', () => ({ default: ({ children }) => <>{children}</> }));
 vi.mock('@/app/v2/products/EditProductModal', () => ({ default: ({ id, onSaved }) => <button onClick={() => { mock.products = mock.products.map(p => p.id === id ? { ...p, name: 'Updated tote' } : p); onSaved(); }}>Save test product</button> }));
 vi.mock('@/app/v2/products/NewProductModal', () => ({ default: ({ onSaved }) => <button onClick={() => { mock.products.push({ id: 'new', name: 'New product', style_number: 'NEW-1' }); onSaved(); }}>Create test product</button> }));
@@ -19,7 +20,9 @@ vi.mock('@/lib/supabase', () => ({ SB: { from: table => ({ delete: () => ({ eq: 
 } }) }) }) } }));
 
 beforeEach(() => {
-  mock.fail = false; mock.ranges = []; mock.deleteError = null; mock.deleteEmpty = false; mock.deletedIds = [];
+  mock.fail = false; mock.ranges = []; mock.deleteError = null; mock.deleteEmpty = false; mock.deletedIds = []; mock.factoryId = '';
+  mock.companies = [{ id: 'f1', name: 'Factory One', type: 'factory' }, { id: 'f2', name: 'Factory Two', type: 'factory' }];
+  mock.purchase_order_items = [];
   mock.products = [
     { id: 'p1', style_number: 'ABC-2', name: 'Tote', sku: 'SKU-2', active: true, client_company_id: 'c1', company: { name: 'Acme' } },
     { id: 'p2', style_number: 'ABC-10', name: 'Cap', active: false, company: { name: 'Beta' } },
@@ -94,6 +97,40 @@ it('filters by catalog status and searches styles, names and clients', async () 
   expect(screen.getByRole('link', { name: 'ABC-10' })).toBeTruthy();
   await user.type(search, 'missing');
   expect(screen.getByText('No products match these filters.')).toBeTruthy();
+});
+
+it('opens a factory-filtered list on active products and allows other statuses', async () => {
+  mock.factoryId = 'f1';
+  mock.quotes = [
+    { id: 'q1', product_id: 'p1', factory: 'Old factory name', factory_company_id: 'f1' },
+    { id: 'q2', product_id: 'p1', factory: 'Factory One' },
+    { id: 'q3', product_id: 'p3', factory: 'Factory One', factory_company_id: 'f2' },
+  ];
+  mock.purchase_order_items = [{ id: 'i1', product_id: 'p1', purchase_orders: { factory_company_id: 'f1' } }, { id: 'i2', product_id: 'p2', purchase_orders: { factory_company_id: 'f1' } }];
+  const user = userEvent.setup();
+  render(<ProductsPage />);
+  expect(await screen.findByRole('link', { name: 'ABC-2' })).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'ABC-10' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Style number not assigned' })).toBeNull();
+  expect(screen.getByText('Factory One')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Clear factory filter' }).getAttribute('href')).toBe('/v2/products');
+  expect(screen.getByRole('button', { name: /Active/ }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByText('1 product shown')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: /All products/ }));
+  expect(screen.getByRole('link', { name: 'ABC-10' })).toBeTruthy();
+  expect(screen.getByText('2 products shown')).toBeTruthy();
+});
+
+it('shows no products for a factory with no links and handles association query errors', async () => {
+  mock.factoryId = 'f2';
+  mock.fail = 'purchase_order_items';
+  const user = userEvent.setup();
+  render(<ProductsPage />);
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  mock.fail = false;
+  await user.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(await screen.findByText('No products match these filters.')).toBeTruthy();
+  expect(screen.getByText('0 products shown')).toBeTruthy();
 });
 
 it('loads all pages and offers retry when either query fails', async () => {

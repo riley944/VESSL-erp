@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { Backpack, CupSoda, FilePlus2, FileText, Package, Pencil, Shirt, ShoppingBag, Trash2 } from 'lucide-react';
 import { SB } from '@/lib/supabase';
 import { recordPath } from '@/lib/v2RecordPaths';
+import { factoryProductIds } from '@/lib/factoryProducts';
 import V2Shell from '../V2Shell';
 import EditProductModal from './EditProductModal';
 import NewProductModal from './NewProductModal';
@@ -37,16 +39,21 @@ async function fetchAll(table, columns) {
 }
 
 function ProductsList() {
+  const factoryId = useSearchParams().get('factoryId') || '';
   const [products, setProducts] = useState(null);
+  const [factoryName, setFactoryName] = useState('');
+  const [factoryProducts, setFactoryProducts] = useState(null);
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState('');
-  const [tab, setTab] = useState('all');
+  const [tab, setTab] = useState(factoryId ? 'active' : 'all');
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
   const [quoteProduct, setQuoteProduct] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [deleteError, setDeleteError] = useState('');
+
+  useEffect(() => { setTab(factoryId ? 'active' : 'all'); }, [factoryId]);
 
   const deleteProduct = async product => {
     if (deleting) return;
@@ -69,9 +76,15 @@ function ProductsList() {
     setProducts(null); setError(false);
     Promise.all([
       fetchAll('products', 'id,style_number,sku,name,description,active,client_company_id,company:companies!client_company_id(name)'),
-      fetchAll('quotes', 'id,product_id,quote_code,created_at'),
-    ]).then(([rows, quotes]) => {
+      fetchAll('quotes', 'id,product_id,quote_code,created_at,factory,factory_company_id'),
+      ...(factoryId ? [fetchAll('companies', 'id,name,type'), fetchAll('purchase_order_items', 'id,product_id,purchase_orders(factory_company_id)')] : []),
+    ]).then(([rows, quotes, companies, items]) => {
       if (!active) return;
+      if (factoryId) {
+        const factories = companies.filter(company => company.type === 'factory');
+        setFactoryName(factories.find(factory => factory.id === factoryId)?.name || 'Unknown factory');
+        setFactoryProducts(factoryProductIds(factories, quotes, items).get(factoryId) || new Set());
+      } else { setFactoryName(''); setFactoryProducts(null); }
       const byProduct = new Map();
       quotes.forEach(quote => {
         if (!quote.product_id) return;
@@ -84,18 +97,21 @@ function ProductsList() {
         .sort((a, b) => (a.style_number || '\uffff').localeCompare(b.style_number || '\uffff', undefined, { numeric: true }) || String(a.id).localeCompare(String(b.id))));
     }).catch(() => { if (active) setError(true); });
     return () => { active = false; };
-  }, [retry]);
+  }, [retry, factoryId]);
+
+  const scopedProducts = useMemo(() => (products || []).filter(product => !factoryId || factoryProducts?.has(product.id)), [products, factoryId, factoryProducts]);
 
   const shown = useMemo(() => {
     const term = normalize(search);
-    return (products || []).filter(product => (tab === 'all' || statusOf(product) === tab) &&
+    return scopedProducts.filter(product => (tab === 'all' || statusOf(product) === tab) &&
       (!term || [product.style_number, product.name, product.description, product.company?.name].some(value => normalize(value).includes(term))));
-  }, [products, search, tab]);
+  }, [scopedProducts, search, tab]);
 
   return <main className={s.main}>
     <div className={s.header}><div><h1>Products</h1><p className={s.subtitle}>Every style number, across all clients</p></div><button className={s.create} onClick={() => setCreating(true)}>+ New product</button></div>
+    {factoryId && <p className={s.factoryFilter}>Factory: <strong>{factoryName || 'Loading…'}</strong> · <Link href="/v2/products">Clear factory filter</Link></p>}
     <div className={s.tabs} role="group" aria-label="Product status">
-      {TABS.map(([key, label]) => <button type="button" key={key} aria-pressed={tab === key} onClick={() => setTab(key)}>{label}{products && <b>{key === 'all' ? products.length : products.filter(product => statusOf(product) === key).length}</b>}</button>)}
+      {TABS.map(([key, label]) => <button type="button" key={key} aria-pressed={tab === key} onClick={() => setTab(key)}>{label}{products && <b>{key === 'all' ? scopedProducts.length : scopedProducts.filter(product => statusOf(product) === key).length}</b>}</button>)}
     </div>
     <input className={s.search} type="search" aria-label="Search products" placeholder="Search style number, product or client" value={search} onChange={event => setSearch(event.target.value)} />
     {deleteError && <p className={s.error} role="alert">{deleteError}</p>}
@@ -121,4 +137,4 @@ function ProductsList() {
   </main>;
 }
 
-export default function ProductsPage() { return <V2Shell><ProductsList /></V2Shell>; }
+export default function ProductsPage() { return <V2Shell><Suspense fallback={<main className={s.main}>Loading products…</main>}><ProductsList /></Suspense></V2Shell>; }

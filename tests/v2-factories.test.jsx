@@ -46,12 +46,14 @@ it('lists factories with linked names, primary contacts, search and edit icons',
   expect(within(link.parentElement).getByText('Jenny')).toBeTruthy();
   expect(within(link.parentElement).getByText('Sample City')).toBeTruthy();
   expect(within(link.parentElement).getByText('2')).toBeTruthy();
+  expect(within(link.parentElement).getByRole('link', { name: '2 active products for Acme Factory' }).getAttribute('href')).toBe('/v2/products?factoryId=f1');
   expect(screen.getByText('Ships from')).toBeTruthy();
   expect(screen.getByText('Active products')).toBeTruthy();
   expect(screen.getByText('Needs attention')).toBeTruthy();
   const emptyRow = screen.getByRole('link', { name: 'Zebra' }).parentElement;
   expect(within(emptyRow).getAllByText('-')).toHaveLength(3);
   expect(within(emptyRow).getByText('0')).toBeTruthy();
+  expect(within(emptyRow).queryByRole('link', { name: '0 active products for Zebra' })).toBeNull();
   expect(within(link.parentElement).getByRole('button', { name: 'Edit Acme Factory' }).querySelector('.lucide-pencil')).toBeTruthy();
   expect(mock.queries).toContainEqual(['companies', 'type', 'factory']);
   expect(mock.queries).toContainEqual(['contacts', 'is_primary', true]);

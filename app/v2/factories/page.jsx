@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Pencil } from 'lucide-react';
 import { SB } from '@/lib/supabase';
+import { factoryProductIds } from '@/lib/factoryProducts';
 import { CreateCompanyModal } from '@/app/components/CreateCompanyModal';
 import V2Shell from '../V2Shell';
 import EditFactoryModal from './EditFactoryModal';
@@ -34,26 +35,14 @@ function FactoriesList() {
       fetchAll('companies', 'id,name,shipping_address', q => q.eq('type', 'factory')),
       fetchAll('contacts', 'id,company_id,full_name', q => q.eq('is_primary', true)),
       fetchAll('products', 'id', q => q.eq('active', true)),
-      fetchAll('quotes', 'id,product_id,factory', q => q),
+      fetchAll('quotes', 'id,product_id,factory,factory_company_id', q => q),
       fetchAll('purchase_order_items', 'id,product_id,purchase_orders(factory_company_id)', q => q),
     ]).then(([factories, contacts, products, quotes, items]) => {
       if (!active) return;
       const names = new Map(contacts.map(contact => [contact.company_id, contact.full_name]));
       const activeProducts = new Set(products.map(product => product.id));
-      const factoryNames = new Map();
-      factories.forEach(factory => {
-        const key = (factory.name || '').trim().toLowerCase();
-        if (key) factoryNames.set(key, factoryNames.has(key) ? null : factory.id);
-      });
-      const counts = new Map();
-      const add = (factoryId, productId) => {
-        if (!factoryId || !activeProducts.has(productId)) return;
-        if (!counts.has(factoryId)) counts.set(factoryId, new Set());
-        counts.get(factoryId).add(productId);
-      };
-      quotes.forEach(quote => add(factoryNames.get((quote.factory || '').trim().toLowerCase()), quote.product_id));
-      items.forEach(item => add(item.purchase_orders?.factory_company_id, item.product_id));
-      setData(factories.map(factory => ({ ...factory, contact: names.get(factory.id) || '', products: counts.get(factory.id)?.size || 0 })).sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+      const links = factoryProductIds(factories, quotes, items);
+      setData(factories.map(factory => ({ ...factory, contact: names.get(factory.id) || '', products: [...(links.get(factory.id) || [])].filter(id => activeProducts.has(id)).length })).sort((a, b) => (a.name || '').localeCompare(b.name || '')));
     }).catch(() => { if (active) setError(true); });
     return () => { active = false; };
   }, [retry]);
@@ -72,7 +61,7 @@ function FactoriesList() {
           <Link className={s.client} href={`/v2/factories/${factory.id}`}>{factory.name || 'Unnamed factory'}</Link>
           <span><span className={s.mobileLabel}>Main contact: </span>{factory.contact || '-'}</span>
           <span className={styles.address}><span className={s.mobileLabel}>Ships from: </span>{factory.shipping_address?.trim() || '-'}</span>
-          <span><span className={s.mobileLabel}>Active products: </span>{factory.products}</span>
+          <span><span className={s.mobileLabel}>Active products: </span>{factory.products ? <Link className={styles.productLink} href={`/v2/products?${new URLSearchParams({ factoryId: factory.id })}`} aria-label={`${factory.products} active products for ${factory.name || 'unnamed factory'}`}>{factory.products}</Link> : 0}</span>
           <span><span className={s.mobileLabel}>Needs attention: </span>-</span>
           <button className={s.edit} title="Edit factory" aria-label={`Edit ${factory.name || 'unnamed factory'}`} onClick={() => setEditing(factory.id)}><Pencil size={18} aria-hidden="true" /></button>
         </div>)}
