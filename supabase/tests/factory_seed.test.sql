@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = extensions, public;
-select plan(3);
+select plan(4);
 
 select is((select count(*) from vessl.companies where type = 'factory' and id in (
   'd4e50000-0000-4000-8000-000000000101', 'd4e50000-0000-4000-8000-000000000102'
@@ -15,6 +15,14 @@ select is((select count(distinct q.factory) from vessl.quotes q join vessl.compa
   where q.id between '40000000-0000-4000-8000-000000000101'::uuid and '40000000-0000-4000-8000-000000000109'::uuid
     and c.id in ('d4e50000-0000-4000-8000-000000000101', 'd4e50000-0000-4000-8000-000000000102')),
   2::bigint, 'sample quote factories match the seeded companies');
+
+select is((select count(*) from vessl.purchase_order_items i
+  join vessl.purchase_orders po on po.id = i.purchase_order_id
+  join vessl.products p on p.id = i.product_id
+  where i.id in ('60000000-0000-4000-8000-000000000101', '60000000-0000-4000-8000-000000000102')
+    and po.factory_company_id in ('d4e50000-0000-4000-8000-000000000101', 'd4e50000-0000-4000-8000-000000000102')
+    and p.active and p.client_company_id = po.client_company_id),
+  2::bigint, 'sample purchase orders link factories to active products');
 
 select * from finish();
 rollback;

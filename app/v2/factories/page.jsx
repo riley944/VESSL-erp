@@ -31,12 +31,29 @@ function FactoriesList() {
     let active = true;
     setData(null); setError(false);
     Promise.all([
-      fetchAll('companies', 'id,name', q => q.eq('type', 'factory')),
+      fetchAll('companies', 'id,name,shipping_address', q => q.eq('type', 'factory')),
       fetchAll('contacts', 'id,company_id,full_name', q => q.eq('is_primary', true)),
-    ]).then(([factories, contacts]) => {
+      fetchAll('products', 'id', q => q.eq('active', true)),
+      fetchAll('quotes', 'id,product_id,factory', q => q),
+      fetchAll('purchase_order_items', 'id,product_id,purchase_orders(factory_company_id)', q => q),
+    ]).then(([factories, contacts, products, quotes, items]) => {
       if (!active) return;
       const names = new Map(contacts.map(contact => [contact.company_id, contact.full_name]));
-      setData(factories.map(factory => ({ ...factory, contact: names.get(factory.id) || '' })).sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+      const activeProducts = new Set(products.map(product => product.id));
+      const factoryNames = new Map();
+      factories.forEach(factory => {
+        const key = (factory.name || '').trim().toLowerCase();
+        if (key) factoryNames.set(key, factoryNames.has(key) ? null : factory.id);
+      });
+      const counts = new Map();
+      const add = (factoryId, productId) => {
+        if (!factoryId || !activeProducts.has(productId)) return;
+        if (!counts.has(factoryId)) counts.set(factoryId, new Set());
+        counts.get(factoryId).add(productId);
+      };
+      quotes.forEach(quote => add(factoryNames.get((quote.factory || '').trim().toLowerCase()), quote.product_id));
+      items.forEach(item => add(item.purchase_orders?.factory_company_id, item.product_id));
+      setData(factories.map(factory => ({ ...factory, contact: names.get(factory.id) || '', products: counts.get(factory.id)?.size || 0 })).sort((a, b) => (a.name || '').localeCompare(b.name || '')));
     }).catch(() => { if (active) setError(true); });
     return () => { active = false; };
   }, [retry]);
@@ -50,10 +67,13 @@ function FactoriesList() {
     <input className={s.search} type="search" aria-label="Search factories" placeholder="Search factories or contacts" value={search} onChange={event => setSearch(event.target.value)} />
     <div className={s.card}>
       {error ? <div className={s.empty} role="alert">Could not load factories. <button onClick={() => setRetry(n => n + 1)}>Try again</button></div> : !data ? <p className={s.empty}>Loading factories…</p> : !shown.length ? <p className={s.empty}>{data.length ? 'No factories match your search.' : 'No factories found.'}</p> : <>
-        <div className={`${s.grid} ${styles.grid} ${s.heading}`} aria-hidden="true"><span>Factory</span><span>Main contact</span><span /></div>
+        <div className={`${s.grid} ${styles.grid} ${s.heading}`} aria-hidden="true"><span>Factory</span><span>Main contact</span><span>Ships from</span><span>Active products</span><span>Needs attention</span><span /></div>
         {shown.map(factory => <div className={`${s.grid} ${styles.grid} ${s.row}`} key={factory.id}>
           <Link className={s.client} href={`/v2/factories/${factory.id}`}>{factory.name || 'Unnamed factory'}</Link>
-          <span><span className={s.mobileLabel}>Main contact: </span>{factory.contact || '—'}</span>
+          <span><span className={s.mobileLabel}>Main contact: </span>{factory.contact || '-'}</span>
+          <span className={styles.address}><span className={s.mobileLabel}>Ships from: </span>{factory.shipping_address?.trim() || '-'}</span>
+          <span><span className={s.mobileLabel}>Active products: </span>{factory.products}</span>
+          <span><span className={s.mobileLabel}>Needs attention: </span>-</span>
           <button className={s.edit} title="Edit factory" aria-label={`Edit ${factory.name || 'unnamed factory'}`} onClick={() => setEditing(factory.id)}><Pencil size={18} aria-hidden="true" /></button>
         </div>)}
       </>}

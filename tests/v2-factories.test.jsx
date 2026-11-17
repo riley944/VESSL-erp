@@ -14,14 +14,20 @@ vi.mock('@/lib/supabase', () => ({ SB: { from: table => {
   const filters = [];
   let payload;
   let operation;
-  const company = { id: 'f1', type: 'factory', name: 'Acme Factory', email: 'hello@example.com', website: 'example.com' };
+  const company = { id: 'f1', type: 'factory', name: 'Acme Factory', email: 'hello@example.com', website: 'example.com', shipping_address: 'Sample City' };
   const chain = {
     select: () => chain,
     eq: (column, value) => { filters.push([column, value]); mock.queries.push([table, column, value]); return chain; },
     order: () => chain,
     update: value => { payload = value; operation = 'update'; return chain; },
     insert: value => { payload = value; operation = 'insert'; return chain; },
-    range: () => Promise.resolve(mock.fail ? { error: { message: 'failed' } } : { data: table === 'companies' ? [company, { id: 'f2', name: 'Zebra' }] : [{ id: 'ct1', company_id: 'f1', full_name: 'Jenny' }] }),
+    range: () => Promise.resolve(mock.fail ? { error: { message: 'failed' } } : { data: ({
+      companies: [company, { id: 'f2', name: 'Zebra' }],
+      contacts: [{ id: 'ct1', company_id: 'f1', full_name: 'Jenny' }],
+      products: [{ id: 'p1' }, { id: 'p2' }],
+      quotes: [{ id: 'q1', factory: ' Acme Factory ', product_id: 'p1' }, { id: 'q2', factory: 'ACME FACTORY', product_id: 'p1' }, { id: 'q3', factory: 'Acme Factory', product_id: 'inactive' }],
+      purchase_order_items: [{ id: 'i1', product_id: 'p1', purchase_orders: { factory_company_id: 'f1' } }, { id: 'i2', product_id: 'p2', purchase_orders: { factory_company_id: 'f1' } }, { id: 'i3', product_id: 'inactive', purchase_orders: { factory_company_id: 'f2' } }],
+    })[table] }),
     maybeSingle: () => Promise.resolve(mock.fail ? { error: { message: 'failed' } } : { data: mock.missing ? null : company }),
     limit: () => Promise.resolve(mock.fail ? { error: { message: 'failed' } } : { data: mock.noContact ? [] : [{ id: 'ct1', full_name: 'Jenny', email: 'jenny@example.com', phone: '123' }] }),
     single: () => { mock.updates.push({ table, operation, payload, filters }); return Promise.resolve(table === 'contacts' && mock.contactFail ? { error: { message: 'failed' } } : { data: table === 'contacts' ? { id: 'ct1', email: 'jenny@example.com', phone: '123', ...payload } : { ...company, ...payload } }); },
@@ -38,9 +44,18 @@ it('lists factories with linked names, primary contacts, search and edit icons',
   const link = await screen.findByRole('link', { name: 'Acme Factory' });
   expect(link.getAttribute('href')).toBe('/v2/factories/f1');
   expect(within(link.parentElement).getByText('Jenny')).toBeTruthy();
+  expect(within(link.parentElement).getByText('Sample City')).toBeTruthy();
+  expect(within(link.parentElement).getByText('2')).toBeTruthy();
+  expect(screen.getByText('Ships from')).toBeTruthy();
+  expect(screen.getByText('Active products')).toBeTruthy();
+  expect(screen.getByText('Needs attention')).toBeTruthy();
+  const emptyRow = screen.getByRole('link', { name: 'Zebra' }).parentElement;
+  expect(within(emptyRow).getAllByText('-')).toHaveLength(3);
+  expect(within(emptyRow).getByText('0')).toBeTruthy();
   expect(within(link.parentElement).getByRole('button', { name: 'Edit Acme Factory' }).querySelector('.lucide-pencil')).toBeTruthy();
   expect(mock.queries).toContainEqual(['companies', 'type', 'factory']);
   expect(mock.queries).toContainEqual(['contacts', 'is_primary', true]);
+  expect(mock.queries).toContainEqual(['products', 'active', true]);
   await user.type(screen.getByRole('searchbox', { name: 'Search factories' }), 'jenny');
   expect(screen.queryByRole('link', { name: 'Zebra' })).toBeNull();
   expect(screen.getByRole('link', { name: 'Acme Factory' })).toBeTruthy();

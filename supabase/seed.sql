@@ -63,3 +63,24 @@ from (values
 join vessl.products p on p.id = seed.product_id
 join vessl.companies c on c.id = p.client_company_id
 where not exists (select 1 from vessl.quotes q where q.id = seed.id);
+
+-- Sample POs add explicit factory-to-product links alongside the sample quotes.
+insert into vessl.purchase_orders (id, order_number, factory_company_id, client_company_id)
+select seed.id, seed.order_number, f.id, c.id
+from (values
+  ('50000000-0000-4000-8000-000000000101'::uuid, 'TEST-FACTORY-PO-101', 'd4e50000-0000-4000-8000-000000000101'::uuid, 'Harbor Test Factory', 'a1b20000-0000-4000-8000-000000000101'::uuid),
+  ('50000000-0000-4000-8000-000000000102'::uuid, 'TEST-FACTORY-PO-102', 'd4e50000-0000-4000-8000-000000000102'::uuid, 'Summit Test Factory', 'b2c30000-0000-4000-8000-000000000102'::uuid)
+) as seed(id, order_number, factory_id, factory_name, client_id)
+join vessl.companies f on f.id = seed.factory_id and f.name = seed.factory_name and f.type = 'factory'
+join vessl.companies c on c.id = seed.client_id and c.type = 'client'
+on conflict do nothing;
+
+insert into vessl.purchase_order_items (id, purchase_order_id, product_id, description, quantity)
+select seed.id, po.id, p.id, p.name, 1000
+from (values
+  ('60000000-0000-4000-8000-000000000101'::uuid, '50000000-0000-4000-8000-000000000101'::uuid, 'TEST-FACTORY-PO-101', 'd4e50000-0000-4000-8000-000000000101'::uuid, '10000000-0000-4000-8000-000000000101'::uuid),
+  ('60000000-0000-4000-8000-000000000102'::uuid, '50000000-0000-4000-8000-000000000102'::uuid, 'TEST-FACTORY-PO-102', 'd4e50000-0000-4000-8000-000000000102'::uuid, '20000000-0000-4000-8000-000000000102'::uuid)
+) as seed(id, po_id, order_number, factory_id, product_id)
+join vessl.purchase_orders po on po.id = seed.po_id and po.order_number = seed.order_number and po.factory_company_id = seed.factory_id
+join vessl.products p on p.id = seed.product_id and p.client_company_id = po.client_company_id
+on conflict do nothing;
