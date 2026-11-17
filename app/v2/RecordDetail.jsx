@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { SB } from '@/lib/supabase';
 import V2Shell from './V2Shell';
+import EditProductModal from './products/EditProductModal';
 import s from './detail.module.css';
 
 function Field({ label, value }) {
@@ -27,6 +28,8 @@ function Detail({ type }) {
   const { id } = useParams();
   const isQuote = type === 'quote';
   const [result, setResult] = useState({ loading: true });
+  const [editing, setEditing] = useState(false);
+  const [revision, setRevision] = useState(0);
   useEffect(() => {
     let active = true;
     setResult({ loading: true });
@@ -38,7 +41,7 @@ function Detail({ type }) {
       if (active) setResult({ data, error });
     });
     return () => { active = false; };
-  }, [id, isQuote]);
+  }, [id, isQuote, revision]);
 
   const record = result.data;
   const tiers = isQuote && record ? quoteTiers(record) : [];
@@ -46,7 +49,7 @@ function Detail({ type }) {
     <Link className={s.back} href={isQuote ? '/v2/quotes' : '/v2/products'}>← {isQuote ? 'Quotes' : 'Products'}</Link>
     {result.loading ? <p className={s.message}>Loading {type}…</p> : result.error ? <p className={s.message} role="alert">Could not load {type}: {result.error.message}</p> : !record ? <p className={s.message}>{isQuote ? 'Quote' : 'Product'} not found.</p> : <>
       <p className={s.eyebrow}>{isQuote ? 'Quote' : 'Product'}</p>
-      <h1>{(isQuote ? record.product_row?.style_number : record.style_number) || (isQuote ? record.quote_code : record.name) || (isQuote ? 'Quote details' : 'Product details')}</h1>
+      <div className={s.titleRow}><h1>{(isQuote ? record.product_row?.style_number : record.style_number) || (isQuote ? record.quote_code : record.name) || (isQuote ? 'Quote details' : 'Product details')}</h1>{!isQuote && <button className={s.editButton} onClick={() => setEditing(true)}>Edit</button>}</div>
       <p className={s.subtitle}>{isQuote ? record.product || 'Product not entered' : record.name || 'Product name not entered'}</p>
       {isQuote && record.product_row && <Link className={s.button} href={`/v2/products/${record.product_row.id}`}>View product</Link>}
       <section className={s.card}>
@@ -93,6 +96,7 @@ function Detail({ type }) {
         </div>; })}</div> : <p className={s.note}>No quantity tiers recorded.</p>}
       </section>}
       {isQuote && record.notes && <section className={s.card}><h2>Notes</h2><p className={s.notes}>{record.notes}</p></section>}
+      {!isQuote && editing && <EditProductModal id={id} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); setRevision(n => n + 1); }} />}
     </>}
   </main>;
 }

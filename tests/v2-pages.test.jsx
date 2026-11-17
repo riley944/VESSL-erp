@@ -18,6 +18,7 @@ vi.mock('next/link', () => ({ default: ({ href, children, ...props }) => <a href
 vi.mock('next/navigation', () => ({ useParams: () => ({ id: mock.id }), usePathname: () => mock.pathname, useSearchParams: () => new URLSearchParams(mock.searchParams), notFound: () => { throw new Error('NEXT_NOT_FOUND'); } }));
 vi.mock('@/app/m/MLogin', () => ({ MLogin: () => <div>Login form</div> }));
 vi.mock('@/app/v2/clients/EditClientModal', () => ({ default: ({ id, onSaved }) => <button onClick={() => onSaved({ id, name: 'Updated client', email: 'new@example.com' })}>Save test edit</button> }));
+vi.mock('@/app/v2/products/EditProductModal', () => ({ default: ({ onSaved }) => <button onClick={() => { mock.detail = Promise.resolve({ data: { name: 'Updated product' }, error: null }); onSaved(); }}>Save test product</button> }));
 vi.mock('@/lib/supabase', () => ({ SB: {
   auth: {
     getSession: () => mock.session,
@@ -453,6 +454,15 @@ describe('V2 quote detail', () => {
 });
 
 describe('V2 product detail', () => {
+  it('opens the editor and reloads the product after saving', async () => {
+    mock.detail = Promise.resolve({ data: { name: 'Bottle' }, error: null });
+    const user = userEvent.setup();
+    render(<ProductPage />);
+    await screen.findByRole('heading', { name: 'Bottle' });
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    await user.click(screen.getByRole('button', { name: 'Save test product' }));
+    expect(await screen.findByRole('heading', { name: 'Updated product' })).toBeTruthy();
+  });
   it('shows product fields and linked client', async () => {
     mock.detail = Promise.resolve({ data: { style_number: 'ACM-1', name: 'Bottle', sku: 'B1', company: { name: 'Acme' }, description: 'Steel' }, error: null });
     render(<ProductPage />);

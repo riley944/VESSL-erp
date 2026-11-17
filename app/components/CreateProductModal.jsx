@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { SB } from '@/lib/supabase';
 import { HtsField, useHtsCodes } from '@/app/components/HtsField';
 import { CodeModal } from '@/app/components/CodeModal';
@@ -70,7 +70,7 @@ function parseCountryInput(raw, existing) {
 // Pass `data` to edit that row, omit it to create — the same shape MaterialModal
 // uses. Every class name below resolves from globals.css, so this file needs no
 // styles of its own.
-export function CreateProductModal({ data, regs = [], links = [], matLinks = [], onClose, onCreated }) {
+export function CreateProductModal({ data, regs = [], links = [], matLinks = [], onClose, onCreated, wizard = false }) {
   const editing = !!(data && data.id);
   // Read-only. LinkRulesModal is the only writer of product_regulations.
   //
@@ -97,6 +97,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
   // link. Falls back to the raw id if the join came back empty, so a broken link shows
   // as something rather than as "not set".
   const [saving, setSaving] = useState(false);
+  const [step, setStep] = useState(0);
   // The ref goes on .modal-box, the card -- not the overlay. CodeModal is rendered
   // as a SIBLING of the box (see the comment at the overlay below), so its inputs
   // are not inside this node at all and never reach the snapshot; the
@@ -121,7 +122,9 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
     // type="date"> wants; slicing guards a row that ever holds a timestamp. Same
     // handling ShipmentQuoteModal gives ready_date.
     manualTestDate: data?.manual_test_date ? String(data.manual_test_date).slice(0,10) : '',
+    active: data?.active === true ? 'active' : data?.active === false ? 'inactive' : '',
   });
+  const original = useRef(form);
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   // Chip input state. countryDraft is what is being typed; countryErr is cleared on the
   // next keystroke so a rejection does not outlive the thing that caused it.
@@ -176,7 +179,9 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
     // Saved in its one written shape (lib/products cleanName).
     const name = cleanName(form.name);
     const sku  = form.sku.trim();
-    if (!name) { alert('Product name required'); return; }
+    if (!name) { if (wizard) setStep(0); alert('Product name required'); return; }
+    if (wizard && countryDraft.trim()) { setStep(3); alert('Press Enter to add the shipping country before saving.'); return; }
+    if (wizard && countryErr) { setStep(3); alert(countryErr); return; }
     setSaving(true);
     const payload = {
       // products_sku_key is UNIQUE and Postgres does not treat NULLs as equal, so any
@@ -233,9 +238,20 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
     // category_id is written explicitly on create so every new row carries the same
     // key set (product_categories has no rows to pick from). On edit it is left out
     // rather than nulled, so a category set elsewhere survives a save here.
-    const { error } = editing
-      ? await SB.from('products').update(payload).eq('id', data.id)
-      : await SB.from('products').insert({ ...payload, category_id:null });
+    if (wizard) {
+      payload.active = form.active === '' ? null : form.active === 'active';
+      const keys = { sku:'sku', name:'name', desc:'description', composition:'composition', hs:'hts_code', uom:'unit_of_measure', wt:'weight_kg', upc:'units_per_carton', cwt:'carton_weight_kg', cl:'carton_l_cm', cw:'carton_w_cm', ch:'carton_h_cm', cpscType:'cpsc_type', shipsTo:'ships_to', tradeDirection:'trade_direction', kuiIor:'kui_ior', testingPaidBy:'testing_paid_by', manualTestDate:'manual_test_date', active:'active' };
+      Object.entries(keys).forEach(([field, column]) => {
+        if (JSON.stringify(form[field]) === JSON.stringify(original.current[field])) delete payload[column];
+      });
+    }
+    let error;
+    try {
+      if (editing && wizard && !Object.keys(payload).length) { setSaving(false); onCreated(); return; }
+      ({ error } = editing
+        ? await SB.from('products').update(payload).eq('id', data.id)
+        : await SB.from('products').insert({ ...payload, category_id:null }));
+    } catch (caught) { error = caught; }
     setSaving(false);
     if (error) {
       const dupe = error.code === '23505' || /duplicate key|products_sku_key/i.test(error.message||'');
@@ -253,9 +269,13 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
           product draft underneath survives. CodeModal is zIndex 300 against this
           overlay's 100, so it stacks on top without help. */}
       {addingCode && <CodeModal data={addingCode} onClose={()=>setAddingCode(null)} onSaved={onCodeAdded} />}
-      <div className="modal-box" ref={cardRef}>
-        <div className="modal-head"><h3>{editing?'Edit Product':'New Product'}</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
+      <div className="modal-box" ref={cardRef} role="dialog" aria-modal="true" aria-label={editing?'Edit Product':'New Product'}>
+        <div className="modal-head"><h3>{editing?'Edit Product':'New Product'}</h3><button className="modal-close" aria-label="Close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
+          {wizard && <div role="tablist" aria-label="Product sections" style={{display:'flex',flexWrap:'wrap',gap:'6px',margin:'0 0 18px'}}>
+            {['Product details', 'Specifications', 'Testing & certification', 'Trade', 'Carton / case pack'].map((label, index) => <button key={label} type="button" role="tab" id={`product-tab-${index}`} aria-controls={`product-panel-${index}`} aria-selected={step === index} tabIndex={step === index ? 0 : -1} onClick={() => setStep(index)} onKeyDown={e => { const next = e.key === 'ArrowRight' ? (index + 1) % 5 : e.key === 'ArrowLeft' ? (index + 4) % 5 : e.key === 'Home' ? 0 : e.key === 'End' ? 4 : null; if (next !== null) { e.preventDefault(); setStep(next); e.currentTarget.parentElement.querySelectorAll('[role="tab"]')[next].focus(); } }} style={{border:'1px solid ' + (step === index ? '#008a25' : '#cbd5e1'),borderRadius:'999px',padding:'7px 11px',background:step === index ? '#e8f7ec' : '#fff',color:step === index ? '#006b1d' : '#334155',fontWeight:600,cursor:'pointer'}}>{label}</button>)}
+          </div>}
+          <section hidden={wizard && step !== 0} role={wizard ? 'tabpanel' : undefined} id={wizard ? 'product-panel-0' : undefined} aria-labelledby={wizard ? 'product-tab-0' : undefined}>
           {/* A datalist gives no visual cue that suggestions exist, so the chevron and
               the hint are what make it findable. The input still accepts anything —
               the list narrows as you type, it does not constrain. */}
@@ -271,8 +291,11 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
                 the browser shows beside it, and is never what gets written. */}
             {skus.length>0 && <datalist id="cpm-sku-list">{skus.map(s=><option key={s.sku} value={s.sku}>{s.product}</option>)}</datalist>}
           </div>
-          <div className="form-row"><label>Product Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
-          <div className="form-row"><label>Description</label><textarea className="form-textarea" value={form.desc} onChange={e=>f('desc')(e.target.value)} /></div>
+          <div className="form-row"><label htmlFor="product-edit-name">Product Name *</label><input id="product-edit-name" className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
+          <div className="form-row"><label htmlFor="product-edit-description">Description</label><textarea id="product-edit-description" className="form-textarea" value={form.desc} onChange={e=>f('desc')(e.target.value)} /></div>
+          {wizard && <div className="form-row"><label htmlFor="product-edit-active">Status</label><select id="product-edit-active" className="form-select" value={form.active} onChange={e=>f('active')(e.target.value)}><option value="">Not set</option><option value="active">Active</option><option value="inactive">Inactive</option></select></div>}
+          </section>
+          <section hidden={wizard && step !== 1} role={wizard ? 'tabpanel' : undefined} id={wizard ? 'product-panel-1' : undefined} aria-labelledby={wizard ? 'product-tab-1' : undefined}>
           {/* Free text, and deliberately so: it is what the label says, transcribed.
               NULL means not recorded -- never "no composition", since everything is made
               of something. Single line rather than a textarea because one line is what a
@@ -310,6 +333,8 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
             <div><label>Unit</label><input className="form-input" value={form.uom} onChange={e=>f('uom')(e.target.value)} /></div>
             <div><label>Weight (kg)</label><input type="number" step="0.001" className="form-input" value={form.wt} onChange={e=>f('wt')(e.target.value)} /></div>
           </div>
+          </section>
+          <section hidden={wizard && step !== 2} role={wizard ? 'tabpanel' : undefined} id={wizard ? 'product-panel-2' : undefined} aria-labelledby={wizard ? 'product-tab-2' : undefined}>
           <div className="form-row-2">
             <div><label>CPSC</label><select className="form-select" value={form.cpscType} onChange={e=>f('cpscType')(e.target.value)}>
               {/* Values stay uppercase to match products_cpsc_type_chk: the product row
@@ -340,7 +365,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
               Placed above the rules block rather than below it so the two single-line
               facts -- type and filing -- stay together under the CPSC row, and the list
               that can run long sits last. */}
-          {editing && (
+          {editing && !wizard && (
             <div className="form-row">
               <label>eFiling <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(set with the eFiling button)</span></label>
               {/* Four readings, matching the row's dot and tooltip. The strings are
@@ -414,7 +439,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
               holding it is directly above, and a product has one type while it can
               link many rules, so putting it on every row would read as a per-rule
               property rather than a per-product one. */}
-          {editing && (
+          {editing && !wizard && (
             <div className="form-row">
               <label>CPSC Rules <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(set with the Rules button)</span></label>
               {links.length === 0 ? (
@@ -445,7 +470,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
               linked and the name of the control that sets it. All three follow one rule
               now: this modal writes product COLUMNS, and every link on a product has a
               single writer of its own, reached from the product row. */}
-          {editing && (
+          {editing && !wizard && (
             <div className="form-row">
               <label>Material <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(set with the Materials button)</span></label>
               {matLinks.length === 0 ? (
@@ -459,6 +484,8 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
               )}
             </div>
           )}
+          </section>
+          <section hidden={wizard && step !== 3} role={wizard ? 'tabpanel' : undefined} id={wizard ? 'product-panel-3' : undefined} aria-labelledby={wizard ? 'product-tab-3' : undefined}>
           <span className="form-section-label">Trade &amp; Compliance</span>
           <div className="form-row">
             <label>Country Product Ships To <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(ISO codes — type one and press Enter)</span></label>
@@ -508,6 +535,8 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
             <div><label>Who Pays for Testing</label><input className="form-input" value={form.testingPaidBy} onChange={e=>f('testingPaidBy')(e.target.value)} /></div>
             <div></div>
           </div>
+          </section>
+          <section hidden={wizard && step !== 4} role={wizard ? 'tabpanel' : undefined} id={wizard ? 'product-panel-4' : undefined} aria-labelledby={wizard ? 'product-tab-4' : undefined}>
           <span className="form-section-label">Carton / Case Pack</span>
           <div className="form-row-3">
             <div><label>Units/Carton</label><input type="number" className="form-input" value={form.upc} onChange={e=>f('upc')(e.target.value)} /></div>
@@ -527,14 +556,15 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
 
             It is read-only and adds no field to this form, so it sits after
             everything editable rather than interrupting it. */}
-        {editing && (
+        {editing && !wizard && (
           <div className="form-block">
             <div className="form-block-title">Lifecycle</div>
             <LifecyclePanel product={data} />
           </div>
         )}
+        </section>
         </div>
-        <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={submit} disabled={saving} style={saving?{opacity:.6,pointerEvents:'none'}:{}}>{saving?'Saving…':(editing?'Save Changes':'Save Product')}</button></div>
+        <div className="modal-foot"><button className="btn btn-ghost" onClick={guardedClose}>Cancel</button>{wizard && step > 0 && <button className="btn btn-ghost" onClick={()=>setStep(step - 1)}>Back</button>}{wizard && step < 4 && <button className="btn btn-ghost" onClick={()=>setStep(step + 1)}>Next</button>}<button className="btn btn-dark" onClick={submit} disabled={saving} style={saving?{opacity:.6,pointerEvents:'none'}:{}}>{saving?'Saving…':(editing?'Save Changes':'Save Product')}</button></div>
       </div>
     </div>
   );

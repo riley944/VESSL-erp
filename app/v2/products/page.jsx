@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Backpack, CupSoda, Package, Shirt, ShoppingBag } from 'lucide-react';
 import { SB } from '@/lib/supabase';
 import V2Shell from '../V2Shell';
+import EditProductModal from './EditProductModal';
 import s from './products.module.css';
 
 const BATCH = 1000;
@@ -38,6 +39,7 @@ function ProductsList() {
   const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('all');
+  const [editing, setEditing] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -81,15 +83,17 @@ function ProductsList() {
           <div><span className={s.mobileLabel}>Product: </span>{product.name || product.description || '—'}</div>
           <div><span className={s.mobileLabel}>Client: </span>{product.company?.name || '—'}</div>
           <div><span className={s.mobileLabel}>Status: </span>{statusOf(product) === 'unset' ? 'Not set' : statusOf(product) === 'active' ? 'Active' : 'Inactive'}</div>
-          <div>{product.quotes.length ? <>
+          <div><div className={s.actions}>{product.quotes.length ? <>
             <Link className={s.button} href={`/v2/quotes/${product.quotes[0].id}`} aria-label={`View quote for ${product.style_number || product.name || 'product'}`}>View quote</Link>
+          </> : <span className={s.noQuote}>No linked quote</span>}<button className={s.edit} aria-label={`Edit ${product.style_number || product.name || 'product'}`} onClick={() => setEditing(product.id)}>Edit</button></div>
             {product.quotes.length > 1 && <span className={s.latest}>Latest quote</span>}
             {product.quotes.length > 1 && <details className={s.more}><summary>{product.quotes.length - 1} more {product.quotes.length === 2 ? 'quote' : 'quotes'}</summary><ul>{product.quotes.slice(1).map(quote => <li key={quote.id}><Link href={`/v2/quotes/${quote.id}`}>{quote.quote_code || 'View quote'}</Link></li>)}</ul></details>}
-          </> : <span className={s.noQuote}>No linked quote</span>}</div>
+          </div>
         </div>)}
       </>}
     </div>
     {products && <p className={s.count}>{shown.length} {shown.length === 1 ? 'product' : 'products'} shown</p>}
+    {editing && <EditProductModal id={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); setRetry(n => n + 1); }} />}
   </main>;
 }
 

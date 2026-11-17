@@ -7,6 +7,7 @@ import ProductsPage from '@/app/v2/products/page';
 const mock = vi.hoisted(() => ({ products: [], quotes: [], fail: false, ranges: [] }));
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a> }));
 vi.mock('@/app/v2/V2Shell', () => ({ default: ({ children }) => <>{children}</> }));
+vi.mock('@/app/v2/products/EditProductModal', () => ({ default: ({ id, onSaved }) => <button onClick={() => { mock.products = mock.products.map(p => p.id === id ? { ...p, name: 'Updated tote' } : p); onSaved(); }}>Save test product</button> }));
 vi.mock('@/lib/supabase', () => ({ SB: { from: table => ({ select: () => ({ order: () => ({ range: (start, end) => {
   mock.ranges.push([table, start, end]);
   return Promise.resolve(mock.fail === table ? { data: null, error: { message: 'Unavailable' } } : { data: mock[table].slice(start, end + 1), error: null });
@@ -72,4 +73,14 @@ it('loads all pages and offers retry when either query fails', async () => {
   await user.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByText('1000 products shown')).toBeTruthy();
   expect(mock.ranges).toContainEqual(['products', 1000, 1999]);
+});
+
+it('opens editing for a product and reloads the updated list', async () => {
+  const user = userEvent.setup();
+  render(<ProductsPage />);
+  await screen.findByRole('link', { name: 'ABC-2' });
+  await user.click(screen.getByRole('button', { name: 'Edit ABC-2' }));
+  await user.click(screen.getByRole('button', { name: 'Save test product' }));
+  expect(await screen.findByText('Updated tote')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Edit Sample' })).toBeTruthy();
 });
