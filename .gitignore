@@ -8,3 +8,5 @@ tmp/
 
 # Supabase directory
 supabase/.*
+
+agents.md

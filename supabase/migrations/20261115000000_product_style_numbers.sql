@@ -1,15 +1,9 @@
--- Existing products remain unnumbered until a separate backfill.
-alter table vessl.companies
-  add column last_style_iteration integer not null default 0,
-  add constraint companies_last_style_iteration_nonnegative
-    check (last_style_iteration >= 0);
-
+-- Existing products remain unnumbered until a separate backfill. The company
+-- counter was introduced by 20261112020000_add_active_and_sn_to_quotes.sql.
 alter table vessl.products
   add column style_number text,
   add constraint products_style_number_key unique (style_number);
 
-comment on column vessl.companies.last_style_iteration is
-  'Last style iteration assigned to this client; zero means none assigned.';
 comment on column vessl.products.style_number is
   'Unique client style number; NULL for products not yet assigned one.';
 

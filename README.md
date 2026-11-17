@@ -39,9 +39,10 @@ npm run lint
 
 ## Deployment
 
-Vercel deploys automatically from `main`: every push to `main` goes to production.
-There are no feature branches. Two weekly Vercel cron jobs (`vercel.json`) run on
-Mondays at 13:00 UTC: the freight-quote digest and the testing digest.
+GitHub Actions deploys pushes to `develop` and `main` after running the tests,
+building the app, and applying Supabase migrations. Failures are reported to Slack.
+See [deployment setup](docs/deployment.md) for the required Vercel, Supabase, and
+GitHub configuration. Scheduled jobs are configured in `vercel.json`.
 
 ## Layout
 
