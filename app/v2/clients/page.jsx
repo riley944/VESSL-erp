@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { SB } from '@/lib/supabase';
 import V2Shell from '../V2Shell';
+import { CreateCompanyModal } from '@/app/components/CreateCompanyModal';
 import s from './clients.module.css';
 
 const BATCH = 1000;
@@ -25,6 +26,7 @@ function ClientsList() {
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState('');
+  const [creating, setCreating] = useState(false);
   useEffect(() => {
     let active = true;
     setData(null); setError(false);
@@ -42,7 +44,7 @@ function ClientsList() {
   const shown = useMemo(() => (data || []).filter(client => (client.name || '').toLowerCase().includes(search.trim().toLowerCase())), [data, search]);
 
   return <main className={s.main}>
-    <h1>Clients</h1><p className={s.subtitle}>Everyone we make products for</p>
+    <div className={s.header}><div><h1>Clients</h1><p className={s.subtitle}>Everyone we make products for</p></div><button className={s.create} onClick={() => setCreating(true)}>+ New company</button></div>
     <input className={s.search} type="search" aria-label="Search clients" placeholder="Search clients" value={search} onChange={event => setSearch(event.target.value)} />
     <div className={s.card}>
       {error ? <div className={s.empty} role="alert">Could not load clients. <button onClick={() => setRetry(n => n + 1)}>Try again</button></div> : !data ? <p className={s.empty}>Loading clients…</p> : !shown.length ? <p className={s.empty}>{data.length ? 'No clients match your search.' : 'No clients found.'}</p> : <>
@@ -56,6 +58,7 @@ function ClientsList() {
       </>}
     </div>
     {data && <p className={s.count}>{shown.length} {shown.length === 1 ? 'client' : 'clients'} shown</p>}
+    {creating && <CreateCompanyModal initialType="client" noun="Company" onClose={() => setCreating(false)} onCreated={() => { setCreating(false); setSearch(''); setRetry(n => n + 1); }} />}
   </main>;
 }
 

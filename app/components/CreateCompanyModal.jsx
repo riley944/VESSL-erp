@@ -67,8 +67,10 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
   // initial prefills fields by name -- the quote form passes what a factory PDF
   // printed (name, email, phone, contact, country). Taken once, at open, so it
   // is the guard's baseline: closing an untouched prefilled form asks nothing.
+  const [step, setStep] = useState(0);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(() => {
-    const base = {name:'',type:initialType || 'client',email:'',phone:'',website:'',vendor_number:'',pallet_info:'',kui_ior:'',billing_address:'',shipping_address:'',tracking_url:'',cname:'',cemail:'',cphone:'',country:''};
+    const base = {name:'',type:initialType || 'client',email:'',phone:'',website:'',vendor_number:'',pallet_info:'',po_notes:'',delivery_request_recipients:'',kui_ior:'',billing_address:'',shipping_address:'',tracking_url:'',cname:'',cemail:'',cphone:'',country:''};
     Object.entries(initial || {}).forEach(([k, v]) => { if (k in base && k !== 'type' && v != null) base[k] = String(v); });
     return base;
   });
@@ -79,8 +81,20 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
   // which only seeds it. An empty or unknown type says Company, as it always did.
   const typeLabel = (COMPANY_TYPES.find(([v]) => v === form.type) || [null, 'Company'])[1];
   const word = noun && form.type === initialType ? noun : (TYPE_NOUN[form.type] || typeLabel);
+  const steps = ['Company details', 'Addresses', 'Business details', 'Primary contact'];
+  const next = () => {
+    if (step === 0 && !form.name.trim()) { alert(word + ' name required'); return; }
+    if (step === 2 && form.type === 'carrier' && form.tracking_url.trim() && !(form.tracking_url.trim().startsWith('https') && form.tracking_url.includes('{number}'))) {
+      alert('The tracking URL must start with https and contain {number} where the tracking number goes.'); return;
+    }
+    if (step === 2 && form.type === 'client' && form.delivery_request_recipients.split(/[,\n]/).map(x => x.trim()).filter(Boolean).some(x => !/^[^,@\s]+@[^,@\s]+$/.test(x))) {
+      alert('Enter valid delivery request email addresses separated by commas or new lines.'); return;
+    }
+    setStep(step + 1);
+  };
   const submit = async () => {
-    if (!form.name) { alert(word + ' name required'); return; }
+    if (saving) return;
+    if (!form.name.trim()) { setStep(0); alert(word + ' name required'); return; }
     // ── A CARRIER'S TRACKING PAGE, AND ITS NAME IN ANY CASE ─────────────────
     // companies.tracking_url (script 85) is the carrier tracking page with
     // {number} where the number goes, and the database refuses any other shape,
@@ -95,7 +109,9 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     if (url && !(url.startsWith('https') && url.includes('{number}'))) {
       alert('The tracking URL must start with https and contain {number} where the tracking number goes.'); return;
     }
-    let name = form.name;
+    setSaving(true);
+    try {
+    let name = form.name.trim();
     if (form.type === 'carrier') {
       const { data: same } = await SB.from('companies').select('name').eq('type', 'carrier');
       const hit = (same || []).find(c => (c.name || '').trim().toLowerCase() === name.trim().toLowerCase());
@@ -105,8 +121,9 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     // is an upsert that can adopt an existing client, and sending null for a
     // blank select would wipe the flag that client already has (script 136).
     const ior = form.type === 'client' ? iorFromSelect(form.kui_ior) : null;
-    const { data: co, error } = await SB.from('companies').upsert({name,type:form.type,...(url ? { tracking_url: url } : {}),...(ior != null ? { kui_ior: ior } : {}),email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
-    if (error) { alert('Error: '+error.message); return; }
+    const recipients = form.delivery_request_recipients.split(/[,\n]/).map(x => x.trim().toLowerCase()).filter(Boolean);
+    const { data: co, error } = await SB.from('companies').upsert({name,type:form.type,...(url ? { tracking_url: url } : {}),...(ior != null ? { kui_ior: ior } : {}),...(form.type === 'client' && form.po_notes ? { po_notes: form.po_notes } : {}),...(form.type === 'client' && recipients.length ? { delivery_request_recipients: recipients } : {}),email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
+    if (error) { setSaving(false); alert('Error: '+error.message); return; }
     // PRIMARY ONLY IF THIS COMPANY HAS NOBODY YET. This modal is an UPSERT on
     // (name, type), so "create" can adopt a company that already exists and
     // already has contacts -- and hardcoding true here is one of the ways three
@@ -126,7 +143,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     // created here is the row those two fields get typed into later.
     try {
       if (form.type==='client') {
-        await SBQ.from('client_contacts').insert({client:form.name,contact:form.cname||null,email:form.cemail||null,phone:form.phone||null}).select();
+        await SBQ.from('client_contacts').insert({client:name,contact:form.cname||null,email:form.cemail||null,phone:form.cphone||null}).select();
       } else if (form.type==='factory') {
         await SBQ.from('factory_presets').insert({factory:form.name,factory_email:form.email||null,factory_phone:form.phone||null,country:form.country||null}).select();
       }
@@ -135,14 +152,20 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     // cannot otherwise know which tab the new company landed on. The ROW travels
     // back beside it for hosts that have to select what they just made.
     onCreated(co.type, co);
+    } catch (error) {
+      setSaving(false);
+      alert('Error: ' + (error.message || 'Could not save company.'));
+    }
   };
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
-      <div ref={cardRef} className="modal-box">
-        <div className="modal-head"><h3>New {word}</h3><button className="modal-close" onClick={guardedClose}>×</button></div>
+      <div ref={cardRef} className="modal-box" role="dialog" aria-modal="true" aria-labelledby="create-company-title">
+        <div className="modal-head"><h3 id="create-company-title">New {word}</h3><button className="modal-close" aria-label="Close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
+          <p style={{color:'var(--muted)', margin:'0 0 16px'}}>Step {step + 1} of {steps.length} · {steps[step]}</p>
+          <section hidden={step !== 0} aria-label="Company details">
           <div className="form-row-2">
-            <div><label>{word} Name *</label><input className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
+            <div><label htmlFor="company-name">{word} Name *</label><input id="company-name" className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
             <div><label>Type</label>{typeFixed
               ? <input className="form-input" value={typeLabel} readOnly tabIndex={-1} data-noguard aria-label="Type" style={{background:'var(--bg)',color:'var(--muted)',cursor:'default'}} />
               : <select className="form-select" value={form.type} onChange={e=>f('type')(e.target.value)}>{COMPANY_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>}</div>
@@ -157,25 +180,38 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
           {form.type==='factory' && (
             <div className="form-row"><label>Country</label><input className="form-input" value={form.country} onChange={e=>f('country')(e.target.value)} placeholder="e.g. China" /></div>
           )}
+          </section>
+          <section hidden={step !== 1} aria-label="Addresses">
+          <div className="form-row"><label>Billing Address</label><textarea aria-label="Billing Address" className="form-input" rows={3} value={form.billing_address} onChange={e=>f('billing_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
+          <div className="form-row"><label>Shipping Address <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(prefills the ship-to on new orders)</span></label><textarea aria-label="Shipping Address" className="form-input" rows={3} value={form.shipping_address} onChange={e=>f('shipping_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
+          </section>
+          <section hidden={step !== 2} aria-label="Business details">
           {form.type==='carrier' && (
             <div className="form-row"><label>Tracking URL <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(optional -- put {'{number}'} where the tracking number goes)</span></label><input className="form-input" value={form.tracking_url} onChange={e=>f('tracking_url')(e.target.value)} placeholder="https://www.example.com/track?n={number}" /></div>
           )}
-          <div className="form-row"><label>Billing Address</label><textarea className="form-input" rows={3} value={form.billing_address} onChange={e=>f('billing_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
-          <div className="form-row"><label>Shipping Address <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(prefills the ship-to on new orders)</span></label><textarea className="form-input" rows={3} value={form.shipping_address} onChange={e=>f('shipping_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
           {form.type==='client' && (
+            <>
             <div className="form-row-2">
               <div><label>Vendor # <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(internal)</span></label><input className="form-input" value={form.vendor_number} onChange={e=>f('vendor_number')(e.target.value)} /></div>
               <div><label>Pallet info</label><input className="form-input" value={form.pallet_info} onChange={e=>f('pallet_info')(e.target.value)} placeholder="e.g. 48x40 GMA" /></div>
               <div><label>Importer of record</label><select className="form-select" value={form.kui_ior} onChange={e=>f('kui_ior')(e.target.value)}><option value="">Not set</option><option value="kui">KUI</option><option value="client">Client</option></select></div>
             </div>
+            <div className="form-row"><label htmlFor="company-po-notes">Purchase order notes</label><textarea id="company-po-notes" className="form-input" rows={3} value={form.po_notes} onChange={e=>f('po_notes')(e.target.value)} /></div>
+            <div className="form-row"><label htmlFor="company-recipients">Delivery request email recipients</label><textarea id="company-recipients" className="form-input" rows={2} value={form.delivery_request_recipients} onChange={e=>f('delivery_request_recipients')(e.target.value)} placeholder="Email addresses separated by commas" /></div>
+            </>
           )}
+          {form.type !== 'client' && form.type !== 'carrier' && <p style={{color:'var(--muted)'}}>No additional business details for this company type.</p>}
+          </section>
+          <section hidden={step !== 3} aria-label="Primary contact">
           <span className="form-section-label">Primary Contact</span>
           <div className="form-row-2">
-            <div><label>Full Name</label><input className="form-input" value={form.cname} onChange={e=>f('cname')(e.target.value)} /></div>
-            <div><label>Email</label><input type="email" className="form-input" value={form.cemail} onChange={e=>f('cemail')(e.target.value)} /></div>
+            <div><label htmlFor="company-contact-name">Full Name</label><input id="company-contact-name" className="form-input" value={form.cname} onChange={e=>f('cname')(e.target.value)} /></div>
+            <div><label htmlFor="company-contact-email">Email</label><input id="company-contact-email" type="email" className="form-input" value={form.cemail} onChange={e=>f('cemail')(e.target.value)} /></div>
           </div>
+          <div className="form-row"><label htmlFor="company-contact-phone">Phone</label><input id="company-contact-phone" className="form-input" value={form.cphone} onChange={e=>f('cphone')(e.target.value)} /></div>
+          </section>
         </div>
-        <div className="modal-foot"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-dark" onClick={submit}>Save {word}</button></div>
+        <div className="modal-foot"><button className="btn btn-ghost" onClick={guardedClose}>Cancel</button>{step > 0 && <button className="btn btn-ghost" onClick={()=>setStep(step - 1)}>Back</button>}{step < steps.length - 1 ? <button className="btn btn-dark" onClick={next}>Next</button> : <button className="btn btn-dark" disabled={saving} onClick={submit}>{saving ? 'Saving…' : `Save ${word}`}</button>}</div>
       </div>
     </div>
   );

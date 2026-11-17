@@ -64,14 +64,23 @@ afterEach(() => cleanup());
 
 describe('V2 client details', () => {
   it('loads a client by id and shows its details', async () => {
-    mock.detail = Promise.resolve({ data: { id: 'record-1', name: 'Acme', email: 'hello@acme.test', phone: '555-0100' }, error: null });
+    mock.detail = Promise.resolve({ data: { id: 'record-1', name: 'Acme', email: 'hello@acme.test', phone: '2125550100', website: 'acme.test' }, error: null });
     render(<ClientPage />);
     expect(await screen.findByRole('heading', { name: 'Acme' })).toBeTruthy();
-    expect(screen.getByText('hello@acme.test')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'hello@acme.test' }).getAttribute('href')).toBe('mailto:hello@acme.test');
+    expect(screen.getByText('(212) 555-0100')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'acme.test' }).getAttribute('href')).toBe('https://acme.test/');
     expect(mock.queries).toEqual(expect.arrayContaining([
       expect.objectContaining({ table: 'companies', column: 'id', value: 'record-1' }),
       expect.objectContaining({ table: 'companies', column: 'type', value: 'client' }),
     ]));
+  });
+
+  it('preserves international phone numbers and existing website schemes', async () => {
+    mock.detail = Promise.resolve({ data: { name: 'Acme', phone: '+44 20 7946 0958', website: 'http://acme.test/contact' }, error: null });
+    render(<ClientPage />);
+    expect(await screen.findByText('+44 20 7946 0958')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'http://acme.test/contact' }).getAttribute('href')).toBe('http://acme.test/contact');
   });
 
   it('shows when a client cannot be found', async () => {

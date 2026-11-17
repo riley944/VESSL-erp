@@ -48,3 +48,13 @@ it('shows a retryable error when loading fails', async () => {
   await user.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByRole('link', { name: 'Zebra' })).toBeTruthy();
 });
+
+it('opens the new company wizard from the clients page', async () => {
+  const user = userEvent.setup();
+  render(<ClientsPage />);
+  await user.click(screen.getByRole('button', { name: '+ New company' }));
+  expect(screen.getByRole('dialog', { name: 'New Company' })).toBeTruthy();
+  expect(screen.getByText(/Step 1 of 4/)).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
