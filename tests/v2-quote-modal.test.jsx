@@ -5,8 +5,8 @@ import userEvent from '@testing-library/user-event';
 import QuoteModal from '@/app/v2/quotes/QuoteModal';
 import { QUOTES_CHANGED } from '@/app/v2/quoteEvents';
 
-const mock = vi.hoisted(() => ({ writes: [], quoteError: null, empty: false, taskError: null, products: [], productError: null, ranges: [] }));
-vi.mock('@/app/components/HtsField', () => ({ HtsField: ({ value, onChange }) => <button type="button" onClick={() => onChange('123456')}>HTS: {value || 'not set'}</button>, useHtsCodes: () => ({ codes: [], addCode: () => {} }) }));
+const mock = vi.hoisted(() => ({ writes: [], quoteError: null, empty: false, taskError: null, products: [], productError: null, ranges: [], codes: [] }));
+vi.mock('@/app/components/HtsField', () => ({ HtsField: ({ value, onChange }) => <button type="button" onClick={() => onChange('123456')}>HTS: {value || 'not set'}</button>, useHtsCodes: () => ({ codes: mock.codes, addCode: () => {} }) }));
 vi.mock('@/app/components/CodeModal', () => ({ CodeModal: () => null }));
 vi.mock('@/lib/taskNotify', () => ({ notifyTaskAssigned: vi.fn() }));
 vi.mock('@/lib/taskSeen', () => ({ insertTask: async task => { mock.writes.push(['tasks', task]); return mock.taskError ? { error: mock.taskError } : { data: { id: 't1', ...task } }; } }));
@@ -32,7 +32,7 @@ vi.mock('@/lib/supabase', () => ({ SB: {
 } }));
 
 const quote = { id: 'q1', quote_code: 'Q-1', product_id: 'p1', client_company_id: 'c1', product: 'Bottle', client: 'Acme', sku: 'SKU-1', notes: 'Original', tiers: [{ qty: 100, landed: 2, ship: 'ocean', freightOcean: 1, sizeQty: [{ scale: 'bag', size: 'M', qty: 100 }], fb: [{ rate: 4 }] }] };
-beforeEach(() => { mock.writes = []; mock.quoteError = null; mock.empty = false; mock.taskError = null; mock.products = [{ id: 'p1', style_number: 'ABC-1', name: 'Bottle', sku: 'SKU-1', client_company_id: 'c1', company: { name: 'Acme' } }, { id: 'p2', style_number: 'XYZ-2', name: 'Tote', client_company_id: null, company: null }]; mock.productError = null; mock.ranges = []; vi.spyOn(window, 'confirm').mockReturnValue(true); });
+beforeEach(() => { mock.writes = []; mock.quoteError = null; mock.empty = false; mock.taskError = null; mock.products = [{ id: 'p1', style_number: 'ABC-1', name: 'Bottle', sku: 'SKU-1', client_company_id: 'c1', company: { name: 'Acme' } }, { id: 'p2', style_number: 'XYZ-2', name: 'Tote', client_company_id: null, company: null }]; mock.productError = null; mock.ranges = []; mock.codes = []; vi.spyOn(window, 'confirm').mockReturnValue(true); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it('creates a product-linked quote and saves without writing tasks', async () => {
@@ -138,8 +138,32 @@ it('filters by SKU or client and lets keyboard users choose a result', async () 
   await user.keyboard('{Escape}');
   expect(screen.queryByText('No matching products.')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  expect((await screen.findByRole('alert')).textContent).toContain('Select a product from the search results or clear the search');
+  expect(mock.writes).toHaveLength(0);
+  await user.click(screen.getByRole('button', { name: 'Clear product search' }));
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
   await screen.findByText('Quote saved.');
   expect(mock.writes[0][2].product_id).toBe('p1');
+});
+
+it('requires a new selection when searching after choosing a product, even from another tab', async () => {
+  const user = userEvent.setup();
+  render(<QuoteModal onClose={() => {}} onSaved={() => {}} />);
+  const search = screen.getByRole('combobox', { name: 'Product *' });
+  await waitFor(() => expect(search.disabled).toBe(false));
+  await user.type(search, 'bottle');
+  await user.click(screen.getByRole('option', { name: 'ABC-1 · Bottle · Acme' }));
+  await user.type(search, 'tote');
+  await user.click(screen.getByRole('tab', { name: 'Pricing' }));
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  expect(screen.getByRole('tab', { name: 'Quote details' }).getAttribute('aria-selected')).toBe('true');
+  expect((await screen.findByRole('alert')).textContent).toContain('Select a product from the search results');
+  expect(mock.writes).toHaveLength(0);
+  await user.click(search);
+  await user.click(screen.getByRole('option', { name: 'XYZ-2 · Tote' }));
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await screen.findByText('Quote saved.');
+  expect(mock.writes[0][2].product_id).toBe('p2');
 });
 
 it('does not treat typed search text as a selected product', async () => {
@@ -266,4 +290,104 @@ it('retains the legacy freight timestamp when saving unrelated changes', async (
   await user.click(screen.getByRole('button', { name: 'Save quote' }));
   await waitFor(() => expect(mock.writes).toHaveLength(1));
   expect(mock.writes[0][2].freight_duty_updated_at).toBe('2025-01-01T00:00:00Z');
+});
+
+it('recalculates automatic duty on price changes and preserves manual duty', async () => {
+  mock.codes = [{ code: '123456', total_duty: 10 }];
+  const user = userEvent.setup();
+  render(<QuoteModal quote={{ ...quote, hts: '123456', tiers: [{ qty: 100, landed: 10, duty: 1, dutyManual: false }, { qty: 200, landed: 10, duty: 7, dutyManual: true }] }} onClose={() => {}} onSaved={() => {}} />);
+  await user.click(screen.getByRole('tab', { name: 'Pricing' }));
+  const prices = screen.getAllByLabelText('Factory price');
+  await user.clear(prices[0]);
+  await user.type(prices[0], '20');
+  await user.clear(prices[1]);
+  await user.type(prices[1], '20');
+  expect(screen.getAllByLabelText('Duty').map(input => input.value)).toEqual(['2', '7']);
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await waitFor(() => expect(mock.writes).toHaveLength(1));
+  expect(mock.writes[0][2].tiers).toEqual([expect.objectContaining({ landed: 20, duty: 2, dutyManual: false }), expect.objectContaining({ landed: 20, duty: 7, dutyManual: true })]);
+  expect(mock.writes[0][2].tiers[0]).not.toHaveProperty('__v2TierKey');
+  expect(mock.writes[0][2].tiers[0]).not.toHaveProperty('__v2LegacyDuty');
+});
+
+it('recalculates duty for a changed HTS code and explains cleared overrides', async () => {
+  mock.codes = [{ code: '123456', total_duty: 12.5 }];
+  const user = userEvent.setup();
+  render(<QuoteModal quote={{ ...quote, hts: 'old', tiers: [{ landed: 10, duty: 9, dutyManual: true }] }} onClose={() => {}} onSaved={() => {}} />);
+  await user.click(screen.getByRole('tab', { name: 'Factory' }));
+  await user.click(screen.getByRole('button', { name: 'HTS: old' }));
+  expect(screen.getByRole('status').textContent).toContain('manual duty overrides were cleared');
+  await user.click(screen.getByRole('tab', { name: 'Pricing' }));
+  expect(screen.getByLabelText('Duty').value).toBe('1.25');
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await waitFor(() => expect(mock.writes).toHaveLength(1));
+  expect(mock.writes[0][2]).toMatchObject({ hts: '123456', tiers: [expect.objectContaining({ duty: 1.25, dutyManual: false })] });
+});
+
+it('keeps duty blank for ambiguous rates and restores automatic duty after clearing an override', async () => {
+  mock.codes = [{ code: '123456', total_duty: 10 }];
+  const user = userEvent.setup();
+  const view = render(<QuoteModal quote={{ ...quote, hts: '123456', tiers: [{ landed: 10, duty: 7, dutyManual: true }] }} onClose={() => {}} onSaved={() => {}} />);
+  await user.click(screen.getByRole('tab', { name: 'Pricing' }));
+  await user.clear(screen.getByLabelText('Duty'));
+  await user.tab();
+  expect(screen.getByLabelText('Duty').value).toBe('1');
+  view.unmount();
+  mock.codes = [{ code: '123456', total_duty: 10 }, { code: '123456', total_duty: 20 }];
+  render(<QuoteModal quote={{ ...quote, hts: 'old', tiers: [{ landed: 10, duty: 7, dutyManual: true }] }} onClose={() => {}} onSaved={() => {}} />);
+  await user.click(screen.getByRole('tab', { name: 'Factory' }));
+  await user.click(screen.getByRole('button', { name: 'HTS: old' }));
+  expect(screen.getByRole('status').textContent).toContain('No single HTS rate is available');
+  await user.click(screen.getByRole('tab', { name: 'Pricing' }));
+  expect(screen.getByLabelText('Duty').value).toBe('');
+});
+
+it('retains the legacy freight timestamp when adding or removing an unrelated tier', async () => {
+  const user = userEvent.setup();
+  const legacy = { ...quote, updated_at: '2025-01-01T00:00:00Z', freight_duty_updated_at: null, tiers: [{ qty: 100, landed: 2, ship: 'ocean', freightOcean: 1 }, { qty: 200, landed: 3, ship: 'ocean', freightOcean: 2 }] };
+  render(<QuoteModal quote={legacy} onClose={() => {}} onSaved={() => {}} />);
+  await user.click(screen.getByRole('tab', { name: 'Pricing' }));
+  await user.click(screen.getByRole('button', { name: '+ Add tier' }));
+  await user.type(screen.getAllByLabelText('Quantity')[2], '300');
+  await user.click(screen.getAllByRole('button', { name: 'Remove tier' })[1]);
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await waitFor(() => expect(mock.writes).toHaveLength(1));
+  expect(mock.writes[0][2].freight_duty_updated_at).toBe('2025-01-01T00:00:00Z');
+  expect(mock.writes[0][2]).not.toHaveProperty('freight_duty_updated_by');
+  expect(mock.writes[0][2].tiers).toHaveLength(2);
+});
+
+it('preserves a legacy combined freight tier when another tier gets automatic duty', async () => {
+  mock.codes = [{ code: '123456', total_duty: 10 }];
+  const user = userEvent.setup();
+  const legacy = { ...quote, hts: '123456', updated_at: '2025-01-01T00:00:00Z', freight_duty_updated_at: null, tiers: [{ qty: 100, landed: 10, ship: 'ocean', freightOcean: 1 }] };
+  render(<QuoteModal quote={legacy} onClose={() => {}} onSaved={() => {}} />);
+  await user.click(screen.getByRole('tab', { name: 'Pricing' }));
+  expect(screen.getByText(/Older freight includes duty/)).toBeTruthy();
+  await user.clear(screen.getByLabelText('Factory price'));
+  await user.type(screen.getByLabelText('Factory price'), '20');
+  expect(screen.getByLabelText('Duty').value).toBe('');
+  await user.click(screen.getByRole('button', { name: '+ Add tier' }));
+  await user.type(screen.getAllByLabelText('Factory price')[1], '30');
+  expect(screen.getAllByLabelText('Duty')[1].value).toBe('3');
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await waitFor(() => expect(mock.writes).toHaveLength(1));
+  expect(mock.writes[0][2].freight_duty_updated_at).toBe('2025-01-01T00:00:00Z');
+  expect(mock.writes[0][2].tiers[0].duty).toBeUndefined();
+  expect(mock.writes[0][2].tiers[1].duty).toBe(3);
+});
+
+it('updates the timestamp and calculates duty when the last legacy freight is edited', async () => {
+  mock.codes = [{ code: '123456', total_duty: 10 }];
+  const user = userEvent.setup();
+  const legacy = { ...quote, hts: '123456', updated_at: '2025-01-01T00:00:00Z', freight_duty_updated_at: null, tiers: [{ qty: 100, landed: 10, ship: 'ocean', freightOcean: 1 }] };
+  render(<QuoteModal quote={legacy} onClose={() => {}} onSaved={() => {}} />);
+  await user.click(screen.getByRole('tab', { name: 'Pricing' }));
+  await user.clear(screen.getByLabelText('Ocean freight'));
+  await user.type(screen.getByLabelText('Ocean freight'), '2');
+  expect(screen.getByLabelText('Duty').value).toBe('1');
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await waitFor(() => expect(mock.writes).toHaveLength(1));
+  expect(mock.writes[0][2].freight_duty_updated_at).not.toBe('2025-01-01T00:00:00Z');
+  expect(mock.writes[0][2].freight_duty_updated_at).toBe(mock.writes[0][2].updated_at);
 });
