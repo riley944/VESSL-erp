@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { FileText, Pencil } from 'lucide-react';
 import { SB } from '@/lib/supabase';
 import V2Shell from '../V2Shell';
 import { CreateCompanyModal } from '@/app/components/CreateCompanyModal';
@@ -55,7 +56,7 @@ function ClientsList() {
           <Link className={s.client} href={`/v2/clients/${client.id}`}>{client.name || 'Unnamed client'}</Link>
           <span><span className={s.mobileLabel}>Active products: </span>{client.products}</span>
           {SHOW_ATTENTION && <span>—</span>}
-          <div className={s.actions}><Link className={s.button} href={`/v2/quotes?${new URLSearchParams({ clientId: client.id, clientName: client.name || '' })}`} aria-label={`See quotes for ${client.name || 'unnamed client'}`}>See quotes</Link><button className={s.edit} aria-label={`Edit ${client.name || 'unnamed client'}`} onClick={() => setEditing(client.id)}>Edit</button></div>
+          <div className={s.actions}><Link className={s.button} href={`/v2/quotes?${new URLSearchParams({ clientId: client.id, clientName: client.name || '' })}`} title="See quotes" aria-label={`See quotes for ${client.name || 'unnamed client'}`}><FileText size={18} aria-hidden="true" /></Link><button className={s.edit} title="Edit client" aria-label={`Edit ${client.name || 'unnamed client'}`} onClick={() => setEditing(client.id)}><Pencil size={18} aria-hidden="true" /></button></div>
         </div>)}
       </>}
     </div>

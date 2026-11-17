@@ -30,6 +30,8 @@ it('lists clients with active product counts and links to their filtered quotes'
   const row = link.parentElement;
   expect(within(row).getByText('2')).toBeTruthy();
   expect(within(row).getByRole('link', { name: 'See quotes for Acme & Co' }).getAttribute('href')).toBe('/v2/quotes?clientId=c1&clientName=Acme+%26+Co');
+  expect(within(row).getByRole('link', { name: 'See quotes for Acme & Co' }).querySelector('svg').classList.contains('lucide-file-text')).toBe(true);
+  expect(within(row).getByRole('button', { name: 'Edit Acme & Co' }).querySelector('svg').classList.contains('lucide-pencil')).toBe(true);
   expect(mock.queries).toContainEqual(['products', 'active', true]);
   expect(mock.queries).toContainEqual(['companies', 'type', 'client']);
   expect(screen.queryByText('Needs attention')).toBeNull();
@@ -55,7 +57,7 @@ it('opens the new company wizard from the clients page', async () => {
   render(<ClientsPage />);
   await user.click(screen.getByRole('button', { name: '+ New company' }));
   expect(screen.getByRole('dialog', { name: 'New Company' })).toBeTruthy();
-  expect(screen.getByText(/Step 1 of 4/)).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Company details' }).getAttribute('aria-selected')).toBe('true');
   await user.click(screen.getByRole('button', { name: 'Cancel' }));
   expect(screen.queryByRole('dialog')).toBeNull();
 });

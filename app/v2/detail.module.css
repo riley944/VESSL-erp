@@ -5,6 +5,8 @@
 .titleRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .editButton { padding: 9px 14px; border: 1px solid #111; border-radius: 9px; background: white; color: #111; font: 600 14px Inter, system-ui, sans-serif; cursor: pointer; }
 .editButton:hover { background: #eee; }
+.editIcon { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid #111; border-radius: 10px; background: white; color: #111; cursor: pointer; }
+.editIcon:hover { background: #eee; }
 .subtitle { color: #555; margin-bottom: 20px; }
 .button { display: inline-flex; padding: 9px 14px; border: 1px solid #d4d4d4; border-radius: 9px; color: #111; font-size: 14px; font-weight: 600; text-decoration: none; }
 .button:hover { background: #eee; }

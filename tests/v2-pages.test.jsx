@@ -90,7 +90,7 @@ describe('V2 client details', () => {
     const user = userEvent.setup();
     render(<ClientPage />);
     await screen.findByRole('heading', { name: 'Acme' });
-    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    await user.click(screen.getByRole('button', { name: 'Edit client' }));
     await user.click(screen.getByRole('button', { name: 'Save test edit' }));
     expect(screen.getByRole('heading', { name: 'Updated client' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'new@example.com' }).getAttribute('href')).toBe('mailto:new@example.com');

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { Pencil } from 'lucide-react';
 import { SB } from '@/lib/supabase';
 import V2Shell from '../../V2Shell';
 import EditClientModal from '../EditClientModal';
@@ -40,7 +41,7 @@ function ClientDetail() {
   return <main className={s.main}>
     <Link className={s.back} href="/v2/clients">← Clients</Link>
     {result.loading ? <p className={s.message}>Loading client…</p> : result.error ? <p className={s.message} role="alert">Could not load client: {result.error.message}</p> : !client ? <p className={s.message}>Client not found.</p> : <>
-      <p className={s.eyebrow}>Client</p><div className={s.titleRow}><h1>{client.name}</h1><button className={s.editButton} onClick={() => setEditing(true)}>Edit</button></div>
+      <p className={s.eyebrow}>Client</p><div className={s.titleRow}><h1>{client.name}</h1><button className={s.editIcon} title="Edit client" aria-label="Edit client" onClick={() => setEditing(true)}><Pencil size={18} aria-hidden="true" /></button></div>
       <section className={s.card}><h2>Client details</h2><dl className={s.fields}>
         <div><dt>Email</dt><dd>{client.email ? <a href={`mailto:${client.email.trim()}`}>{client.email}</a> : '—'}</dd></div>
         <div><dt>Phone</dt><dd>{client.phone ? formatPhone(client.phone) : '—'}</dd></div>

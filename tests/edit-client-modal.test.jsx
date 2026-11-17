@@ -78,7 +78,7 @@ it('validates business details when saving from another step', async () => {
   await user.click(screen.getByRole('button', { name: 'Back' }));
   await user.click(screen.getByRole('button', { name: 'Save Company' }));
   expect(window.alert).toHaveBeenCalledWith('Enter valid delivery request email addresses separated by commas or new lines.');
-  expect(screen.getByText(/Step 3 of 3/)).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Business details' }).getAttribute('aria-selected')).toBe('true');
   expect(mock.payload).toBeNull();
 });
 

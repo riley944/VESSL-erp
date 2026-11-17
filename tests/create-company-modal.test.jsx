@@ -32,7 +32,7 @@ it('validates, navigates back without losing values, and saves grouped details',
   await user.type(screen.getByLabelText('Delivery request email recipients'), 'A@EXAMPLE.COM, b@example.com');
   await user.click(screen.getByRole('button', { name: 'Next' }));
   await user.type(screen.getByLabelText('Full Name'), 'Jane Doe');
-  await user.type(within(screen.getByRole('region', { name: 'Primary contact' })).getByLabelText('Phone'), '555-1234');
+  await user.type(within(screen.getByRole('tabpanel', { name: 'Primary contact' })).getByLabelText('Phone'), '555-1234');
   await user.click(screen.getByRole('button', { name: 'Save Company' }));
   expect(mock.company).toMatchObject({ name: 'Acme', type: 'client', billing_address: 'Main Street', po_notes: 'Deliver early', delivery_request_recipients: ['a@example.com', 'b@example.com'] });
   expect(mock.contact).toMatchObject({ full_name: 'Jane Doe', phone: '555-1234', company_id: '1', is_primary: true });
@@ -47,5 +47,28 @@ it('keeps invalid delivery recipients on the business details step', async () =>
   await user.type(screen.getByLabelText('Delivery request email recipients'), 'invalid');
   await user.click(screen.getByRole('button', { name: 'Next' }));
   expect(window.alert).toHaveBeenCalled();
-  expect(screen.getByText(/Step 3 of 4/)).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Business details' }).getAttribute('aria-selected')).toBe('true');
+});
+
+it('supports direct and keyboard tab navigation without bypassing required-name validation', async () => {
+  const user = userEvent.setup();
+  render(<CreateCompanyModal initialType="client" noun="Company" onClose={() => {}} onCreated={() => {}} />);
+  await user.click(screen.getByRole('tab', { name: 'Primary contact' }));
+  await user.click(screen.getByRole('button', { name: 'Save Company' }));
+  expect(window.alert).toHaveBeenCalledWith('Company name required');
+  const tab = screen.getByRole('tab', { name: 'Company details' });
+  expect(tab.getAttribute('aria-selected')).toBe('true');
+  tab.focus();
+  await user.keyboard('{ArrowRight}');
+  expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Addresses' }));
+  expect(screen.getByRole('tabpanel', { name: 'Addresses' })).toBeTruthy();
+});
+
+it('can save a new company directly from the first tab', async () => {
+  const user = userEvent.setup();
+  const created = vi.fn();
+  render(<CreateCompanyModal initialType="client" noun="Company" onClose={() => {}} onCreated={created} />);
+  await user.type(screen.getByLabelText('Company Name *'), 'Acme');
+  await user.click(screen.getByRole('button', { name: 'Save Company' }));
+  expect(created).toHaveBeenCalledWith('client', expect.objectContaining({ name: 'Acme' }));
 });

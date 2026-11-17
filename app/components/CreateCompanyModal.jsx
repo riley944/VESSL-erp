@@ -111,7 +111,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     // that carrier, spelled as it already is.
     const url = form.type === 'carrier' ? (form.tracking_url || '').trim() : '';
     if (url && !(url.startsWith('https') && url.includes('{number}'))) {
-      alert('The tracking URL must start with https and contain {number} where the tracking number goes.'); return;
+      setStep(2); alert('The tracking URL must start with https and contain {number} where the tracking number goes.'); return;
     }
     setSaving(true);
     try {
@@ -179,8 +179,10 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
       <div ref={cardRef} className="modal-box" role="dialog" aria-modal="true" aria-labelledby="create-company-title">
         <div className="modal-head"><h3 id="create-company-title">{editCompany ? 'Edit' : 'New'} {word}</h3><button className="modal-close" aria-label="Close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
-          <p style={{color:'var(--muted)', margin:'0 0 16px'}}>Step {step + 1} of {steps.length} · {steps[step]}</p>
-          <section hidden={step !== 0} aria-label="Company details">
+          <div role="tablist" aria-label="Company sections" style={{display:'flex',flexWrap:'wrap',gap:'6px',margin:'0 0 18px'}}>
+            {steps.map((label, index) => <button key={label} type="button" role="tab" id={`company-tab-${index}`} aria-controls={`company-panel-${index}`} aria-selected={step === index} tabIndex={step === index ? 0 : -1} onClick={() => setStep(index)} onKeyDown={e => { const target = e.key === 'ArrowRight' ? (index + 1) % steps.length : e.key === 'ArrowLeft' ? (index + steps.length - 1) % steps.length : e.key === 'Home' ? 0 : e.key === 'End' ? steps.length - 1 : null; if (target !== null) { e.preventDefault(); setStep(target); e.currentTarget.parentElement.querySelectorAll('[role="tab"]')[target].focus(); } }} style={{border:'1px solid ' + (step === index ? '#008a25' : '#cbd5e1'),borderRadius:'999px',padding:'7px 11px',background:step === index ? '#e8f7ec' : '#fff',color:step === index ? '#006b1d' : '#334155',fontWeight:600,cursor:'pointer'}}>{label}</button>)}
+          </div>
+          <section hidden={step !== 0} role="tabpanel" id="company-panel-0" aria-labelledby="company-tab-0">
           <div className="form-row-2">
             <div><label htmlFor="company-name">{word} Name *</label><input id="company-name" className="form-input" value={form.name} onChange={e=>f('name')(e.target.value)} /></div>
             <div><label>Type</label>{typeFixed
@@ -198,11 +200,11 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
             <div className="form-row"><label>Country</label><input className="form-input" value={form.country} onChange={e=>f('country')(e.target.value)} placeholder="e.g. China" /></div>
           )}
           </section>
-          <section hidden={step !== 1} aria-label="Addresses">
+          <section hidden={step !== 1} role="tabpanel" id="company-panel-1" aria-labelledby="company-tab-1">
           <div className="form-row"><label>Billing Address</label><textarea aria-label="Billing Address" className="form-input" rows={3} value={form.billing_address} onChange={e=>f('billing_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
           <div className="form-row"><label>Shipping Address <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(prefills the ship-to on new orders)</span></label><textarea aria-label="Shipping Address" className="form-input" rows={3} value={form.shipping_address} onChange={e=>f('shipping_address')(e.target.value)} placeholder="Street, city, state / province, postal code, country" style={{resize:'vertical',fontFamily:'var(--sans)',lineHeight:1.5}} /></div>
           </section>
-          <section hidden={step !== 2} aria-label="Business details">
+          <section hidden={step !== 2} role="tabpanel" id="company-panel-2" aria-labelledby="company-tab-2">
           {form.type==='carrier' && (
             <div className="form-row"><label>Tracking URL <span style={{color:'var(--muted)',textTransform:'none',letterSpacing:0}}>(optional -- put {'{number}'} where the tracking number goes)</span></label><input className="form-input" value={form.tracking_url} onChange={e=>f('tracking_url')(e.target.value)} placeholder="https://www.example.com/track?n={number}" /></div>
           )}
@@ -219,7 +221,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
           )}
           {form.type !== 'client' && form.type !== 'carrier' && <p style={{color:'var(--muted)'}}>No additional business details for this company type.</p>}
           </section>
-          {!editCompany && <section hidden={step !== 3} aria-label="Primary contact">
+          {!editCompany && <section hidden={step !== 3} role="tabpanel" id="company-panel-3" aria-labelledby="company-tab-3">
           <span className="form-section-label">Primary Contact</span>
           <div className="form-row-2">
             <div><label htmlFor="company-contact-name">Full Name</label><input id="company-contact-name" className="form-input" value={form.cname} onChange={e=>f('cname')(e.target.value)} /></div>
@@ -228,7 +230,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
           <div className="form-row"><label htmlFor="company-contact-phone">Phone</label><input id="company-contact-phone" className="form-input" value={form.cphone} onChange={e=>f('cphone')(e.target.value)} /></div>
           </section>}
         </div>
-        <div className="modal-foot"><button className="btn btn-ghost" onClick={guardedClose}>Cancel</button>{step > 0 && <button className="btn btn-ghost" onClick={()=>setStep(step - 1)}>Back</button>}{step < steps.length - 1 && <button className={editCompany ? 'btn btn-ghost' : 'btn btn-dark'} onClick={next}>Next</button>}{(editCompany || step === steps.length - 1) && <button className="btn btn-dark" disabled={saving} onClick={submit}>{saving ? 'Saving…' : `Save ${word}`}</button>}</div>
+        <div className="modal-foot"><button className="btn btn-ghost" onClick={guardedClose}>Cancel</button>{step > 0 && <button className="btn btn-ghost" onClick={()=>setStep(step - 1)}>Back</button>}{step < steps.length - 1 && <button className="btn btn-ghost" onClick={next}>Next</button>}<button className="btn btn-dark" disabled={saving} onClick={submit}>{saving ? 'Saving…' : `Save ${word}`}</button></div>
       </div>
     </div>
   );
