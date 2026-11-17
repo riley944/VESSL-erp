@@ -960,6 +960,7 @@ function Platform({ session, newQuote = null, editQuote = null, isAdmin = false,
         const name = (savedRow.client || "").trim();
         let cid = null;
         if (links.clientId) cid = links.clientId;
+        else if (modalOnly && editQuote?.id === f.id && (editQuote.client || '').trim() === name && editQuote.client_company_id) cid = editQuote.client_company_id;
         else if (name) {
           const { data: hits } = await supabase.from("companies").select("id").ilike("name", name);
           if (hits && hits.length === 1) cid = hits[0].id;

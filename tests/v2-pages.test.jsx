@@ -362,13 +362,19 @@ describe('V2 quotes list', () => {
 
   it('links each quote and only linked products, with fallback identifiers', async () => {
     mock.pages = [{ data: [quote('1'), quote('2', { product_id: null, product_row: null, quote_code: 'Q-2', company: null, client: 'Beacon' }), quote('3', { product_id: null, product_row: null, quote_code: null })], error: null }];
+    const user = userEvent.setup();
     render(<QuotesPage />);
     expect((await screen.findByRole('link', { name: 'ACM-1' })).getAttribute('href')).toBe('/v2/quotes/1');
-    expect(screen.getByRole('link', { name: 'View product' }).getAttribute('href')).toBe('/v2/products/product-1');
-    expect(screen.getByRole('link', { name: 'View product' }).querySelector('svg').classList.contains('lucide-shopping-bag')).toBe(true);
+    expect(screen.getByRole('link', { name: 'Product 1' }).getAttribute('href')).toBe('/v2/products/product-1');
+    expect(screen.getByRole('link', { name: 'ACM-1' }).getAttribute('title')).toBe('View quote Q-1');
+    expect(screen.getByRole('link', { name: 'Product 1' }).getAttribute('title')).toBe('View product Product 1');
+    await user.hover(screen.getByRole('link', { name: 'ACM-1' }));
+    await user.hover(screen.getByRole('link', { name: 'Product 1' }));
+    expect(screen.queryByRole('link', { name: 'View product' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Q-2' }).getAttribute('href')).toBe('/v2/quotes/2');
     expect(screen.getByRole('link', { name: 'View quote' }).getAttribute('href')).toBe('/v2/quotes/3');
     expect(screen.getAllByText('No linked product')).toHaveLength(2);
+    expect(screen.queryByRole('link', { name: 'Product 2' })).toBeNull();
     expect(screen.getAllByText('Beacon')).toHaveLength(2);
   });
 

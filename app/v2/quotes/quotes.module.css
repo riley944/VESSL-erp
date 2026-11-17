@@ -14,15 +14,15 @@
 .filters label { display: flex; align-items: center; gap: 8px; color: #555; font-size: 14px; font-weight: 600; }
 .clear { border: 0; background: none; text-decoration: underline; cursor: pointer; font: inherit; }
 .card { background: #fff; border: 1px solid #eaeaea; border-radius: 14px; overflow: hidden; }
-.grid { display: grid; grid-template-columns: minmax(140px, 2fr) minmax(90px, 1.2fr) minmax(90px, 1.2fr) minmax(75px, .8fr) minmax(100px, 1fr) 136px; gap: 12px; align-items: center; text-align: left; padding: 14px 18px; }
+.grid { display: grid; grid-template-columns: minmax(140px, 2fr) minmax(90px, 1.2fr) minmax(90px, 1.2fr) minmax(75px, .8fr) minmax(100px, 1fr) 120px; gap: 12px; align-items: center; text-align: left; padding: 14px 18px; }
 .heading { background: #f5f5f5; color: #6a6a6a; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
 .row { border-top: 1px solid #f0f0f0; font-size: 15px; overflow-wrap: anywhere; }
 .sub { display: block; margin-top: 3px; color: #555; font-size: 14px; }
 .styleLink { color: #111; text-decoration: underline; text-underline-offset: 3px; }
+.productName { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.styleLink:hover, .productName:hover { color: #008a25; text-decoration-thickness: 2px; }
 .actions { display: flex; align-items: center; gap: 8px; }
-.productLink, .edit, .delete { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid #111; border-radius: 10px; cursor: pointer; }
-.productLink { background: #111; color: white; text-decoration: none; }
-.productLink:hover { background: #333; }
+.edit, .delete { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid #111; border-radius: 10px; cursor: pointer; }
 .edit { background: white; color: #111; }
 .edit:hover { background: #eee; }
 .delete { border-color: #b91c1c; background: #b91c1c; color: white; }
@@ -33,7 +33,7 @@
 .empty { padding: 28px 18px; text-align: center; color: #555; }
 .count { color: #555; font-size: 14px; }
 @media (min-width: 721px) and (max-width: 900px) {
-  .grid { grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, .8fr) minmax(0, 1fr) 136px; }
+  .grid { grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, .8fr) minmax(0, 1fr) 120px; }
 }
 @media (max-width: 720px) {
   .main { padding: 20px 16px 40px; }

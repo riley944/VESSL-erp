@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { SB } from '@/lib/supabase';
 import { SBQ } from '@/lib/supabaseQuotes';
 import { useDirtyGuard } from '@/app/components/ModalGuard';
@@ -76,6 +76,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     });
     return base;
   });
+  const original = useRef(form);
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
   // THE WORD FOLLOWS THE TYPE, fixed or selected, so the title, the name label, the save
   // button and the required-name alert all say Factory once somebody picks
@@ -99,6 +100,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     if (saving) return;
     if (!form.name.trim()) { setStep(0); alert(word + ' name required'); return; }
     if (form.type === 'client' && !validRecipients()) { setStep(2); alert('Enter valid delivery request email addresses separated by commas or new lines.'); return; }
+    if (!editCompany && !form.cname.trim() && (form.cemail.trim() || form.cphone.trim())) { setStep(3); alert('Enter a name for the primary contact.'); return; }
     // ── A CARRIER'S TRACKING PAGE, AND ITS NAME IN ANY CASE ─────────────────
     // companies.tracking_url (script 85) is the carrier tracking page with
     // {number} where the number goes, and the database refuses any other shape,
@@ -118,13 +120,16 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     let name = form.name.trim();
     if (editCompany) {
       const recipients = form.delivery_request_recipients.split(/[,\n]/).map(x => x.trim().toLowerCase()).filter(Boolean);
-      const { data, error } = await SB.from('companies').update({
+      const payload = {
         name, email: form.email || null, phone: form.phone || null, website: form.website || null,
         billing_address: form.billing_address || null, shipping_address: form.shipping_address || null,
         vendor_number: form.vendor_number || null, pallet_info: form.pallet_info || null,
         kui_ior: iorFromSelect(form.kui_ior), po_notes: form.po_notes || null,
         delivery_request_recipients: recipients.length ? recipients : null,
-      }).eq('id', editCompany.id).eq('type', 'client').select().single();
+      };
+      Object.keys(payload).forEach(key => { if (form[key] === original.current[key]) delete payload[key]; });
+      if (!Object.keys(payload).length) { onCreated(editCompany.type, editCompany); return; }
+      const { data, error } = await SB.from('companies').update(payload).eq('id', editCompany.id).eq('type', 'client').select().single();
       if (error) throw error;
       onCreated(data.type, data);
       return;
@@ -139,17 +144,20 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     // blank select would wipe the flag that client already has (script 136).
     const ior = form.type === 'client' ? iorFromSelect(form.kui_ior) : null;
     const recipients = form.delivery_request_recipients.split(/[,\n]/).map(x => x.trim().toLowerCase()).filter(Boolean);
-    const { data: co, error } = await SB.from('companies').upsert({name,type:form.type,...(url ? { tracking_url: url } : {}),...(ior != null ? { kui_ior: ior } : {}),...(form.type === 'client' && form.po_notes ? { po_notes: form.po_notes } : {}),...(form.type === 'client' && recipients.length ? { delivery_request_recipients: recipients } : {}),email:form.email||null,phone:form.phone||null,website:form.website||null,vendor_number:form.vendor_number||null,pallet_info:form.pallet_info||null,billing_address:form.billing_address||null,shipping_address:form.shipping_address||null},{onConflict:'name,type',ignoreDuplicates:false}).select().single();
+    const optional = Object.fromEntries(['email', 'phone', 'website', 'vendor_number', 'pallet_info', 'billing_address', 'shipping_address'].filter(key => form[key].trim()).map(key => [key, form[key]]));
+    const { data: co, error } = await SB.from('companies').upsert({name,type:form.type,...optional,...(url ? { tracking_url: url } : {}),...(ior != null ? { kui_ior: ior } : {}),...(form.type === 'client' && form.po_notes ? { po_notes: form.po_notes } : {}),...(form.type === 'client' && recipients.length ? { delivery_request_recipients: recipients } : {})},{onConflict:'name,type',ignoreDuplicates:false,defaultToNull:false}).select().single();
     if (error) { setSaving(false); alert('Error: '+error.message); return; }
     // PRIMARY ONLY IF THIS COMPANY HAS NOBODY YET. This modal is an UPSERT on
     // (name, type), so "create" can adopt a company that already exists and
     // already has contacts -- and hardcoding true here is one of the ways three
     // companies ended up with several primaries. The count is one extra read on
     // a path somebody takes once.
-    if (form.cname) {
-      const { count } = await SB.from('contacts')
+    if (form.cname.trim()) {
+      const { count, error: countError } = await SB.from('contacts')
         .select('id', { count:'exact', head:true }).eq('company_id', co.id);
-      await SB.from('contacts').insert({company_id:co.id,full_name:form.cname,email:form.cemail||null,phone:form.cphone||null,is_primary:!(count||0)});
+      if (countError) throw new Error('Company saved, but its contact could not be checked: ' + countError.message);
+      const { error: contactError } = await SB.from('contacts').insert({company_id:co.id,full_name:form.cname.trim(),email:form.cemail||null,phone:form.cphone||null,is_primary:!(count||0)});
+      if (contactError) throw new Error('Company saved, but its contact could not be added: ' + contactError.message);
     }
     // Mirror into Quotes directory so it appears in quote autofill.
     //

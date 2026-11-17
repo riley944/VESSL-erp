@@ -70,3 +70,55 @@ it('requires a client even when saving from another tab', async () => {
   expect(mock.payload).toBeNull();
   expect(saved).not.toHaveBeenCalled();
 });
+
+it('saves a typed shipping country when Save is clicked without pressing Enter', async () => {
+  const user = userEvent.setup();
+  const saved = vi.fn();
+  render(<NewProductModal onClose={() => {}} onSaved={saved} />);
+  await user.type(await screen.findByLabelText('Product Name *'), 'Bottle');
+  await user.selectOptions(screen.getByLabelText('Client *'), 'c1');
+  await user.click(screen.getByRole('tab', { name: 'Trade' }));
+  await user.type(screen.getByPlaceholderText('US'), 'US');
+  await user.click(screen.getByRole('button', { name: 'Save Product' }));
+  expect(mock.payload).toMatchObject({ ships_to: ['US'] });
+  expect(saved).toHaveBeenCalledOnce();
+});
+
+it('saves specification, certification, trade and carton details together', async () => {
+  const user = userEvent.setup();
+  render(<NewProductModal onClose={() => {}} onSaved={() => {}} />);
+  await user.type(await screen.findByLabelText('Product Name *'), 'Bottle');
+  await user.selectOptions(screen.getByLabelText('Client *'), 'c1');
+  await user.click(screen.getByRole('tab', { name: 'Specifications' }));
+  await user.type(screen.getByLabelText('Unit'), 'pcs');
+  await user.type(screen.getByLabelText('Weight (kg)'), '0.5');
+  await user.click(screen.getByRole('tab', { name: 'Testing & certification' }));
+  await user.selectOptions(screen.getByLabelText('CPSC'), 'CPC');
+  await user.click(screen.getByRole('tab', { name: 'Trade' }));
+  await user.type(screen.getByPlaceholderText('US'), 'US, JP');
+  await user.keyboard('{Enter}');
+  await user.type(screen.getByLabelText('Domestic / Import / Export'), 'Import');
+  await user.selectOptions(screen.getByLabelText('Importer of record'), 'kui');
+  await user.type(screen.getByLabelText('Who Pays for Testing'), 'Client');
+  await user.click(screen.getByRole('tab', { name: 'Carton / case pack' }));
+  await user.type(screen.getByLabelText('Units/Carton'), '24');
+  await user.type(screen.getByLabelText('Carton Wt (kg)'), '10');
+  await user.type(screen.getByLabelText('L (cm)'), '40');
+  await user.type(screen.getByLabelText('W (cm)'), '30');
+  await user.type(screen.getByLabelText('H (cm)'), '20');
+  await user.click(screen.getByRole('button', { name: 'Save Product' }));
+  expect(mock.payload).toMatchObject({ unit_of_measure: 'pcs', weight_kg: 0.5, cpsc_type: 'CPC', ships_to: ['US', 'JP'], trade_direction: 'Import', kui_ior: true, testing_paid_by: 'Client', units_per_carton: 24, carton_weight_kg: 10, carton_l_cm: 40, carton_w_cm: 30, carton_h_cm: 20 });
+});
+
+it('blocks an invalid shipping country until corrected', async () => {
+  const user = userEvent.setup();
+  render(<NewProductModal onClose={() => {}} onSaved={() => {}} />);
+  await user.type(await screen.findByLabelText('Product Name *'), 'Bottle');
+  await user.selectOptions(screen.getByLabelText('Client *'), 'c1');
+  await user.click(screen.getByRole('tab', { name: 'Trade' }));
+  await user.type(screen.getByPlaceholderText('US'), 'UK');
+  await user.keyboard('{Enter}');
+  expect(screen.getByText('The ISO code for the United Kingdom is GB.')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Save Product' }));
+  expect(mock.payload).toBeNull();
+});

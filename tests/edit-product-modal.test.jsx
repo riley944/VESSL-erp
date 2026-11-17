@@ -32,6 +32,18 @@ it('saves from the first step and only updates changed fields', async () => {
   expect(saved).toHaveBeenCalledOnce();
 });
 
+it('preserves a zero entered for a numeric product field', async () => {
+  const user = userEvent.setup();
+  render(<EditProductModal id="p1" onClose={() => {}} onSaved={() => {}} />);
+  await screen.findByLabelText('Product Name *');
+  await user.click(screen.getByRole('tab', { name: 'Specifications' }));
+  const weight = screen.getByLabelText('Weight (kg)');
+  await user.clear(weight);
+  await user.type(weight, '0.0');
+  await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+  expect(mock.payload).toEqual({ weight_kg: 0 });
+});
+
 it('preserves form values across steps and requires a name when saving', async () => {
   const user = userEvent.setup();
   render(<EditProductModal id="p1" onClose={() => {}} onSaved={() => {}} />);

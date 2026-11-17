@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Pencil, ShoppingBag, Trash2 } from 'lucide-react';
+import { Pencil, Trash2 } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { SB } from '@/lib/supabase';
 import V2Shell from '../V2Shell';
@@ -105,12 +105,12 @@ function QuotesList() {
       {error ? <div className={s.empty} role="alert">Could not load quotes. {error} <button onClick={() => setRetry(n => n + 1)}>Try again</button></div> : !rows ? <p className={s.empty}>Loading quotes…</p> : !shown.length ? <p className={s.empty}>{rows.length ? 'No quotes match these filters.' : 'No quotes found.'}</p> : <>
         <div className={`${s.grid} ${s.heading}`} aria-hidden="true"><span>Style / product</span><span>Client</span><span>Factory</span><span>Quote ID</span><span>Last edited</span><span></span></div>
         {shown.map(q => <div className={`${s.grid} ${s.row}`} key={q.id}>
-          <div><strong><Link className={s.styleLink} href={`/v2/quotes/${q.id}`}>{q.style || q.quote_code || 'View quote'}</Link></strong>{!q.style && <span className={s.sub}>Style number not assigned</span>}<span className={s.sub}>{q.product || 'Product not entered'}{q.sku ? ` · SKU ${q.sku}` : ''}</span></div>
+          <div><strong><Link className={s.styleLink} href={`/v2/quotes/${q.id}`} title={`View quote ${q.quote_code || q.style || ''}`.trim()}>{q.style || q.quote_code || 'View quote'}</Link></strong>{!q.style && <span className={s.sub}>Style number not assigned</span>}<span className={s.sub}>{q.product_id && q.product_row && q.product ? <Link className={s.productName} href={`/v2/products/${q.product_id}`} title={`View product ${q.product}`}>{q.product}</Link> : q.product || 'Product not entered'}{q.sku ? ` · SKU ${q.sku}` : ''}</span></div>
           <div><span className={s.mobileLabel}>Client: </span>{q.clientName || '—'}</div>
           <div><span className={s.mobileLabel}>Factory: </span>{q.factory || '—'}</div>
           <div><span className={s.mobileLabel}>Quote ID: </span>{q.quote_code || '—'}</div>
           <div><span className={s.mobileLabel}>Last edited: </span>{q.updated_at || q.created_at ? new Date(q.updated_at || q.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</div>
-          <div><div className={s.actions}>{q.product_id && q.product_row && <Link className={s.productLink} href={`/v2/products/${q.product_id}`} aria-label="View product" title="View product"><ShoppingBag size={18} aria-hidden="true" /></Link>}<button className={s.edit} title="Edit quote" aria-label={`Edit ${q.quote_code || q.style || q.product || 'quote'}`} onClick={() => setEditing(q.id)}><Pencil size={18} aria-hidden="true" /></button><button className={s.delete} title="Delete quote" aria-label={`Delete ${q.quote_code || q.style || q.product || 'quote'}`} disabled={!!deleting} onClick={() => deleteQuote(q)}><Trash2 size={18} aria-hidden="true" /></button></div>{!(q.product_id && q.product_row) && <span className={s.sub}>No linked product</span>}</div>
+          <div><div className={s.actions}><button className={s.edit} title="Edit quote" aria-label={`Edit ${q.quote_code || q.style || q.product || 'quote'}`} onClick={() => setEditing(q.id)}><Pencil size={18} aria-hidden="true" /></button><button className={s.delete} title="Delete quote" aria-label={`Delete ${q.quote_code || q.style || q.product || 'quote'}`} disabled={!!deleting} onClick={() => deleteQuote(q)}><Trash2 size={18} aria-hidden="true" /></button></div>{!(q.product_id && q.product_row) && <span className={s.sub}>No linked product</span>}</div>
         </div>)}
       </>}
     </div>

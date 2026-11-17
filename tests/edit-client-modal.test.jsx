@@ -33,7 +33,7 @@ it('loads the client, edits existing fields, and updates the same record', async
   expect(recipients.value).toBe('one@example.com');
   await user.clear(recipients);
   await user.click(screen.getByRole('button', { name: 'Save Company' }));
-  expect(mock.payload).toMatchObject({ name: 'New Acme', email: 'old@example.com', kui_ior: false, delivery_request_recipients: null });
+  expect(mock.payload).toEqual({ name: 'New Acme', delivery_request_recipients: null });
   expect(mock.filters).toContainEqual(['id', 'c1']);
   expect(mock.filters).toContainEqual(['type', 'client']);
   expect(saved).toHaveBeenCalledWith(expect.objectContaining({ id: 'c1', name: 'New Acme' }));
@@ -44,7 +44,7 @@ it('keeps the form open when saving fails', async () => {
   const user = userEvent.setup();
   const saved = vi.fn();
   render(<EditClientModal id="c1" onClose={() => {}} onSaved={saved} />);
-  await screen.findByLabelText('Company Name *');
+  await user.type(await screen.findByLabelText('Company Name *'), ' changed');
   await user.click(screen.getByRole('button', { name: 'Next' }));
   await user.click(screen.getByRole('button', { name: 'Next' }));
   await user.click(screen.getByRole('button', { name: 'Save Company' }));
@@ -62,8 +62,18 @@ it('saves directly from the first step', async () => {
   await user.clear(email);
   await user.type(email, 'new@example.com');
   await user.click(screen.getByRole('button', { name: 'Save Company' }));
-  expect(mock.payload).toMatchObject({ email: 'new@example.com', delivery_request_recipients: ['one@example.com'] });
+  expect(mock.payload).toEqual({ email: 'new@example.com' });
   expect(saved).toHaveBeenCalledOnce();
+});
+
+it('does not overwrite unchanged client fields', async () => {
+  const user = userEvent.setup();
+  const saved = vi.fn();
+  render(<EditClientModal id="c1" onClose={() => {}} onSaved={saved} />);
+  await screen.findByLabelText('Company Name *');
+  await user.click(screen.getByRole('button', { name: 'Save Company' }));
+  expect(mock.payload).toBeNull();
+  expect(saved).toHaveBeenCalledWith(expect.objectContaining({ id: 'c1', email: 'old@example.com' }));
 });
 
 it('validates business details when saving from another step', async () => {

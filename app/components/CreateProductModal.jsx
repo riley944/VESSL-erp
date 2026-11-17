@@ -186,6 +186,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
     if (wizard && countryDraft.trim()) { setStep(3); alert('Press Enter to add the shipping country before saving.'); return; }
     if (wizard && countryErr) { setStep(3); alert(countryErr); return; }
     setSaving(true);
+    const numberOrNull = value => value === '' || value == null ? null : Number(value);
     const payload = {
       // products_sku_key is UNIQUE and Postgres does not treat NULLs as equal, so any
       // number of SKU-less products can coexist -- but a second '' would collide.
@@ -193,7 +194,7 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
       composition:form.composition.trim()||null,
       // unit_of_measure has a DB default of 'pcs', but a default only fires when the
       // key is absent -- sending null keeps the column empty until someone types a unit.
-      hts_code:form.hs||null, unit_of_measure:form.uom||null, weight_kg:Number(form.wt)||null,
+      hts_code:form.hs||null, unit_of_measure:form.uom||null, weight_kg:numberOrNull(form.wt),
       // 'N/A' is not a type, so it clears to NULL and the column reads the same
       // whether it was never set or emptied out. products_cpsc_type_chk accepts only
       // NULL, 'GCC' or 'CPC', which is why '' must not reach it.
@@ -227,8 +228,8 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
       // It is NOT superseded by the linked rules below. The rules are what a product
       // is certified against; cpsc_code was the number off the issued GCC or CPC
       // document. Different things -- this was removed as unused, not replaced.
-      units_per_carton:Number(form.upc)||null, carton_weight_kg:Number(form.cwt)||null,
-      carton_l_cm:Number(form.cl)||null, carton_w_cm:Number(form.cw)||null, carton_h_cm:Number(form.ch)||null,
+      units_per_carton:numberOrNull(form.upc), carton_weight_kg:numberOrNull(form.cwt),
+      carton_l_cm:numberOrNull(form.cl), carton_w_cm:numberOrNull(form.cw), carton_h_cm:numberOrNull(form.ch),
       // '' clears the column back to NULL, so an emptied box records "no manual date"
       // rather than an empty string a date column would reject anyway.
       //
@@ -337,13 +338,13 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
             inputStyle={{textTransform:'none',letterSpacing:'normal'}}
           />
           <div className="form-row-2">
-            <div><label>Unit</label><input className="form-input" value={form.uom} onChange={e=>f('uom')(e.target.value)} /></div>
-            <div><label>Weight (kg)</label><input type="number" step="0.001" className="form-input" value={form.wt} onChange={e=>f('wt')(e.target.value)} /></div>
+            <div><label htmlFor="product-unit">Unit</label><input id="product-unit" className="form-input" value={form.uom} onChange={e=>f('uom')(e.target.value)} /></div>
+            <div><label htmlFor="product-weight">Weight (kg)</label><input id="product-weight" type="number" step="0.001" className="form-input" value={form.wt} onChange={e=>f('wt')(e.target.value)} /></div>
           </div>
           </section>
           <section hidden={wizard && step !== 2} role={wizard ? 'tabpanel' : undefined} id={wizard ? 'product-panel-2' : undefined} aria-labelledby={wizard ? 'product-tab-2' : undefined}>
           <div className="form-row-2">
-            <div><label>CPSC</label><select className="form-select" value={form.cpscType} onChange={e=>f('cpscType')(e.target.value)}>
+            <div><label htmlFor="product-cpsc">CPSC</label><select id="product-cpsc" className="form-select" value={form.cpscType} onChange={e=>f('cpscType')(e.target.value)}>
               {/* Values stay uppercase to match products_cpsc_type_chk: the product row
                   renders cpsc_type raw, so a mixed-case value would read "· Gcc" beside
                   "· GCC".
@@ -526,12 +527,12 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
                 rather than a guessed vocabulary that would have to be widened. Importer
                 of record became a three-way select in script 136: it only ever had
                 two answers, KUI or the client. */}
-            <div><label>Domestic / Import / Export</label><input className="form-input" value={form.tradeDirection} onChange={e=>f('tradeDirection')(e.target.value)} /></div>
+            <div><label htmlFor="product-trade">Domestic / Import / Export</label><input id="product-trade" className="form-input" value={form.tradeDirection} onChange={e=>f('tradeDirection')(e.target.value)} /></div>
             {/* Hidden, not disabled, when the row came without kui_ior -- the save
                 leaves the column alone then, so a select here would be a control
                 that does nothing. */}
             {!editing || (data && 'kui_ior' in data) ? (
-              <div><label>Importer of record</label><select className="form-select" value={form.kuiIor} onChange={e=>f('kuiIor')(e.target.value)}>
+              <div><label htmlFor="product-ior">Importer of record</label><select id="product-ior" className="form-select" value={form.kuiIor} onChange={e=>f('kuiIor')(e.target.value)}>
                 <option value="">{'Use company (currently ' + (data?.client ? (iorWord(data.client.kui_ior) || 'not set') : 'no client') + ')'}</option>
                 <option value="kui">KUI</option>
                 <option value="client">Client</option>
@@ -539,21 +540,21 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
             ) : <div></div>}
           </div>
           <div className="form-row-2">
-            <div><label>Who Pays for Testing</label><input className="form-input" value={form.testingPaidBy} onChange={e=>f('testingPaidBy')(e.target.value)} /></div>
+            <div><label htmlFor="product-test-payer">Who Pays for Testing</label><input id="product-test-payer" className="form-input" value={form.testingPaidBy} onChange={e=>f('testingPaidBy')(e.target.value)} /></div>
             <div></div>
           </div>
           </section>
           <section hidden={wizard && step !== 4} role={wizard ? 'tabpanel' : undefined} id={wizard ? 'product-panel-4' : undefined} aria-labelledby={wizard ? 'product-tab-4' : undefined}>
           <span className="form-section-label">Carton / Case Pack</span>
           <div className="form-row-3">
-            <div><label>Units/Carton</label><input type="number" className="form-input" value={form.upc} onChange={e=>f('upc')(e.target.value)} /></div>
-            <div><label>Carton Wt (kg)</label><input type="number" step="0.01" className="form-input" value={form.cwt} onChange={e=>f('cwt')(e.target.value)} /></div>
+            <div><label htmlFor="product-carton-units">Units/Carton</label><input id="product-carton-units" type="number" className="form-input" value={form.upc} onChange={e=>f('upc')(e.target.value)} /></div>
+            <div><label htmlFor="product-carton-weight">Carton Wt (kg)</label><input id="product-carton-weight" type="number" step="0.01" className="form-input" value={form.cwt} onChange={e=>f('cwt')(e.target.value)} /></div>
             <div></div>
           </div>
           <div className="form-row-3">
-            <div><label>L (cm)</label><input type="number" step="0.1" className="form-input" value={form.cl} onChange={e=>f('cl')(e.target.value)} /></div>
-            <div><label>W (cm)</label><input type="number" step="0.1" className="form-input" value={form.cw} onChange={e=>f('cw')(e.target.value)} /></div>
-            <div><label>H (cm)</label><input type="number" step="0.1" className="form-input" value={form.ch} onChange={e=>f('ch')(e.target.value)} /></div>
+            <div><label htmlFor="product-carton-length">L (cm)</label><input id="product-carton-length" type="number" step="0.1" className="form-input" value={form.cl} onChange={e=>f('cl')(e.target.value)} /></div>
+            <div><label htmlFor="product-carton-width">W (cm)</label><input id="product-carton-width" type="number" step="0.1" className="form-input" value={form.cw} onChange={e=>f('cw')(e.target.value)} /></div>
+            <div><label htmlFor="product-carton-height">H (cm)</label><input id="product-carton-height" type="number" step="0.1" className="form-input" value={form.ch} onChange={e=>f('ch')(e.target.value)} /></div>
           </div>
         {/* ── LIFECYCLE, LAST IN THE BODY AND ONLY WHEN EDITING ──────────────
             A product being CREATED has no lifecycle to show and no id to key on,
