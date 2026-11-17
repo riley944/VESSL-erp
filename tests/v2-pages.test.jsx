@@ -11,7 +11,7 @@ import SectionPage from '@/app/v2/[section]/page';
 
 const mock = vi.hoisted(() => ({
   session: null, profile: null, pages: [], detail: null, id: 'record-1', pathname: '/v2',
-  signOut: vi.fn(), unsubscribe: vi.fn(), from: vi.fn(), authCallback: null, queries: [], searchParams: '', deleteError: null, deleteEmpty: false, deleted: [],
+  signOut: vi.fn(), unsubscribe: vi.fn(), from: vi.fn(), authCallback: null, queries: [], searchParams: '', deleted: [],
 }));
 
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a> }));
@@ -46,13 +46,13 @@ beforeEach(() => {
   mock.id = 'record-1';
   mock.pathname = '/v2';
   mock.searchParams = '';
-  mock.deleteError = null; mock.deleteEmpty = false; mock.deleted = [];
+  mock.deleted = [];
   localStorage.clear();
   mock.queries = [];
   mock.signOut.mockReset();
   mock.unsubscribe.mockReset();
   mock.from.mockReset().mockImplementation(table => ({
-    delete: () => ({ eq: (column, value) => ({ select: async () => { mock.deleted.push([table, column, value]); return { data: mock.deleteError ? null : mock.deleteEmpty ? [] : [{ id: value }], error: mock.deleteError }; } }) }),
+    delete: () => { mock.deleted.push(table); throw new Error('Unexpected deletion'); },
     select: columns => table === 'staff_profiles'
       ? { ilike: (column, value) => { mock.queries.push({ table, columns, column, value }); return mock.profile; } }
       : {
@@ -302,44 +302,18 @@ describe('V2 quotes list', () => {
     expect(await screen.findByText('Updated factory')).toBeTruthy();
   });
 
-  it('deletes the confirmed quote and keeps other quotes', async () => {
+  it('shows an unavailable archive action without deleting or hiding quotes', async () => {
     mock.pages = [{ data: [quote('1'), quote('2')], error: null }];
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup();
     render(<QuotesPage />);
-    await user.click(await screen.findByRole('button', { name: 'Delete Q-1' }));
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Q-1'));
-    expect(mock.deleted).toEqual([['quotes', 'id', '1']]);
-    expect(screen.queryByRole('link', { name: 'ACM-1' })).toBeNull();
-    expect(screen.getByRole('link', { name: 'ACM-2' })).toBeTruthy();
-    confirm.mockRestore();
-  });
-
-  it('keeps the quote on cancellation or a database failure', async () => {
-    mock.pages = [{ data: [quote('1')], error: null }];
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    const user = userEvent.setup();
-    render(<QuotesPage />);
-    await user.click(await screen.findByRole('button', { name: 'Delete Q-1' }));
+    const archive = await screen.findByRole('button', { name: 'Archive Q-1 (coming soon)' });
+    expect(archive.disabled).toBe(true);
+    expect(archive.title).toBe('Archive quote (coming soon)');
+    await user.click(archive);
     expect(mock.deleted).toEqual([]);
-    confirm.mockReturnValue(true);
-    mock.deleteError = { code: '23503', message: 'foreign key' };
-    await user.click(screen.getByRole('button', { name: 'Delete Q-1' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('cannot be deleted');
     expect(screen.getByRole('link', { name: 'ACM-1' })).toBeTruthy();
-    confirm.mockRestore();
-  });
-
-  it('reports when deletion affects no rows', async () => {
-    mock.pages = [{ data: [quote('1')], error: null }];
-    mock.deleteEmpty = true;
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    const user = userEvent.setup();
-    render(<QuotesPage />);
-    await user.click(await screen.findByRole('button', { name: 'Delete Q-1' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('No quote was deleted');
-    expect(screen.getByRole('link', { name: 'ACM-1' })).toBeTruthy();
-    confirm.mockRestore();
+    expect(screen.getByRole('link', { name: 'ACM-2' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /delete/i })).toBeNull();
   });
   it('shows loading and an empty list', async () => {
     let resolve;

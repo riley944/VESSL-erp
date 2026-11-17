@@ -22,13 +22,11 @@
 .productName { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .styleLink:hover, .productName:hover { color: #008a25; text-decoration-thickness: 2px; }
 .actions { display: flex; align-items: center; gap: 8px; }
-.edit, .delete { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid #111; border-radius: 10px; cursor: pointer; }
+.edit, .archive { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid #111; border-radius: 10px; cursor: pointer; }
 .edit { background: white; color: #111; }
 .edit:hover { background: #eee; }
-.delete { border-color: #b91c1c; background: #b91c1c; color: white; }
-.delete:hover { border-color: #991b1b; background: #991b1b; }
-.delete:disabled { opacity: .5; cursor: wait; }
-.error { margin: 0 0 16px; color: #b91c1c; font-size: 14px; }
+.archive { background: white; color: #555; }
+.archive:disabled { opacity: .5; cursor: not-allowed; }
 .mobileLabel { display: none; }
 .empty { padding: 28px 18px; text-align: center; color: #555; }
 .count { color: #555; font-size: 14px; }

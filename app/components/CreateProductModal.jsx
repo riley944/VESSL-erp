@@ -252,12 +252,15 @@ export function CreateProductModal({ data, regs = [], links = [], matLinks = [],
         });
       }
     }
-    let error;
+    let error, updated;
     try {
       if (editing && wizard && !Object.keys(payload).length) { setSaving(false); onCreated(); return; }
-      ({ error } = editing
-        ? await SB.from('products').update(payload).eq('id', data.id)
-        : await SB.from('products').insert({ ...payload, category_id:null }));
+      if (editing) {
+        ({ data: updated, error } = await SB.from('products').update(payload).eq('id', data.id).select('id'));
+        if (!error && !updated?.length) error = new Error('No product was updated. It may no longer exist or you may not have permission.');
+      } else {
+        ({ error } = await SB.from('products').insert({ ...payload, category_id:null }));
+      }
     } catch (caught) { error = caught; }
     setSaving(false);
     if (error) {

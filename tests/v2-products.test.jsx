@@ -21,7 +21,7 @@ vi.mock('@/lib/supabase', () => ({ SB: { from: table => ({ delete: () => ({ eq: 
 beforeEach(() => {
   mock.fail = false; mock.ranges = []; mock.deleteError = null; mock.deleteEmpty = false; mock.deletedIds = [];
   mock.products = [
-    { id: 'p1', style_number: 'ABC-2', name: 'Tote', active: true, company: { name: 'Acme' } },
+    { id: 'p1', style_number: 'ABC-2', name: 'Tote', sku: 'SKU-2', active: true, client_company_id: 'c1', company: { name: 'Acme' } },
     { id: 'p2', style_number: 'ABC-10', name: 'Cap', active: false, company: { name: 'Beta' } },
     { id: 'p3', style_number: null, name: 'Sample', active: null, client_company_id: 'c3', company: { name: 'Gamma' } },
   ];
@@ -47,6 +47,10 @@ it('links styles to products and each linked quote to its own page', async () =>
   expect(within(row).getByRole('link', { name: 'Q-1' }).getAttribute('href')).toBe('/v2/quotes/q-old');
   expect(screen.getByRole('link', { name: 'Style number not assigned' }).getAttribute('href')).toBe('/v2/products/p3');
   expect(screen.getByRole('button', { name: 'Add quote for Sample' })).toBeTruthy();
+  const unquotedActions = screen.getByRole('button', { name: 'Delete Sample' }).parentElement;
+  expect(unquotedActions.children[0]).toBe(screen.getByRole('button', { name: 'Add quote for Sample' }));
+  expect(unquotedActions.children[2]).toBe(screen.getByRole('button', { name: 'Delete Sample' }));
+  expect(within(row).getByRole('button', { name: 'Delete ABC-2' }).parentElement.children[2]).toBe(within(row).getByRole('button', { name: 'Delete ABC-2' }));
   expect(screen.getByRole('link', { name: 'Style number not assigned' }).previousElementSibling.querySelector('svg').classList.contains('lucide-package')).toBe(true);
 });
 
@@ -57,7 +61,20 @@ it('opens the quote form for the chosen unquoted product and refreshes after sav
   expect(screen.getByRole('dialog', { name: 'New Quote' }).textContent).toContain('p3 / Sample / c3 / Gamma');
   await user.click(screen.getByRole('button', { name: 'Save test quote' }));
   expect((await screen.findByRole('link', { name: 'View quote for Sample' })).getAttribute('href')).toBe('/v2/quotes/q-added');
-  expect(screen.queryByRole('button', { name: 'Add quote for Sample' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Add quote for Sample' })).toBeTruthy();
+});
+
+it('adds another quote to a product while retaining its existing quotes', async () => {
+  const user = userEvent.setup();
+  render(<ProductsPage />);
+  await user.click(await screen.findByRole('button', { name: 'Add quote for ABC-2' }));
+  expect(screen.getByRole('dialog', { name: 'New Quote' }).textContent).toContain('p1 / Tote / c1 / Acme');
+  await user.click(screen.getByRole('button', { name: 'Save test quote' }));
+  await user.click(await screen.findByText('2 more quotes'));
+  expect(screen.getByRole('link', { name: 'Q-1' }).getAttribute('href')).toBe('/v2/quotes/q-old');
+  expect(screen.getByRole('link', { name: 'Q-NEW' }).getAttribute('href')).toBe('/v2/quotes/q-added');
+  expect(screen.getByRole('link', { name: 'View quote for ABC-2' }).getAttribute('href')).toBe('/v2/quotes/q-new');
+  expect(screen.getByRole('button', { name: 'Add quote for ABC-2' })).toBeTruthy();
 });
 
 it('filters by catalog status and searches styles, names and clients', async () => {

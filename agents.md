@@ -1,0 +1,3 @@
+For all future sessions on this project, refer to the `~/Desktop/Vessl/Vessl-handoff-v1` directory. This directory has all the docs necessary to reference designs, style books, and instructions for building out the v2.
+
+anything thing that is built or modified, should get accompanying tests to verify the work. also, double check your work and make sure there are no bugs, dead code, and the logic is sound.

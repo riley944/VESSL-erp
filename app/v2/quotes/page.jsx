@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Pencil, Trash2 } from 'lucide-react';
+import { Archive, Pencil } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { SB } from '@/lib/supabase';
 import V2Shell from '../V2Shell';
@@ -25,24 +25,6 @@ function QuotesList() {
   const [tab, setTab] = useState('All open');
   const [retry, setRetry] = useState(0);
   const [editing, setEditing] = useState(null);
-  const [deleting, setDeleting] = useState(null);
-  const [deleteError, setDeleteError] = useState('');
-
-  const deleteQuote = async quote => {
-    if (deleting) return;
-    const label = quote.quote_code || quote.style || quote.product || 'this quote';
-    if (!window.confirm(`Delete ${label}?\n\nLinked records may be affected. This cannot be undone.`)) return;
-    setDeleting(quote.id);
-    setDeleteError('');
-    try {
-      const { data, error: err } = await SB.from('quotes').delete().eq('id', quote.id).select('id');
-      if (err) throw err;
-      if (!data?.length) throw new Error('No quote was deleted. It may no longer exist or you may not have permission.');
-      setRows(current => current?.filter(row => row.id !== quote.id));
-    } catch (err) {
-      setDeleteError(err.code === '23503' ? 'This quote is linked to other records and cannot be deleted.' : `Could not delete quote — ${err.message || 'Please try again.'}`);
-    } finally { setDeleting(null); }
-  };
 
   useEffect(() => { setClientId(requestedId); setClient(requestedId ? requestedName : ''); }, [requestedId, requestedName]);
 
@@ -100,7 +82,6 @@ function QuotesList() {
       <label>Sort <select value={sort} onChange={e => setSort(e.target.value)}><option value="style">Style number</option><option value="client">Client</option><option value="new">Last edited, newest first</option><option value="old">Last edited, oldest first</option></select></label>
       {(search || client || clientId || sort !== 'style') && <button className={s.clear} onClick={() => { setSearch(''); setClient(''); setClientId(''); setSort('style'); }}>Clear filters</button>}
     </div>
-    {deleteError && <p className={s.error} role="alert">{deleteError}</p>}
     <div className={s.card}>
       {error ? <div className={s.empty} role="alert">Could not load quotes. {error} <button onClick={() => setRetry(n => n + 1)}>Try again</button></div> : !rows ? <p className={s.empty}>Loading quotes…</p> : !shown.length ? <p className={s.empty}>{rows.length ? 'No quotes match these filters.' : 'No quotes found.'}</p> : <>
         <div className={`${s.grid} ${s.heading}`} aria-hidden="true"><span>Style / product</span><span>Client</span><span>Factory</span><span>Quote ID</span><span>Last edited</span><span></span></div>
@@ -110,7 +91,7 @@ function QuotesList() {
           <div><span className={s.mobileLabel}>Factory: </span>{q.factory || '—'}</div>
           <div><span className={s.mobileLabel}>Quote ID: </span>{q.quote_code || '—'}</div>
           <div><span className={s.mobileLabel}>Last edited: </span>{q.updated_at || q.created_at ? new Date(q.updated_at || q.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</div>
-          <div><div className={s.actions}><button className={s.edit} title="Edit quote" aria-label={`Edit ${q.quote_code || q.style || q.product || 'quote'}`} onClick={() => setEditing(q.id)}><Pencil size={18} aria-hidden="true" /></button><button className={s.delete} title="Delete quote" aria-label={`Delete ${q.quote_code || q.style || q.product || 'quote'}`} disabled={!!deleting} onClick={() => deleteQuote(q)}><Trash2 size={18} aria-hidden="true" /></button></div>{!(q.product_id && q.product_row) && <span className={s.sub}>No linked product</span>}</div>
+          <div><div className={s.actions}><button className={s.edit} title="Edit quote" aria-label={`Edit ${q.quote_code || q.style || q.product || 'quote'}`} onClick={() => setEditing(q.id)}><Pencil size={18} aria-hidden="true" /></button><button className={s.archive} title="Archive quote (coming soon)" aria-label={`Archive ${q.quote_code || q.style || q.product || 'quote'} (coming soon)`} disabled><Archive size={18} aria-hidden="true" /></button></div>{!(q.product_id && q.product_row) && <span className={s.sub}>No linked product</span>}</div>
         </div>)}
       </>}
     </div>
