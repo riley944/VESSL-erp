@@ -4774,7 +4774,7 @@ function PoEditModal({ po, items:initialItems, onClose, onSaved }) {
       // Save as quote — tiers as plain array (not stringified)
       const tier = {qty:Number(it.qty)||1, exw:Number(it.price)||0, ship:0, freightAir:0, freightOcean:0, landed:Number(it.price)||0, client:Number(it.price)||0};
       const { error: qErr } = await SB.from('quotes').insert({
-        product:name, sku:it.prodId||null, client:clientName||null, factory:factoryName||null,
+        product:name, sku:it.prodId||null, client:clientName||null, factory:factoryName||null, factory_company_id:po.factory_company_id||null,
         quote_date:form.date||new Date().toISOString().split('T')[0],
         tiers:[tier], status:'active'
       });

@@ -1,7 +1,7 @@
 import { DUTY_SPLIT_AT } from '@/lib/quoteRow';
 import { freightChanged } from '@/lib/v2QuotePricing';
 
-const FIELDS = ['quote_date', 'notes', 'client_contact', 'client_email', 'client_phone', 'client_address', 'factory', 'factory_contact', 'factory_email', 'factory_phone', 'country', 'lead_time', 'hts', 'units_per_carton', 'carton_l', 'carton_w', 'carton_h', 'carton_weight', 'mold_fee', 'sample_fee', 'client_details', 'client_color'];
+const FIELDS = ['quote_date', 'notes', 'client_contact', 'client_email', 'client_phone', 'client_address', 'factory', 'factory_company_id', 'factory_contact', 'factory_email', 'factory_phone', 'country', 'lead_time', 'hts', 'units_per_carton', 'carton_l', 'carton_w', 'carton_h', 'carton_weight', 'mold_fee', 'sample_fee', 'client_details', 'client_color'];
 const NUMBERS = new Set(['units_per_carton', 'carton_l', 'carton_w', 'carton_h', 'carton_weight', 'mold_fee', 'sample_fee']);
 const TIER_NUMBERS = ['qty', 'landed', 'freightAir', 'freightOcean', 'duty', 'client'];
 
@@ -25,8 +25,9 @@ export function initialQuoteForm(quote) {
     const hasFreight = [tier.freightAir, tier.freightOcean, tier.freightDuty].some(value => value !== '' && value != null);
     const legacyDuty = savedAt < DUTY_SPLIT_AT && (tier.duty === '' || tier.duty == null) && hasFreight;
     const result = { ...tier, __v2TierKey: `stored-${index}`, __v2LegacyDuty: legacyDuty };
-    if (tier.freightDuty != null && tier.freightDuty !== '' && (tier.freightAir == null || tier.freightAir === '') && (tier.freightOcean == null || tier.freightOcean === '')) {
-      result[tier.ship === 'air' ? 'freightAir' : 'freightOcean'] = tier.freightDuty;
+    const activeFreight = tier.ship === 'air' ? 'freightAir' : 'freightOcean';
+    if (tier.freightDuty != null && tier.freightDuty !== '' && (tier[activeFreight] == null || tier[activeFreight] === '')) {
+      result[activeFreight] = tier.freightDuty;
     }
     return result;
   });

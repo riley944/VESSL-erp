@@ -9,7 +9,7 @@ vi.mock('@/lib/supabaseQuotes', () => ({ SBQ: {} }));
 vi.mock('@/app/components/HtsField', () => ({ HtsField: () => null, useHtsCodes: () => ({ codes: [], addCode: () => {} }) }));
 vi.mock('@/app/components/HtsRuleHints', () => ({ HtsRuleHints: () => null, useHtsRuleMap: () => ({ chapters: [], rules: [] }) }));
 vi.mock('@/app/components/ProductCpscRules', async importOriginal => ({ ...(await importOriginal()), useProductCpscRules: () => ({ products: [], links: [], regs: [] }) }));
-vi.mock('@/app/components/FactorySelect', () => ({ FactorySelect: () => null, ContactPickModal: () => null, useFactoryCompanies: () => ({ companies: [], contacts: [], presets: [], addCompany: () => {} }), factoryFillFor: () => ({}), contactFieldsFrom: () => ({}) }));
+vi.mock('@/app/components/FactorySelect', () => ({ FactorySelect: ({ onPick }) => <><button type="button" onClick={() => onPick({ id: 'factory-b', name: 'Factory B' })}>Pick Factory B</button><button type="button" onClick={() => onPick(null)}>Clear factory</button></>, ContactPickModal: () => null, useFactoryCompanies: () => ({ companies: [], contacts: [], presets: [], addCompany: () => {} }), factoryFillFor: () => ({ contacts: [] }), contactFieldsFrom: () => ({}) }));
 vi.mock('@/app/components/CompanySelect', () => ({ CompanySelect: () => null, useCompanyDirectory: () => ({ companies: [], contacts: [], addCompany: () => {} }), contactsOf: () => [] }));
 vi.mock('@/lib/supabase', () => ({ SB: {
   auth: { getSession: async () => ({ data: { session: null } }) },
@@ -72,4 +72,27 @@ it('preserves the existing client link when editing a quote without changing its
   await waitFor(() => expect(mock.saved).toHaveBeenCalledOnce());
   expect(mock.updates.filter(([table]) => table === 'quotes')).toHaveLength(1);
   expect(mock.updates[0][1]).not.toHaveProperty('client_company_id');
+});
+
+it('preserves, changes, and clears the factory link in the legacy editor', async () => {
+  const user = userEvent.setup();
+  const original = { id: 'q1', product: 'Bottle', factory: 'Historical name', factory_company_id: 'factory-a', tiers: [] };
+  const view = render(<Quotes session={session} modalOnly editQuote={original} onClose={() => {}} onSaved={mock.saved} />);
+  await user.click(await screen.findByRole('button', { name: 'Save Quote' }));
+  await waitFor(() => expect(mock.saved).toHaveBeenCalledOnce());
+  expect(mock.updated).toMatchObject({ factory: 'Historical name', factory_company_id: 'factory-a' });
+  view.unmount();
+  mock.saved.mockClear();
+  render(<Quotes session={session} modalOnly editQuote={original} onClose={() => {}} onSaved={mock.saved} />);
+  await user.click(await screen.findByRole('button', { name: 'Pick Factory B' }));
+  await user.click(screen.getByRole('button', { name: 'Save Quote' }));
+  await waitFor(() => expect(mock.saved).toHaveBeenCalledOnce());
+  expect(mock.updated).toMatchObject({ factory: 'Factory B', factory_company_id: 'factory-b' });
+  cleanup();
+  mock.saved.mockClear();
+  render(<Quotes session={session} modalOnly editQuote={original} onClose={() => {}} onSaved={mock.saved} />);
+  await user.click(await screen.findByRole('button', { name: 'Clear factory' }));
+  await user.click(screen.getByRole('button', { name: 'Save Quote' }));
+  await waitFor(() => expect(mock.saved).toHaveBeenCalledOnce());
+  expect(mock.updated).toMatchObject({ factory: null, factory_company_id: null });
 });

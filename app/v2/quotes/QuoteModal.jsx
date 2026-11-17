@@ -46,8 +46,8 @@ export default function QuoteModal({ quote = null, newQuote = null, onClose, onS
     setError('');
     return true;
   };
-  const pickFactory = value => {
-    setForm(previous => ({ ...previous, factory: value, factory_contact: '', factory_email: '', factory_phone: '', country: '', lead_time: '' }));
+  const pickFactory = factory => {
+    setForm(previous => ({ ...previous, factory: factory?.name || '', factory_company_id: factory?.id || '', factory_contact: '', factory_email: '', factory_phone: '', country: '', lead_time: '' }));
     setNotice('');
   };
   const tabKeyDown = (event, index) => {
@@ -122,7 +122,7 @@ export default function QuoteModal({ quote = null, newQuote = null, onClose, onS
           {field('client_phone', 'Client phone')}{field('client_address', 'Client address', 'textarea')}
         </section>
         <section hidden={step !== 2} role="tabpanel" id="quote-panel-2" aria-labelledby="quote-tab-2">
-          <FactoryField value={form.factory} onChange={pickFactory} />
+          <FactoryField value={form.factory} factoryId={form.factory_company_id} onChange={pickFactory} />
           {field('factory_contact', 'Factory contact')}{field('factory_email', 'Factory email', 'email')}
           {field('factory_phone', 'Factory phone')}{field('country', 'Country')}{field('lead_time', 'Lead time')}
           <HtsField label="HTS code" fieldClassName="form-row" inputClassName="form-input" value={form.hts} codes={codes} onChange={changeHts} onAdd={code => setAddingCode({ code })} />

@@ -1,17 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { CreateCompanyModal } from '@/app/components/CreateCompanyModal';
 
-const mock = vi.hoisted(() => ({ company: null, contact: null, contactError: null, countError: null, companyError: null, carriers: [], presets: [] }));
+const mock = vi.hoisted(() => ({ company: null, contact: null, contactError: null, countError: null, companyError: null, pending: null, carriers: [], presets: [] }));
 vi.mock('@/lib/supabase', () => ({ SB: { from: table => ({
-  upsert: payload => { mock.company = payload; return { select: () => ({ single: async () => ({ data: mock.companyError ? null : { id: '1', ...payload }, error: mock.companyError }) }) }; },
+  upsert: payload => { mock.company = payload; return { select: () => ({ single: async () => mock.pending || ({ data: mock.companyError ? null : { id: '1', ...payload }, error: mock.companyError }) }) }; },
   select: () => ({ eq: async () => table === 'companies' ? { data: mock.carriers } : { count: 0, error: mock.countError } }),
   insert: async payload => { if (table === 'contacts') mock.contact = payload; return { error: mock.contactError }; },
 }) } }));
 vi.mock('@/lib/supabaseQuotes', () => ({ SBQ: { from: table => ({ insert: payload => ({ select: async () => { mock.presets.push([table, payload]); return {}; } }) }) } }));
-beforeEach(() => { mock.company = null; mock.contact = null; mock.contactError = null; mock.countError = null; mock.companyError = null; mock.carriers = []; mock.presets = []; vi.spyOn(window, 'alert').mockImplementation(() => {}); });
+beforeEach(() => { mock.company = null; mock.contact = null; mock.contactError = null; mock.countError = null; mock.companyError = null; mock.pending = null; mock.carriers = []; mock.presets = []; vi.spyOn(window, 'alert').mockImplementation(() => {}); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it('validates, navigates back without losing values, and saves grouped details', async () => {
@@ -147,4 +147,24 @@ it('leaves the company form open when the company save fails', async () => {
   await user.click(screen.getByRole('button', { name: 'Save Client' }));
   expect(window.alert).toHaveBeenCalledWith('Error: Unavailable');
   expect(created).not.toHaveBeenCalled();
+});
+
+it('locks a new client form until creation finishes', async () => {
+  let finish;
+  mock.pending = new Promise(resolve => { finish = resolve; });
+  const user = userEvent.setup();
+  const created = vi.fn();
+  const close = vi.fn();
+  render(<CreateCompanyModal initialType="client" onClose={close} onCreated={created} />);
+  const name = screen.getByLabelText('Client Name *');
+  await user.type(name, 'Acme');
+  await user.click(screen.getByRole('button', { name: 'Save Client' }));
+  await waitFor(() => expect(mock.company).not.toBeNull());
+  expect(name.matches(':disabled')).toBe(true);
+  await user.type(name, ' lost');
+  await user.click(screen.getByRole('button', { name: 'Close' }));
+  expect(name.value).toBe('Acme');
+  expect(close).not.toHaveBeenCalled();
+  finish({ data: { id: '1', ...mock.company }, error: null });
+  await waitFor(() => expect(created).toHaveBeenCalledWith('client', expect.objectContaining({ name: 'Acme' })));
 });

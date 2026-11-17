@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { closeTopModal } from '@/app/components/ModalGuard';
 import FactoriesPage from '@/app/v2/factories/page';
 import FactoryPage from '@/app/v2/factories/[id]/page';
 
-const mock = vi.hoisted(() => ({ fail: false, missing: false, noContact: false, contactFail: false, queries: [], updates: [] }));
+const mock = vi.hoisted(() => ({ fail: false, missing: false, noContact: false, contactFail: false, pending: null, queries: [], updates: [] }));
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a> }));
 vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'f1' }) }));
 vi.mock('@/app/v2/V2Shell', () => ({ default: ({ children }) => <>{children}</> }));
@@ -30,12 +31,12 @@ vi.mock('@/lib/supabase', () => ({ SB: { from: table => {
     })[table] }),
     maybeSingle: () => Promise.resolve(mock.fail ? { error: { message: 'failed' } } : { data: mock.missing ? null : company }),
     limit: () => Promise.resolve(mock.fail ? { error: { message: 'failed' } } : { data: mock.noContact ? [] : [{ id: 'ct1', full_name: 'Jenny', email: 'jenny@example.com', phone: '123' }] }),
-    single: () => { mock.updates.push({ table, operation, payload, filters }); return Promise.resolve(table === 'contacts' && mock.contactFail ? { error: { message: 'failed' } } : { data: table === 'contacts' ? { id: 'ct1', email: 'jenny@example.com', phone: '123', ...payload } : { ...company, ...payload } }); },
+    single: () => { mock.updates.push({ table, operation, payload, filters }); return mock.pending?.table === table ? mock.pending.promise : Promise.resolve(table === 'contacts' && mock.contactFail ? { error: { message: 'failed' } } : { data: table === 'contacts' ? { id: 'ct1', email: 'jenny@example.com', phone: '123', ...payload } : { ...company, ...payload } }); },
   };
   return chain;
 } } }));
 
-beforeEach(() => { mock.fail = false; mock.missing = false; mock.noContact = false; mock.contactFail = false; mock.queries = []; mock.updates = []; });
+beforeEach(() => { mock.fail = false; mock.missing = false; mock.noContact = false; mock.contactFail = false; mock.pending = null; mock.queries = []; mock.updates = []; });
 afterEach(cleanup);
 
 it('lists factories with linked names, primary contacts, search and edit icons', async () => {
@@ -85,6 +86,33 @@ it('updates the factory name in the list after editing', async () => {
   await user.type(name, 'Updated Factory');
   await user.click(screen.getByRole('button', { name: 'Save Factory' }));
   expect((await screen.findByRole('link', { name: 'Updated Factory' })).getAttribute('href')).toBe('/v2/factories/f1');
+});
+
+it.each(['companies', 'contacts'])('locks the form during a pending %s save and unlocks after an error', async table => {
+  let finish;
+  mock.pending = { table, promise: new Promise(resolve => { finish = resolve; }) };
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+  const user = userEvent.setup();
+  render(<FactoryPage />);
+  await user.click(await screen.findByRole('button', { name: 'Edit factory' }));
+  if (table === 'companies') await user.type(await screen.findByLabelText('Factory Name *'), ' revised');
+  else {
+    await user.click(await screen.findByRole('tab', { name: 'Primary contact' }));
+    await user.type(screen.getByLabelText('Full Name'), ' revised');
+  }
+  await user.click(screen.getByRole('button', { name: 'Save Factory' }));
+  await waitFor(() => expect(mock.updates.some(update => update.table === table)).toBe(true));
+  expect(screen.getByRole('button', { name: 'Saving…' }).disabled).toBe(true);
+  expect(screen.getByLabelText(table === 'companies' ? 'Factory Name *' : 'Full Name').matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Close' }).disabled).toBe(true);
+  closeTopModal();
+  expect(screen.getByRole('dialog', { name: 'Edit Factory' })).toBeTruthy();
+  finish({ error: { message: 'Offline' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save Factory' }).disabled).toBe(false));
+  expect(screen.getByLabelText(table === 'companies' ? 'Factory Name *' : 'Full Name').value).toContain(' revised');
+  confirm.mockRestore();
+  alert.mockRestore();
 });
 
 it('shows factory details and saves edits against the factory type', async () => {

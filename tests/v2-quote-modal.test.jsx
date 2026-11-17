@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import QuoteModal from '@/app/v2/quotes/QuoteModal';
 import { QUOTES_CHANGED } from '@/app/v2/quoteEvents';
+import { tierFreight } from '@/lib/tierCost';
 
 const mock = vi.hoisted(() => ({ writes: [], quoteError: null, empty: false, taskError: null, products: [], productError: null, ranges: [], codes: [], savePending: null }));
 vi.mock('@/app/components/HtsField', () => ({ HtsField: ({ value, onChange }) => <button type="button" onClick={() => onChange('123456')}>HTS: {value || 'not set'}</button>, useHtsCodes: () => ({ codes: mock.codes, addCode: () => {} }) }));
@@ -306,6 +307,33 @@ it('does not restore legacy freight after it is explicitly cleared', async () =>
   await waitFor(() => expect(mock.writes).toHaveLength(1));
   expect(mock.writes[0][2].freight_duty).toBeNull();
   expect(mock.writes[0][2].tiers[0]).not.toHaveProperty('freightDuty');
+});
+
+it.each([['ocean', 'air', 'freightOcean', 'freightAir'], ['air', 'ocean', 'freightAir', 'freightOcean']])('keeps legacy %s freight with its original method when switching to %s', async (original, next, originalKey, nextKey) => {
+  const user = userEvent.setup();
+  render(<QuoteModal quote={{ ...quote, tiers: [{ qty: 100, landed: 2, ship: original, freightDuty: 1.5 }] }} onClose={() => {}} onSaved={() => {}} />);
+  await user.click(screen.getByRole('tab', { name: 'Pricing' }));
+  await user.selectOptions(screen.getByLabelText('Shipping method'), next);
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await waitFor(() => expect(mock.writes).toHaveLength(1));
+  const tier = mock.writes[0][2].tiers[0];
+  expect(tier[originalKey]).toBe(1.5);
+  expect(tier[nextKey] ?? null).toBeNull();
+  expect(tier).not.toHaveProperty('freightDuty');
+  expect(tierFreight(tier)).toBe(0);
+  expect(tierFreight({ ...tier, ship: original })).toBe(1.5);
+});
+
+it('preserves an existing price for the new shipping method', async () => {
+  const user = userEvent.setup();
+  render(<QuoteModal quote={{ ...quote, tiers: [{ qty: 100, landed: 2, ship: 'ocean', freightDuty: 1.5, freightAir: 3 }] }} onClose={() => {}} onSaved={() => {}} />);
+  await user.click(screen.getByRole('tab', { name: 'Pricing' }));
+  expect(screen.getByLabelText('Ocean freight').value).toBe('1.5');
+  await user.selectOptions(screen.getByLabelText('Shipping method'), 'air');
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await waitFor(() => expect(mock.writes).toHaveLength(1));
+  expect(mock.writes[0][2].tiers[0]).toMatchObject({ ship: 'air', freightOcean: 1.5, freightAir: 3 });
+  expect(tierFreight(mock.writes[0][2].tiers[0])).toBe(3);
 });
 
 it('preserves unreadable tier data while allowing unrelated quote edits', async () => {

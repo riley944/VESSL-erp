@@ -433,7 +433,7 @@ function formToRow(f) {
     sku: f.sku || null, size_scale: (f.sizeScales || []).length ? f.sizeScales : null, size_price_deltas: mapToDeltas(f.sizeDeltas, f.sizeScales), size_plate_fees: mapToPlates(f.sizePlateFees, f.sizeScales), size_cartons: mapToCartons(f.sizeCartons, f.sizeScales), qty: num(first.qty), notes: f.notes || null,
     client: f.client || null, client_contact: f.clientContact || null, client_email: f.clientEmail || null,
     client_phone: f.clientPhone || null, client_address: f.clientAddress || null,
-    factory: f.factory || null, factory_contact: f.factoryContact || null, factory_email: f.factoryEmail || null,
+    factory: f.factory || null, factory_company_id: f.factoryCompanyId || null, factory_contact: f.factoryContact || null, factory_email: f.factoryEmail || null,
     factory_phone: f.factoryPhone || null, country: f.country || null, lead_time: f.leadTime || null, hts: f.hts || null,
     units_per_carton: num(f.unitsPerCarton), carton_l: num(f.cartonL), carton_w: num(f.cartonW),
     carton_h: num(f.cartonH), carton_weight: num(f.cartonWeight),
@@ -477,7 +477,7 @@ function pdfItemToForm(it, f) {
   return {
     ...BLANK,
     quoteDate: f.quoteDate || "",
-    factory: f.factory || "", factoryContact: f.factoryContact || "", factoryEmail: f.factoryEmail || "", factoryPhone: f.factoryPhone || "",
+    factory: f.factory || "", factoryCompanyId: f.factoryCompanyId || "", factoryContact: f.factoryContact || "", factoryEmail: f.factoryEmail || "", factoryPhone: f.factoryPhone || "",
     country: f.country || "",
     pdfPath: f.pdfPath || "",
     tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }],
@@ -533,7 +533,7 @@ const BLANK = {
   id: null, quoteDate: "", product: "", sku: "", sizeScales: [], sizeDeltas: {}, sizePlateFees: {}, sizeCartons: {}, notes: "",
   updatedAt: "", updatedBy: "",
   client: "", clientContact: "", clientEmail: "", clientPhone: "", clientAddress: "",
-  factory: "", factoryContact: "", factoryEmail: "", factoryPhone: "", country: "", leadTime: "", hts: "",
+  factory: "", factoryCompanyId: "", factoryContact: "", factoryEmail: "", factoryPhone: "", country: "", leadTime: "", hts: "",
   unitsPerCarton: "", cartonL: "", cartonW: "", cartonH: "", cartonWeight: "",
   freightDutyUpdatedAt: "", freightDutyUpdatedBy: "",
   moldFee: "", sampleFee: "", pdfPath: "", pdfItem: null,
@@ -3564,11 +3564,11 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
   // company's contacts are.
   const onPickFactory = (company) => {
     if (!company) {
-      setF((p) => ({ ...p, factory: "", factoryContact: "", factoryEmail: "",
+      setF((p) => ({ ...p, factory: "", factoryCompanyId: "", factoryContact: "", factoryEmail: "",
                      factoryPhone: "", country: "", leadTime: "" }));
       return;
     }
-    setF((p) => ({ ...p, factory: company.name || "" }));
+    setF((p) => ({ ...p, factory: company.name || "", factoryCompanyId: company.id || "" }));
     const fill = factoryFillFor(company, { contacts: factoryContacts, presets: factoryPresets });
     if (fill.contacts.length > 1) {
       // Filled after the choice rather than before it, so the fields do not flash
@@ -3593,7 +3593,7 @@ function QuoteForm({ initial, onClose, onSave, onSkip, userEmail, existingTasks 
     setAddingFactory(null);
     if (!company || type !== 'factory') return;
     addCompany(company);
-    setF((p) => ({ ...p, factory: company.name || "" }));
+    setF((p) => ({ ...p, factory: company.name || "", factoryCompanyId: company.id || "" }));
     applyFactory(company, null);
   };
 

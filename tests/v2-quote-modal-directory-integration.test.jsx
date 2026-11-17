@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import QuoteModal from '@/app/v2/quotes/QuoteModal';
+import { factoryProductIds } from '@/lib/factoryProducts';
 
 const mock = vi.hoisted(() => ({ factories: [], codes: [], insertedCodes: [], quoteUpdates: [] }));
 
@@ -29,7 +30,7 @@ vi.mock('@/lib/supabase', () => ({ SB: {
         let result;
         if (table === 'companies' && operation === 'read') result = { data: mock.factories, error: null };
         else if (table === 'htscodes' && operation === 'read') result = { data: mock.codes, error: null };
-        else if (table === 'quotes' && operation === 'update') {
+        else if (table === 'quotes' && (operation === 'update' || operation === 'insert')) {
           mock.quoteUpdates.push(payload);
           result = { data: [{ ...quote, ...payload }], error: null };
         } else if ((table === 'tasks' || table === 'staff_profiles') && operation === 'read') result = { data: [], error: null };
@@ -92,14 +93,17 @@ it('clears the previous factory details when a different factory is selected', a
   await user.click(screen.getByRole('tab', { name: 'Factory' }));
   await screen.findByRole('option', { name: 'New Factory' });
   expect(screen.getByLabelText('Factory contact').value).toBe('Jane');
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Factory' }), 'New Factory');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Factory' }), 'f2');
   for (const label of ['Factory contact', 'Factory email', 'Factory phone', 'Country', 'Lead time']) {
     expect(screen.getByLabelText(label).value).toBe('');
   }
   await user.click(screen.getByRole('button', { name: 'Save quote' }));
   await waitFor(() => expect(mock.quoteUpdates).toHaveLength(1));
-  expect(mock.quoteUpdates[0]).toMatchObject({ factory: 'New Factory', factory_contact: null, factory_email: null, factory_phone: null, country: null, lead_time: null });
+  expect(mock.quoteUpdates[0]).toMatchObject({ factory: 'New Factory', factory_company_id: 'f2', factory_contact: null, factory_email: null, factory_phone: null, country: null, lead_time: null });
   expect(mock.quoteUpdates[0]).not.toHaveProperty('hts');
+  const products = factoryProductIds(mock.factories, [{ ...quote, ...mock.quoteUpdates[0], product_id: 'p1' }], []);
+  expect(products.get('f2').has('p1')).toBe(true);
+  expect(products.has('f1')).toBe(false);
 });
 
 it('retains an unlisted saved factory when saving an unrelated edit', async () => {
@@ -108,8 +112,8 @@ it('retains an unlisted saved factory when saving an unrelated edit', async () =
   render(<QuoteModal quote={quote} onClose={() => {}} onSaved={() => {}} />);
   await user.click(screen.getByRole('tab', { name: 'Factory' }));
   await screen.findByRole('option', { name: 'New Factory' });
-  expect(screen.getByRole('combobox', { name: 'Factory' }).value).toBe('Original Factory');
-  expect(screen.getByRole('option', { name: 'Original Factory' })).toBeTruthy();
+  expect(screen.getByRole('combobox', { name: 'Factory' }).value).toBe('__saved_name__');
+  expect(screen.getByRole('option', { name: 'Original Factory (saved name)' })).toBeTruthy();
   await user.click(screen.getByRole('tab', { name: 'Quote details' }));
   await user.type(screen.getByLabelText('Notes'), ' updated');
   await user.click(screen.getByRole('button', { name: 'Save quote' }));
@@ -117,4 +121,27 @@ it('retains an unlisted saved factory when saving an unrelated edit', async () =
   expect(mock.quoteUpdates[0]).toMatchObject({ notes: 'Original note updated' });
   expect(mock.quoteUpdates[0]).not.toHaveProperty('factory');
   expect(mock.quoteUpdates[0]).not.toHaveProperty('factory_contact');
+});
+
+it('preserves a renamed factory snapshot and clears its ID when removed', async () => {
+  const user = userEvent.setup();
+  mock.factories = [{ id: 'f1', name: 'Renamed Factory' }];
+  render(<QuoteModal quote={{ ...quote, factory_company_id: 'f1' }} onClose={() => {}} onSaved={() => {}} />);
+  await user.click(screen.getByRole('tab', { name: 'Factory' }));
+  await screen.findByRole('option', { name: 'Original Factory' });
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Factory' }), '');
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await waitFor(() => expect(mock.quoteUpdates).toHaveLength(1));
+  expect(mock.quoteUpdates[0]).toMatchObject({ factory: null, factory_company_id: null });
+});
+
+it('saves the selected factory ID on a new quote', async () => {
+  const user = userEvent.setup();
+  render(<QuoteModal newQuote={{ productId: 'p1', product: 'Bottle' }} onClose={() => {}} onSaved={() => {}} />);
+  await user.click(screen.getByRole('tab', { name: 'Factory' }));
+  await screen.findByRole('option', { name: 'New Factory' });
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Factory' }), 'f2');
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await waitFor(() => expect(mock.quoteUpdates).toHaveLength(1));
+  expect(mock.quoteUpdates[0]).toMatchObject({ product_id: 'p1', factory: 'New Factory', factory_company_id: 'f2' });
 });

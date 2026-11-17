@@ -19,6 +19,9 @@ export default function useQuotePricing({ form, setForm, codes, setNotice }) {
     setForm(previous => ({ ...previous, tiers: previous.tiers.map((tier, i) => {
       if (i !== index) return tier;
       const updated = { ...tier, [key]: value, ...(key === 'duty' ? { dutyManual: value !== '', __v2LegacyDuty: false } : {}) };
+      if (key === 'ship' && value !== (tier.ship || 'ocean')) {
+        delete updated.freightDuty;
+      }
       if (key === 'freightAir' || key === 'freightOcean') {
         delete updated.freightDuty;
         updated.__v2LegacyDuty = false;

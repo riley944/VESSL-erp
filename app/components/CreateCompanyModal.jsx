@@ -52,7 +52,8 @@ const TYPE_NOUN = { client: 'Client' };
 // The Type field still shows the type itself, which is what gets stored.
 export function CreateCompanyModal({ onClose, onCreated, initialType, noun, initial = null, editCompany = null, editContact = undefined }) {
   // Plain form, every field an input or select. No click-driven setters at all.
-  const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
+  const savingRef = useRef(false);
+  const { ref: cardRef, guardedClose } = useDirtyGuard(() => { if (!savingRef.current) onClose(); });
   // initialType lets a host open this already set to what it is asking for -- the
   // quote form only ever wants a factory, and making somebody pick it from a list
   // of four when the button said "add new factory" is a step that can go wrong.
@@ -98,7 +99,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     setStep(step + 1);
   };
   const submit = async () => {
-    if (saving) return;
+    if (savingRef.current) return;
     if (!form.name.trim()) { setStep(0); alert(word + ' name required'); return; }
     if (form.type === 'client' && !validRecipients()) { setStep(2); alert('Enter valid delivery request email addresses separated by commas or new lines.'); return; }
     if ((!editCompany || editContact !== undefined) && !form.cname.trim() && (editContact || form.cemail.trim() || form.cphone.trim())) { setStep(3); alert('Enter a name for the primary contact.'); return; }
@@ -116,6 +117,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     if (url && !(url.startsWith('https') && url.includes('{number}'))) {
       setStep(2); alert('The tracking URL must start with https and contain {number} where the tracking number goes.'); return;
     }
+    savingRef.current = true;
     setSaving(true);
     try {
     let name = form.name.trim();
@@ -166,7 +168,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     const recipients = form.delivery_request_recipients.split(/[,\n]/).map(x => x.trim().toLowerCase()).filter(Boolean);
     const optional = Object.fromEntries(['email', 'phone', 'website', 'vendor_number', 'pallet_info', 'billing_address', 'shipping_address'].filter(key => form[key].trim()).map(key => [key, form[key]]));
     const { data: co, error } = await SB.from('companies').upsert({name,type:form.type,...optional,...(url ? { tracking_url: url } : {}),...(ior != null ? { kui_ior: ior } : {}),...(form.type === 'client' && form.po_notes ? { po_notes: form.po_notes } : {}),...(form.type === 'client' && recipients.length ? { delivery_request_recipients: recipients } : {})},{onConflict:'name,type',ignoreDuplicates:false,defaultToNull:false}).select().single();
-    if (error) { setSaving(false); alert('Error: '+error.message); return; }
+    if (error) { alert('Error: '+error.message); return; }
     // PRIMARY ONLY IF THIS COMPANY HAS NOBODY YET. This modal is an UPSERT on
     // (name, type), so "create" can adopt a company that already exists and
     // already has contacts -- and hardcoding true here is one of the ways three
@@ -198,15 +200,18 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     // back beside it for hosts that have to select what they just made.
     onCreated(co.type, co);
     } catch (error) {
-      setSaving(false);
       alert('Error: ' + (error.message || 'Could not save company.'));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
   return (
-    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
+    <div className="modal-overlay" onClick={e=>!saving&&e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box" role="dialog" aria-modal="true" aria-labelledby="create-company-title">
-        <div className="modal-head"><h3 id="create-company-title">{editCompany ? 'Edit' : 'New'} {word}</h3><button className="modal-close" aria-label="Close" onClick={guardedClose}>×</button></div>
+        <div className="modal-head"><h3 id="create-company-title">{editCompany ? 'Edit' : 'New'} {word}</h3><button className="modal-close" aria-label="Close" disabled={saving} onClick={guardedClose}>×</button></div>
         <div className="modal-body">
+          <fieldset disabled={saving} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
           <div role="tablist" aria-label="Company sections" style={{display:'flex',flexWrap:'wrap',gap:'6px',margin:'0 0 18px'}}>
             {steps.map((label, index) => <button key={label} type="button" role="tab" id={`company-tab-${index}`} aria-controls={`company-panel-${index}`} aria-selected={step === index} tabIndex={step === index ? 0 : -1} onClick={() => setStep(index)} onKeyDown={e => { const target = e.key === 'ArrowRight' ? (index + 1) % steps.length : e.key === 'ArrowLeft' ? (index + steps.length - 1) % steps.length : e.key === 'Home' ? 0 : e.key === 'End' ? steps.length - 1 : null; if (target !== null) { e.preventDefault(); setStep(target); e.currentTarget.parentElement.querySelectorAll('[role="tab"]')[target].focus(); } }} style={{border:'1px solid ' + (step === index ? '#008a25' : '#cbd5e1'),borderRadius:'999px',padding:'7px 11px',background:step === index ? '#e8f7ec' : '#fff',color:step === index ? '#006b1d' : '#334155',fontWeight:600,cursor:'pointer'}}>{label}</button>)}
           </div>
@@ -257,8 +262,9 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
           </div>
           <div className="form-row"><label htmlFor="company-contact-phone">Phone</label><input id="company-contact-phone" className="form-input" value={form.cphone} onChange={e=>f('cphone')(e.target.value)} /></div>
           </section>}
+          </fieldset>
         </div>
-        <div className="modal-foot"><button className="btn btn-ghost" onClick={guardedClose}>Cancel</button>{step > 0 && <button className="btn btn-ghost" onClick={()=>setStep(step - 1)}>Back</button>}{step < steps.length - 1 && <button className="btn btn-ghost" onClick={next}>Next</button>}<button className="btn btn-dark" disabled={saving} onClick={submit}>{saving ? 'Saving…' : `Save ${word}`}</button></div>
+        <div className="modal-foot"><button className="btn btn-ghost" disabled={saving} onClick={guardedClose}>Cancel</button>{step > 0 && <button className="btn btn-ghost" disabled={saving} onClick={()=>setStep(step - 1)}>Back</button>}{step < steps.length - 1 && <button className="btn btn-ghost" disabled={saving} onClick={next}>Next</button>}<button className="btn btn-dark" disabled={saving} onClick={submit}>{saving ? 'Saving…' : `Save ${word}`}</button></div>
       </div>
     </div>
   );
