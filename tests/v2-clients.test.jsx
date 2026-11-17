@@ -29,9 +29,17 @@ it('lists clients with active product counts and links to their filtered quotes'
   expect(link.getAttribute('href')).toBe('/v2/clients/c1');
   const row = link.parentElement;
   expect(within(row).getByText('2')).toBeTruthy();
+  expect(within(row).getByRole('link', { name: '2 active products for Acme & Co' }).getAttribute('href')).toBe('/v2/products?clientId=c1');
+  expect(within(row).getByRole('link', { name: '2 active products for Acme & Co' }).getAttribute('title')).toBe('See products');
   expect(within(row).getByRole('link', { name: 'See quotes for Acme & Co' }).getAttribute('href')).toBe('/v2/quotes?clientId=c1&clientName=Acme+%26+Co');
   expect(within(row).getByRole('link', { name: 'See quotes for Acme & Co' }).querySelector('svg').classList.contains('lucide-file-text')).toBe(true);
   expect(within(row).getByRole('button', { name: 'Edit Acme & Co' }).querySelector('svg').classList.contains('lucide-pencil')).toBe(true);
+  const actions = within(row).getByRole('button', { name: 'Edit Acme & Co' }).parentElement;
+  expect(actions.children[0]).toBe(within(row).getByRole('button', { name: 'Edit Acme & Co' }));
+  expect(actions.children[1]).toBe(within(row).getByRole('link', { name: 'See quotes for Acme & Co' }));
+  const emptyRow = screen.getByRole('link', { name: 'Zebra' }).parentElement;
+  expect(within(emptyRow).getByText('0').tagName).not.toBe('A');
+  expect(within(emptyRow).queryByRole('link', { name: '0 active products for Zebra' })).toBeNull();
   expect(mock.queries).toContainEqual(['products', 'active', true]);
   expect(mock.queries).toContainEqual(['companies', 'type', 'client']);
   expect(screen.queryByText('Needs attention')).toBeNull();

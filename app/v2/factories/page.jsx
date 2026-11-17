@@ -61,7 +61,7 @@ function FactoriesList() {
           <Link className={s.client} href={`/v2/factories/${factory.id}`}>{factory.name || 'Unnamed factory'}</Link>
           <span><span className={s.mobileLabel}>Main contact: </span>{factory.contact || '-'}</span>
           <span className={styles.address}><span className={s.mobileLabel}>Ships from: </span>{factory.shipping_address?.trim() || '-'}</span>
-          <span><span className={s.mobileLabel}>Active products: </span>{factory.products ? <Link className={styles.productLink} href={`/v2/products?${new URLSearchParams({ factoryId: factory.id })}`} aria-label={`${factory.products} active products for ${factory.name || 'unnamed factory'}`}>{factory.products}</Link> : 0}</span>
+          <span><span className={s.mobileLabel}>Active products: </span>{factory.products ? <Link className={styles.productLink} href={`/v2/products?${new URLSearchParams({ factoryId: factory.id })}`} title="See products" aria-label={`${factory.products} active products for ${factory.name || 'unnamed factory'}`}>{factory.products}</Link> : 0}</span>
           <span><span className={s.mobileLabel}>Needs attention: </span>-</span>
           <button className={s.edit} title="Edit factory" aria-label={`Edit ${factory.name || 'unnamed factory'}`} onClick={() => setEditing(factory.id)}><Pencil size={18} aria-hidden="true" /></button>
         </div>)}

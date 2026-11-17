@@ -47,6 +47,7 @@ it('lists factories with linked names, primary contacts, search and edit icons',
   expect(within(link.parentElement).getByText('Sample City')).toBeTruthy();
   expect(within(link.parentElement).getByText('2')).toBeTruthy();
   expect(within(link.parentElement).getByRole('link', { name: '2 active products for Acme Factory' }).getAttribute('href')).toBe('/v2/products?factoryId=f1');
+  expect(within(link.parentElement).getByRole('link', { name: '2 active products for Acme Factory' }).getAttribute('title')).toBe('See products');
   expect(screen.getByText('Ships from')).toBeTruthy();
   expect(screen.getByText('Active products')).toBeTruthy();
   expect(screen.getByText('Needs attention')).toBeTruthy();

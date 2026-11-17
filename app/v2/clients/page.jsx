@@ -54,9 +54,9 @@ function ClientsList() {
         <div className={`${s.grid} ${s.heading} ${SHOW_ATTENTION ? s.withAttention : ''}`} aria-hidden="true"><span>Client</span><span>Active products</span>{SHOW_ATTENTION && <span>Needs attention</span>}<span /></div>
         {shown.map(client => <div className={`${s.grid} ${s.row} ${SHOW_ATTENTION ? s.withAttention : ''}`} key={client.id}>
           <Link className={s.client} href={`/v2/clients/${client.id}`}>{client.name || 'Unnamed client'}</Link>
-          <span><span className={s.mobileLabel}>Active products: </span>{client.products}</span>
+          <span><span className={s.mobileLabel}>Active products: </span>{client.products ? <Link className={s.productLink} href={`/v2/products?${new URLSearchParams({ clientId: client.id })}`} title="See products" aria-label={`${client.products} active products for ${client.name || 'unnamed client'}`}>{client.products}</Link> : 0}</span>
           {SHOW_ATTENTION && <span>—</span>}
-          <div className={s.actions}><Link className={s.button} href={`/v2/quotes?${new URLSearchParams({ clientId: client.id, clientName: client.name || '' })}`} title="See quotes" aria-label={`See quotes for ${client.name || 'unnamed client'}`}><FileText size={18} aria-hidden="true" /></Link><button className={s.edit} title="Edit client" aria-label={`Edit ${client.name || 'unnamed client'}`} onClick={() => setEditing(client.id)}><Pencil size={18} aria-hidden="true" /></button></div>
+          <div className={s.actions}><button className={s.edit} title="Edit client" aria-label={`Edit ${client.name || 'unnamed client'}`} onClick={() => setEditing(client.id)}><Pencil size={18} aria-hidden="true" /></button><Link className={s.button} href={`/v2/quotes?${new URLSearchParams({ clientId: client.id, clientName: client.name || '' })}`} title="See quotes" aria-label={`See quotes for ${client.name || 'unnamed client'}`}><FileText size={18} aria-hidden="true" /></Link></div>
         </div>)}
       </>}
     </div>

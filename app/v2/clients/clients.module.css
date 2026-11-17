@@ -12,6 +12,7 @@
 .row { border-top: 1px solid #f0f0f0; font-size: 15px; overflow-wrap: anywhere; }
 .client { color: #111; font-weight: 700; text-decoration: none; }
 .client:hover { text-decoration: underline; }
+.productLink { color: #111; font-weight: 600; text-underline-offset: 3px; }
 .button, .edit { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid #111; border-radius: 10px; cursor: pointer; }
 .button { background: #111; color: white; text-decoration: none; }
 .button:hover { background: #333; }

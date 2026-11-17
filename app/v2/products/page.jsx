@@ -39,21 +39,24 @@ async function fetchAll(table, columns) {
 }
 
 function ProductsList() {
-  const factoryId = useSearchParams().get('factoryId') || '';
+  const params = useSearchParams();
+  const factoryId = params.get('factoryId') || '';
+  const clientId = params.get('clientId') || '';
   const [products, setProducts] = useState(null);
   const [factoryName, setFactoryName] = useState('');
+  const [clientName, setClientName] = useState('');
   const [factoryProducts, setFactoryProducts] = useState(null);
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState('');
-  const [tab, setTab] = useState(factoryId ? 'active' : 'all');
+  const [tab, setTab] = useState(factoryId || clientId ? 'active' : 'all');
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
   const [quoteProduct, setQuoteProduct] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [deleteError, setDeleteError] = useState('');
 
-  useEffect(() => { setTab(factoryId ? 'active' : 'all'); }, [factoryId]);
+  useEffect(() => { setTab(factoryId || clientId ? 'active' : 'all'); }, [factoryId, clientId]);
 
   const deleteProduct = async product => {
     if (deleting) return;
@@ -77,9 +80,11 @@ function ProductsList() {
     Promise.all([
       fetchAll('products', 'id,style_number,sku,name,description,active,client_company_id,company:companies!client_company_id(name)'),
       fetchAll('quotes', 'id,product_id,quote_code,created_at,factory,factory_company_id'),
-      ...(factoryId ? [fetchAll('companies', 'id,name,type'), fetchAll('purchase_order_items', 'id,product_id,purchase_orders(factory_company_id)')] : []),
+      factoryId || clientId ? fetchAll('companies', 'id,name,type') : Promise.resolve([]),
+      factoryId ? fetchAll('purchase_order_items', 'id,product_id,purchase_orders(factory_company_id)') : Promise.resolve([]),
     ]).then(([rows, quotes, companies, items]) => {
       if (!active) return;
+      setClientName(clientId ? companies.find(company => company.id === clientId && company.type === 'client')?.name || 'Unknown client' : '');
       if (factoryId) {
         const factories = companies.filter(company => company.type === 'factory');
         setFactoryName(factories.find(factory => factory.id === factoryId)?.name || 'Unknown factory');
@@ -97,9 +102,9 @@ function ProductsList() {
         .sort((a, b) => (a.style_number || '\uffff').localeCompare(b.style_number || '\uffff', undefined, { numeric: true }) || String(a.id).localeCompare(String(b.id))));
     }).catch(() => { if (active) setError(true); });
     return () => { active = false; };
-  }, [retry, factoryId]);
+  }, [retry, factoryId, clientId]);
 
-  const scopedProducts = useMemo(() => (products || []).filter(product => !factoryId || factoryProducts?.has(product.id)), [products, factoryId, factoryProducts]);
+  const scopedProducts = useMemo(() => (products || []).filter(product => (!factoryId || factoryProducts?.has(product.id)) && (!clientId || product.client_company_id === clientId)), [products, factoryId, factoryProducts, clientId]);
 
   const shown = useMemo(() => {
     const term = normalize(search);
@@ -108,8 +113,10 @@ function ProductsList() {
   }, [scopedProducts, search, tab]);
 
   return <main className={s.main}>
+    <Link href="/v2/clients" className={s.back}>← Clients</Link>
     <div className={s.header}><div><h1>Products</h1><p className={s.subtitle}>Every style number, across all clients</p></div><button className={s.create} onClick={() => setCreating(true)}>+ New product</button></div>
-    {factoryId && <p className={s.factoryFilter}>Factory: <strong>{factoryName || 'Loading…'}</strong> · <Link href="/v2/products">Clear factory filter</Link></p>}
+    {factoryId && <p className={s.factoryFilter}>Factory: <strong>{factoryName || 'Loading…'}</strong> · <Link href={clientId ? `/v2/products?${new URLSearchParams({ clientId })}` : '/v2/products'}>Clear factory filter</Link></p>}
+    {clientId && <p className={s.factoryFilter}>Client: <strong>{clientName || 'Loading…'}</strong> · <Link href={factoryId ? `/v2/products?${new URLSearchParams({ factoryId })}` : '/v2/products'}>Clear client filter</Link></p>}
     <div className={s.tabs} role="group" aria-label="Product status">
       {TABS.map(([key, label]) => <button type="button" key={key} aria-pressed={tab === key} onClick={() => setTab(key)}>{label}{products && <b>{key === 'all' ? scopedProducts.length : scopedProducts.filter(product => statusOf(product) === key).length}</b>}</button>)}
     </div>
@@ -121,7 +128,7 @@ function ProductsList() {
         {shown.map(product => <div className={`${s.grid} ${s.row}`} key={product.id}>
           <div className={s.styleCell}><ProductThumbnail product={product} /><Link className={s.style} href={recordPath('product', product)}>{product.style_number || 'Style number not assigned'}</Link></div>
           <div><span className={s.mobileLabel}>Product: </span>{product.name || product.description || '—'}</div>
-          <div><span className={s.mobileLabel}>Client: </span>{product.company?.name || '—'}</div>
+          <div><span className={s.mobileLabel}>Client: </span>{product.client_company_id && product.company?.name ? <Link className={s.clientLink} href={`/v2/clients/${product.client_company_id}`}>{product.company.name}</Link> : product.company?.name || '—'}</div>
           <div><span className={s.mobileLabel}>Status: </span>{statusOf(product) === 'unset' ? 'Not set' : statusOf(product) === 'active' ? 'Active' : 'Inactive'}</div>
           <div><div className={s.actions}><button className={s.addQuote} title="Add quote" aria-label={`Add quote for ${product.style_number || product.name || 'product'}`} onClick={() => setQuoteProduct({ productId: product.id, sku: product.sku || '', product: product.name || product.description || '', clientId: product.client_company_id || null, client: product.company?.name || '' })}><FilePlus2 size={18} aria-hidden="true" /></button><button className={s.edit} title="Edit product" aria-label={`Edit ${product.style_number || product.name || 'product'}`} onClick={() => setEditing(product.id)}><Pencil size={18} aria-hidden="true" /></button><button className={s.delete} title="Delete product" aria-label={`Delete ${product.style_number || product.name || 'product'}`} disabled={!!deleting} onClick={() => deleteProduct(product)}><Trash2 size={18} aria-hidden="true" /></button>{product.quotes.length > 0 && <Link className={s.button} href={recordPath('quote', product.quotes[0])} title="View quote" aria-label={`View quote for ${product.style_number || product.name || 'product'}`}><FileText size={18} aria-hidden="true" /></Link>}</div>
             {product.quotes.length > 1 && <span className={s.latest}>Latest quote</span>}

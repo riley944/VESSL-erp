@@ -1,5 +1,6 @@
 .main { max-width: 1440px; margin: 0 auto; padding: 28px 24px 48px; color: #111; font-family: Inter, system-ui, sans-serif; }
 .main h1 { margin: 0; font: 400 32px Georgia, serif; }
+.back { display: inline-block; margin-bottom: 16px; color: #555; font-size: 14px; }
 .subtitle { color: #555; margin: 4px 0 20px; }
 .factoryFilter { margin: 0 0 16px; color: #555; font-size: 14px; }
 .factoryFilter a { color: #111; text-underline-offset: 3px; }
@@ -20,6 +21,7 @@
 .styleCell { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .thumbnail { display: grid; place-items: center; width: 48px; height: 48px; flex: none; border: 1px solid #eaeaea; border-radius: 8px; background: #f5f5f5; color: #64748b; }
 .style { color: #111; font-weight: 700; text-underline-offset: 3px; }
+.clientLink { color: #111; text-underline-offset: 3px; }
 .button, .addQuote, .edit, .delete { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid #111; border-radius: 10px; cursor: pointer; }
 .button { background: #111; color: white; text-decoration: none; }
 .button:hover { background: #333; }

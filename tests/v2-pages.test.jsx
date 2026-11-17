@@ -602,13 +602,19 @@ describe('V2 product detail', () => {
     expect(await screen.findByRole('heading', { name: 'Updated product' })).toBeTruthy();
   });
   it('shows product fields and linked client', async () => {
-    mock.detail = Promise.resolve({ data: { style_number: 'ACM-1', name: 'Bottle', sku: 'B1', company: { name: 'Acme' }, description: 'Steel' }, error: null });
+    mock.detail = Promise.resolve({ data: { style_number: 'ACM-1', name: 'Bottle', sku: 'B1', client_company_id: 'client-1', company: { name: 'Acme' }, description: 'Steel' }, error: null });
     render(<ProductPage />);
     expect(await screen.findByRole('heading', { name: 'ACM-1' })).toBeTruthy();
     expect(screen.getByText('Bottle')).toBeTruthy();
-    expect(screen.getByText('Acme')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Acme' }).getAttribute('href')).toBe('/v2/clients/client-1');
     expect(screen.getByText('Steel')).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Quantity tiers' })).toBeNull();
+  });
+
+  it('shows an unlinked client name as text', async () => {
+    mock.detail = Promise.resolve({ data: { name: 'Bottle', company: { name: 'Acme' } }, error: null });
+    render(<ProductPage />);
+    expect((await screen.findByText('Acme')).tagName).not.toBe('A');
   });
 
   it('falls back to product name and then a generic heading', async () => {

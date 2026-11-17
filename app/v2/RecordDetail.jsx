@@ -67,7 +67,7 @@ function Detail({ type }) {
             <Field label="HTS code" value={record.hts} />
           </> : <>
             <Field label="Style number" value={record.style_number} />
-            <Field label="Client" value={record.company?.name} />
+            <Field label="Client" value={record.client_company_id && record.company?.name ? <Link href={`/v2/clients/${record.client_company_id}`}>{record.company.name}</Link> : record.company?.name} />
             <Field label="SKU" value={record.sku} />
             <Field label="Description" value={record.description} />
             <Field label="Composition" value={record.composition} />
