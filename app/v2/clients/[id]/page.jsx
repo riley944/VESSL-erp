@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { SB } from '@/lib/supabase';
 import V2Shell from '../../V2Shell';
+import EditClientModal from '../EditClientModal';
 import s from '../../detail.module.css';
 
 function formatPhone(value) {
@@ -26,6 +27,7 @@ function websiteHref(value) {
 function ClientDetail() {
   const { id } = useParams();
   const [result, setResult] = useState({ loading: true });
+  const [editing, setEditing] = useState(false);
   useEffect(() => {
     let active = true;
     setResult({ loading: true });
@@ -38,13 +40,14 @@ function ClientDetail() {
   return <main className={s.main}>
     <Link className={s.back} href="/v2/clients">← Clients</Link>
     {result.loading ? <p className={s.message}>Loading client…</p> : result.error ? <p className={s.message} role="alert">Could not load client: {result.error.message}</p> : !client ? <p className={s.message}>Client not found.</p> : <>
-      <p className={s.eyebrow}>Client</p><h1>{client.name}</h1>
+      <p className={s.eyebrow}>Client</p><div className={s.titleRow}><h1>{client.name}</h1><button className={s.editButton} onClick={() => setEditing(true)}>Edit</button></div>
       <section className={s.card}><h2>Client details</h2><dl className={s.fields}>
         <div><dt>Email</dt><dd>{client.email ? <a href={`mailto:${client.email.trim()}`}>{client.email}</a> : '—'}</dd></div>
         <div><dt>Phone</dt><dd>{client.phone ? formatPhone(client.phone) : '—'}</dd></div>
         <div><dt>Website</dt><dd>{website ? <a href={website} target="_blank" rel="noopener noreferrer">{client.website}</a> : client.website || '—'}</dd></div>
         {[['Billing address', client.billing_address], ['Shipping address', client.shipping_address]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || '—'}</dd></div>)}
       </dl></section>
+      {editing && <EditClientModal id={id} onClose={() => setEditing(false)} onSaved={company => { setResult({ data: company }); setEditing(false); }} />}
     </>}
   </main>;
 }

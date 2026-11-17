@@ -17,6 +17,7 @@ const mock = vi.hoisted(() => ({
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a> }));
 vi.mock('next/navigation', () => ({ useParams: () => ({ id: mock.id }), usePathname: () => mock.pathname, useSearchParams: () => new URLSearchParams(mock.searchParams), notFound: () => { throw new Error('NEXT_NOT_FOUND'); } }));
 vi.mock('@/app/m/MLogin', () => ({ MLogin: () => <div>Login form</div> }));
+vi.mock('@/app/v2/clients/EditClientModal', () => ({ default: ({ id, onSaved }) => <button onClick={() => onSaved({ id, name: 'Updated client', email: 'new@example.com' })}>Save test edit</button> }));
 vi.mock('@/lib/supabase', () => ({ SB: {
   auth: {
     getSession: () => mock.session,
@@ -81,6 +82,17 @@ describe('V2 client details', () => {
     render(<ClientPage />);
     expect(await screen.findByText('+44 20 7946 0958')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'http://acme.test/contact' }).getAttribute('href')).toBe('http://acme.test/contact');
+  });
+
+  it('opens editing and shows the saved client', async () => {
+    mock.detail = Promise.resolve({ data: { id: 'record-1', name: 'Acme' }, error: null });
+    const user = userEvent.setup();
+    render(<ClientPage />);
+    await screen.findByRole('heading', { name: 'Acme' });
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    await user.click(screen.getByRole('button', { name: 'Save test edit' }));
+    expect(screen.getByRole('heading', { name: 'Updated client' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'new@example.com' }).getAttribute('href')).toBe('mailto:new@example.com');
   });
 
   it('shows when a client cannot be found', async () => {

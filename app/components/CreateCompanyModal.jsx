@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { SB } from '@/lib/supabase';
 import { SBQ } from '@/lib/supabaseQuotes';
 import { useDirtyGuard } from '@/app/components/ModalGuard';
-import { iorFromSelect } from '@/lib/ior';
+import { iorFromSelect, iorToSelect } from '@/lib/ior';
 
 // ── CreateCompanyModal ───────────────────────────────────────────────────────
 // Extracted from app/page.jsx unchanged in behaviour. It moved because the quote
@@ -50,7 +50,7 @@ const TYPE_NOUN = { client: 'Client' };
 // noun replaces the type's word in the title, the name label, the save button and
 // the required-name alert -- the Companies page's Clients tab passes "Company".
 // The Type field still shows the type itself, which is what gets stored.
-export function CreateCompanyModal({ onClose, onCreated, initialType, noun, initial = null }) {
+export function CreateCompanyModal({ onClose, onCreated, initialType, noun, initial = null, editCompany = null }) {
   // Plain form, every field an input or select. No click-driven setters at all.
   const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   // initialType lets a host open this already set to what it is asking for -- the
@@ -71,7 +71,9 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(() => {
     const base = {name:'',type:initialType || 'client',email:'',phone:'',website:'',vendor_number:'',pallet_info:'',po_notes:'',delivery_request_recipients:'',kui_ior:'',billing_address:'',shipping_address:'',tracking_url:'',cname:'',cemail:'',cphone:'',country:''};
-    Object.entries(initial || {}).forEach(([k, v]) => { if (k in base && k !== 'type' && v != null) base[k] = String(v); });
+    Object.entries(editCompany || initial || {}).forEach(([k, v]) => {
+      if (k in base && k !== 'type' && v != null) base[k] = k === 'kui_ior' && editCompany ? iorToSelect(v) : Array.isArray(v) ? v.join(', ') : String(v);
+    });
     return base;
   });
   const f = k => v => setForm(prev=>({...prev,[k]:v}));
@@ -81,13 +83,14 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
   // which only seeds it. An empty or unknown type says Company, as it always did.
   const typeLabel = (COMPANY_TYPES.find(([v]) => v === form.type) || [null, 'Company'])[1];
   const word = noun && form.type === initialType ? noun : (TYPE_NOUN[form.type] || typeLabel);
-  const steps = ['Company details', 'Addresses', 'Business details', 'Primary contact'];
+  const steps = editCompany ? ['Company details', 'Addresses', 'Business details'] : ['Company details', 'Addresses', 'Business details', 'Primary contact'];
+  const validRecipients = () => !form.delivery_request_recipients.split(/[,\n]/).map(x => x.trim()).filter(Boolean).some(x => !/^[^,@\s]+@[^,@\s]+$/.test(x));
   const next = () => {
     if (step === 0 && !form.name.trim()) { alert(word + ' name required'); return; }
     if (step === 2 && form.type === 'carrier' && form.tracking_url.trim() && !(form.tracking_url.trim().startsWith('https') && form.tracking_url.includes('{number}'))) {
       alert('The tracking URL must start with https and contain {number} where the tracking number goes.'); return;
     }
-    if (step === 2 && form.type === 'client' && form.delivery_request_recipients.split(/[,\n]/).map(x => x.trim()).filter(Boolean).some(x => !/^[^,@\s]+@[^,@\s]+$/.test(x))) {
+    if (step === 2 && form.type === 'client' && !validRecipients()) {
       alert('Enter valid delivery request email addresses separated by commas or new lines.'); return;
     }
     setStep(step + 1);
@@ -95,6 +98,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
   const submit = async () => {
     if (saving) return;
     if (!form.name.trim()) { setStep(0); alert(word + ' name required'); return; }
+    if (form.type === 'client' && !validRecipients()) { setStep(2); alert('Enter valid delivery request email addresses separated by commas or new lines.'); return; }
     // ── A CARRIER'S TRACKING PAGE, AND ITS NAME IN ANY CASE ─────────────────
     // companies.tracking_url (script 85) is the carrier tracking page with
     // {number} where the number goes, and the database refuses any other shape,
@@ -112,6 +116,19 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     setSaving(true);
     try {
     let name = form.name.trim();
+    if (editCompany) {
+      const recipients = form.delivery_request_recipients.split(/[,\n]/).map(x => x.trim().toLowerCase()).filter(Boolean);
+      const { data, error } = await SB.from('companies').update({
+        name, email: form.email || null, phone: form.phone || null, website: form.website || null,
+        billing_address: form.billing_address || null, shipping_address: form.shipping_address || null,
+        vendor_number: form.vendor_number || null, pallet_info: form.pallet_info || null,
+        kui_ior: iorFromSelect(form.kui_ior), po_notes: form.po_notes || null,
+        delivery_request_recipients: recipients.length ? recipients : null,
+      }).eq('id', editCompany.id).eq('type', 'client').select().single();
+      if (error) throw error;
+      onCreated(data.type, data);
+      return;
+    }
     if (form.type === 'carrier') {
       const { data: same } = await SB.from('companies').select('name').eq('type', 'carrier');
       const hit = (same || []).find(c => (c.name || '').trim().toLowerCase() === name.trim().toLowerCase());
@@ -160,7 +177,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
   return (
     <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&guardedClose()}>
       <div ref={cardRef} className="modal-box" role="dialog" aria-modal="true" aria-labelledby="create-company-title">
-        <div className="modal-head"><h3 id="create-company-title">New {word}</h3><button className="modal-close" aria-label="Close" onClick={guardedClose}>×</button></div>
+        <div className="modal-head"><h3 id="create-company-title">{editCompany ? 'Edit' : 'New'} {word}</h3><button className="modal-close" aria-label="Close" onClick={guardedClose}>×</button></div>
         <div className="modal-body">
           <p style={{color:'var(--muted)', margin:'0 0 16px'}}>Step {step + 1} of {steps.length} · {steps[step]}</p>
           <section hidden={step !== 0} aria-label="Company details">
@@ -171,10 +188,10 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
               : <select className="form-select" value={form.type} onChange={e=>f('type')(e.target.value)}>{COMPANY_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>}</div>
           </div>
           <div className="form-row-2">
-            <div><label>Email</label><input type="email" className="form-input" value={form.email} onChange={e=>f('email')(e.target.value)} /></div>
-            <div><label>Phone</label><input className="form-input" value={form.phone} onChange={e=>f('phone')(e.target.value)} /></div>
+            <div><label htmlFor="company-email">Email</label><input id="company-email" type="email" className="form-input" value={form.email} onChange={e=>f('email')(e.target.value)} /></div>
+            <div><label htmlFor="company-phone">Phone</label><input id="company-phone" className="form-input" value={form.phone} onChange={e=>f('phone')(e.target.value)} /></div>
           </div>
-          <div className="form-row"><label>Website</label><input className="form-input" value={form.website} onChange={e=>f('website')(e.target.value)} placeholder="https://" /></div>
+          <div className="form-row"><label htmlFor="company-website">Website</label><input id="company-website" className="form-input" value={form.website} onChange={e=>f('website')(e.target.value)} placeholder="https://" /></div>
           {/* A factory's country has no column on companies; it lives on the
               factory's preset row, which the quote form fills Country from. */}
           {form.type==='factory' && (
@@ -202,16 +219,16 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
           )}
           {form.type !== 'client' && form.type !== 'carrier' && <p style={{color:'var(--muted)'}}>No additional business details for this company type.</p>}
           </section>
-          <section hidden={step !== 3} aria-label="Primary contact">
+          {!editCompany && <section hidden={step !== 3} aria-label="Primary contact">
           <span className="form-section-label">Primary Contact</span>
           <div className="form-row-2">
             <div><label htmlFor="company-contact-name">Full Name</label><input id="company-contact-name" className="form-input" value={form.cname} onChange={e=>f('cname')(e.target.value)} /></div>
             <div><label htmlFor="company-contact-email">Email</label><input id="company-contact-email" type="email" className="form-input" value={form.cemail} onChange={e=>f('cemail')(e.target.value)} /></div>
           </div>
           <div className="form-row"><label htmlFor="company-contact-phone">Phone</label><input id="company-contact-phone" className="form-input" value={form.cphone} onChange={e=>f('cphone')(e.target.value)} /></div>
-          </section>
+          </section>}
         </div>
-        <div className="modal-foot"><button className="btn btn-ghost" onClick={guardedClose}>Cancel</button>{step > 0 && <button className="btn btn-ghost" onClick={()=>setStep(step - 1)}>Back</button>}{step < steps.length - 1 ? <button className="btn btn-dark" onClick={next}>Next</button> : <button className="btn btn-dark" disabled={saving} onClick={submit}>{saving ? 'Saving…' : `Save ${word}`}</button>}</div>
+        <div className="modal-foot"><button className="btn btn-ghost" onClick={guardedClose}>Cancel</button>{step > 0 && <button className="btn btn-ghost" onClick={()=>setStep(step - 1)}>Back</button>}{step < steps.length - 1 && <button className={editCompany ? 'btn btn-ghost' : 'btn btn-dark'} onClick={next}>Next</button>}{(editCompany || step === steps.length - 1) && <button className="btn btn-dark" disabled={saving} onClick={submit}>{saving ? 'Saving…' : `Save ${word}`}</button>}</div>
       </div>
     </div>
   );

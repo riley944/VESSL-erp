@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { CreateCompanyModal } from '@/app/components/CreateCompanyModal';
 
@@ -32,7 +32,7 @@ it('validates, navigates back without losing values, and saves grouped details',
   await user.type(screen.getByLabelText('Delivery request email recipients'), 'A@EXAMPLE.COM, b@example.com');
   await user.click(screen.getByRole('button', { name: 'Next' }));
   await user.type(screen.getByLabelText('Full Name'), 'Jane Doe');
-  await user.type(screen.getByLabelText('Phone'), '555-1234');
+  await user.type(within(screen.getByRole('region', { name: 'Primary contact' })).getByLabelText('Phone'), '555-1234');
   await user.click(screen.getByRole('button', { name: 'Save Company' }));
   expect(mock.company).toMatchObject({ name: 'Acme', type: 'client', billing_address: 'Main Street', po_notes: 'Deliver early', delivery_request_recipients: ['a@example.com', 'b@example.com'] });
   expect(mock.contact).toMatchObject({ full_name: 'Jane Doe', phone: '555-1234', company_id: '1', is_primary: true });

@@ -7,6 +7,7 @@ import ClientsPage from '@/app/v2/clients/page';
 const mock = vi.hoisted(() => ({ queries: [], fail: false }));
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a> }));
 vi.mock('@/app/v2/V2Shell', () => ({ default: ({ children }) => <>{children}</> }));
+vi.mock('@/app/v2/clients/EditClientModal', () => ({ default: ({ id, onSaved }) => <button onClick={() => onSaved({ id, name: 'Renamed' })}>Save test edit</button> }));
 vi.mock('@/lib/supabase', () => ({ SB: { from: table => {
   const chain = {
     select: () => chain,
@@ -57,4 +58,14 @@ it('opens the new company wizard from the clients page', async () => {
   expect(screen.getByText(/Step 1 of 4/)).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Cancel' }));
   expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+it('edits the chosen client and updates its name and quotes link', async () => {
+  const user = userEvent.setup();
+  render(<ClientsPage />);
+  await screen.findByRole('link', { name: 'Acme & Co' });
+  await user.click(screen.getByRole('button', { name: 'Edit Acme & Co' }));
+  await user.click(screen.getByRole('button', { name: 'Save test edit' }));
+  expect(screen.getByRole('link', { name: 'Renamed' }).getAttribute('href')).toBe('/v2/clients/c1');
+  expect(screen.getByRole('link', { name: 'See quotes for Renamed' }).getAttribute('href')).toContain('clientName=Renamed');
 });

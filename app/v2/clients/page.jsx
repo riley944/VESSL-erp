@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { SB } from '@/lib/supabase';
 import V2Shell from '../V2Shell';
 import { CreateCompanyModal } from '@/app/components/CreateCompanyModal';
+import EditClientModal from './EditClientModal';
 import s from './clients.module.css';
 
 const BATCH = 1000;
@@ -27,6 +28,7 @@ function ClientsList() {
   const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState('');
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(null);
   useEffect(() => {
     let active = true;
     setData(null); setError(false);
@@ -53,12 +55,13 @@ function ClientsList() {
           <Link className={s.client} href={`/v2/clients/${client.id}`}>{client.name || 'Unnamed client'}</Link>
           <span><span className={s.mobileLabel}>Active products: </span>{client.products}</span>
           {SHOW_ATTENTION && <span>—</span>}
-          <Link className={s.button} href={`/v2/quotes?${new URLSearchParams({ clientId: client.id, clientName: client.name || '' })}`} aria-label={`See quotes for ${client.name || 'unnamed client'}`}>See quotes</Link>
+          <div className={s.actions}><Link className={s.button} href={`/v2/quotes?${new URLSearchParams({ clientId: client.id, clientName: client.name || '' })}`} aria-label={`See quotes for ${client.name || 'unnamed client'}`}>See quotes</Link><button className={s.edit} aria-label={`Edit ${client.name || 'unnamed client'}`} onClick={() => setEditing(client.id)}>Edit</button></div>
         </div>)}
       </>}
     </div>
     {data && <p className={s.count}>{shown.length} {shown.length === 1 ? 'client' : 'clients'} shown</p>}
     {creating && <CreateCompanyModal initialType="client" noun="Company" onClose={() => setCreating(false)} onCreated={() => { setCreating(false); setSearch(''); setRetry(n => n + 1); }} />}
+    {editing && <EditClientModal id={editing} onClose={() => setEditing(null)} onSaved={company => { setData(rows => rows.map(row => row.id === company.id ? { ...row, ...company } : row).sort((a, b) => (a.name || '').localeCompare(b.name || ''))); setEditing(null); }} />}
   </main>;
 }
 
