@@ -11,14 +11,14 @@ import SectionPage from '@/app/v2/[section]/page';
 
 const mock = vi.hoisted(() => ({
   session: null, profile: null, pages: [], detail: null, id: 'record-1', pathname: '/v2',
-  signOut: vi.fn(), unsubscribe: vi.fn(), from: vi.fn(), authCallback: null, queries: [], searchParams: '', deleted: [],
+  signOut: vi.fn(), unsubscribe: vi.fn(), from: vi.fn(), authCallback: null, queries: [], searchParams: '', deleted: [], editProductId: null,
 }));
 
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a> }));
 vi.mock('next/navigation', () => ({ useParams: () => ({ id: mock.id }), usePathname: () => mock.pathname, useSearchParams: () => new URLSearchParams(mock.searchParams), notFound: () => { throw new Error('NEXT_NOT_FOUND'); } }));
 vi.mock('@/app/m/MLogin', () => ({ MLogin: () => <div>Login form</div> }));
 vi.mock('@/app/v2/clients/EditClientModal', () => ({ default: ({ id, onSaved }) => <button onClick={() => onSaved({ id, name: 'Updated client', email: 'new@example.com' })}>Save test edit</button> }));
-vi.mock('@/app/v2/products/EditProductModal', () => ({ default: ({ onSaved }) => <button onClick={() => { mock.detail = Promise.resolve({ data: { name: 'Updated product' }, error: null }); onSaved(); }}>Save test product</button> }));
+vi.mock('@/app/v2/products/EditProductModal', () => ({ default: ({ id, onSaved }) => { mock.editProductId = id; return <button onClick={() => { mock.detail = Promise.resolve({ data: { name: 'Updated product' }, error: null }); onSaved(); }}>Save test product</button>; } }));
 vi.mock('@/app/v2/quotes/EditQuoteModal', () => ({ default: ({ id, onSaved, onClose }) => <div role="dialog" aria-label="Edit Quote"><span>Editing {id}</span><button onClick={() => { mock.pages = [{ data: [quote(id, { factory: 'Updated factory' })], error: null }]; onSaved(); }}>Save test quote edit</button><button onClick={onClose}>Close test quote edit</button></div> }));
 vi.mock('@/lib/supabase', () => ({ SB: {
   auth: {
@@ -47,6 +47,7 @@ beforeEach(() => {
   mock.pathname = '/v2';
   mock.searchParams = '';
   mock.deleted = [];
+  mock.editProductId = null;
   localStorage.clear();
   mock.queries = [];
   mock.signOut.mockReset();
@@ -338,14 +339,14 @@ describe('V2 quotes list', () => {
     mock.pages = [{ data: [quote('1'), quote('2', { product_id: null, product_row: null, quote_code: 'Q-2', company: null, client: 'Beacon' }), quote('3', { product_id: null, product_row: null, quote_code: null })], error: null }];
     const user = userEvent.setup();
     render(<QuotesPage />);
-    expect((await screen.findByRole('link', { name: 'ACM-1' })).getAttribute('href')).toBe('/v2/quotes/1');
-    expect(screen.getByRole('link', { name: 'Product 1' }).getAttribute('href')).toBe('/v2/products/product-1');
+    expect((await screen.findByRole('link', { name: 'ACM-1' })).getAttribute('href')).toBe('/v2/quotes/Q-1');
+    expect(screen.getByRole('link', { name: 'Product 1' }).getAttribute('href')).toBe('/v2/products/ACM-1');
     expect(screen.getByRole('link', { name: 'ACM-1' }).getAttribute('title')).toBe('View quote Q-1');
     expect(screen.getByRole('link', { name: 'Product 1' }).getAttribute('title')).toBe('View product Product 1');
     await user.hover(screen.getByRole('link', { name: 'ACM-1' }));
     await user.hover(screen.getByRole('link', { name: 'Product 1' }));
     expect(screen.queryByRole('link', { name: 'View product' })).toBeNull();
-    expect(screen.getByRole('link', { name: 'Q-2' }).getAttribute('href')).toBe('/v2/quotes/2');
+    expect(screen.getByRole('link', { name: 'Q-2' }).getAttribute('href')).toBe('/v2/quotes/Q-2');
     expect(screen.getByRole('link', { name: 'View quote' }).getAttribute('href')).toBe('/v2/quotes/3');
     expect(screen.getAllByText('No linked product')).toHaveLength(2);
     expect(screen.queryByRole('link', { name: 'Product 2' })).toBeNull();
@@ -415,6 +416,13 @@ describe('V2 quotes list', () => {
 });
 
 describe.each([['quote', QuotePage], ['product', ProductPage]])('V2 %s detail page', (type, Page) => {
+  it('looks up legacy UUID URLs by database id', async () => {
+    mock.id = '123e4567-e89b-12d3-a456-426614174000';
+    render(<Page />);
+    await screen.findByText(`${type === 'quote' ? 'Quote' : 'Product'} not found.`);
+    expect(mock.queries).toContainEqual(expect.objectContaining({ table: type === 'quote' ? 'quotes' : 'products', column: 'id', value: mock.id }));
+  });
+
   it('shows loading, not found, and a link back', async () => {
     let resolve;
     mock.detail = new Promise(r => { resolve = r; });
@@ -423,7 +431,7 @@ describe.each([['quote', QuotePage], ['product', ProductPage]])('V2 %s detail pa
     expect(screen.getByRole('link', { name: type === 'quote' ? '← Quotes' : '← Products' }).getAttribute('href')).toBe(type === 'quote' ? '/v2/quotes' : '/v2/products');
     resolve({ data: null, error: null });
     expect(await screen.findByText(`${type === 'quote' ? 'Quote' : 'Product'} not found.`)).toBeTruthy();
-    expect(mock.queries).toContainEqual(expect.objectContaining({ table: type === 'quote' ? 'quotes' : 'products', column: 'id', value: 'record-1' }));
+    expect(mock.queries).toContainEqual(expect.objectContaining({ table: type === 'quote' ? 'quotes' : 'products', column: type === 'quote' ? 'quote_code' : 'style_number', value: 'record-1' }));
   });
 
   it('shows database errors', async () => {
@@ -448,7 +456,7 @@ describe('V2 quote detail', () => {
     mock.detail = Promise.resolve({ data: quote('1', { tiers: [{ qty: 1000, landed: 3.25, client: 5.25, sizeQty: [{ scale: 'bag', size: 'M', qty: 100 }, { scale: 'bag', size: 'L', qty: 200 }], sizeCost: [{ scale: 'bag', size: 'M', landed: 4, client: 6 }] }], notes: 'Factory note' }), error: null });
     render(<QuotePage />);
     expect(await screen.findByRole('heading', { name: 'ACM-1' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'View product' }).getAttribute('href')).toBe('/v2/products/product-1');
+    expect(screen.getByRole('link', { name: 'View product' }).getAttribute('href')).toBe('/v2/products/ACM-1');
     expect(screen.getByText('Factory note')).toBeTruthy();
     const tier = within(screen.getByRole('heading', { name: 'Tier 1' }).parentElement);
     expect(tier.getByText('300')).toBeTruthy();
@@ -488,11 +496,12 @@ describe('V2 quote detail', () => {
 
 describe('V2 product detail', () => {
   it('opens the editor and reloads the product after saving', async () => {
-    mock.detail = Promise.resolve({ data: { name: 'Bottle' }, error: null });
+    mock.detail = Promise.resolve({ data: { id: 'product-uuid', name: 'Bottle' }, error: null });
     const user = userEvent.setup();
     render(<ProductPage />);
     await screen.findByRole('heading', { name: 'Bottle' });
     await user.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(mock.editProductId).toBe('product-uuid');
     await user.click(screen.getByRole('button', { name: 'Save test product' }));
     expect(await screen.findByRole('heading', { name: 'Updated product' })).toBeTruthy();
   });

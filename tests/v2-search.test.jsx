@@ -22,7 +22,7 @@ it('shows matching products and clients with links to their detail pages', async
   const user = userEvent.setup();
   render(<GlobalSearch />);
   await user.type(screen.getByRole('textbox'), 'ABC');
-  expect((await screen.findByRole('link', { name: /ABC-1/ })).getAttribute('href')).toBe('/v2/products/p1');
+  expect((await screen.findByRole('link', { name: /ABC-1/ })).getAttribute('href')).toBe('/v2/products/ABC-1');
   expect(screen.getByRole('link', { name: /ABC Company/ }).getAttribute('href')).toBe('/v2/clients/c1');
   expect(mock.queries).toContainEqual(['companies', 'type', 'client']);
   expect(mock.queries).toContainEqual(['products', 'style_number', '%ABC%']);

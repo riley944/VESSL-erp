@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Archive, Pencil } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { SB } from '@/lib/supabase';
+import { recordPath } from '@/lib/v2RecordPaths';
 import V2Shell from '../V2Shell';
 import EditQuoteModal from './EditQuoteModal';
 import s from './quotes.module.css';
@@ -86,7 +87,7 @@ function QuotesList() {
       {error ? <div className={s.empty} role="alert">Could not load quotes. {error} <button onClick={() => setRetry(n => n + 1)}>Try again</button></div> : !rows ? <p className={s.empty}>Loading quotes…</p> : !shown.length ? <p className={s.empty}>{rows.length ? 'No quotes match these filters.' : 'No quotes found.'}</p> : <>
         <div className={`${s.grid} ${s.heading}`} aria-hidden="true"><span>Style / product</span><span>Client</span><span>Factory</span><span>Quote ID</span><span>Last edited</span><span></span></div>
         {shown.map(q => <div className={`${s.grid} ${s.row}`} key={q.id}>
-          <div><strong><Link className={s.styleLink} href={`/v2/quotes/${q.id}`} title={`View quote ${q.quote_code || q.style || ''}`.trim()}>{q.style || q.quote_code || 'View quote'}</Link></strong>{!q.style && <span className={s.sub}>Style number not assigned</span>}<span className={s.sub}>{q.product_id && q.product_row && q.product ? <Link className={s.productName} href={`/v2/products/${q.product_id}`} title={`View product ${q.product}`}>{q.product}</Link> : q.product || 'Product not entered'}{q.sku ? ` · SKU ${q.sku}` : ''}</span></div>
+          <div><strong><Link className={s.styleLink} href={recordPath('quote', q)} title={`View quote ${q.quote_code || q.style || ''}`.trim()}>{q.style || q.quote_code || 'View quote'}</Link></strong>{!q.style && <span className={s.sub}>Style number not assigned</span>}<span className={s.sub}>{q.product_id && q.product_row && q.product ? <Link className={s.productName} href={recordPath('product', { id: q.product_id, style_number: q.style })} title={`View product ${q.product}`}>{q.product}</Link> : q.product || 'Product not entered'}{q.sku ? ` · SKU ${q.sku}` : ''}</span></div>
           <div><span className={s.mobileLabel}>Client: </span>{q.clientName || '—'}</div>
           <div><span className={s.mobileLabel}>Factory: </span>{q.factory || '—'}</div>
           <div><span className={s.mobileLabel}>Quote ID: </span>{q.quote_code || '—'}</div>

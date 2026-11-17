@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { SB } from '@/lib/supabase';
+import { recordLookupColumn, recordPath } from '@/lib/v2RecordPaths';
 import V2Shell from './V2Shell';
 import EditProductModal from './products/EditProductModal';
 import s from './detail.module.css';
@@ -37,11 +38,11 @@ function Detail({ type }) {
     const select = isQuote
       ? '*,company:companies!client_company_id(name),product_row:products!product_id(id,style_number)'
       : '*,company:companies!client_company_id(name)';
-    SB.from(table).select(select).eq('id', id).maybeSingle().then(({ data, error }) => {
+    SB.from(table).select(select).eq(recordLookupColumn(type, id), id).maybeSingle().then(({ data, error }) => {
       if (active) setResult({ data, error });
     });
     return () => { active = false; };
-  }, [id, isQuote, revision]);
+  }, [id, isQuote, revision, type]);
 
   const record = result.data;
   const tiers = isQuote && record ? quoteTiers(record) : [];
@@ -51,7 +52,7 @@ function Detail({ type }) {
       <p className={s.eyebrow}>{isQuote ? 'Quote' : 'Product'}</p>
       <div className={s.titleRow}><h1>{(isQuote ? record.product_row?.style_number : record.style_number) || (isQuote ? record.quote_code : record.name) || (isQuote ? 'Quote details' : 'Product details')}</h1>{!isQuote && <button className={s.editButton} onClick={() => setEditing(true)}>Edit</button>}</div>
       <p className={s.subtitle}>{isQuote ? record.product || 'Product not entered' : record.name || 'Product name not entered'}</p>
-      {isQuote && record.product_row && <Link className={s.button} href={`/v2/products/${record.product_row.id}`}>View product</Link>}
+      {isQuote && record.product_row && <Link className={s.button} href={recordPath('product', record.product_row)}>View product</Link>}
       <section className={s.card}>
         <h2>{isQuote ? 'Quote details' : 'Product details'}</h2>
         <dl className={s.fields}>
@@ -96,7 +97,7 @@ function Detail({ type }) {
         </div>; })}</div> : <p className={s.note}>No quantity tiers recorded.</p>}
       </section>}
       {isQuote && record.notes && <section className={s.card}><h2>Notes</h2><p className={s.notes}>{record.notes}</p></section>}
-      {!isQuote && editing && <EditProductModal id={id} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); setRevision(n => n + 1); }} />}
+      {!isQuote && editing && <EditProductModal id={record.id} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); setRevision(n => n + 1); }} />}
     </>}
   </main>;
 }

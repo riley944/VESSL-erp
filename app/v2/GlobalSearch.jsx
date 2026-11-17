@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Search } from 'lucide-react';
 import { SB } from '@/lib/supabase';
+import { recordPath } from '@/lib/v2RecordPaths';
 import s from './v2.module.css';
 
 export default function GlobalSearch() {
@@ -27,7 +28,7 @@ export default function GlobalSearch() {
         if (!active) return;
         if (products.error || clients.error) { setResult({ error: true, items: [] }); return; }
         setResult({ items: [
-          ...(products.data || []).map(p => ({ id: p.id, label: p.style_number, detail: p.name, type: 'Product', href: `/v2/products/${p.id}` })),
+          ...(products.data || []).map(p => ({ id: p.id, label: p.style_number, detail: p.name, type: 'Product', href: recordPath('product', p) })),
           ...(clients.data || []).map(c => ({ id: c.id, label: c.name, type: 'Client', href: `/v2/clients/${c.id}` })),
         ] });
       } catch { if (active) setResult({ error: true, items: [] }); }
