@@ -8,6 +8,7 @@ import { SB } from '@/lib/supabase';
 import { recordPath } from '@/lib/v2RecordPaths';
 import V2Shell from '../V2Shell';
 import EditQuoteModal from './EditQuoteModal';
+import QuoteModal from './QuoteModal';
 import s from './quotes.module.css';
 
 const BATCH = 1000;
@@ -26,6 +27,7 @@ function QuotesList() {
   const [tab, setTab] = useState('All open');
   const [retry, setRetry] = useState(0);
   const [editing, setEditing] = useState(null);
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => { setClientId(requestedId); setClient(requestedId ? requestedName : ''); }, [requestedId, requestedName]);
 
@@ -71,8 +73,7 @@ function QuotesList() {
 
   return <main className={s.main}>
     <Link href="/v2" className={s.back}>← V2 home</Link>
-    <h1>Quotes</h1>
-    <p className={s.subtitle}>Factory quotes in one list</p>
+    <div className={s.header}><div><h1>Quotes</h1><p className={s.subtitle}>Factory quotes in one list</p></div><button type="button" className={s.create} onClick={() => setCreating(true)}>+ Create quote</button></div>
     <div className={s.tabs} aria-label="Quote status preview">
       {TABS.map(label => <button type="button" key={label} aria-pressed={tab === label} onClick={() => setTab(label)}>{label} <b>–</b></button>)}
     </div>
@@ -98,6 +99,7 @@ function QuotesList() {
     </div>
     {rows && <p className={s.count}>{shown.length} {shown.length === 1 ? 'quote' : 'quotes'} shown</p>}
     {editing && <EditQuoteModal id={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); setRetry(n => n + 1); }} />}
+    {creating && <QuoteModal onClose={() => setCreating(false)} onSaved={() => { setCreating(false); setSearch(''); setClient(''); setClientId(''); setSort('style'); setRetry(n => n + 1); }} />}
   </main>;
 }
 

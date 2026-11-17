@@ -20,6 +20,7 @@ vi.mock('@/app/m/MLogin', () => ({ MLogin: () => <div>Login form</div> }));
 vi.mock('@/app/v2/clients/EditClientModal', () => ({ default: ({ id, onSaved }) => <button onClick={() => onSaved({ id, name: 'Updated client', email: 'new@example.com' })}>Save test edit</button> }));
 vi.mock('@/app/v2/products/EditProductModal', () => ({ default: ({ id, onSaved }) => { mock.editProductId = id; return <button onClick={() => { mock.detail = Promise.resolve({ data: { name: 'Updated product' }, error: null }); onSaved(); }}>Save test product</button>; } }));
 vi.mock('@/app/v2/quotes/EditQuoteModal', () => ({ default: ({ id, onSaved, onClose }) => <div role="dialog" aria-label="Edit Quote"><span>Editing {id}</span><button onClick={() => { mock.pages = [{ data: [quote(id, { factory: 'Updated factory' })], error: null }]; onSaved(); }}>Save test quote edit</button><button onClick={onClose}>Close test quote edit</button></div> }));
+vi.mock('@/app/v2/quotes/QuoteModal', () => ({ default: ({ onSaved, onClose }) => <div role="dialog" aria-label="New Quote"><button onClick={() => { mock.pages = [{ data: [quote('new')], error: null }]; onSaved(); }}>Finish test quote</button><button onClick={onClose}>Cancel test quote</button></div> }));
 vi.mock('@/lib/supabase', () => ({ SB: {
   auth: {
     getSession: () => mock.session,
@@ -293,6 +294,30 @@ describe('V2 home and staff access', () => {
 });
 
 describe('V2 quotes list', () => {
+  it('opens quote creation and refreshes the unfiltered list after saving', async () => {
+    mock.pages = [{ data: [quote('1')], error: null }];
+    const user = userEvent.setup();
+    render(<QuotesPage />);
+    await screen.findByRole('link', { name: 'ACM-1' });
+    await user.type(screen.getByRole('searchbox', { name: 'Search quotes' }), 'missing');
+    await user.click(screen.getByRole('button', { name: '+ Create quote' }));
+    expect(screen.getByRole('dialog', { name: 'New Quote' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Finish test quote' }));
+    expect(await screen.findByRole('link', { name: 'ACM-new' })).toBeTruthy();
+    expect(screen.getByRole('searchbox', { name: 'Search quotes' }).value).toBe('');
+  });
+
+  it('closes quote creation without refreshing when cancelled', async () => {
+    const user = userEvent.setup();
+    render(<QuotesPage />);
+    await screen.findByText('No quotes found.');
+    const before = mock.queries.filter(query => query.table === 'quotes').length;
+    await user.click(screen.getByRole('button', { name: '+ Create quote' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel test quote' }));
+    expect(screen.queryByRole('dialog', { name: 'New Quote' })).toBeNull();
+    expect(mock.queries.filter(query => query.table === 'quotes')).toHaveLength(before);
+  });
+
   it('opens the selected quote editor and refreshes after saving', async () => {
     mock.pages = [{ data: [quote('1')], error: null }];
     const user = userEvent.setup();

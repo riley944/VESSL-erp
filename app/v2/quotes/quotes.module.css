@@ -2,6 +2,9 @@
 .back { color: #555; font-size: 14px; }
 .main h1 { margin: 20px 0 0; font-family: Georgia, serif; font-size: 32px; font-weight: 400; }
 .subtitle { color: #555; margin: 4px 0 20px; }
+.header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.create { border: 0; border-radius: 999px; padding: 10px 18px; background: #008a25; color: white; font: 600 14px Inter, system-ui, sans-serif; cursor: pointer; white-space: nowrap; }
+.create:hover { background: #006b1d; }
 .tabs { display: flex; gap: 28px; overflow-x: auto; border-bottom: 2px solid #eaeaea; }
 .tabs button { display: inline-flex; flex: none; align-items: center; gap: 8px; padding: 8px 2px 12px; margin-bottom: -2px; border: 0; border-bottom: 4px solid transparent; background: none; color: #555; font: 600 17px Inter, system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
 .tabs button[aria-pressed='true'] { color: #111; border-bottom-color: #111; }

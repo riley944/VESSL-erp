@@ -1,0 +1,7 @@
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; }
+.tabs button { border: 1px solid #cbd5e1; border-radius: 999px; padding: 7px 11px; background: #fff; color: #334155; font-weight: 600; cursor: pointer; }
+.tabs button[aria-selected='true'] { border-color: #008a25; background: #e8f7ec; color: #006b1d; }
+.error { color: #b91c1c; }
+.tier { border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px; margin: 0 0 12px; }
+.tierFields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.tierFields label { min-width: 0; }

@@ -8,7 +8,7 @@ import { recordPath } from '@/lib/v2RecordPaths';
 import V2Shell from '../V2Shell';
 import EditProductModal from './EditProductModal';
 import NewProductModal from './NewProductModal';
-import Quotes from '@/app/quotes';
+import QuoteModal from '../quotes/QuoteModal';
 import s from './products.module.css';
 
 const BATCH = 1000;
@@ -117,7 +117,7 @@ function ProductsList() {
     {products && <p className={s.count}>{shown.length} {shown.length === 1 ? 'product' : 'products'} shown</p>}
     {editing && <EditProductModal id={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); setRetry(n => n + 1); }} />}
     {creating && <NewProductModal onClose={() => setCreating(false)} onSaved={() => { setCreating(false); setSearch(''); setTab('all'); setRetry(n => n + 1); }} />}
-    {quoteProduct && <Quotes modalOnly newQuote={quoteProduct} onClose={() => { setQuoteProduct(null); setRetry(n => n + 1); }} onSaved={() => { setQuoteProduct(null); setRetry(n => n + 1); }} />}
+    {quoteProduct && <QuoteModal newQuote={quoteProduct} onClose={() => { setQuoteProduct(null); setRetry(n => n + 1); }} onSaved={() => { setQuoteProduct(null); setRetry(n => n + 1); }} />}
   </main>;
 }
 
