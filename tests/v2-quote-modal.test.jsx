@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import QuoteModal from '@/app/v2/quotes/QuoteModal';
 import { QUOTES_CHANGED } from '@/app/v2/quoteEvents';
 
-const mock = vi.hoisted(() => ({ writes: [], quoteError: null, empty: false, taskError: null, products: [], productError: null, ranges: [], codes: [] }));
+const mock = vi.hoisted(() => ({ writes: [], quoteError: null, empty: false, taskError: null, products: [], productError: null, ranges: [], codes: [], savePending: null }));
 vi.mock('@/app/components/HtsField', () => ({ HtsField: ({ value, onChange }) => <button type="button" onClick={() => onChange('123456')}>HTS: {value || 'not set'}</button>, useHtsCodes: () => ({ codes: mock.codes, addCode: () => {} }) }));
 vi.mock('@/app/components/CodeModal', () => ({ CodeModal: () => null }));
 vi.mock('@/lib/taskNotify', () => ({ notifyTaskAssigned: vi.fn() }));
@@ -24,7 +24,8 @@ vi.mock('@/lib/supabase', () => ({ SB: {
       then: resolve => {
         if (!operation) return Promise.resolve({ data: table === 'staff_profiles' ? [{ email: 'person@example.com', full_name: 'Person' }] : [], error: null }).then(resolve);
         mock.writes.push([table, operation, payload]);
-        return Promise.resolve(mock.quoteError ? { data: null, error: mock.quoteError } : { data: mock.empty ? [] : [{ id: 'q1', quote_code: 'Q-1', product: 'Bottle', client: 'Acme', ...payload }], error: null }).then(resolve);
+        const result = mock.quoteError ? { data: null, error: mock.quoteError } : { data: mock.empty ? [] : [{ id: 'q1', quote_code: 'Q-1', product: 'Bottle', client: 'Acme', ...payload }], error: null };
+        return (mock.savePending || Promise.resolve(result)).then(resolve);
       },
     };
     return chain;
@@ -32,7 +33,7 @@ vi.mock('@/lib/supabase', () => ({ SB: {
 } }));
 
 const quote = { id: 'q1', quote_code: 'Q-1', product_id: 'p1', client_company_id: 'c1', product: 'Bottle', client: 'Acme', sku: 'SKU-1', notes: 'Original', tiers: [{ qty: 100, landed: 2, ship: 'ocean', freightOcean: 1, sizeQty: [{ scale: 'bag', size: 'M', qty: 100 }], fb: [{ rate: 4 }] }] };
-beforeEach(() => { mock.writes = []; mock.quoteError = null; mock.empty = false; mock.taskError = null; mock.products = [{ id: 'p1', style_number: 'ABC-1', name: 'Bottle', sku: 'SKU-1', client_company_id: 'c1', company: { name: 'Acme' } }, { id: 'p2', style_number: 'XYZ-2', name: 'Tote', client_company_id: null, company: null }]; mock.productError = null; mock.ranges = []; mock.codes = []; vi.spyOn(window, 'confirm').mockReturnValue(true); });
+beforeEach(() => { mock.writes = []; mock.quoteError = null; mock.empty = false; mock.taskError = null; mock.products = [{ id: 'p1', style_number: 'ABC-1', name: 'Bottle', sku: 'SKU-1', client_company_id: 'c1', company: { name: 'Acme' } }, { id: 'p2', style_number: 'XYZ-2', name: 'Tote', client_company_id: null, company: null }]; mock.productError = null; mock.ranges = []; mock.codes = []; mock.savePending = null; vi.spyOn(window, 'confirm').mockReturnValue(true); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it('creates a product-linked quote and saves without writing tasks', async () => {
@@ -194,6 +195,43 @@ it('updates only changed quote fields and keeps detailed pricing intact', async 
   await user.click(screen.getByRole('button', { name: 'Save quote' }));
   await waitFor(() => expect(mock.writes).toHaveLength(2));
   expect(mock.writes[1][2].tiers[0]).toMatchObject({ landed: 3, sizeQty: quote.tiers[0].sizeQty, fb: quote.tiers[0].fb });
+});
+
+it('keeps edits made while a quote save is pending for a second save', async () => {
+  let finish;
+  mock.savePending = new Promise(resolve => { finish = resolve; });
+  const user = userEvent.setup();
+  render(<QuoteModal quote={quote} onClose={() => {}} onSaved={() => {}} />);
+  const notes = screen.getByLabelText('Notes');
+  await user.clear(notes);
+  await user.type(notes, 'First');
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await waitFor(() => expect(mock.writes).toHaveLength(1));
+  await user.type(notes, ' later');
+  mock.savePending = null;
+  finish({ data: [{ ...quote, notes: 'First' }], error: null });
+  await screen.findByText('Quote saved.');
+  expect(notes.value).toBe('First later');
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await waitFor(() => expect(mock.writes).toHaveLength(2));
+  expect(mock.writes[1][2].notes).toBe('First later');
+});
+
+it('keeps quote and pricing drafts across keyboard tab navigation', async () => {
+  const user = userEvent.setup();
+  render(<QuoteModal quote={quote} onClose={() => {}} onSaved={() => {}} />);
+  await user.clear(screen.getByLabelText('Notes'));
+  await user.type(screen.getByLabelText('Notes'), 'Draft note');
+  screen.getByRole('tab', { name: 'Quote details' }).focus();
+  await user.keyboard('{ArrowRight}{ArrowRight}{ArrowRight}');
+  expect(screen.getByRole('tabpanel', { name: 'Pricing' })).toBeTruthy();
+  await user.clear(screen.getByLabelText('Factory price'));
+  await user.type(screen.getByLabelText('Factory price'), '5');
+  await user.click(screen.getByRole('tab', { name: 'Quote details' }));
+  expect(screen.getByLabelText('Notes').value).toBe('Draft note');
+  await user.click(screen.getByRole('button', { name: 'Save quote' }));
+  await waitFor(() => expect(mock.writes).toHaveLength(1));
+  expect(mock.writes[0][2]).toMatchObject({ notes: 'Draft note', tiers: [expect.objectContaining({ landed: 5 })] });
 });
 
 it('keeps quote and task failures independent and allows retrying a task', async () => {
