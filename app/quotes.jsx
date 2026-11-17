@@ -545,7 +545,7 @@ const BLANK = {
 //  Login is handled by the ERP shell; we read the existing session
 //  and render the Platform directly.
 // ============================================================
-export default function Quotes({ session: erpSession, newQuote = null, isAdmin = false, modalOnly = false, onClose, onSaved }) {
+export default function Quotes({ session: erpSession, newQuote = null, editQuote = null, isAdmin = false, modalOnly = false, onClose, onSaved }) {
   const [session, setSession] = useState(erpSession || null);
 
   useEffect(() => {
@@ -556,7 +556,7 @@ export default function Quotes({ session: erpSession, newQuote = null, isAdmin =
   }, [erpSession]);
 
   if (!session) return <div style={S.shell}><style>{CSS}</style><div style={S.center}>Loading quotes…</div></div>;
-  return <Platform session={session} newQuote={newQuote} isAdmin={isAdmin} modalOnly={modalOnly} onClose={onClose} onSaved={onSaved} />;
+  return <Platform session={session} newQuote={newQuote} editQuote={editQuote} isAdmin={isAdmin} modalOnly={modalOnly} onClose={onClose} onSaved={onSaved} />;
 }
 
 // The same two as plain values for the CSV: numbers, "incl." or blank.
@@ -571,7 +571,7 @@ function dutyValue(t) {
 const ALL = "__all_clients__";
 
 // ---------- main platform ----------
-function Platform({ session, newQuote = null, isAdmin = false, modalOnly = false, onClose, onSaved }) {
+function Platform({ session, newQuote = null, editQuote = null, isAdmin = false, modalOnly = false, onClose, onSaved }) {
   const userEmail = session?.user?.email || "unknown";
   // The HTS rate each quote's duty is worked out at, for the card, the detail view,
   // the printed quote and the CSV -- the same rate the form uses, from the same list.
@@ -613,9 +613,10 @@ function Platform({ session, newQuote = null, isAdmin = false, modalOnly = false
   // the same blank the + New Quote button builds, with SKU, name and client filled in.
   // Keyed on that object, so a later visit to this page without one opens nothing.
   useEffect(() => {
+    if (editQuote) { setEditing(rowToForm(editQuote)); return; }
     if (!newQuote) return;
     setEditing({ ...BLANK, quoteDate: new Date().toISOString().slice(0, 10), sku: newQuote.sku || "", product: newQuote.product || "", client: newQuote.client || "", ...(modalOnly ? { __productId: newQuote.productId, __clientId: newQuote.clientId, __clientName: newQuote.client } : {}), tiers: [{ qty: "", landed: "", ship: "ocean", freightAir: "", freightOcean: "", client: "" }] });
-  }, [newQuote, modalOnly]);
+  }, [newQuote, editQuote, modalOnly]);
 
   const loadTasks = useCallback(async () => {
     const { data, error } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
@@ -843,7 +844,7 @@ function Platform({ session, newQuote = null, isAdmin = false, modalOnly = false
     // The pre-edit row, read from state rather than re-fetched. The rename keys
     // on the OLD sku and name: that is what vessl.products still holds, because
     // saving a quote never touches that table.
-    const before = f.id ? quotes.find(x => x.id === f.id) : null;
+    const before = f.id ? quotes.find(x => x.id === f.id) || (editQuote?.id === f.id ? rowToForm(editQuote) : null) : null;
     const row = formToRow({ ...f, updatedBy: userEmail });
     Object.assign(row, links.row);
     let savedRow = null;
@@ -860,6 +861,7 @@ function Platform({ session, newQuote = null, isAdmin = false, modalOnly = false
       savedRow = data && data[0];
     }
 
+    let skuChoicePending = false;
     if (savedRow) {
       const confirmed = rowToForm(savedRow);
       setQuotes((prev) => {
@@ -1003,7 +1005,7 @@ function Platform({ session, newQuote = null, isAdmin = false, modalOnly = false
       // screens, it allows more chance for me to miss something."
       if (before && (before.sku || "") !== (savedRow.sku || "")) {
         const target = await productByKey(before.sku, before.product);
-        if (target) setSkuChoice({ product: target, quote: savedRow });
+        if (target) { skuChoicePending = true; setSkuChoice({ product: target, quote: savedRow }); }
       }
     }
     // ── THE NEXT ITEM OF AN IMPORTED PDF ───────────────────────────────────
@@ -1015,7 +1017,7 @@ function Platform({ session, newQuote = null, isAdmin = false, modalOnly = false
       const next = chainForm(f.pdfChain, f);
       if (next) setEditing(next);
     }
-    return savedRow ? { savedId: savedRow.id, failed: failedTasks } : null;
+    return savedRow ? { savedId: savedRow.id, failed: failedTasks, skuChoicePending } : null;
   };
   // Skip this item of a chain: the next one opens unsaved work aside, or the
   // chain ends when there is none.
@@ -1150,9 +1152,9 @@ function Platform({ session, newQuote = null, isAdmin = false, modalOnly = false
 
   if (modalOnly) return <><style>{CSS}</style>{editing && <QuoteForm key={editing.__key || editing.id || 'new'} initial={editing} onClose={onClose} onSave={async (form, queued) => {
     const result = await saveQuote(form, queued);
-    if (result?.savedId && !result.failed?.length && !form.pdfChain) onSaved?.();
+    if (result?.savedId && !result.failed?.length && !result.skuChoicePending && !form.pdfChain) onSaved?.();
     return result;
-  }} onSkip={(chain, form, notice) => { if (chainForm(chain, form, notice)) skipChained(chain, form, notice); else onSaved?.(); }} userEmail={userEmail} assignees={assignees} existingTasks={editing.id ? tasks.filter(t => t.quote_id === editing.id) : []} />}{toast && <div style={S.toast}>{toast}</div>}</>;
+  }} onSkip={(chain, form, notice) => { if (chainForm(chain, form, notice)) skipChained(chain, form, notice); else onSaved?.(); }} userEmail={userEmail} assignees={assignees} existingTasks={editing.id ? tasks.filter(t => t.quote_id === editing.id) : []} />}{skuChoice && <QuoteSkuChoiceModal product={skuChoice.product} quote={skuChoice.quote} updatedBy={userEmail} onClose={() => { setSkuChoice(null); onSaved?.(); }} onDone={() => load()} />}{toast && <div style={S.toast}>{toast}</div>}</>;
 
   return (
     <div style={{ ...S.shell, ...(isMobile ? { padding: "16px 12px 60px" } : {}) }}>

@@ -11,7 +11,7 @@ import SectionPage from '@/app/v2/[section]/page';
 
 const mock = vi.hoisted(() => ({
   session: null, profile: null, pages: [], detail: null, id: 'record-1', pathname: '/v2',
-  signOut: vi.fn(), unsubscribe: vi.fn(), from: vi.fn(), authCallback: null, queries: [], searchParams: '',
+  signOut: vi.fn(), unsubscribe: vi.fn(), from: vi.fn(), authCallback: null, queries: [], searchParams: '', deleteError: null, deleteEmpty: false, deleted: [],
 }));
 
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a> }));
@@ -19,6 +19,7 @@ vi.mock('next/navigation', () => ({ useParams: () => ({ id: mock.id }), usePathn
 vi.mock('@/app/m/MLogin', () => ({ MLogin: () => <div>Login form</div> }));
 vi.mock('@/app/v2/clients/EditClientModal', () => ({ default: ({ id, onSaved }) => <button onClick={() => onSaved({ id, name: 'Updated client', email: 'new@example.com' })}>Save test edit</button> }));
 vi.mock('@/app/v2/products/EditProductModal', () => ({ default: ({ onSaved }) => <button onClick={() => { mock.detail = Promise.resolve({ data: { name: 'Updated product' }, error: null }); onSaved(); }}>Save test product</button> }));
+vi.mock('@/app/v2/quotes/EditQuoteModal', () => ({ default: ({ id, onSaved, onClose }) => <div role="dialog" aria-label="Edit Quote"><span>Editing {id}</span><button onClick={() => { mock.pages = [{ data: [quote(id, { factory: 'Updated factory' })], error: null }]; onSaved(); }}>Save test quote edit</button><button onClick={onClose}>Close test quote edit</button></div> }));
 vi.mock('@/lib/supabase', () => ({ SB: {
   auth: {
     getSession: () => mock.session,
@@ -45,11 +46,13 @@ beforeEach(() => {
   mock.id = 'record-1';
   mock.pathname = '/v2';
   mock.searchParams = '';
+  mock.deleteError = null; mock.deleteEmpty = false; mock.deleted = [];
   localStorage.clear();
   mock.queries = [];
   mock.signOut.mockReset();
   mock.unsubscribe.mockReset();
   mock.from.mockReset().mockImplementation(table => ({
+    delete: () => ({ eq: (column, value) => ({ select: async () => { mock.deleted.push([table, column, value]); return { data: mock.deleteError ? null : mock.deleteEmpty ? [] : [{ id: value }], error: mock.deleteError }; } }) }),
     select: columns => table === 'staff_profiles'
       ? { ilike: (column, value) => { mock.queries.push({ table, columns, column, value }); return mock.profile; } }
       : {
@@ -289,6 +292,55 @@ describe('V2 home and staff access', () => {
 });
 
 describe('V2 quotes list', () => {
+  it('opens the selected quote editor and refreshes after saving', async () => {
+    mock.pages = [{ data: [quote('1')], error: null }];
+    const user = userEvent.setup();
+    render(<QuotesPage />);
+    await user.click(await screen.findByRole('button', { name: 'Edit Q-1' }));
+    expect(screen.getByRole('dialog', { name: 'Edit Quote' }).textContent).toContain('Editing 1');
+    await user.click(screen.getByRole('button', { name: 'Save test quote edit' }));
+    expect(await screen.findByText('Updated factory')).toBeTruthy();
+  });
+
+  it('deletes the confirmed quote and keeps other quotes', async () => {
+    mock.pages = [{ data: [quote('1'), quote('2')], error: null }];
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+    render(<QuotesPage />);
+    await user.click(await screen.findByRole('button', { name: 'Delete Q-1' }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Q-1'));
+    expect(mock.deleted).toEqual([['quotes', 'id', '1']]);
+    expect(screen.queryByRole('link', { name: 'ACM-1' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'ACM-2' })).toBeTruthy();
+    confirm.mockRestore();
+  });
+
+  it('keeps the quote on cancellation or a database failure', async () => {
+    mock.pages = [{ data: [quote('1')], error: null }];
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<QuotesPage />);
+    await user.click(await screen.findByRole('button', { name: 'Delete Q-1' }));
+    expect(mock.deleted).toEqual([]);
+    confirm.mockReturnValue(true);
+    mock.deleteError = { code: '23503', message: 'foreign key' };
+    await user.click(screen.getByRole('button', { name: 'Delete Q-1' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('cannot be deleted');
+    expect(screen.getByRole('link', { name: 'ACM-1' })).toBeTruthy();
+    confirm.mockRestore();
+  });
+
+  it('reports when deletion affects no rows', async () => {
+    mock.pages = [{ data: [quote('1')], error: null }];
+    mock.deleteEmpty = true;
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+    render(<QuotesPage />);
+    await user.click(await screen.findByRole('button', { name: 'Delete Q-1' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('No quote was deleted');
+    expect(screen.getByRole('link', { name: 'ACM-1' })).toBeTruthy();
+    confirm.mockRestore();
+  });
   it('shows loading and an empty list', async () => {
     let resolve;
     mock.pages = [new Promise(r => { resolve = r; })];
@@ -313,6 +365,7 @@ describe('V2 quotes list', () => {
     render(<QuotesPage />);
     expect((await screen.findByRole('link', { name: 'ACM-1' })).getAttribute('href')).toBe('/v2/quotes/1');
     expect(screen.getByRole('link', { name: 'View product' }).getAttribute('href')).toBe('/v2/products/product-1');
+    expect(screen.getByRole('link', { name: 'View product' }).querySelector('svg').classList.contains('lucide-shopping-bag')).toBe(true);
     expect(screen.getByRole('link', { name: 'Q-2' }).getAttribute('href')).toBe('/v2/quotes/2');
     expect(screen.getByRole('link', { name: 'View quote' }).getAttribute('href')).toBe('/v2/quotes/3');
     expect(screen.getAllByText('No linked product')).toHaveLength(2);
