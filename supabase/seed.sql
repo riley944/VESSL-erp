@@ -7,6 +7,24 @@ values
   ('c3d40000-0000-4000-8000-000000000103', 'Cedar Test Company', 'client')
 on conflict (id) do nothing;
 
+-- Match the factory names already used in the sample quotes. These are local
+-- fixtures, not real suppliers; rerunning the seed leaves existing rows alone.
+insert into vessl.companies (id, name, type, email, phone, website, shipping_address)
+values
+  ('d4e50000-0000-4000-8000-000000000101', 'Harbor Test Factory', 'factory', 'harbor@example.com', '+1 555 010 0101', 'https://example.com', '100 Harbor Road, Sample City'),
+  ('d4e50000-0000-4000-8000-000000000102', 'Summit Test Factory', 'factory', 'summit@example.com', '+1 555 010 0102', 'https://example.com', '200 Summit Road, Sample City')
+on conflict do nothing;
+
+insert into vessl.contacts (id, company_id, full_name, email, is_primary)
+select seed.id, c.id, seed.full_name, seed.email, true
+from (values
+  ('e5f60000-0000-4000-8000-000000000101'::uuid, 'd4e50000-0000-4000-8000-000000000101'::uuid, 'Harbor Test Factory', 'Jamie Harbor', 'jamie@example.com'),
+  ('e5f60000-0000-4000-8000-000000000102'::uuid, 'd4e50000-0000-4000-8000-000000000102'::uuid, 'Summit Test Factory', 'Morgan Summit', 'morgan@example.com')
+) as seed(id, company_id, company_name, full_name, email)
+join vessl.companies c on c.id = seed.company_id and c.name = seed.company_name and c.type = 'factory'
+where not exists (select 1 from vessl.contacts where company_id = c.id and is_primary)
+on conflict do nothing;
+
 insert into vessl.products (id, name, client_company_id, active)
 select seed.id, seed.name, seed.company_id, true
 from (values

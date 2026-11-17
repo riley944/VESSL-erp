@@ -50,7 +50,7 @@ const TYPE_NOUN = { client: 'Client' };
 // noun replaces the type's word in the title, the name label, the save button and
 // the required-name alert -- the Companies page's Clients tab passes "Company".
 // The Type field still shows the type itself, which is what gets stored.
-export function CreateCompanyModal({ onClose, onCreated, initialType, noun, initial = null, editCompany = null }) {
+export function CreateCompanyModal({ onClose, onCreated, initialType, noun, initial = null, editCompany = null, editContact = undefined }) {
   // Plain form, every field an input or select. No click-driven setters at all.
   const { ref: cardRef, guardedClose } = useDirtyGuard(onClose);
   // initialType lets a host open this already set to what it is asking for -- the
@@ -74,6 +74,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     Object.entries(editCompany || initial || {}).forEach(([k, v]) => {
       if (k in base && k !== 'type' && v != null) base[k] = k === 'kui_ior' && editCompany ? iorToSelect(v) : Array.isArray(v) ? v.join(', ') : String(v);
     });
+    if (editContact) { base.cname = editContact.full_name || ''; base.cemail = editContact.email || ''; base.cphone = editContact.phone || ''; }
     return base;
   });
   const original = useRef(form);
@@ -84,7 +85,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
   // which only seeds it. An empty or unknown type says Company, as it always did.
   const typeLabel = (COMPANY_TYPES.find(([v]) => v === form.type) || [null, 'Company'])[1];
   const word = noun && form.type === initialType ? noun : (TYPE_NOUN[form.type] || typeLabel);
-  const steps = editCompany ? ['Company details', 'Addresses', 'Business details'] : ['Company details', 'Addresses', 'Business details', 'Primary contact'];
+  const steps = editCompany && editContact === undefined ? ['Company details', 'Addresses', 'Business details'] : ['Company details', 'Addresses', 'Business details', 'Primary contact'];
   const validRecipients = () => !form.delivery_request_recipients.split(/[,\n]/).map(x => x.trim()).filter(Boolean).some(x => !/^[^,@\s]+@[^,@\s]+$/.test(x));
   const next = () => {
     if (step === 0 && !form.name.trim()) { alert(word + ' name required'); return; }
@@ -100,7 +101,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
     if (saving) return;
     if (!form.name.trim()) { setStep(0); alert(word + ' name required'); return; }
     if (form.type === 'client' && !validRecipients()) { setStep(2); alert('Enter valid delivery request email addresses separated by commas or new lines.'); return; }
-    if (!editCompany && !form.cname.trim() && (form.cemail.trim() || form.cphone.trim())) { setStep(3); alert('Enter a name for the primary contact.'); return; }
+    if ((!editCompany || editContact !== undefined) && !form.cname.trim() && (editContact || form.cemail.trim() || form.cphone.trim())) { setStep(3); alert('Enter a name for the primary contact.'); return; }
     // ── A CARRIER'S TRACKING PAGE, AND ITS NAME IN ANY CASE ─────────────────
     // companies.tracking_url (script 85) is the carrier tracking page with
     // {number} where the number goes, and the database refuses any other shape,
@@ -128,10 +129,29 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
         delivery_request_recipients: recipients.length ? recipients : null,
       };
       Object.keys(payload).forEach(key => { if (form[key] === original.current[key]) delete payload[key]; });
-      if (!Object.keys(payload).length) { onCreated(editCompany.type, editCompany); return; }
-      const { data, error } = await SB.from('companies').update(payload).eq('id', editCompany.id).eq('type', 'client').select().single();
-      if (error) throw error;
-      onCreated(data.type, data);
+      let company = editCompany;
+      if (Object.keys(payload).length) {
+        const { data, error } = await SB.from('companies').update(payload).eq('id', editCompany.id).eq('type', editCompany.type).select().single();
+        if (error) throw error;
+        company = data;
+      }
+      let contact = editContact;
+      const contactChanged = ['cname', 'cemail', 'cphone'].some(key => form[key] !== original.current[key]);
+      if (editContact !== undefined && contactChanged && form.cname.trim()) {
+        const fields = { full_name: form.cname.trim(), email: form.cemail.trim() || null, phone: form.cphone.trim() || null };
+        if (editContact) {
+          [['full_name', 'cname'], ['email', 'cemail'], ['phone', 'cphone']].forEach(([field, key]) => {
+            if (form[key] === original.current[key]) delete fields[field];
+          });
+        }
+        const query = editContact
+          ? SB.from('contacts').update(fields).eq('id', editContact.id).eq('company_id', editCompany.id).eq('is_primary', true)
+          : SB.from('contacts').insert({ ...fields, company_id: editCompany.id, is_primary: true });
+        const { data, error } = await query.select().single();
+        if (error) throw new Error('Company saved, but the primary contact could not be saved: ' + error.message);
+        contact = data;
+      }
+      onCreated(company.type, company, contact);
       return;
     }
     if (form.type === 'carrier') {
@@ -204,7 +224,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
           <div className="form-row"><label htmlFor="company-website">Website</label><input id="company-website" className="form-input" value={form.website} onChange={e=>f('website')(e.target.value)} placeholder="https://" /></div>
           {/* A factory's country has no column on companies; it lives on the
               factory's preset row, which the quote form fills Country from. */}
-          {form.type==='factory' && (
+          {form.type==='factory' && !editCompany && (
             <div className="form-row"><label>Country</label><input className="form-input" value={form.country} onChange={e=>f('country')(e.target.value)} placeholder="e.g. China" /></div>
           )}
           </section>
@@ -229,7 +249,7 @@ export function CreateCompanyModal({ onClose, onCreated, initialType, noun, init
           )}
           {form.type !== 'client' && form.type !== 'carrier' && <p style={{color:'var(--muted)'}}>No additional business details for this company type.</p>}
           </section>
-          {!editCompany && <section hidden={step !== 3} role="tabpanel" id="company-panel-3" aria-labelledby="company-tab-3">
+          {(!editCompany || editContact !== undefined) && <section hidden={step !== 3} role="tabpanel" id="company-panel-3" aria-labelledby="company-tab-3">
           <span className="form-section-label">Primary Contact</span>
           <div className="form-row-2">
             <div><label htmlFor="company-contact-name">Full Name</label><input id="company-contact-name" className="form-input" value={form.cname} onChange={e=>f('cname')(e.target.value)} /></div>
